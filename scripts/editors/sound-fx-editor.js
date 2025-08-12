@@ -74,10 +74,8 @@ class SoundFXEditor extends CompoundEditor {
     this.populateSourceEditor(sourceArea);
     this.populateOutputPreview(outputArea);
     
-    // Ensure waveform loads after DOM is ready
-    setTimeout(() => {
-      this.updateWaveformPreview();
-    }, 200);
+    // Ensure waveform loads after DOM and CSS layout are ready
+    // Remove the setTimeout from createBody since we handle it in initializeWaveform now
     
     console.log('[SoundFXEditor] createBody completed');
   }
@@ -146,13 +144,20 @@ class SoundFXEditor extends CompoundEditor {
   initializeWaveform(container) {
     const waveformContainer = container.querySelector('#waveform-container');
     if (waveformContainer && window.WaveformDisplay) {
-      this.waveformDisplay = new WaveformDisplay(waveformContainer, {
-        width: 550,
-        height: 150
+      // Wait for CSS layout to complete before creating waveform display
+      // Use requestAnimationFrame to ensure layout is done
+      requestAnimationFrame(() => {
+        // Double RAF to ensure layout is fully complete
+        requestAnimationFrame(() => {
+          this.waveformDisplay = new WaveformDisplay(waveformContainer, {
+            width: 550,
+            height: 150
+          });
+          
+          // Generate initial waveform after display is ready
+          this.updateWaveformPreview();
+        });
       });
-      
-      // Generate initial waveform
-      this.updateWaveformPreview();
     }
   }
   
@@ -407,6 +412,8 @@ class SoundFXEditor extends CompoundEditor {
   }
   
   static async showCreateDialog() {
+    let currentUniqueName = null; // Store the current unique name
+    
     const result = await ModalUtils.showForm('Create New Sound Effect', [
       {
         name: 'name',
@@ -415,21 +422,75 @@ class SoundFXEditor extends CompoundEditor {
         defaultValue: 'new_sound',
         placeholder: 'Enter filename...',
         required: true,
-        hint: 'Name for your sound effect (without .sfx extension)'
+        hint: 'Name for your sound effect (without .sfx extension)',
+        validator: (value) => {
+          const trimmed = value.trim();
+          if (trimmed.length === 0) return false;
+          // Check for invalid filename characters
+          const invalidChars = /[<>:"/\\|?*]/;
+          return !invalidChars.test(trimmed);
+        },
+        onInput: async (value, formData) => {
+          console.log(`[SoundFXEditor] onInput called with value: ${value}`);
+          // Real-time duplicate checking and preview
+          let testName = value.trim();
+          if (!testName.toLowerCase().endsWith('.sfx')) {
+            testName += '.sfx';
+          }
+          
+          try {
+            // Check for duplicates and show what the actual filename will be
+            const uniqueName = await EditorRegistry.getUniqueFileName(testName);
+            currentUniqueName = uniqueName; // Store for later use
+            console.log(`[SoundFXEditor] Duplicate check: ${testName} -> ${uniqueName}`);
+            
+            // Update hint to show the actual filename that will be created
+            const modal = document.querySelector('.modal-dialog');
+            if (modal) {
+              const hintEl = modal.querySelector('.form-hint');
+              if (hintEl) {
+                let displayName = uniqueName;
+                if (displayName.toLowerCase().endsWith('.sfx')) {
+                  displayName = displayName.substring(0, displayName.length - 4);
+                }
+                
+                if (displayName !== value.trim()) {
+                  hintEl.textContent = `Will be created as: ${displayName}.sfx`;
+                  hintEl.style.color = '#ffa500'; // Orange to indicate change
+                } else {
+                  hintEl.textContent = 'Name for your sound effect (without .sfx extension)';
+                  hintEl.style.color = ''; // Reset color
+                }
+              }
+            }
+          } catch (error) {
+            console.error('[SoundFXEditor] Error during duplicate check:', error);
+            currentUniqueName = null;
+          }
+        }
       }
     ]);
     
     if (!result) return null;
     
-    let name = result.name.trim();
-    
-    // Ensure proper extension
-    if (!name.toLowerCase().endsWith('.sfx')) {
-      name += '.sfx';
+    // Use the stored unique name if available, otherwise generate it
+    let finalName;
+    if (currentUniqueName) {
+      finalName = currentUniqueName;
+    } else {
+      let name = result.name.trim();
+      // Ensure proper extension
+      if (!name.toLowerCase().endsWith('.sfx')) {
+        name += '.sfx';
+      }
+      // Make sure the final name is unique
+      finalName = await EditorRegistry.getUniqueFileName(name);
     }
     
+    console.log(`[SoundFXEditor] Final name selected: ${finalName}`);
+    
     return {
-      name: name,
+      name: finalName,
       uniqueNameChecked: true
     };
   }
@@ -555,6 +616,39 @@ class SoundFXEditor extends CompoundEditor {
     } catch (error) {
       console.error('[SoundFXEditor] Failed to load file content:', error);
       this.parameters = { ...this.defaultParameters };
+    }
+  }
+
+  // Cleanup method to properly dispose of resources
+  cleanup() {
+    console.log('[SoundFXEditor] Cleaning up resources');
+    
+    // Stop any audio preview
+    this.stopPreview();
+    
+    // Close audio context if it exists
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(err => {
+        console.warn('[SoundFXEditor] Error closing audio context:', err);
+      });
+      this.audioContext = null;
+    }
+    
+    // Clean up waveform display
+    if (this.waveformDisplay && typeof this.waveformDisplay.cleanup === 'function') {
+      this.waveformDisplay.cleanup();
+      this.waveformDisplay = null;
+    }
+    
+    // Clean up play button
+    if (this.playPauseButton && typeof this.playPauseButton.cleanup === 'function') {
+      this.playPauseButton.cleanup();
+      this.playPauseButton = null;
+    }
+    
+    // Call parent cleanup if it exists
+    if (super.cleanup) {
+      super.cleanup();
     }
   }
 }

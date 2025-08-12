@@ -38,9 +38,9 @@ class CompoundEditor extends EditorBase {
   }
   
   updateRegenerationStatus() {
-    // Update UI to show regeneration status
+    // Mark as dirty if regeneration is needed
     if (this.needsRegeneration && !this.isRegenerating) {
-      this.updateStatus('Needs Regeneration');
+      this.markDirty();
     }
   }
   
@@ -106,8 +106,6 @@ class CompoundEditor extends EditorBase {
   // Save all managed files
   async save() {
     try {
-      this.updateStatus('Saving...');
-      
       // Save the source file first
       await super.save();
       
@@ -118,11 +116,9 @@ class CompoundEditor extends EditorBase {
       
       this.markClean();
       this.needsRegeneration = false;
-      this.updateStatus('Saved');
       
     } catch (error) {
       console.error('[CompoundEditor] Save failed:', error);
-      this.updateStatus('Save Failed');
       throw error;
     }
   }
@@ -135,7 +131,6 @@ class CompoundEditor extends EditorBase {
     
     try {
       this.isBuilding = true;
-      this.updateStatus('Building...');
       
       // Update UI to show building state
       const buildButton = this.element.querySelector('.regeneration-controls button');

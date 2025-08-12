@@ -33,7 +33,7 @@ class BuildSystem {
     return lastDot !== -1 ? filename.substring(lastDot).toLowerCase() : '';
   }
   
-  async buildProject(projectFiles = null) {
+  async buildProject() {
     if (this.isBuilding) {
       console.log('[BuildSystem] Build already in progress');
       return { success: false, error: 'Build already in progress' };
@@ -43,8 +43,13 @@ class BuildSystem {
       this.isBuilding = true;
       console.log('[BuildSystem] Starting project build...');
       
-      // Get all resource files from project explorer or use provided files
-      const resourceFiles = projectFiles ? this.extractFilesFromProjectExplorer(projectFiles) : this.getAllResourceFiles();
+      // Clear the build folder before starting
+      if (window.gameEditor && window.gameEditor.projectExplorer) {
+        window.gameEditor.projectExplorer.clearBuildFolder();
+      }
+      
+      // Get all resource files from project explorer
+      const resourceFiles = this.getAllResourceFiles();
       console.log(`[BuildSystem] Found ${resourceFiles.length} resource files to process`);
       
       const buildResults = [];
@@ -60,6 +65,11 @@ class BuildSystem {
           if (result.success) {
             successCount++;
             console.log(`[BuildSystem] ✓ Built: ${file.path} → ${result.outputPath}`);
+            
+            // Add the built file to the project explorer
+            if (window.gameEditor && window.gameEditor.projectExplorer && result.outputPath) {
+              await this.addBuiltFileToExplorer(result.outputPath, file);
+            }
           } else {
             errorCount++;
             console.error(`[BuildSystem] ✗ Failed: ${file.path} - ${result.error}`);
@@ -77,6 +87,9 @@ class BuildSystem {
       
       const totalTime = Date.now() - Date.now(); // Placeholder for actual timing
       console.log(`[BuildSystem] Build completed: ${successCount} success, ${errorCount} errors`);
+      
+      // Note: Build files are added to the project explorer as they are built
+      // No need to refresh from localStorage here
       
       return {
         success: errorCount === 0,
@@ -100,6 +113,38 @@ class BuildSystem {
     }
   }
   
+  async addBuiltFileToExplorer(outputPath, originalFile) {
+    try {
+      console.log(`[BuildSystem] Adding built file to explorer: ${outputPath}`);
+      
+      // Load the built file from localStorage
+      const fileData = await window.fileIOService.loadFromLocalStorage(outputPath);
+      if (!fileData) {
+        console.error(`[BuildSystem] Could not load built file from storage: ${outputPath}`);
+        return;
+      }
+      
+      // Extract the relative path from the build path (remove "build/" prefix)
+      const relativePath = outputPath.replace(/^build\//, '');
+      
+      // Create a file object for the built file
+      const builtFile = new File([fileData.content], originalFile.file.name, {
+        type: originalFile.file.type
+      });
+      
+      // Add to project explorer's build folder
+      window.gameEditor.projectExplorer.addBuildFileToStructure(relativePath, {
+        content: fileData.content,
+        name: originalFile.file.name,
+        path: outputPath
+      });
+      
+      console.log(`[BuildSystem] Successfully added built file to explorer: ${relativePath}`);
+    } catch (error) {
+      console.error(`[BuildSystem] Failed to add built file to explorer:`, error);
+    }
+  }
+
   async buildFile(file) {
     const builder = this.getBuilderForFile(file.name);
     if (!builder) {
@@ -119,49 +164,77 @@ class BuildSystem {
     // Get files from project explorer
     if (window.gameEditor && window.gameEditor.projectExplorer) {
       const explorer = window.gameEditor.projectExplorer;
-      files.push(...this.extractFilesFromNode(explorer.resources, 'Resources/'));
+      console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
+      
+      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure.Resources) {
+        console.log('[BuildSystem] Resources node:', explorer.projectData.structure.Resources);
+        files.push(...this.extractFilesFromNode(explorer.projectData.structure.Resources, 'Resources/'));
+      }
     }
     
+    console.log(`[BuildSystem] Extracted ${files.length} files:`, files);
     return files;
   }
   
   extractFilesFromProjectExplorer(projectFiles) {
-    const files = [];
-    
-    // ProjectExplorer.files is a Map structure where each entry contains file data
-    if (projectFiles && typeof projectFiles.forEach === 'function') {
-      projectFiles.forEach((fileData, filePath) => {
-        files.push({
-          name: fileData.name || filePath.split('/').pop(),
-          path: filePath,
-          file: fileData.file || fileData,
-          folder: filePath.substring(0, filePath.lastIndexOf('/') + 1)
-        });
-      });
-    }
-    
-    console.log(`[BuildSystem] Extracted ${files.length} files from project explorer`);
-    return files;
+    // This method is not used since ProjectExplorer doesn't have a .files property
+    // Instead, we use getAllResourceFiles() which traverses the projectData.structure
+    return this.getAllResourceFiles();
   }
-  
+
   extractFilesFromNode(node, basePath = '') {
     const files = [];
     
+    if (!node) {
+      return files;
+    }
+
     if (node.type === 'file' && node.file) {
       files.push({
-        name: node.name,
-        path: basePath + node.name,
+        name: node.file.name,
+        path: basePath + node.file.name,
         file: node.file,
         folder: basePath
       });
     } else if (node.type === 'folder' && node.children) {
-      for (const child of node.children) {
-        const childPath = basePath + node.name + '/';
-        files.push(...this.extractFilesFromNode(child, childPath));
+      // Recursively process all children in the folder
+      for (const [childName, childNode] of Object.entries(node.children)) {
+        if (childNode.type === 'file') {
+          // For files, use basePath + childName
+          files.push(...this.extractFilesFromNode(childNode, basePath));
+        } else {
+          // For folders, add the folder name to the path
+          files.push(...this.extractFilesFromNode(childNode, basePath + childName + '/'));
+        }
       }
     }
     
     return files;
+  }
+  
+  downloadBuildFile(filePath, data, mimeType) {
+    try {
+      // Create a blob from the data
+      const blob = new Blob([data], { type: mimeType });
+      
+      // Create download link
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filePath.split('/').pop(); // Get just the filename
+      
+      // Trigger download
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // Clean up
+      URL.revokeObjectURL(url);
+      
+      console.log(`[BuildSystem] Downloaded: ${filePath}`);
+    } catch (error) {
+      console.error(`[BuildSystem] Failed to download ${filePath}:`, error);
+    }
   }
 }
 
@@ -185,7 +258,8 @@ class BaseBuilder {
 class CopyBuilder extends BaseBuilder {
   async build(file) {
     try {
-      const outputPath = `build/${file.path}`;
+      // Remove Resources/ prefix and add build/ prefix: Resources/Lua/file.lua -> build/Lua/file.lua
+      const outputPath = file.path.replace(/^Resources\//, 'build/');
       
       // Read file content
       const content = await file.file.arrayBuffer();
@@ -196,6 +270,9 @@ class CopyBuilder extends BaseBuilder {
           binaryData: true
         });
       }
+      
+      // Build files are saved to localStorage under build/ prefix
+      // No automatic download - files go to virtual build directory
       
       return {
         success: true,
@@ -211,6 +288,19 @@ class CopyBuilder extends BaseBuilder {
         builder: 'copy'
       };
     }
+  }
+  
+  getMimeType(filename) {
+    const ext = filename.toLowerCase().split('.').pop();
+    const mimeTypes = {
+      'wav': 'audio/wav',
+      'mp3': 'audio/mpeg', 
+      'lua': 'text/plain',
+      'js': 'application/javascript',
+      'json': 'application/json',
+      'txt': 'text/plain'
+    };
+    return mimeTypes[ext] || 'application/octet-stream';
   }
 }
 
@@ -232,7 +322,12 @@ class SfxBuilder extends BaseBuilder {
       const wavData = this.audioBufferToWav(audioBuffer);
       
       // Generate output path (convert .sfx to .wav in build directory)
-      const outputPath = file.path.replace(/\.sfx$/i, '.wav').replace(/^Resources\//, 'build/Resources/');
+      const inputPath = file.path;
+      // Remove Resources/ prefix and add build/ prefix: Resources/SFX/file.sfx -> build/SFX/file.wav
+      const outputPath = file.path.replace(/\.sfx$/i, '.wav').replace(/^Resources\//, 'build/');
+      
+      console.log(`[SfxBuilder] Input path: ${inputPath}`);
+      console.log(`[SfxBuilder] Output path: ${outputPath}`);
       
       // Save WAV file
       if (window.fileIOService) {
@@ -240,7 +335,11 @@ class SfxBuilder extends BaseBuilder {
           type: '.wav',
           binaryData: true
         });
+        console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
       }
+      
+      // Build files are saved to localStorage under build/ prefix
+      // No automatic download - files go to virtual build directory
       
       return {
         success: true,

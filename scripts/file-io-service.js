@@ -88,13 +88,29 @@ class FileIOService {
   
   // Save file content to persistent storage
   async saveFile(path, content, metadata = {}) {
+    // Handle binary data conversion for storage
+    let processedContent = content;
+    let isBinaryData = false;
+    
+    if (content instanceof ArrayBuffer) {
+      // Convert ArrayBuffer to base64 for storage
+      const bytes = new Uint8Array(content);
+      processedContent = btoa(String.fromCharCode.apply(null, bytes));
+      isBinaryData = true;
+    } else if (content instanceof Uint8Array) {
+      // Convert Uint8Array to base64 for storage
+      processedContent = btoa(String.fromCharCode.apply(null, content));
+      isBinaryData = true;
+    }
+    
     const fileData = {
       path: path,
       filename: path.split('/').pop(),
       directory: path.substring(0, path.lastIndexOf('/')),
-      content: content,
+      fileContent: processedContent,  // Use fileContent instead of content
       lastModified: Date.now(),
-      size: new Blob([content]).size,
+      size: content instanceof ArrayBuffer ? content.byteLength : new Blob([content]).size,
+      binaryData: isBinaryData,
       ...metadata
     };
     
@@ -239,7 +255,25 @@ class FileIOService {
     const data = localStorage.getItem(key);
     if (data) {
       const parsed = JSON.parse(data);
-      console.log(`[FileIOService] Loaded from localStorage: ${path} (${parsed.content?.length || 0} chars)`);
+      
+      // Convert base64 back to binary data if needed
+      if (parsed.binaryData && parsed.fileContent) {
+        try {
+          const binaryString = atob(parsed.fileContent);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          parsed.content = bytes.buffer; // Return as ArrayBuffer
+        } catch (error) {
+          console.warn(`[FileIOService] Failed to decode binary data for ${path}:`, error);
+          parsed.content = parsed.fileContent; // Fallback to raw data
+        }
+      } else {
+        parsed.content = parsed.fileContent; // For text data
+      }
+      
+      console.log(`[FileIOService] Loaded from localStorage: ${path} (${parsed.content?.byteLength || parsed.content?.length || 0} bytes)`);
       return parsed;
     } else {
       console.log(`[FileIOService] No data found in localStorage for: ${path}`);

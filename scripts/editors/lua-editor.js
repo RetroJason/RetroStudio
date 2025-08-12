@@ -249,25 +249,6 @@ end`;
   }
   
   // Override toolbar creation to add Lua-specific tools
-  createToolbar(toolbarContainer) {
-    // Call parent toolbar creation
-    super.createToolbar(toolbarContainer);
-    
-    // Add simple separator and info
-    const separator = document.createElement('span');
-    separator.className = 'toolbar-separator';
-    separator.textContent = '|';
-    
-    const infoSpan = document.createElement('span');
-    infoSpan.className = 'toolbar-info';
-    infoSpan.textContent = 'Lua Script Editor';
-    infoSpan.style.color = '#999999';
-    infoSpan.style.fontSize = '12px';
-    
-    toolbarContainer.appendChild(separator);
-    toolbarContainer.appendChild(infoSpan);
-  }
-  
   // Override focus to focus the textarea
   onFocus() {
     super.onFocus();
@@ -307,6 +288,8 @@ end`;
       text: info.name
     }));
 
+    let currentUniqueName = null; // Store the current unique name
+
     const result = await ModalUtils.showForm('Create New Lua Script', [
       {
         name: 'name',
@@ -334,6 +317,7 @@ end`;
           try {
             // Check for duplicates and show what the actual filename will be
             const uniqueName = await EditorRegistry.getUniqueFileName(testName);
+            currentUniqueName = uniqueName; // Store for later use
             console.log(`[LuaEditor] Duplicate check: ${testName} -> ${uniqueName}`);
             
             // Update the input field to show the actual filename that will be created
@@ -389,14 +373,21 @@ end`;
 
     if (!result) return null; // User cancelled
 
-    // Ensure proper extension
-    let finalName = result.name.trim();
-    if (!finalName.toLowerCase().endsWith('.lua')) {
-      finalName += '.lua';
+    // Use the stored unique name if available, otherwise generate it
+    let finalName;
+    if (currentUniqueName) {
+      finalName = currentUniqueName;
+    } else {
+      let name = result.name.trim();
+      // Ensure proper extension
+      if (!name.toLowerCase().endsWith('.lua')) {
+        name += '.lua';
+      }
+      // Check for duplicates and auto-increment if needed (final check)
+      finalName = await EditorRegistry.getUniqueFileName(name);
     }
 
-    // Check for duplicates and auto-increment if needed (final check)
-    finalName = await EditorRegistry.getUniqueFileName(finalName);
+    console.log(`[LuaEditor] Final name selected: ${finalName}`);
 
     return {
       name: finalName,

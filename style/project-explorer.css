@@ -49,6 +49,54 @@
   background: #484848;
 }
 
+/* Folder and File Type Differentiation */
+.tree-item {
+  position: relative;
+}
+
+/* Resources folder styling (editable) */
+.tree-item[data-path="Resources"] {
+  color: #4fc3f7; /* Light blue for editable resources */
+}
+
+.tree-item[data-path="Resources"] .tree-icon {
+  color: #4fc3f7;
+}
+
+/* Build folder styling (read-only outputs) */
+.tree-item[data-path="Build"] {
+  color: #ff9800; /* Orange for build outputs */
+}
+
+.tree-item[data-path="Build"] .tree-icon {
+  color: #ff9800;
+}
+
+/* Build folder children inherit orange color */
+.tree-item[data-path^="Build/"] {
+  color: #ffb74d; /* Lighter orange for build folder contents */
+}
+
+.tree-item[data-path^="Build/"] .tree-icon {
+  color: #ffb74d;
+}
+
+/* Sub-folders under Resources */
+.tree-item[data-path^="Resources/"] .tree-icon {
+  color: #81c784; /* Green for resource type folders */
+}
+
+/* Read-only tabs styling */
+.tab.readonly-tab {
+  background: linear-gradient(135deg, #3c3c3c 0%, #4a3c2a 100%);
+  border-left: 3px solid #ff9800;
+}
+
+.tab.readonly-tab .tab-title {
+  color: #ffb74d;
+  font-style: italic;
+}
+
 .explorer-tree {
   flex: 1;
   overflow-y: auto;
@@ -321,18 +369,50 @@
   white-space: nowrap;
   min-width: 120px;
   max-width: 200px;
-  transition: background 0.2s ease;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.tab:hover {
+  background-color: #404040;
 }
 
 .tab.active {
   background-color: #1e1e1e;
-  border-bottom: 1px solid #1e1e1e;
+  border-bottom: 2px solid #007acc; /* Blue accent line */
   margin-bottom: -1px;
   color: #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); /* Subtle shadow */
+}
+
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #007acc, #0098ff);
+  z-index: 1;
 }
 
 .tab.preview-tab {
   font-style: italic;
+  color: #999999;
+  background-color: #333333;
+}
+
+.tab.preview-tab.active {
+  background-color: #1e1e1e;
+  color: #cccccc;
+}
+
+.tab.readonly-tab {
+  background-color: #2d2d30;
+  border-left: 3px solid #666666;
+}
+
+.tab.readonly-tab .tab-title {
   color: #999999;
 }
 
@@ -371,10 +451,16 @@
   display: none;
   height: 100%;
   overflow: auto;
+  position: relative; /* Enable positioning for transform animations */
 }
 
 .tab-pane.active {
   display: block;
+}
+
+/* Preview pane specific animations */
+.tab-pane[data-tab-id="preview"] {
+  transform: translateX(0); /* Default position */
 }
 
 .preview-pane {

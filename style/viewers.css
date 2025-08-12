@@ -667,49 +667,10 @@
   height: 100%;
 }
 
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: #37373d;
-  border-bottom: 1px solid #3c3c3c;
-  border-radius: 6px 6px 0 0;
-}
-
 .editor-body {
   flex: 1;
   display: flex;
   flex-direction: column;
-}
-
-.editor-status {
-  margin-left: auto;
-  font-size: 12px;
-  color: #999999;
-  padding: 2px 8px;
-  border-radius: 3px;
-}
-
-.editor-status.saved {
-  color: #81c784;
-}
-
-.editor-status.modified {
-  color: #ffb74d;
-}
-
-.editor-status.new-resource {
-  color: #64b5f6;
-}
-
-.editor-status.save-failed {
-  color: #e57373;
-}
-
-.toolbar-separator {
-  color: #555555;
-  margin: 0 5px;
 }
 
 .btn-save {
@@ -789,8 +750,28 @@
   transition: color 0.2s ease;
 }
 
+.tab.dirty {
+  border-left: 3px solid #ff6b6b;
+}
+
 .tab.dirty .tab-title {
   color: #ffb74d;
+  font-weight: 500;
+}
+
+.tab.dirty .tab-title::after {
+  content: " *";
+  color: #ff6b6b;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.tab.dirty.active .tab-title {
+  color: #ffffff;
+}
+
+.tab.dirty.active .tab-title::after {
+  color: #ff8a80;
 }
 
 /* Loading states */
