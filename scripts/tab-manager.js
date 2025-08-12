@@ -203,10 +203,7 @@ class TabManager {
     const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
     if (!previewPane) return null;
     
-    // Show preview with animation
-    this._showPreviewWithAnimation();
-    
-    // Cleanup previous preview
+    // Cleanup previous preview FIRST - before any rendering starts
     this._cleanupPreview();
     
     // Create viewer/editor
@@ -216,7 +213,7 @@ class TabManager {
       return null;
     }
     
-    // Setup preview
+    // Setup preview content BEFORE showing animation
     previewPane.innerHTML = '';
     previewPane.appendChild(viewerInfo.element);
     
@@ -224,6 +221,9 @@ class TabManager {
     this.previewFile = file;
     this.previewViewer = viewerInfo.viewer;
     this.previewReadOnly = options.isReadOnly || false;
+    
+    // Show preview with animation AFTER content is ready
+    this._showPreviewWithAnimation();
     
     // Update preview tab title
     const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
@@ -427,18 +427,21 @@ class TabManager {
     
     if (!previewTab || !previewPane) return;
     
-    // Show the elements first
+    // Show the tab element first
     previewTab.style.display = 'block';
-    previewPane.style.display = 'block';
     
-    // Set initial position (off-screen to the left)
+    // Ensure pane is visible but positioned off-screen initially
+    previewPane.style.display = 'block';
     previewPane.style.transform = 'translateX(-100%)';
-    previewPane.style.transition = 'transform 0.2s ease-out';
+    previewPane.style.transition = 'none'; // No transition for initial setup
     
     // Force a reflow to ensure the initial state is applied
     previewPane.offsetWidth;
     
-    // Animate in from the left
+    // Now add transition and animate in
+    previewPane.style.transition = 'transform 0.2s ease-out';
+    
+    // Use requestAnimationFrame to ensure DOM is ready
     requestAnimationFrame(() => {
       previewPane.style.transform = 'translateX(0)';
     });
@@ -472,25 +475,55 @@ class TabManager {
     this._hidePreviewWithAnimation();
     console.log('[TabManager] Preview cleared and hidden');
   }
+  
+  _closePreviewTab() {
+    console.log('[TabManager] Closing preview tab');
+    
+    // Clean up the preview content
+    this._cleanupPreview();
+    
+    // Hide preview tab and pane
+    this._hidePreviewWithAnimation();
+    
+    // Reset preview tab to default state
+    this._resetPreviewTab();
+    
+    console.log('[TabManager] Preview tab closed');
+  }
 
   _cleanupPreview() {
     console.log('[TabManager] Cleaning up preview tab');
-    if (this.previewViewer && typeof this.previewViewer.cleanup === 'function') {
-      console.log('[TabManager] Calling cleanup on preview viewer');
-      this.previewViewer.cleanup();
-    }
     
-    // Clear preview pane content
-    const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
-    if (previewPane) {
-      console.log('[TabManager] Clearing preview pane HTML content');
-      previewPane.innerHTML = '';
-    }
+    // Stop any focus events from firing during cleanup
+    const oldViewer = this.previewViewer;
     
+    // Clear state FIRST to prevent any callbacks
     this.previewPath = null;
     this.previewFile = null;
     this.previewViewer = null;
     this.previewReadOnly = false;
+    
+    // Now cleanup the old viewer safely
+    if (oldViewer && typeof oldViewer.cleanup === 'function') {
+      console.log('[TabManager] Calling cleanup on preview viewer');
+      try {
+        oldViewer.cleanup();
+      } catch (error) {
+        console.error('[TabManager] Error during viewer cleanup:', error);
+      }
+    }
+    
+    // Clear preview pane content completely
+    const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
+    if (previewPane) {
+      console.log('[TabManager] Clearing preview pane HTML content');
+      // Force removal of all child elements to prevent any DOM leakage
+      while (previewPane.firstChild) {
+        previewPane.removeChild(previewPane.firstChild);
+      }
+      previewPane.innerHTML = '';
+    }
+    
     console.log('[TabManager] Preview state reset');
   }
   
@@ -504,22 +537,34 @@ class TabManager {
     
     console.log(`[TabManager] Switching from ${this.activeTabId} to ${tabId}`);
     
-    // Cleanup current tab
-    this._notifyTabBlur(this.activeTabId);
+    // Store previous tab for proper cleanup
+    const previousTabId = this.activeTabId;
     
-    // Deactivate current
-    const currentTab = this.tabBar.querySelector(`[data-tab-id="${this.activeTabId}"]`);
-    const currentPane = this.tabContentArea.querySelector(`[data-tab-id="${this.activeTabId}"]`);
+    // Special behavior: If switching away from preview tab, close it automatically
+    if (previousTabId === 'preview' && tabId !== 'preview') {
+      console.log('[TabManager] Switching away from preview tab - auto-closing preview');
+      this._closePreviewTab();
+    }
+    
+    // Cleanup current tab FIRST
+    this._notifyTabBlur(previousTabId);
+    
+    // Deactivate current tab elements
+    const currentTab = this.tabBar.querySelector(`[data-tab-id="${previousTabId}"]`);
+    const currentPane = this.tabContentArea.querySelector(`[data-tab-id="${previousTabId}"]`);
     if (currentTab) {
       currentTab.classList.remove('active');
-      console.log(`[TabManager] Deactivated tab element for ${this.activeTabId}`);
+      console.log(`[TabManager] Deactivated tab element for ${previousTabId}`);
     }
     if (currentPane) {
       currentPane.classList.remove('active');
-      console.log(`[TabManager] Deactivated pane element for ${this.activeTabId}`);
+      console.log(`[TabManager] Deactivated pane element for ${previousTabId}`);
     }
     
-    // Activate new
+    // Update active tab ID BEFORE activating new tab
+    this.activeTabId = tabId;
+    
+    // Activate new tab elements
     const newTab = this.tabBar.querySelector(`[data-tab-id="${tabId}"]`);
     const newPane = this.tabContentArea.querySelector(`[data-tab-id="${tabId}"]`);
     if (newTab) {
@@ -533,10 +578,9 @@ class TabManager {
       console.warn(`[TabManager] No pane found for tab ${tabId}`);
     }
     
-    this.activeTabId = tabId;
     console.log(`[TabManager] Active tab ID set to ${tabId}`);
     
-    // Notify new tab
+    // Notify new tab AFTER everything is set up
     this._notifyTabFocus(tabId);
     
     // Fire event
@@ -544,7 +588,20 @@ class TabManager {
   }
   
   closeTab(tabId) {
-    if (tabId === 'preview') return; // Can't close preview
+    if (tabId === 'preview') {
+      // Allow closing preview tab explicitly
+      this._closePreviewTab();
+      
+      // If no dedicated tabs exist, set activeTabId to null
+      if (this.dedicatedTabs.size === 0) {
+        this.activeTabId = null;
+      } else {
+        // Switch to the first available dedicated tab
+        const firstTabId = this.dedicatedTabs.keys().next().value;
+        this.switchToTab(firstTabId);
+      }
+      return;
+    }
     
     const tabInfo = this.dedicatedTabs.get(tabId);
     if (!tabInfo) return;
@@ -758,20 +815,99 @@ class TabManager {
     }
   }
   
+  // Update file references when a file is renamed in the project explorer
+  updateFileReference(oldPath, newPath, newFileName) {
+    console.log(`[TabManager] Updating file references: ${oldPath} → ${newPath}`);
+    
+    // Update dedicated tabs
+    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
+      if (tabInfo.fullPath === oldPath) {
+        // Update the tab info
+        tabInfo.fullPath = newPath;
+        
+        // Create new file object with updated name
+        if (tabInfo.file && newFileName) {
+          const newFile = new File([tabInfo.file], newFileName, {
+            type: tabInfo.file.type,
+            lastModified: tabInfo.file.lastModified || Date.now()
+          });
+          tabInfo.file = newFile;
+        }
+        
+        // Update tab title
+        const tabElement = tabInfo.element;
+        if (tabElement) {
+          const titleElement = tabElement.querySelector('.tab-title');
+          if (titleElement && newFileName) {
+            const readOnlyIndicator = tabInfo.isReadOnly ? ' 🔒' : '';
+            titleElement.textContent = newFileName + readOnlyIndicator;
+          }
+        }
+        
+        // Notify the viewer of the path change if it supports it
+        if (tabInfo.viewer && typeof tabInfo.viewer.updateFilePath === 'function') {
+          tabInfo.viewer.updateFilePath(newPath, newFileName);
+        }
+        
+        console.log(`[TabManager] Updated tab ${tabId} path: ${oldPath} → ${newPath}`);
+        
+        // If this is the active tab, update project explorer highlighting
+        if (this.activeTabId === tabId) {
+          this._notifyTabFocus(tabId);
+        }
+      }
+    }
+    
+    // Update preview tab
+    if (this.previewPath === oldPath) {
+      this.previewPath = newPath;
+      
+      if (this.previewFile && newFileName) {
+        const newFile = new File([this.previewFile], newFileName, {
+          type: this.previewFile.type,
+          lastModified: this.previewFile.lastModified || Date.now()
+        });
+        this.previewFile = newFile;
+      }
+      
+      // Update preview tab title
+      const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
+      if (previewTab && newFileName) {
+        const titleElement = previewTab.querySelector('.tab-title');
+        if (titleElement) {
+          const readOnlyIndicator = this.previewReadOnly ? ' 🔒' : '';
+          titleElement.textContent = `Preview: ${newFileName}${readOnlyIndicator}`;
+        }
+      }
+      
+      // Notify the viewer of the path change if it supports it
+      if (this.previewViewer && typeof this.previewViewer.updateFilePath === 'function') {
+        this.previewViewer.updateFilePath(newPath, newFileName);
+      }
+      
+      console.log(`[TabManager] Updated preview tab path: ${oldPath} → ${newPath}`);
+      
+      // If preview is active, update project explorer highlighting
+      if (this.activeTabId === 'preview') {
+        this._notifyTabFocus('preview');
+      }
+    }
+  }
+  
   // DIRTY STATE TRACKING
   
   markTabDirty(tabId) {
-    console.log(`[TabManager] Marking tab ${tabId} as dirty`);
     const tabElement = this.tabBar.querySelector(`[data-tab-id="${tabId}"]`);
-    if (tabElement) {
+    if (tabElement && !tabElement.classList.contains('dirty')) {
+      console.log(`[TabManager] Marking tab ${tabId} as dirty`);
       tabElement.classList.add('dirty');
     }
   }
   
   markTabClean(tabId) {
-    console.log(`[TabManager] Marking tab ${tabId} as clean`);
     const tabElement = this.tabBar.querySelector(`[data-tab-id="${tabId}"]`);
-    if (tabElement) {
+    if (tabElement && tabElement.classList.contains('dirty')) {
+      console.log(`[TabManager] Marking tab ${tabId} as clean`);
       tabElement.classList.remove('dirty');
     }
   }

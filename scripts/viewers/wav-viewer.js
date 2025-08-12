@@ -590,6 +590,32 @@ class WavViewer extends ViewerBase {
     console.log('[WavViewer] Cleaning up WAV viewer');
     try {
       this.stopAllPlayback();
+      
+      // Clean up control objects to prevent DOM element leakage
+      if (this.playPauseButton && typeof this.playPauseButton.destroy === 'function') {
+        console.log('[WavViewer] Destroying play/pause button');
+        this.playPauseButton.destroy();
+        this.playPauseButton = null;
+      }
+      
+      if (this.volumeControl && typeof this.volumeControl.destroy === 'function') {
+        console.log('[WavViewer] Destroying volume control');
+        this.volumeControl.destroy();
+        this.volumeControl = null;
+      }
+      
+      if (this.loopControl && typeof this.loopControl.destroy === 'function') {
+        console.log('[WavViewer] Destroying loop control');
+        this.loopControl.destroy();
+        this.loopControl = null;
+      }
+      
+      // Clear any animation frames
+      if (this.animationFrame) {
+        cancelAnimationFrame(this.animationFrame);
+        this.animationFrame = null;
+      }
+      
     } catch (error) {
       console.error('[WavViewer] Error in cleanup:', error);
     }

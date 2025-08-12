@@ -332,9 +332,47 @@ class ProjectExplorer {
   }
   
   showContextMenu(x, y) {
-    this.contextMenu.style.display = 'block';
-    this.contextMenu.style.left = `${x}px`;
-    this.contextMenu.style.top = `${y}px`;
+    if (!this.selectedNode) return;
+    
+    const path = this.selectedNode.dataset.path;
+    const type = this.selectedNode.dataset.type;
+    
+    // Show/hide menu items based on selection
+    const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
+    const newFolderItem = this.contextMenu.querySelector('[data-action="newfolder"]');
+    const renameItem = this.contextMenu.querySelector('[data-action="rename"]');
+    const deleteItem = this.contextMenu.querySelector('[data-action="delete"]');
+    
+    // Upload and New Folder only available for folders
+    uploadItem.style.display = type === 'folder' ? 'block' : 'none';
+    newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
+    
+    // Rename and Delete available for files and non-root folders, but not for build files/folders
+    const isRootFolder = path === 'Resources' || path === 'Build';
+    const isBuildFile = path.startsWith('Build/');
+    const canModify = !isRootFolder && !isBuildFile;
+    
+    if (type === 'file') {
+      renameItem.style.display = canModify ? 'block' : 'none';
+      deleteItem.style.display = canModify ? 'block' : 'none';
+    } else if (type === 'folder') {
+      renameItem.style.display = canModify ? 'block' : 'none';
+      deleteItem.style.display = canModify ? 'block' : 'none';
+    }
+    
+    // Check if any menu items are visible before showing the context menu
+    const visibleItems = [uploadItem, newFolderItem, renameItem, deleteItem].filter(item => 
+      item && item.style.display !== 'none'
+    );
+    
+    // Only show context menu if there are visible items
+    if (visibleItems.length > 0) {
+      this.contextMenu.style.display = 'block';
+      this.contextMenu.style.left = `${x}px`;
+      this.contextMenu.style.top = `${y}px`;
+    } else {
+      console.log('[ProjectExplorer] No context menu items available for this selection');
+    }
   }
   
   hideContextMenu() {
@@ -358,6 +396,9 @@ class ProjectExplorer {
         if (type === 'folder') {
           this.createNewFolder(path);
         }
+        break;
+      case 'rename':
+        this.renameNode(path, type);
         break;
       case 'delete':
         this.deleteNode(path);
@@ -665,7 +706,7 @@ class ProjectExplorer {
     for (const part of parts) {
       if (current[part]) {
         if (current[part].type === 'folder') {
-          current = current[part];
+          current = current[part].children;
         } else {
           return current[part];
         }
@@ -740,6 +781,287 @@ class ProjectExplorer {
     }
   }
   
+  async renameNode(path, type) {
+    console.log(`[ProjectExplorer] Starting rename for: ${path} (${type})`);
+    
+    const parts = path.split('/');
+    const currentName = parts[parts.length - 1];
+    const parentPath = parts.slice(0, -1).join('/');
+    
+    console.log(`[ProjectExplorer] Current name: ${currentName}, Parent path: ${parentPath}`);
+    
+    // Create input dialog for new name
+    const newName = await this.showRenameDialog(currentName, type);
+    if (!newName || newName === currentName) {
+      console.log(`[ProjectExplorer] Rename cancelled or no change`);
+      return; // User cancelled or no change
+    }
+    
+    console.log(`[ProjectExplorer] New name: ${newName}`);
+    
+    // Validate the new name
+    const validation = this.validateFileName(newName, type);
+    if (!validation.valid) {
+      console.log(`[ProjectExplorer] Validation failed: ${validation.message}`);
+      alert(`Invalid name: ${validation.message}`);
+      return;
+    }
+    
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    console.log(`[ProjectExplorer] New path will be: ${newPath}`);
+    
+    // Check if new name already exists
+    if (this.getNodeByPath(newPath)) {
+      console.log(`[ProjectExplorer] Path already exists: ${newPath}`);
+      alert(`A ${type} with the name "${newName}" already exists.`);
+      return;
+    }
+    
+    try {
+      // Get the node data before renaming
+      console.log(`[ProjectExplorer] Looking for node at path: ${path}`);
+      const nodeData = this.getNodeByPath(path);
+      if (!nodeData) {
+        console.error(`[ProjectExplorer] Node not found: ${path}`);
+        console.log(`[ProjectExplorer] Project structure:`, JSON.stringify(this.projectData.structure, null, 2));
+        return;
+      }
+      
+      console.log(`[ProjectExplorer] Found node data:`, nodeData);
+      
+      // Handle file renaming (update storage)
+      if (type === 'file' && nodeData.file) {
+        await this.renameFileInStorage(path, newPath, nodeData.file);
+      }
+      
+      // Update the project structure
+      this.updateNodePath(path, newPath, nodeData);
+      
+      // Re-render the tree
+      this.renderTree();
+      
+      // Expand to show the renamed item
+      this.expandToPath(newPath);
+      
+      // Update any open tabs with the renamed file
+      if (type === 'file' && window.gameEditor && window.gameEditor.tabManager) {
+        window.gameEditor.tabManager.updateFileReference(path, newPath, newName);
+      }
+      
+      console.log(`[ProjectExplorer] Renamed: ${path} → ${newPath}`);
+    } catch (error) {
+      console.error(`[ProjectExplorer] Failed to rename ${path}:`, error);
+      alert(`Failed to rename ${type}: ${error.message}`);
+    }
+  }
+  
+  async showRenameDialog(currentName, type) {
+    return new Promise((resolve) => {
+      // Create modal dialog
+      const modal = document.createElement('div');
+      modal.className = 'modal-overlay';
+      modal.innerHTML = `
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3 class="modal-title">Rename ${type === 'file' ? 'File' : 'Folder'}</h3>
+          </div>
+          <div class="modal-body">
+            <div class="modal-field">
+              <label class="modal-label">New name:</label>
+              <input type="text" id="renameInput" class="modal-input" value="${currentName}" />
+              <div id="validationMessage" class="modal-hint" style="color: #ff6b6b; margin-top: 4px; display: none;"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="modal-btn modal-btn-primary" id="renameConfirm">Rename</button>
+            <button type="button" class="modal-btn modal-btn-secondary" id="renameCancel">Cancel</button>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(modal);
+      
+      const input = modal.querySelector('#renameInput');
+      const confirmBtn = modal.querySelector('#renameConfirm');
+      const cancelBtn = modal.querySelector('#renameCancel');
+      const validationMsg = modal.querySelector('#validationMessage');
+      
+      // Focus input and select filename without extension
+      input.focus();
+      if (type === 'file') {
+        const lastDot = currentName.lastIndexOf('.');
+        if (lastDot > 0) {
+          input.setSelectionRange(0, lastDot);
+        } else {
+          input.select();
+        }
+      } else {
+        input.select();
+      }
+      
+      // Real-time validation
+      const validateInput = () => {
+        const name = input.value.trim();
+        if (name === currentName) {
+          validationMsg.style.display = 'none';
+          confirmBtn.disabled = false;
+          return;
+        }
+        
+        const validation = this.validateFileName(name, type);
+        if (!validation.valid) {
+          validationMsg.textContent = validation.message;
+          validationMsg.style.display = 'block';
+          confirmBtn.disabled = true;
+        } else {
+          validationMsg.style.display = 'none';
+          confirmBtn.disabled = false;
+        }
+      };
+      
+      // Validate on input
+      input.addEventListener('input', validateInput);
+      
+      const cleanup = () => {
+        document.body.removeChild(modal);
+      };
+      
+      const handleConfirm = () => {
+        const newName = input.value.trim();
+        cleanup();
+        resolve(newName);
+      };
+      
+      const handleCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+      
+      // Event listeners
+      confirmBtn.addEventListener('click', handleConfirm);
+      cancelBtn.addEventListener('click', handleCancel);
+      
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (!confirmBtn.disabled) {
+            handleConfirm();
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          handleCancel();
+        }
+      });
+      
+      // Click outside to cancel
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          handleCancel();
+        }
+      });
+    });
+  }
+  
+  validateFileName(name, type) {
+    // Basic validation for file/folder names
+    const validNameRegex = /^[a-zA-Z0-9._-]+$/;
+    
+    if (!name || name.length === 0) {
+      return { valid: false, message: 'Name cannot be empty.' };
+    }
+    
+    if (name.length > 255) {
+      return { valid: false, message: 'Name is too long (max 255 characters).' };
+    }
+    
+    // Check for valid characters
+    if (!validNameRegex.test(name)) {
+      return { valid: false, message: 'Name can only contain letters, numbers, dots, hyphens, and underscores.' };
+    }
+    
+    // Check for reserved names
+    const reservedNames = ['con', 'prn', 'aux', 'nul', 'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9', 'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9'];
+    if (reservedNames.includes(name.toLowerCase())) {
+      return { valid: false, message: 'This name is reserved by the system.' };
+    }
+    
+    // Files should have an extension, folders shouldn't
+    if (type === 'file') {
+      if (!name.includes('.')) {
+        return { valid: false, message: 'Files must have an extension (e.g., .lua, .wav).' };
+      }
+      // Check if it starts with a dot
+      if (name.startsWith('.')) {
+        return { valid: false, message: 'File names cannot start with a dot.' };
+      }
+    } else {
+      if (name.includes('.')) {
+        return { valid: false, message: 'Folder names cannot contain dots.' };
+      }
+    }
+    
+    return { valid: true };
+  }
+  
+  async renameFileInStorage(oldPath, newPath, file) {
+    // Remove old file from storage
+    const oldKey = `retro_studio_file_${oldPath}`;
+    const newKey = `retro_studio_file_${newPath}`;
+    
+    try {
+      // Get the old file content
+      const oldContent = localStorage.getItem(oldKey);
+      if (oldContent) {
+        // Store with new key
+        localStorage.setItem(newKey, oldContent);
+        // Remove old key
+        localStorage.removeItem(oldKey);
+        console.log(`[ProjectExplorer] Moved file in storage: ${oldKey} → ${newKey}`);
+      }
+    } catch (error) {
+      console.error(`[ProjectExplorer] Failed to rename file in storage:`, error);
+      throw new Error('Failed to update file storage');
+    }
+  }
+  
+  updateNodePath(oldPath, newPath, nodeData) {
+    // Remove from old location
+    const oldParts = oldPath.split('/');
+    const oldFileName = oldParts.pop();
+    let oldParent = this.projectData.structure;
+    
+    for (const part of oldParts) {
+      if (oldParent[part] && oldParent[part].type === 'folder') {
+        oldParent = oldParent[part].children;
+      }
+    }
+    
+    delete oldParent[oldFileName];
+    
+    // Add to new location
+    const newParts = newPath.split('/');
+    const newFileName = newParts.pop();
+    let newParent = this.projectData.structure;
+    
+    for (const part of newParts) {
+      if (newParent[part] && newParent[part].type === 'folder') {
+        newParent = newParent[part].children;
+      }
+    }
+    
+    // Update the node data with new name if it's a file
+    if (nodeData.type === 'file' && nodeData.file) {
+      // Create a new File object with the updated name
+      const newFile = new File([nodeData.file], newFileName, {
+        type: nodeData.file.type,
+        lastModified: nodeData.file.lastModified
+      });
+      nodeData.file = newFile;
+    }
+    
+    newParent[newFileName] = nodeData;
+  }
+
   // Public API
   getSelectedFile() {
     if (this.selectedNode && this.selectedNode.dataset.type === 'file') {
