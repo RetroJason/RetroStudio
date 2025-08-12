@@ -13,8 +13,6 @@ class MixerWorklet extends AudioWorkletProcessor {
     this.requestInFlight = false; // Prevent multiple simultaneous requests
     
     this.port.onmessage = (e) => {
-      console.log('[MixerWorklet] Received message:', e.data.type);
-      
       if (e.data.type === 'play') {
         if (e.data.streamId) {
           // Continuous stream (MOD) - improved buffering
@@ -40,17 +38,15 @@ class MixerWorklet extends AudioWorkletProcessor {
             
             existing.channels = newChannels;
             existing.pos = 0; // Reset position
-            console.log(`[MixerWorklet] Appended to stream: ${e.data.streamId}, total samples: ${newChannels[0].length}`);
           } else {
             this.continuousStreams.set(e.data.streamId, newData);
-            console.log(`[MixerWorklet] Created new stream: ${e.data.streamId}, samples: ${newData.channels[0].length}`);
+            console.log(`[MixerWorklet] Started stream: ${e.data.streamId}`);
           }
           
           // Clear the request flag since we got data
           this.requestInFlight = false;
         } else {
-          // One-shot buffer (WAV)
-          console.log(`[MixerWorklet] Adding one-shot buffer, ${e.data.channels.length} channels, ${e.data.channels[0].length} samples`);
+          // One-shot buffer (WAV) - no logging for routine playback
           this.buffers.push({
             channels: e.data.channels.map(arr => new Float32Array(arr)),
             pos: 0,
@@ -58,20 +54,23 @@ class MixerWorklet extends AudioWorkletProcessor {
           });
         }
       } else if (e.data.type === 'stop-stream') {
+        if (this.continuousStreams.has(e.data.streamId)) {
+          console.log(`[MixerWorklet] Stopped stream: ${e.data.streamId}`);
+        }
         this.continuousStreams.delete(e.data.streamId);
         this.isPlaying = false;
       } else if (e.data.type === 'stop-all-audio') {
         // Clear all audio streams and buffers
-        console.log('[MixerWorklet] Stopping all audio and clearing buffers');
+        console.log('[MixerWorklet] Stopped all audio');
         this.continuousStreams.clear();
         this.buffers = [];
         this.isPlaying = false;
         this.requestInFlight = false;
       } else if (e.data.type === 'start-playing') {
         this.isPlaying = true;
+        console.log('[MixerWorklet] Started playing');
       } else if (e.data.type === 'set-volume') {
         this.volume = Math.max(0, e.data.volume); // Allow volume > 1.0 for boost
-        console.log(`[MixerWorklet] Volume set to: ${this.volume}`);
       }
     };
   }
@@ -80,18 +79,6 @@ class MixerWorklet extends AudioWorkletProcessor {
     const output = outputs[0];
     const numChannels = output.length;
     const blockSize = output[0].length;
-    
-    // Add debug logging (throttled)
-    if (!this.processCallCount) this.processCallCount = 0;
-    this.processCallCount++;
-    
-    if (this.processCallCount % 1000 === 0) {
-      console.log(`[MixerWorklet] Process called ${this.processCallCount} times, streams: ${this.continuousStreams.size}, buffers: ${this.buffers.length}`);
-      // Log stream details
-      for (const [streamId, stream] of this.continuousStreams) {
-        console.log(`[MixerWorklet] Stream ${streamId}: pos=${stream.pos}, length=${stream.channels[0]?.length || 0}, remaining=${(stream.channels[0]?.length || 0) - stream.pos}`);
-      }
-    }
     
     // Clear output
     for (let c = 0; c < numChannels; c++) {
@@ -120,10 +107,6 @@ class MixerWorklet extends AudioWorkletProcessor {
     // Mix continuous streams
     for (const [streamId, stream] of this.continuousStreams) {
       if (stream.channels && stream.channels.length > 0) {
-        if (this.processCallCount % 1000 === 0) {
-          console.log(`[MixerWorklet] Processing stream ${streamId}, pos: ${stream.pos}, length: ${stream.channels[0].length}, remaining: ${stream.channels[0].length - stream.pos}`);
-        }
-        
         for (let c = 0; c < numChannels; c++) {
           const src = stream.channels[c % stream.channels.length];
           if (src && src.length > 0) {
@@ -147,7 +130,6 @@ class MixerWorklet extends AudioWorkletProcessor {
         const remainingFrames = stream.channels[0].length - stream.pos;
         if (this.isPlaying && !this.requestInFlight && remainingFrames < this.bufferSize * 3 && streamId === 'mod-stream') {
           // Request more PCM data well before we run out
-          console.log(`[MixerWorklet] Requesting more data early: ${remainingFrames} frames remaining`);
           this.requestInFlight = true; // Prevent multiple requests
           this.port.postMessage({
             type: 'request-pcm',
@@ -159,7 +141,7 @@ class MixerWorklet extends AudioWorkletProcessor {
         // Handle end of buffer more gracefully
         if (stream.pos >= stream.channels[0].length) {
           if (remainingFrames <= 0) {
-            console.log(`[MixerWorklet] Stream ${streamId} buffer exhausted, position reset`);
+            console.log(`[MixerWorklet] Error: Stream ${streamId} buffer exhausted`);
           }
           stream.pos = Math.max(0, stream.channels[0].length - 1); // Stay near end but not past it
         }
