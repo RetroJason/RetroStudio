@@ -10,7 +10,7 @@ class WavViewer extends ViewerBase {
     this.waveformCanvas = null;
     this.audioContext = null;
     
-    this.loadAudioResource();
+    // Don't load audio resource immediately - wait for DOM to be ready
   }
   
   createBody(bodyContainer) {
@@ -106,6 +106,9 @@ class WavViewer extends ViewerBase {
       waveformCanvas: !!this.waveformCanvas
     });
     
+    // Now that DOM is ready, load the audio resource
+    this.loadAudioResource();
+    
     // No longer need setupControls since controls handle themselves
   }
 
@@ -153,10 +156,8 @@ class WavViewer extends ViewerBase {
         this.updateMetadata();
         this.updateDurationDisplay(); // Ensure duration is shown
         
-        // Draw waveform with a small delay to ensure canvas is ready
-        setTimeout(() => {
-          this.drawWaveform();
-        }, 100);
+        // Draw waveform using a more robust approach
+        this.scheduleWaveformDraw();
         return;
       }
 
@@ -174,10 +175,8 @@ class WavViewer extends ViewerBase {
         this.updateMetadata();
         this.updateDurationDisplay(); // Ensure duration is shown
         
-        // Draw waveform with a small delay to ensure canvas is ready
-        setTimeout(() => {
-          this.drawWaveform();
-        }, 100);
+        // Draw waveform using a more robust approach
+        this.scheduleWaveformDraw();
       } else {
         this.updateStatus('Failed to load audio resource');
       }
@@ -185,6 +184,14 @@ class WavViewer extends ViewerBase {
       console.error('[WavViewer] Failed to load audio resource:', error);
       this.updateStatus(`Error: ${error.message}`);
     }
+  }
+  
+  // Method to schedule waveform drawing after DOM is ready
+  scheduleWaveformDraw() {
+    // Use requestAnimationFrame to ensure rendering happens after layout
+    requestAnimationFrame(() => {
+      this.drawWaveform();
+    });
   }
   
   updateStatus(status) {
@@ -295,8 +302,9 @@ class WavViewer extends ViewerBase {
     console.log('[WavViewer] Canvas getBoundingClientRect:', rect);
     
     if (rect.width === 0 || rect.height === 0) {
-      console.warn('[WavViewer] Canvas has zero dimensions, retrying in 500ms');
-      setTimeout(() => this.drawWaveform(), 500);
+      console.error('[WavViewer] Canvas has zero dimensions - this should not happen with proper initialization!');
+      console.error('[WavViewer] Canvas rect:', rect);
+      console.error('[WavViewer] Canvas parent:', canvas.parentElement);
       return;
     }
     
@@ -561,7 +569,7 @@ class WavViewer extends ViewerBase {
     this.loadAudioResource();
     
     // Redraw waveform in case canvas was resized
-    setTimeout(() => this.drawWaveform(), 100);
+    this.scheduleWaveformDraw();
   }
   
   // Lifecycle methods

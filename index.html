@@ -10,20 +10,48 @@
 </head>
 <body>
   <div class="editor-layout">
-    <!-- Top Bar -->
-    <div class="top-bar">
-      <div class="create-dropdown" id="createDropdown">
-        <button id="createProjectBtn" class="btn-create dropdown-toggle">
-          + Create <span class="dropdown-arrow">▼</span>
-        </button>
-        <div class="dropdown-menu" id="createDropdownMenu">
-          <!-- Menu items will be populated by JavaScript -->
+    <!-- Ribbon Toolbar -->
+    <div class="ribbon-toolbar">
+      <!-- File Operations Section -->
+      <div class="ribbon-section">
+        <div class="ribbon-label">File</div>
+        <div class="ribbon-buttons">
+          <button id="saveBtn" class="ribbon-btn" title="Save Active File">
+            <div class="ribbon-icon">💾</div>
+            <div class="ribbon-text">Save</div>
+          </button>
         </div>
       </div>
-      <button id="saveBtn" class="btn-save">💾 Save</button>
-      <div class="top-bar-spacer"></div>
-      <button id="buildBtn" class="btn-build">🔨 Build</button>
-      <button id="playProjectBtn" class="btn-play">▶ Play</button>
+      
+      <!-- Create Objects Section -->
+      <div class="ribbon-section">
+        <div class="ribbon-label">Create</div>
+        <div class="ribbon-buttons">
+          <button id="createLuaBtn" class="ribbon-btn" title="Create Lua Script">
+            <div class="ribbon-icon">📜</div>
+            <div class="ribbon-text">Lua Script</div>
+          </button>
+          <button id="createSfxBtn" class="ribbon-btn" title="Create Sound Effect">
+            <div class="ribbon-icon">🎵</div>
+            <div class="ribbon-text">Sound FX</div>
+          </button>
+        </div>
+      </div>
+      
+      <!-- Project Build/Run Section -->
+      <div class="ribbon-section">
+        <div class="ribbon-label">Project</div>
+        <div class="ribbon-buttons">
+          <button id="buildBtn" class="ribbon-btn" title="Build Project">
+            <div class="ribbon-icon">🔨</div>
+            <div class="ribbon-text">Build</div>
+          </button>
+          <button id="playProjectBtn" class="ribbon-btn" title="Run Project">
+            <div class="ribbon-icon">▶️</div>
+            <div class="ribbon-text">Run</div>
+          </button>
+        </div>
+      </div>
     </div>
     
     <!-- Content Area (Project Explorer + Main Content) -->
@@ -108,7 +136,7 @@
   <script src="scripts/editors/lua-editor.js"></script>
   <script src="scripts/editors/sound-fx-editor.js"></script>
   <script src="scripts/editors/editor-registry.js"></script>
-  <script src="scripts/create-dropdown.js"></script>
+  <script src="scripts/ribbon-toolbar.js"></script>
   <script src="scripts/tab-manager.js"></script>
   <script src="scripts/project-explorer.js"></script>
   <script src="scripts/game-editor.js"></script>

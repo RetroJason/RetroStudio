@@ -235,7 +235,102 @@ body.no-select {
   -ms-user-select: none;
 }
 
-/* Top Bar */
+/* Ribbon Toolbar Styles */
+.ribbon-toolbar {
+  display: flex;
+  background: linear-gradient(135deg, #2a2a2a, #3a3a3a);
+  border-bottom: 2px solid #444;
+  padding: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.ribbon-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 100px;
+}
+
+.ribbon-label {
+  font-size: 11px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+.ribbon-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.ribbon-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: linear-gradient(135deg, #404040, #505050);
+  border: 1px solid #666;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-width: 60px;
+  font-family: inherit;
+}
+
+.ribbon-btn:hover {
+  background: linear-gradient(135deg, #505050, #606060);
+  border-color: #777;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(0,0,0,0.2);
+}
+
+.ribbon-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.ribbon-icon {
+  font-size: 20px;
+  margin-bottom: 4px;
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
+}
+
+.ribbon-text {
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+  line-height: 1.2;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .ribbon-toolbar {
+    padding: 4px;
+    gap: 10px;
+  }
+  
+  .ribbon-btn {
+    padding: 6px 8px;
+    min-width: 50px;
+  }
+  
+  .ribbon-icon {
+    font-size: 16px;
+  }
+  
+  .ribbon-text {
+    font-size: 9px;
+  }
+}
+
+/* Legacy top-bar styles for backwards compatibility */
 .top-bar {
   display: flex;
   align-items: center;
@@ -733,6 +828,8 @@ body.no-select {
 
 .waveform-container {
   flex: 1;
+  min-height: 150px;
+  min-width: 400px;
   display: flex;
   justify-content: center;
   align-items: center;

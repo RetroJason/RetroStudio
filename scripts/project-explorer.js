@@ -64,6 +64,9 @@ class ProjectExplorer {
   }
   
   setupEventListeners() {
+    // Listen to tab manager events for file highlighting (with deferred setup)
+    this.setupTabManagerEventListener();
+    
     // Global click to hide context menu
     document.addEventListener('click', (e) => {
       if (!this.contextMenu.contains(e.target)) {
@@ -109,6 +112,29 @@ class ProjectExplorer {
     });
   }
   
+  setupTabManagerEventListener() {
+    // Try to set up the event listener, with retry if TabManager isn't ready
+    const trySetup = () => {
+      if (window.gameEditor && window.gameEditor.tabManager) {
+        console.log('[ProjectExplorer] Setting up TabManager event listener');
+        window.gameEditor.tabManager.addEventListener('tabSwitched', (data) => {
+          console.log('[ProjectExplorer] TabManager tabSwitched event received:', data);
+          const tabInfo = data.tabInfo;
+          if (tabInfo && tabInfo.fullPath) {
+            console.log('[ProjectExplorer] Highlighting file:', tabInfo.fullPath);
+            this.highlightActiveFile(tabInfo.fullPath);
+          }
+        });
+      } else {
+        // TabManager not ready yet, try again in 100ms
+        console.log('[ProjectExplorer] TabManager not ready, retrying in 100ms');
+        setTimeout(trySetup, 100);
+      }
+    };
+    
+    trySetup();
+  }
+  
   renderTree() {
     this.treeContainer.innerHTML = '';
     const rootList = document.createElement('ul');
@@ -145,7 +171,7 @@ class ProjectExplorer {
       // Icon
       const icon = document.createElement('span');
       icon.className = `tree-icon file-icon ${this.getFileIcon(name, data.type)}`;
-      icon.textContent = this.getFileIconSymbol(name, data.type);
+      icon.textContent = this.getFileIconSymbol(name, data.type, currentPath);
       
       // Label
       const label = document.createElement('span');
@@ -156,30 +182,46 @@ class ProjectExplorer {
       item.appendChild(icon);
       item.appendChild(label);
       
-      // Event listeners
+      // Event listeners with double-click protection
+      let clickTimeout = null;
+      
       item.addEventListener('click', (e) => {
         e.stopPropagation();
+        
         // Don't auto-select here - let tab manager control highlighting via highlightActiveFile
         
-        // Show in preview if it's a file
-        if (data.type === 'file' && window.tabManager) {
-          window.tabManager.previewResource(data.file, currentPath);
-        }
+        // Delay single-click action to check for double-click
+        clearTimeout(clickTimeout);
+        clickTimeout = setTimeout(() => {
+          // Show in preview if it's a file (only if not double-clicked)
+          if (data.type === 'file' && window.tabManager) {
+            const isReadOnly = data.isReadOnly || data.isBuildFile;
+            // For files, currentPath already includes the full path, don't append filename again
+            const fullPath = currentPath;
+            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", fileName="${data.file.name}", fullPath="${fullPath}"`);
+            window.tabManager.openInPreview(fullPath, data.file, { isReadOnly });
+          }
+        }, 200); // 200ms delay to detect double-click
       });
-      
+
       item.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         
+        // Cancel the single-click timeout
+        clearTimeout(clickTimeout);
+        
         // Open in new tab if it's a file
         if (data.type === 'file' && window.tabManager) {
-          window.tabManager.openInNewTab(data.file, currentPath);
+          const isReadOnly = data.isReadOnly || data.isBuildFile;
+          // For files, currentPath already includes the full path, don't append filename again
+          const fullPath = currentPath;
+          console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fileName="${data.file.name}", fullPath="${fullPath}"`);
+          window.tabManager.openInTab(fullPath, data.file, { isReadOnly });
         } else if (data.type === 'folder') {
           // Toggle folder on double-click
           this.toggleNode(li, expand);
         }
-      });
-      
-      item.addEventListener('contextmenu', (e) => {
+      });      item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         this.selectNode(item);
         this.showContextMenu(e.clientX, e.clientY);
@@ -230,12 +272,27 @@ class ProjectExplorer {
     return 'file';
   }
   
-  getFileIconSymbol(name, type) {
-    if (type === 'folder') return '📁';
+  getFileIconSymbol(name, type, currentPath = '') {
+    if (type === 'folder') {
+      // Different icons for different folder types
+      if (name === 'Resources') return '📁'; // Standard blue folder for editable resources
+      if (name === 'Build') return '📦'; // Package box for build outputs
+      if (currentPath.startsWith('Build/')) return '🗂️'; // File folder for build subfolders
+      if (currentPath.startsWith('Resources/')) {
+        // Special icons for resource type folders
+        if (name === 'Music') return '🎼';
+        if (name === 'SFX') return '🔊';
+        if (name === 'Lua') return '📜';
+        if (name === 'Binary') return '🗃️';
+        return '📂'; // Open folder for resource subfolders
+      }
+      return '📁'; // Default folder
+    }
     
     const ext = this.getFileExtension(name).toLowerCase();
     if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return '🎵';
     if (['.wav'].includes(ext)) return '🔊';
+    if (['.lua'].includes(ext)) return '📜';
     
     return '📄';
   }
@@ -407,6 +464,200 @@ class ProjectExplorer {
     }
   }
   
+  clearBuildFolder() {
+    console.log('[ProjectExplorer] Clearing build folder...');
+    // Clear existing build folder contents
+    this.projectData.structure.Build.children = {};
+    
+    // Also clean up old build files from localStorage
+    this.cleanupBuildFilesFromStorage();
+    
+    // Update the UI
+    this.renderTree();
+  }
+
+  cleanupBuildFilesFromStorage() {
+    console.log('[ProjectExplorer] Cleaning up old build files from localStorage...');
+    const keysToRemove = [];
+    
+    // Find all build file keys in localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('retro_studio_file_build/')) {
+        keysToRemove.push(key);
+      }
+    }
+    
+    // Remove old build files
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+      console.log(`[ProjectExplorer] Removed old build file: ${key}`);
+    });
+    
+    console.log(`[ProjectExplorer] Cleaned up ${keysToRemove.length} old build files`);
+  }
+
+  async refreshBuildFolder() {
+    console.log('[ProjectExplorer] Refreshing build folder...');
+    
+    // Clear existing build folder contents
+    this.projectData.structure.Build.children = {};
+    
+    // Load all build files from localStorage
+    try {
+      const buildFiles = await this.loadBuildFilesFromStorage();
+      console.log('[ProjectExplorer] Found build files:', Object.keys(buildFiles));
+      
+      // Clean up any duplicate or invalid entries
+      const cleanedBuildFiles = {};
+      for (const [filePath, fileData] of Object.entries(buildFiles)) {
+        // Skip invalid paths (like paths with double extensions)
+        if (filePath.includes('.sfx/') || filePath.includes('..')) {
+          console.log(`[ProjectExplorer] Skipping invalid build file path: ${filePath}`);
+          continue;
+        }
+        
+        // Skip if we already have a file with the same final path
+        const finalPath = filePath.startsWith('build/') ? filePath.substring(6) : filePath;
+        const fileName = finalPath.split('/').pop();
+        const existing = Object.values(cleanedBuildFiles).find(f => f.name === fileName && f.path.endsWith(finalPath));
+        
+        if (!existing) {
+          cleanedBuildFiles[filePath] = fileData;
+        } else {
+          console.log(`[ProjectExplorer] Skipping duplicate build file: ${filePath}`);
+        }
+      }
+      
+      // Add each cleaned build file to the project structure
+      for (const [filePath, fileData] of Object.entries(cleanedBuildFiles)) {
+        if (filePath.startsWith('build/')) {
+          // Remove 'build/' prefix and add to Build folder
+          let relativePath = filePath.substring(6); // Remove 'build/' prefix
+          
+          // Also remove 'Resources/' prefix if it exists (legacy paths)
+          if (relativePath.startsWith('Resources/')) {
+            relativePath = relativePath.substring(10); // Remove 'Resources/' prefix
+          }
+          
+          console.log(`[ProjectExplorer] Adding build file: ${relativePath}`);
+          this.addBuildFileToStructure(relativePath, fileData);
+        }
+      }
+      
+      console.log('[ProjectExplorer] Build folder structure:', this.projectData.structure.Build);
+      
+      // Refresh the tree display
+      this.renderTree();
+      
+      console.log('[ProjectExplorer] Build folder refreshed');
+    } catch (error) {
+      console.error('[ProjectExplorer] Failed to refresh build folder:', error);
+    }
+  }
+  
+  async loadBuildFilesFromStorage() {
+    const buildFiles = {};
+    
+    console.log('[ProjectExplorer] Scanning localStorage for build files...');
+    console.log('[ProjectExplorer] localStorage length:', localStorage.length);
+    
+    // Check localStorage for build files
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      console.log(`[ProjectExplorer] localStorage key ${i}: ${key}`);
+      
+      // Look for keys that contain build/ path (accounting for retro_studio_file_ prefix)
+      if (key && key.includes('build/')) {
+        try {
+          const data = localStorage.getItem(key);
+          console.log(`[ProjectExplorer] Found build file: ${key}, size: ${data.length}`);
+          
+          // Extract the build path from the key (remove prefix if present)
+          let buildPath = key;
+          if (key.startsWith('retro_studio_file_')) {
+            buildPath = key.substring('retro_studio_file_'.length);
+          }
+          
+          buildFiles[buildPath] = {
+            content: data,
+            name: buildPath.split('/').pop(),
+            path: buildPath
+          };
+        } catch (error) {
+          console.warn(`[ProjectExplorer] Failed to load build file ${key}:`, error);
+        }
+      }
+    }
+    
+    console.log('[ProjectExplorer] Total build files found:', Object.keys(buildFiles).length);
+    return buildFiles;
+  }
+  
+  clearBuildFiles() {
+    console.log('[ProjectExplorer] Clearing build files from localStorage...');
+    const keysToRemove = [];
+    
+    // Find all build-related keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.includes('build/')) {
+        keysToRemove.push(key);
+      }
+    }
+    
+    // Remove them
+    keysToRemove.forEach(key => {
+      localStorage.removeItem(key);
+      console.log(`[ProjectExplorer] Removed: ${key}`);
+    });
+    
+    console.log(`[ProjectExplorer] Cleared ${keysToRemove.length} build files`);
+    
+    // Clear the build folder structure and refresh
+    this.projectData.structure.Build.children = {};
+    this.renderTree();
+  }
+  
+  addBuildFileToStructure(relativePath, fileData) {
+    console.log(`[ProjectExplorer] addBuildFileToStructure called with: ${relativePath}`, fileData);
+    
+    const parts = relativePath.split('/');
+    const fileName = parts.pop();
+    console.log(`[ProjectExplorer] Path parts:`, parts, `FileName: ${fileName}`);
+    
+    // Navigate to or create the folder structure
+    let current = this.projectData.structure.Build.children;
+    console.log(`[ProjectExplorer] Starting from Build.children:`, current);
+    
+    for (const part of parts) {
+      if (!current[part]) {
+        console.log(`[ProjectExplorer] Creating folder: ${part}`);
+        current[part] = {
+          type: 'folder',
+          children: {}
+        };
+      }
+      current = current[part].children;
+      console.log(`[ProjectExplorer] Navigated to:`, current);
+    }
+    
+    // Add the file
+    current[fileName] = {
+      type: 'file',
+      file: new File([fileData.content], fileName),
+      size: fileData.content.length,
+      lastModified: Date.now(),
+      isBuildFile: true,
+      isReadOnly: true  // Mark build files as read-only
+    };
+    
+    console.log(`[ProjectExplorer] Added file ${fileName} to structure. Current:`, current);
+    
+    // Update the UI to show the new build file
+    this.renderTree();
+  }
+  
   getNodeByPath(path) {
     const parts = path.split('/');
     let current = this.projectData.structure;
@@ -537,8 +788,8 @@ class ProjectExplorer {
   }
   
   // Highlight only the currently active file in the tab
-  highlightActiveFile(filename) {
-    console.log(`[ProjectExplorer] Highlighting active file: ${filename}`);
+  highlightActiveFile(fullPath) {
+    console.log(`[ProjectExplorer] Highlighting active file: ${fullPath}`);
     
     // Always clear all current selections first
     const allSelected = this.treeContainer.querySelectorAll('.tree-item.selected');
@@ -548,20 +799,26 @@ class ProjectExplorer {
     });
     this.selectedNode = null;
     
-    if (!filename) {
-      console.log(`[ProjectExplorer] No filename provided, cleared all selections`);
+    if (!fullPath) {
+      console.log(`[ProjectExplorer] No path provided, cleared all selections`);
       return;
     }
     
-    // Find the tree item with this filename
+    // Find the tree item with this exact path
     const allItems = this.treeContainer.querySelectorAll('.tree-item[data-type="file"]');
     for (const item of allItems) {
-      const path = item.dataset.path;
-      const itemFilename = path.substring(path.lastIndexOf('/') + 1);
-      if (itemFilename === filename) {
+      const itemPath = item.dataset.path;
+      if (itemPath === fullPath) {
+        // Expand tree to show this file
+        this.expandToPath(itemPath);
+        
+        // Select the file
         item.classList.add('selected');
         this.selectedNode = item;
-        console.log(`[ProjectExplorer] Selected file: ${filename} at ${path}`);
+        console.log(`[ProjectExplorer] Selected file at exact path: ${fullPath}`);
+        
+        // Scroll into view if needed
+        item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         break;
       }
     }
@@ -571,12 +828,14 @@ class ProjectExplorer {
   expandToPath(path) {
     console.log(`[ProjectExplorer] Expanding to path: ${path}`);
     
-    // Debug: show all current data-path attributes
-    const allElements = this.treeContainer.querySelectorAll('[data-path]');
-    console.log(`[ProjectExplorer] Available data-path elements:`, 
-      Array.from(allElements).map(el => el.dataset.path));
+    // Extract the directory path (remove filename)
+    const pathParts = path.split('/');
+    const isFile = pathParts.length > 0 && pathParts[pathParts.length - 1].includes('.');
+    const directoryPath = isFile ? pathParts.slice(0, -1).join('/') : path;
     
-    const parts = path.split('/').filter(part => part); // Remove empty parts
+    console.log(`[ProjectExplorer] Target directory path: ${directoryPath}`);
+    
+    const parts = directoryPath.split('/').filter(part => part); // Remove empty parts
     
     for (let i = 0; i < parts.length; i++) {
       const currentPath = parts.slice(0, i + 1).join('/');

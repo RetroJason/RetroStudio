@@ -36,42 +36,17 @@ class EditorBase extends ViewerBase {
     return activeTabData && activeTabData.viewer === this;
   }
   
-  // Override createElement to add editor toolbar
+  // Override createElement to create editor content without toolbar
   createElement() {
     this.element = document.createElement('div');
     this.element.className = 'viewer-content editor-content';
     
-    // Create toolbar
-    const toolbar = document.createElement('div');
-    toolbar.className = 'editor-toolbar';
-    this.createToolbar(toolbar);
-    
-    // Create body
+    // Create body (no toolbar)
     const body = document.createElement('div');
     body.className = 'viewer-body editor-body';
     this.createBody(body);
     
-    this.element.appendChild(toolbar);
     this.element.appendChild(body);
-  }
-  
-  createToolbar(toolbarContainer) {
-    // Create status indicator only
-    const statusSpan = document.createElement('span');
-    statusSpan.className = 'editor-status';
-    statusSpan.textContent = this.isNewResource ? 'New Resource' : 'Saved';
-    this.statusSpan = statusSpan;
-    
-    // Add file path info
-    const pathSpan = document.createElement('span');
-    pathSpan.className = 'editor-path';
-    pathSpan.textContent = this.file.name;
-    pathSpan.style.color = '#999999';
-    pathSpan.style.fontSize = '12px';
-    pathSpan.style.marginLeft = '15px';
-    
-    toolbarContainer.appendChild(pathSpan);
-    toolbarContainer.appendChild(statusSpan);
   }
   
   // Mark editor as having unsaved changes
@@ -79,7 +54,12 @@ class EditorBase extends ViewerBase {
     if (!this.isDirty) {
       this.isDirty = true;
       this.hasUnsavedChanges = true;
-      this.updateStatus('Modified');
+      
+      // Notify TabManager to update tab appearance
+      if (window.tabManager) {
+        window.tabManager.notifyContentChanged(this);
+      }
+      
       this.updateTabTitle();
     }
   }
@@ -88,51 +68,24 @@ class EditorBase extends ViewerBase {
   markClean() {
     this.isDirty = false;
     this.hasUnsavedChanges = false;
-    this.updateStatus('Saved');
+    
+    // Notify TabManager to update tab appearance
+    if (window.tabManager) {
+      window.tabManager.notifyContentSaved(this);
+    }
+    
     this.updateTabTitle();
-    this.updateToolbarPath();
   }
   
-  updateToolbarPath() {
-    const pathSpan = this.element ? this.element.querySelector('.editor-path') : null;
-    if (pathSpan) {
-      const displayPath = this.path || this.file.name;
-      pathSpan.textContent = displayPath;
-    }
-  }
-  
-  updateStatus(status) {
-    if (this.statusSpan) {
-      this.statusSpan.textContent = status;
-      this.statusSpan.className = 'editor-status ' + status.toLowerCase().replace(' ', '-');
-    }
+  // Method that TabManager uses to check if editor is modified
+  isModified() {
+    return this.isDirty || this.hasUnsavedChanges;
   }
   
   updateTabTitle() {
-    // Find the tab for this editor and update its title
-    if (window.tabManager && window.tabManager.activeTabId) {
-      // Find the tab data for this editor
-      for (const [tabId, tabData] of window.tabManager.tabs.entries()) {
-        if (tabData.viewer === this) {
-          const tabElement = tabData.element;
-          if (tabElement) {
-            const titleSpan = tabElement.querySelector('.tab-title');
-            if (titleSpan) {
-              const baseName = this.file.name;
-              titleSpan.textContent = this.isDirty ? `${baseName} *` : baseName;
-              
-              // Also add/remove dirty class
-              if (this.isDirty) {
-                tabElement.classList.add('dirty');
-              } else {
-                tabElement.classList.remove('dirty');
-              }
-            }
-          }
-          break;
-        }
-      }
-    }
+    // TabManager now handles tab title updates automatically
+    // This method is kept for compatibility but does nothing
+    // The dirty state is communicated via notifyContentChanged/notifyContentSaved
   }
   
   // Get the current content (override in subclasses)
@@ -163,7 +116,7 @@ class EditorBase extends ViewerBase {
       console.log(`[EditorBase] Saved ${this.file.name}`);
     } catch (error) {
       console.error('[EditorBase] Save failed:', error);
-      this.updateStatus('Save Failed');
+      // Keep the tab dirty since save failed
       alert(`Failed to save: ${error.message}`);
     }
   }
@@ -242,10 +195,8 @@ class EditorBase extends ViewerBase {
     
     console.log(`[EditorBase] Created new resource: ${name} in ${targetPath}`);
     
-    // Update tab data if this editor is in a tab
-    if (window.tabManager) {
-      window.tabManager.updateTabFile(this, file);
-    }
+    // Resource is now saved and has proper path - no need to update tabs
+    // The TabManager will open this with the correct path from the start
   }
   
   async saveExistingResource(content) {
@@ -294,10 +245,7 @@ class EditorBase extends ViewerBase {
     this.file = file;
     console.log(`[EditorBase] Updated existing resource: ${this.file.name}`);
     
-    // Update tab data if this editor is in a tab
-    if (window.tabManager) {
-      window.tabManager.updateTabFile(this, file);
-    }
+    // File updated - UI will sync via events
   }
   
   // Check if editor can be closed (prompt if unsaved changes)
@@ -351,33 +299,90 @@ class EditorBase extends ViewerBase {
   // Static method to show custom creation dialog
   // Returns Promise<{name: string, ...otherData}> or null if cancelled
   static async showCreateDialog() {
-    const defaultName = `new_${this.getDisplayName().toLowerCase().replace(/\s+/g, '_')}${this.getFileExtension()}`;
+    const displayName = this.getDisplayName();
+    const extension = this.getFileExtension();
+    const defaultBaseName = `new_${displayName.toLowerCase().replace(/\s+/g, '_')}`;
+    let currentUniqueName = null; // Store the current unique name
     
-    const name = await ModalUtils.showPrompt(
-      `Create New ${this.getDisplayName()}`,
-      'Enter filename:',
-      defaultName,
+    const result = await ModalUtils.showForm(`Create New ${displayName}`, [
       {
+        name: 'name',
+        type: 'text',
+        label: 'File Name:',
+        defaultValue: defaultBaseName,
+        placeholder: 'Enter filename...',
+        required: true,
+        hint: `Name for your ${displayName.toLowerCase()} (without ${extension} extension)`,
         validator: (value) => {
           const trimmed = value.trim();
           if (trimmed.length === 0) return false;
           // Check for invalid filename characters
           const invalidChars = /[<>:"/\\|?*]/;
           return !invalidChars.test(trimmed);
+        },
+        onInput: async (value, formData) => {
+          console.log(`[${this.name}] onInput called with value: ${value}`);
+          // Real-time duplicate checking and preview
+          let testName = value.trim();
+          if (!testName.toLowerCase().endsWith(extension.toLowerCase())) {
+            testName += extension;
+          }
+          
+          try {
+            // Check for duplicates and show what the actual filename will be
+            const uniqueName = await EditorRegistry.getUniqueFileName(testName);
+            currentUniqueName = uniqueName; // Store for later use
+            console.log(`[${this.name}] Duplicate check: ${testName} -> ${uniqueName}`);
+            
+            // Update hint to show the actual filename that will be created
+            const modal = document.querySelector('.modal-dialog');
+            if (modal) {
+              const hintEl = modal.querySelector('.form-hint');
+              if (hintEl) {
+                let displayName = uniqueName;
+                if (displayName.toLowerCase().endsWith(extension.toLowerCase())) {
+                  displayName = displayName.substring(0, displayName.length - extension.length);
+                }
+                
+                if (displayName !== value.trim()) {
+                  hintEl.textContent = `Will be created as: ${displayName}${extension}`;
+                  hintEl.style.color = '#ffa500'; // Orange to indicate change
+                } else {
+                  hintEl.textContent = `Name for your ${this.getDisplayName().toLowerCase()} (without ${extension} extension)`;
+                  hintEl.style.color = ''; // Reset color
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`[${this.name}] Error during duplicate check:`, error);
+            currentUniqueName = null;
+          }
         }
       }
-    );
+    ]);
     
-    if (!name) return null; // User cancelled
+    if (!result) return null; // User cancelled
     
-    // Ensure proper extension
-    let finalName = name.trim();
-    const extension = this.getFileExtension();
-    if (!finalName.toLowerCase().endsWith(extension.toLowerCase())) {
-      finalName += extension;
+    // Use the stored unique name if available, otherwise generate it
+    let finalName;
+    if (currentUniqueName) {
+      finalName = currentUniqueName;
+    } else {
+      let name = result.name.trim();
+      // Ensure proper extension
+      if (!name.toLowerCase().endsWith(extension.toLowerCase())) {
+        name += extension;
+      }
+      // Make sure the final name is unique
+      finalName = await EditorRegistry.getUniqueFileName(name);
     }
     
-    return { name: finalName };
+    console.log(`[${this.name}] Final name selected: ${finalName}`);
+    
+    return { 
+      name: finalName,
+      uniqueNameChecked: true
+    };
   }
 }
 
