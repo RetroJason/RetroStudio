@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Game Engine Editor</title>
+  <link rel="stylesheet" href="style/main.css">
+  <link rel="stylesheet" href="style/project-explorer.css">
+  <link rel="stylesheet" href="style/viewers.css">
+  <link rel="stylesheet" href="styles/mod-player.css">
+</head>
+<body>
+  <div class="editor-layout">
+    <!-- Top Bar -->
+    <div class="top-bar">
+      <div class="create-dropdown" id="createDropdown">
+        <button id="createProjectBtn" class="btn-create dropdown-toggle">
+          + Create <span class="dropdown-arrow">▼</span>
+        </button>
+        <div class="dropdown-menu" id="createDropdownMenu">
+          <!-- Menu items will be populated by JavaScript -->
+        </div>
+      </div>
+      <button id="saveBtn" class="btn-save">💾 Save</button>
+      <div class="top-bar-spacer"></div>
+      <button id="buildBtn" class="btn-build">🔨 Build</button>
+      <button id="playProjectBtn" class="btn-play">▶ Play</button>
+    </div>
+    
+    <!-- Content Area (Project Explorer + Main Content) -->
+    <div class="content-wrapper">
+      <!-- Project Explorer (left panel) -->
+      <div class="project-explorer" id="projectExplorer">
+        <div class="explorer-header">
+          <h3>Project Explorer</h3>
+        </div>
+        <div class="explorer-tree" id="projectTree">
+          <!-- Tree will be populated by JavaScript -->
+        </div>
+      </div>
+      
+      <!-- Resizer -->
+      <div class="resizer" id="resizer"></div>
+      
+      <!-- Main Content Area -->
+      <div class="main-content" id="mainContent">
+        <!-- Tabbed Viewer System -->
+        <div class="viewer-container">
+          <div class="tab-bar" id="tabBar">
+            <div class="tab preview-tab active" data-tab-id="preview">
+              <span class="tab-title">Preview</span>
+              <span class="tab-close" data-action="close">×</span>
+            </div>
+          </div>
+          
+          <div class="tab-content-area" id="tabContentArea">
+            <div class="tab-pane active" data-tab-id="preview">
+              <div class="preview-pane">
+                <div class="preview-header">
+                  <h3>Welcome to Retro Studio</h3>
+                  <p>Select a resource from the Project Explorer to preview it here, or double-click to open in a new tab.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Context Menu -->
+  <div id="contextMenu" class="context-menu" style="display: none;">
+    <div class="context-item" data-action="upload">📁 Upload Files...</div>
+    <div class="context-item" data-action="newfolder">📂 New Folder</div>
+    <div class="context-separator"></div>
+    <div class="context-item" data-action="delete">🗑️ Delete</div>
+  </div>
+  
+  <!-- Hidden file input for uploads -->
+  <input type="file" id="fileUpload" multiple style="display: none;">
+  
+  <!-- Load scripts -->
+  <script src="scripts/resizer.js"></script>
+  <script src="scripts/file-io-service.js?v=11"></script>
+  <script src="scripts/services/template-service.js"></script>
+  <script src="scripts/services/resource-pipeline.js"></script>
+  <script src="scripts/utils/modal-utils.js"></script>
+  <script src="scripts/audio/audio-api.js"></script>
+  <script src="scripts/audio/resource-manager.js"></script>
+  <!-- UI Controls -->
+  <script src="scripts/controls/play-pause-button.js"></script>
+  <script src="scripts/controls/volume-control.js"></script>
+  <script src="scripts/controls/loop-control.js"></script>
+  <!-- Viewers -->
+  <script src="scripts/viewers/viewer-base.js"></script>
+  <script src="scripts/viewers/mod-viewer.js"></script>
+  <script src="scripts/viewers/wav-viewer.js"></script>
+  <script src="scripts/viewers/hex-viewer.js"></script>
+  <script src="scripts/viewers/viewer-plugins.js"></script>
+  <!-- Components -->
+  <script src="scripts/components/waveform-display.js"></script>
+  <!-- Build System -->
+  <script src="scripts/build-system.js"></script>
+  <!-- Interfaces -->
+  <script src="scripts/interfaces/buildable.js"></script>
+  <!-- Editors -->
+  <script src="scripts/editors/editor-base.js"></script>
+  <script src="scripts/editors/compound-editor.js"></script>
+  <script src="scripts/editors/lua-editor.js"></script>
+  <script src="scripts/editors/sound-fx-editor.js"></script>
+  <script src="scripts/editors/editor-registry.js"></script>
+  <script src="scripts/create-dropdown.js"></script>
+  <script src="scripts/tab-manager.js"></script>
+  <script src="scripts/project-explorer.js"></script>
+  <script src="scripts/game-editor.js"></script>
+</body>
+</html>

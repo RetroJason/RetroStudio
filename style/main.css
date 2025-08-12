@@ -1,0 +1,785 @@
+/* Web Audio Engine Test - Main Styles - Dark Theme */
+
+/* Custom Modal Dialog */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+}
+
+.modal-dialog {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 400px;
+  max-width: 500px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: modalFadeIn 0.2s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.modal-header {
+  margin-bottom: 16px;
+}
+
+.modal-title {
+  color: #e0e0e0;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.modal-body {
+  margin-bottom: 24px;
+}
+
+.modal-label {
+  color: #cccccc;
+  font-size: 14px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  box-sizing: border-box;
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.modal-field {
+  margin-bottom: 16px;
+}
+
+.modal-field:last-child {
+  margin-bottom: 0;
+}
+
+.modal-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  box-sizing: border-box;
+}
+
+.modal-select:focus {
+  outline: none;
+  border-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.modal-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 60px;
+}
+
+.modal-textarea:focus {
+  outline: none;
+  border-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.modal-checkbox-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: #cccccc;
+  font-size: 14px;
+}
+
+.modal-checkbox {
+  margin-right: 8px;
+  accent-color: #4caf50;
+}
+
+.modal-checkbox-text {
+  user-select: none;
+}
+
+.modal-hint {
+  font-size: 12px;
+  color: #888;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.modal-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  min-width: 80px;
+}
+
+.modal-btn-primary {
+  background: #4caf50;
+  color: white;
+}
+
+.modal-btn-primary:hover {
+  background: #45a049;
+}
+
+.modal-btn-primary:disabled {
+  background: #2c5530;
+  color: #888;
+  cursor: not-allowed;
+}
+
+.modal-btn-secondary {
+  background: #3c3c3c;
+  color: #cccccc;
+}
+
+.modal-btn-secondary:hover {
+  background: #4a4a4a;
+}
+
+/* End Custom Modal Dialog */
+
+/* Global drag and drop feedback */
+body.drag-over {
+  background: linear-gradient(45deg, rgba(66, 165, 245, 0.15) 25%, transparent 25%),
+              linear-gradient(-45deg, rgba(66, 165, 245, 0.15) 25%, transparent 25%),
+              linear-gradient(45deg, transparent 75%, rgba(66, 165, 245, 0.15) 75%),
+              linear-gradient(-45deg, transparent 75%, rgba(66, 165, 245, 0.15) 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  transition: background 0.2s ease;
+}
+
+body.drag-over::before {
+  content: "Drop files anywhere to add them to your project";
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(66, 165, 245, 0.95);
+  color: #ffffff;
+  padding: 15px 25px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  z-index: 10000;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+/* Base styles - Dark Theme */
+body { 
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+  margin: 0; 
+  overflow: hidden; /* Prevent scrollbars during resize */
+  background: #1e1e1e;
+  color: #e0e0e0;
+}
+
+/* Prevent text selection during resize */
+body.no-select {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+/* Top Bar */
+.top-bar {
+  display: flex;
+  align-items: center;
+  background: #252526;
+  color: #cccccc;
+  padding: 8px 16px;
+  border-bottom: 1px solid #3c3c3c;
+  z-index: 1000;
+  gap: 12px;
+}
+
+.top-bar-spacer {
+  flex: 1;
+}
+
+.btn-create {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.btn-create:hover {
+  background: #45a049;
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+/* Dropdown styles */
+.create-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.dropdown-arrow {
+  font-size: 10px;
+  transition: transform 0.2s ease;
+}
+
+.create-dropdown.open .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 200px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  display: none;
+  margin-top: 4px;
+}
+
+.create-dropdown.open .dropdown-menu {
+  display: block;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 15px;
+  color: #cccccc;
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px solid #3c3c3c;
+  transition: background 0.2s ease;
+}
+
+.dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.dropdown-item:hover {
+  background: #37373d;
+}
+
+.dropdown-item-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+.dropdown-item-text {
+  flex: 1;
+}
+
+.dropdown-item-ext {
+  font-size: 12px;
+  color: #999999;
+}
+
+.btn-play {
+  background: #2196f3;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.btn-play:hover {
+  background: #1976d2;
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+}
+
+.btn-build {
+  background: #4caf50;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+  margin-right: 8px;
+}
+
+.btn-build:hover {
+  background: #45a049;
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+.btn-build:disabled {
+  background: #cccccc;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-save {
+  background: #ff9800;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  box-sizing: border-box;
+}
+
+.btn-save:hover {
+  background: #f57c00;
+  box-shadow: 0 2px 8px rgba(255, 152, 0, 0.3);
+}
+
+.btn-save:disabled {
+  background: #555;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Editor Layout */
+.editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Content wrapper for project explorer and main content */
+.content-wrapper {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.project-explorer {
+  width: 300px;
+  min-width: 200px;
+  max-width: 500px;
+  flex-shrink: 0;
+  background: #252526;
+  border-right: 1px solid #3c3c3c;
+}
+
+.resizer {
+  width: 4px;
+  background: #3c3c3c;
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.resizer:hover {
+  background: #007acc;
+}
+
+.resizer.dragging {
+  background: #007acc;
+  transition: none;
+}
+
+.main-content {
+  flex: 1;
+  min-width: 300px;
+  background: #1e1e1e;
+}
+
+.sound-btn { 
+  margin: 0.5em; 
+}
+
+/* MOD file list */
+#modList { 
+  list-style: none; 
+  padding: 0; 
+}
+
+#modList li { 
+  padding: 0.5em; 
+  border: 1px solid #404040; 
+  margin: 0.2em 0; 
+  cursor: pointer;
+  background: #2d2d30;
+  color: #cccccc;
+  transition: background 0.2s ease;
+}
+
+#modList li:hover { 
+  background: #373738; 
+}
+
+#modList li.selected { 
+  background: #094771; 
+  font-weight: bold; 
+  color: #ffffff;
+}
+
+/* WAV file controls */
+#wavControls {
+  margin-top: 10px;
+}
+
+.wav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid #404040;
+  margin: 4px 0;
+  background: #2d2d30;
+  border-radius: 4px;
+  color: #cccccc;
+  transition: background 0.2s ease;
+}
+
+.wav-item:hover {
+  background: #373738;
+}
+
+.wav-item button {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid #555555;
+  background: #3c3c3c;
+  color: #cccccc;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.wav-item button:hover {
+  background: #484848;
+}
+
+.wav-item .name {
+  flex: 1;
+  font-weight: bold;
+}
+
+/* Control panel */
+.controls { 
+  margin: 1em 0; 
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.controls button { 
+  margin: 0; 
+  padding: 0.5em 1em; 
+  background: #3c3c3c;
+  color: #cccccc;
+  border: 1px solid #555555;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.controls button:hover {
+  background: #484848;
+}
+
+.controls label { 
+  font-weight: bold; 
+  color: #cccccc;
+}
+
+/* Volume control */
+#volumeSlider { 
+  width: 100px; 
+  background: #3c3c3c;
+}
+
+#volumeDisplay { 
+  min-width: 35px; 
+  font-weight: bold; 
+  color: #cccccc;
+}
+
+/* Status display */
+#status { 
+  font-weight: bold; 
+  margin-left: 1em; 
+  padding: 0.25em 0.5em;
+  border-radius: 3px;
+  background: #3c3c3c;
+  color: #cccccc;
+}
+
+/* Status message types - Dark Theme */
+.status.success {
+  background-color: #155724;
+  color: #d4edda;
+  border: 1px solid #28a745;
+}
+
+.status.error {
+  background-color: #721c24;
+  color: #f8d7da;
+  border: 1px solid #dc3545;
+}
+
+.status.warning {
+  background-color: #856404;
+  color: #fff3cd;
+  border: 1px solid #ffc107;
+}
+
+.status.info {
+  background-color: #0c5460;
+  color: #d1ecf1;
+  border: 1px solid #17a2b8;
+}
+
+/* Compound Editor styles */
+.compound-editor-body {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.source-editor-area {
+  flex: 1;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--editor-bg);
+  overflow-y: auto;
+}
+
+.regeneration-controls {
+  padding: 8px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.output-preview-area {
+  min-height: 150px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 12px;
+  background: var(--panel-bg);
+}
+
+/* Sound FX Editor styles */
+.sound-fx-controls h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+  color: var(--text-color);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.parameter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.parameter-group label {
+  min-width: 120px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.parameter-group input[type="range"] {
+  flex: 1;
+  margin: 0 8px;
+}
+
+.parameter-group select {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+
+.parameter-group span {
+  min-width: 60px;
+  text-align: right;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  color: var(--text-color);
+}
+
+.envelope-controls {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.envelope-controls h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  color: var(--text-color);
+}
+
+.output-preview h3 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: var(--text-color);
+}
+
+.audio-controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.waveform-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  min-height: 150px;
+}
+
+.play-controls {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.waveform-container {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* SFX Editor Play Button Styles */
+.output-preview .play-pause-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-color, #0078d4);
+  background: var(--background-color, #1e1e1e);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.output-preview .play-pause-button:hover {
+  background: var(--accent-color, #0078d4);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 120, 212, 0.3);
+}
+
+.output-preview .play-pause-button.playing {
+  background: var(--accent-color, #0078d4);
+  border-color: var(--accent-hover, #106ebe);
+}
+
+.output-preview .play-pause-button .play-icon {
+  font-size: 20px;
+  color: var(--text-color, #ffffff);
+  transition: color 0.2s ease;
+}
+
+.output-preview .play-pause-button:hover .play-icon,
+.output-preview .play-pause-button.playing .play-icon {
+  color: var(--background-color, #1e1e1e);
+}
+
+.audio-info {
+  padding: 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

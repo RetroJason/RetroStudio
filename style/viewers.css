@@ -1,0 +1,922 @@
+/* Viewer Styles - Dark Theme */
+
+/* MOD Viewer */
+.mod-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+}
+
+/* MOD Player - Dark Theme */
+.mod-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  padding: 20px;
+  height: 100%;
+  justify-content: center;
+  --accent-color: #0078d4;
+  --background-color: #1e1e1e;
+  --text-color: #cccccc;
+  --text-muted: #999999;
+  --border-color: #3c3c3c;
+  --panel-background: #2d2d30;
+}
+
+.mod-player .song-title {
+  text-align: center;
+  margin-bottom: 5px;
+}
+
+.mod-player .song-title h3 {
+  margin: 0;
+  font-size: 1.2em;
+  color: var(--text-color);
+  font-weight: 500;
+}
+
+.mod-player .waveform-display,
+.wav-player .waveform-display {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 12px;
+  width: 100%;
+  max-width: 600px;
+  height: 224px; /* Fixed height: 200px canvas + 24px padding (12px top + 12px bottom) */
+  min-height: 224px;
+  max-height: 224px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  flex-grow: 0;
+}
+
+.mod-player .waveform-display canvas,
+.wav-player .waveform-display canvas {
+  background: #1e1e1e;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  width: 100%;
+  max-width: 600px;
+  height: 200px;
+  display: block;
+}
+
+.mod-player .player-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.mod-player .progress-container {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+}
+
+.mod-player .play-button-container {
+  display: flex;
+  justify-content: center;
+}
+
+.mod-player .play-pause-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-color, #0078d4);
+  background: var(--background-color, #1e1e1e);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.mod-player .play-pause-button:hover {
+  background: var(--accent-color, #0078d4);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 120, 212, 0.3);
+}
+
+.mod-player .play-pause-button.playing {
+  background: var(--accent-color, #0078d4);
+  border-color: var(--accent-color, #0078d4);
+}
+
+.mod-player .play-pause-button .play-icon {
+  font-size: 1.5em;
+  color: var(--accent-color, #0078d4);
+}
+
+.mod-player .play-pause-button:hover .play-icon,
+.mod-player .play-pause-button.playing .play-icon {
+  color: white;
+}
+
+.mod-player .progress-bar-container {
+  flex: 1;
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.mod-player .progress-bar {
+  width: 100%;
+  height: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  position: relative;
+  z-index: 2;
+}
+
+.mod-player .progress-bar::-webkit-slider-track {
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  border: none;
+}
+
+.mod-player .progress-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 50%;
+  background: var(--accent-color, #0078d4);
+  cursor: pointer;
+  border: 2px solid #1e1e1e;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease;
+}
+
+.mod-player .progress-bar::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 3px 8px rgba(0, 120, 212, 0.4);
+}
+
+.mod-player .time-display {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: var(--text-color);
+  min-width: 40px;
+  text-align: center;
+}
+
+.mod-player .volume-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.mod-player .volume-container label {
+  min-width: 60px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-color);
+}
+
+.mod-player .volume-container input[type="range"] {
+  flex: 1;
+  max-width: 150px;
+  background: var(--border-color);
+}
+
+.mod-player .volume-container span {
+  min-width: 40px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.mod-player .loop-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 15px;
+}
+
+.mod-player .loop-control input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent-color);
+}
+
+.mod-player .loop-control label {
+  font-size: 12px;
+  color: var(--text-color);
+  margin: 0;
+  cursor: pointer;
+}
+
+.mod-player .song-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.mod-player .info-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  text-align: center;
+}
+
+.mod-player .info-item strong {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mod-player .info-item span {
+  font-size: 0.9em;
+  color: var(--text-color);
+}
+
+/* Legacy MOD info styles - Dark Theme */
+.mod-info, .mod-controls, .mod-metadata {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.mod-info h4, .mod-controls h4, .mod-metadata h4 {
+  margin: 0 0 10px 0;
+  color: #cccccc;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wav-info, .wav-controls, .wav-metadata {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.mod-info h4, .mod-controls h4, .mod-metadata h4,
+.wav-info h4, .wav-controls h4, .wav-metadata h4 {
+  margin: 0 0 10px 0;
+  color: #cccccc;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid #3c3c3c;
+  color: #cccccc;
+}
+
+.info-item:last-child {
+  border-bottom: none;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.control-group label {
+  min-width: 80px;
+  font-weight: 500;
+  font-size: 13px;
+  color: #cccccc;
+}
+
+.control-group input[type="range"] {
+  flex: 1;
+  max-width: 200px;
+  background: #3c3c3c;
+  accent-color: #0078d4;
+}
+
+.control-group span {
+  min-width: 60px;
+  font-size: 12px;
+  color: #999999;
+}
+
+.metadata-content {
+  font-size: 13px;
+  color: #cccccc;
+}
+
+.metadata-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid #3c3c3c;
+  color: #cccccc;
+}
+
+.metadata-row:last-child {
+  border-bottom: none;
+}
+
+.metadata-row strong {
+  color: #cccccc;
+  min-width: 120px;
+}
+
+/* WAV Viewer */
+.wav-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 100%;
+}
+
+/* WAV Player - Dark Theme */
+.wav-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  padding: 20px;
+  height: 100%;
+  justify-content: center;
+  --accent-color: #0078d4;
+  --background-color: #1e1e1e;
+  --text-color: #cccccc;
+  --text-muted: #999999;
+  --border-color: #3c3c3c;
+  --panel-background: #2d2d30;
+}
+
+.wav-player .song-title {
+  text-align: center;
+  margin-bottom: 5px;
+}
+
+.wav-player .song-title h3 {
+  margin: 0;
+  font-size: 1.2em;
+  color: var(--text-color);
+  font-weight: 500;
+}
+
+.wav-player .player-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.wav-player .progress-container {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  width: 100%;
+}
+
+.wav-player .play-button-container {
+  display: flex;
+  justify-content: center;
+}
+
+.wav-player .play-pause-button {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-color, #0078d4);
+  background: var(--background-color, #1e1e1e);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.wav-player .play-pause-button:hover {
+  background: var(--accent-color, #0078d4);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px rgba(0, 120, 212, 0.3);
+}
+
+.wav-player .play-pause-button.playing {
+  background: var(--accent-color, #0078d4);
+  border-color: var(--accent-color, #0078d4);
+}
+
+.wav-player .play-pause-button .play-icon {
+  font-size: 1.5em;
+  color: var(--accent-color, #0078d4);
+}
+
+.wav-player .play-pause-button:hover .play-icon,
+.wav-player .play-pause-button.playing .play-icon {
+  color: white;
+}
+
+.wav-player .progress-bar-container {
+  flex: 1;
+  position: relative;
+  height: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.wav-player .progress-bar {
+  width: 100%;
+  height: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  position: relative;
+  z-index: 2;
+}
+
+.wav-player .progress-bar::-webkit-slider-track {
+  height: 8px;
+  background: var(--border-color);
+  border-radius: 4px;
+  border: none;
+}
+
+.wav-player .progress-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 50%;
+  background: var(--accent-color, #0078d4);
+  cursor: pointer;
+  border: 2px solid #1e1e1e;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease;
+}
+
+.wav-player .progress-bar::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 3px 8px rgba(0, 120, 212, 0.4);
+}
+
+.wav-player .time-display {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: var(--text-color);
+  min-width: 40px;
+  text-align: center;
+}
+
+.wav-player .volume-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.wav-player .volume-container label {
+  min-width: 60px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-color);
+}
+
+.wav-player .volume-container input[type="range"] {
+  flex: 1;
+  max-width: 150px;
+  background: var(--border-color);
+  accent-color: var(--accent-color);
+}
+
+.wav-player .volume-container span {
+  min-width: 40px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wav-player .loop-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 15px;
+}
+
+.wav-player .loop-control input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent-color);
+}
+
+.wav-player .loop-control label {
+  font-size: 12px;
+  color: var(--text-color);
+  margin: 0;
+  cursor: pointer;
+}
+
+.wav-player .song-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.wav-player .info-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  text-align: center;
+}
+
+.wav-player .info-item strong {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.wav-player .info-item span {
+  font-size: 0.9em;
+  color: var(--text-color);
+}
+
+/* Legacy WAV viewer styles - Dark Theme */
+.wav-info, .wav-controls, .wav-metadata {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.wav-info h4, .wav-controls h4, .wav-metadata h4 {
+  margin: 0 0 10px 0;
+  color: #cccccc;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.waveform-display {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px;
+  padding: 15px;
+  min-height: 250px;
+  max-height: 250px;
+  height: 250px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+  flex-grow: 0;
+}
+
+.waveform-display h4 {
+  margin: 0 0 15px 0;
+  color: #cccccc;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#waveformCanvas {
+  background: #1e1e1e;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  width: 100%;
+  max-width: 600px;
+  height: 200px;
+  display: block;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .control-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .control-group label {
+    min-width: auto;
+  }
+  
+  .control-group input[type="range"] {
+    max-width: none;
+  }
+  
+  .metadata-row {
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .metadata-row strong {
+    min-width: auto;
+  }
+}
+
+/* Button styling in viewers - Dark Theme */
+.btn-small {
+  padding: 4px 8px;
+  font-size: 11px;
+  border: 1px solid #555555;
+  background: #3c3c3c;
+  color: #cccccc;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-left: 5px;
+  transition: background 0.2s ease;
+}
+
+.btn-small:hover {
+  background: #484848;
+}
+
+.btn-small:first-child {
+  margin-left: 0;
+}
+
+/* Editor-specific styles */
+.editor-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #37373d;
+  border-bottom: 1px solid #3c3c3c;
+  border-radius: 6px 6px 0 0;
+}
+
+.editor-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-status {
+  margin-left: auto;
+  font-size: 12px;
+  color: #999999;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.editor-status.saved {
+  color: #81c784;
+}
+
+.editor-status.modified {
+  color: #ffb74d;
+}
+
+.editor-status.new-resource {
+  color: #64b5f6;
+}
+
+.editor-status.save-failed {
+  color: #e57373;
+}
+
+.toolbar-separator {
+  color: #555555;
+  margin: 0 5px;
+}
+
+.btn-save {
+  background: #4caf50;
+  color: white;
+  border: none;
+}
+
+.btn-save:hover {
+  background: #45a049;
+}
+
+.btn-save-as {
+  background: #2196f3;
+  color: white;
+  border: none;
+}
+
+.btn-save-as:hover {
+  background: #1976d2;
+}
+
+.btn-run {
+  background: #ff9800;
+  color: white;
+  border: none;
+}
+
+.btn-run:hover {
+  background: #f57c00;
+}
+
+.btn-format {
+  background: #9c27b0;
+  color: white;
+  border: none;
+}
+
+.btn-format:hover {
+  background: #7b1fa2;
+}
+
+/* Lua Editor styles */
+.lua-editor-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.lua-editor-textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  padding: 15px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  background: #1e1e1e;
+  color: #cccccc;
+  resize: none;
+  border-radius: 0 0 6px 6px;
+}
+
+.lua-editor-textarea::placeholder {
+  color: #666666;
+}
+
+.lua-editor-textarea.syntax-highlighted {
+  /* Future syntax highlighting styles will go here */
+  position: relative;
+}
+
+/* Tab title modifications for dirty state */
+.tab-title {
+  transition: color 0.2s ease;
+}
+
+.tab.dirty .tab-title {
+  color: #ffb74d;
+}
+
+/* Loading states */
+.loading {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.loading::after {
+  content: "⟳";
+  animation: spin 1s linear infinite;
+  margin-left: 5px;
+  color: #cccccc;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Hex Viewer - Dark Theme */
+.hex-viewer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-family: 'Consolas', 'Courier New', monospace;
+}
+
+.hex-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 6px 6px 0 0;
+  gap: 15px;
+}
+
+.hex-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  font-size: 12px;
+  color: #cccccc;
+}
+
+.hex-content-wrapper {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.hex-status {
+  padding: 20px;
+  text-align: center;
+  color: #999999;
+  font-size: 14px;
+}
+
+.hex-content {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #3c3c3c;
+  border-top: none;
+  background: #1e1e1e;
+}
+
+.hex-header {
+  display: grid;
+  grid-template-columns: 80px 1fr 200px;
+  gap: 15px;
+  padding: 8px 12px;
+  background: #37373d;
+  border-bottom: 2px solid #3c3c3c;
+  font-weight: bold;
+  font-size: 12px;
+  color: #cccccc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.hex-data {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.hex-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 200px;
+  gap: 15px;
+  padding: 2px 12px;
+  border-bottom: 1px solid #2d2d30;
+  color: #cccccc;
+}
+
+.hex-row:hover {
+  background: #37373d;
+}
+
+.offset {
+  color: #999999;
+  font-weight: bold;
+}
+
+.hex-bytes {
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #4fc3f7;
+  word-spacing: 2px;
+}
+
+.ascii-chars {
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #81c784;
+  background: #2d2d30;
+  padding: 0 8px;
+  border-radius: 2px;
+}
+
+.hex-truncated {
+  padding: 15px;
+  text-align: center;
+  color: #999999;
+  font-style: italic;
+  background: #2d2d30;
+  border-top: 1px solid #3c3c3c;
+}
