@@ -108,6 +108,16 @@
   <input type="file" id="fileUpload" multiple style="display: none;">
   
   <!-- Load scripts -->
+  <!-- Core Architecture (must load first) -->
+  <script src="scripts/core/service-container.js"></script>
+  <script src="scripts/core/event-bus.js"></script>
+  <script src="scripts/core/config-manager.js"></script>
+  <script src="scripts/core/plugin-system.js"></script>
+  <script src="scripts/core/component-registry.js"></script>
+  <script src="scripts/core/service-adapters.js"></script>
+  <script src="scripts/core/core-init.js"></script>
+  
+  <!-- Utilities and Services -->
   <script src="scripts/resizer.js"></script>
   <script src="scripts/file-io-service.js?v=11"></script>
   <script src="scripts/services/template-service.js"></script>
@@ -115,31 +125,42 @@
   <script src="scripts/utils/modal-utils.js"></script>
   <script src="scripts/audio/audio-api.js"></script>
   <script src="scripts/audio/resource-manager.js"></script>
+  
   <!-- UI Controls -->
   <script src="scripts/controls/play-pause-button.js"></script>
   <script src="scripts/controls/volume-control.js"></script>
   <script src="scripts/controls/loop-control.js"></script>
+  
   <!-- Viewers -->
   <script src="scripts/viewers/viewer-base.js"></script>
   <script src="scripts/viewers/mod-viewer.js"></script>
   <script src="scripts/viewers/wav-viewer.js"></script>
   <script src="scripts/viewers/hex-viewer.js"></script>
   <script src="scripts/viewers/viewer-plugins.js"></script>
+  
   <!-- Components -->
   <script src="scripts/components/waveform-display.js"></script>
+  
   <!-- Build System -->
   <script src="scripts/build-system.js"></script>
+  
   <!-- Interfaces -->
   <script src="scripts/interfaces/buildable.js"></script>
+  
   <!-- Editors -->
   <script src="scripts/editors/editor-base.js"></script>
   <script src="scripts/editors/compound-editor.js"></script>
   <script src="scripts/editors/lua-editor.js"></script>
   <script src="scripts/editors/sound-fx-editor.js"></script>
   <script src="scripts/editors/editor-registry.js"></script>
+  
+  <!-- UI Management -->
   <script src="scripts/ribbon-toolbar.js"></script>
   <script src="scripts/tab-manager.js"></script>
   <script src="scripts/project-explorer.js"></script>
   <script src="scripts/game-editor.js"></script>
+  
+  <!-- Application Bootstrap (must load last) -->
+  <script src="scripts/core/application.js"></script>
 </body>
 </html>
