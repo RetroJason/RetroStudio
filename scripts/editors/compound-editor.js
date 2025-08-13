@@ -2,10 +2,10 @@
 // Base class for editors that manage multiple related files (source + generated outputs)
 
 class CompoundEditor extends EditorBase {
-  constructor(file, path, isNewResource = false, templateOptions = null) {
-    super(file, path, isNewResource, templateOptions);
+  constructor(path, isNewResource = false, templateOptions = null) {
+    super(path, isNewResource, templateOptions);
     
-    console.log(`[CompoundEditor] Constructor called for ${file?.name}`);
+    console.log(`[CompoundEditor] Constructor called for ${this.getFileName()}`);
     
     // Define the files this editor manages
     // Override in subclass to define specific file relationships
@@ -38,9 +38,16 @@ class CompoundEditor extends EditorBase {
   }
   
   updateRegenerationStatus() {
-    // Mark as dirty if regeneration is needed
+    // Update status display but don't call markDirty to avoid circular calls
     if (this.needsRegeneration && !this.isRegenerating) {
-      this.markDirty();
+      // Visual indication that regeneration is needed
+      if (this.container) {
+        this.container.classList.add('needs-regeneration');
+      }
+    } else {
+      if (this.container) {
+        this.container.classList.remove('needs-regeneration');
+      }
     }
   }
   
@@ -246,7 +253,7 @@ class CompoundEditor extends EditorBase {
           const fileName = pathParts.pop();
           const directory = pathParts.join('/');
           
-          window.gameEditor.projectExplorer.addFileToProject(fileName, directory);
+          window.gameEditor.projectExplorer.addFileToProject(fileName, directory, true); // Skip auto-open during save
         }
       }
       

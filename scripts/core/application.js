@@ -50,6 +50,11 @@ class RetroStudioApplication {
       // Emit ready event
       this.events.emit('application.ready', { loadTime });
 
+      // Also emit on document for backward compatibility
+      document.dispatchEvent(new CustomEvent('retrostudio-ready', { 
+        detail: { loadTime } 
+      }));
+
     } catch (error) {
       console.error('❌ [RetroStudio] Failed to initialize:', error);
       this.events?.emit('application.error', { error });
@@ -102,6 +107,8 @@ class RetroStudioApplication {
     this.events.registerEventType('build.started', {
       projectPath: 'string'
     });
+    
+    this.events.registerEventType('content.refresh.required', {});
 
     console.log('[Application] Configuration loaded');
   }
@@ -136,7 +143,8 @@ class RetroStudioApplication {
       icon: '📜',
       editorClass: LuaEditor,
       priority: 10,
-      capabilities: ['syntax-highlighting', 'auto-completion']
+      capabilities: ['syntax-highlighting', 'auto-completion'],
+      canCreate: true
     });
 
     this.components.registerEditor({
@@ -146,7 +154,19 @@ class RetroStudioApplication {
       icon: '🔊',
       editorClass: SoundFXEditor,
       priority: 10,
-      capabilities: ['audio-preview', 'waveform-display', 'buildable']
+      capabilities: ['audio-preview', 'waveform-display', 'buildable'],
+      canCreate: true
+    });
+
+    this.components.registerEditor({
+      name: 'palette-editor',
+      extensions: ['.pal', '.act', '.aco'],
+      displayName: 'Palette Editor',
+      icon: '🎨',
+      editorClass: PaletteEditor,
+      priority: 10,
+      capabilities: ['color-editing', 'import-export', 'color-stealing'],
+      canCreate: true
     });
 
     // Register built-in viewers
@@ -236,6 +256,12 @@ class RetroStudioApplication {
     window.buildSystem = this.services.get('buildSystem');
 
     console.log('[Application] Main systems started');
+
+    // Initialize service adapters
+    const adapterRegistry = new ServiceAdapterRegistry(this.services, this.events);
+    adapterRegistry.initializeAllAdapters();
+
+    console.log('[Application] Service adapters initialized');
   }
 
   // Graceful shutdown

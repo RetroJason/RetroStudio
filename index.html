@@ -6,6 +6,7 @@
   <link rel="stylesheet" href="style/main.css">
   <link rel="stylesheet" href="style/project-explorer.css">
   <link rel="stylesheet" href="style/viewers.css">
+  <link rel="stylesheet" href="style/palette-editor.css">
   <link rel="stylesheet" href="styles/mod-player.css">
 </head>
 <body>
@@ -20,6 +21,10 @@
             <div class="ribbon-icon">💾</div>
             <div class="ribbon-text">Save</div>
           </button>
+          <button id="clearDataBtn" class="ribbon-btn" title="Clear All Project Data (Development)">
+            <div class="ribbon-icon">🗑️</div>
+            <div class="ribbon-text">Clear Data</div>
+          </button>
         </div>
       </div>
       
@@ -27,14 +32,7 @@
       <div class="ribbon-section">
         <div class="ribbon-label">Create</div>
         <div class="ribbon-buttons">
-          <button id="createLuaBtn" class="ribbon-btn" title="Create Lua Script">
-            <div class="ribbon-icon">📜</div>
-            <div class="ribbon-text">Lua Script</div>
-          </button>
-          <button id="createSfxBtn" class="ribbon-btn" title="Create Sound Effect">
-            <div class="ribbon-icon">🎵</div>
-            <div class="ribbon-text">Sound FX</div>
-          </button>
+          <!-- Dynamic buttons will be added here by the ribbon toolbar -->
         </div>
       </div>
       
@@ -120,6 +118,7 @@
   <!-- Utilities and Services -->
   <script src="scripts/resizer.js"></script>
   <script src="scripts/file-io-service.js?v=11"></script>
+  <script src="scripts/services/file-manager.js"></script>
   <script src="scripts/services/template-service.js"></script>
   <script src="scripts/services/resource-pipeline.js"></script>
   <script src="scripts/utils/modal-utils.js"></script>
@@ -152,6 +151,7 @@
   <script src="scripts/editors/compound-editor.js"></script>
   <script src="scripts/editors/lua-editor.js"></script>
   <script src="scripts/editors/sound-fx-editor.js"></script>
+  <script src="scripts/editors/palette-editor.js"></script>
   <script src="scripts/editors/editor-registry.js"></script>
   
   <!-- UI Management -->

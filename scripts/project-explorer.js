@@ -19,6 +19,11 @@ class ProjectExplorer {
               filter: [".wav"],
               children: {}
             },
+            "Palettes": {
+              type: "folder",
+              filter: [".pal", ".act", ".aco"],
+              children: {}
+            },
             "Lua": {
               type: "folder",
               filter: [".lua"],
@@ -197,8 +202,14 @@ class ProjectExplorer {
           if (data.type === 'file' && window.tabManager) {
             const isReadOnly = data.isReadOnly || data.isBuildFile;
             // For files, currentPath already includes the full path, don't append filename again
-            const fullPath = currentPath;
-            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", fileName="${data.file.name}", fullPath="${fullPath}"`);
+            let fullPath = currentPath;
+            
+            // Convert Build/ paths to build/ for storage access
+            if (fullPath.startsWith('Build/')) {
+              fullPath = fullPath.replace(/^Build\//, 'build/');
+            }
+            
+            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", fullPath="${fullPath}"`);
             window.tabManager.openInPreview(fullPath, data.file, { isReadOnly });
           }
         }, 200); // 200ms delay to detect double-click
@@ -214,9 +225,16 @@ class ProjectExplorer {
         if (data.type === 'file' && window.tabManager) {
           const isReadOnly = data.isReadOnly || data.isBuildFile;
           // For files, currentPath already includes the full path, don't append filename again
-          const fullPath = currentPath;
-          console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fileName="${data.file.name}", fullPath="${fullPath}"`);
-          window.tabManager.openInTab(fullPath, data.file, { isReadOnly });
+          let fullPath = currentPath;
+          
+          // Convert Build/ paths to build/ for storage access
+          if (fullPath.startsWith('Build/')) {
+            fullPath = fullPath.replace(/^Build\//, 'build/');
+          }
+          
+          console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fullPath="${fullPath}"`);
+          // TabManager now loads from storage, no need to pass file object
+          window.tabManager.openInTab(fullPath, null, { isReadOnly });
         } else if (data.type === 'folder') {
           // Toggle folder on double-click
           this.toggleNode(li, expand);
@@ -315,6 +333,50 @@ class ProjectExplorer {
       children.classList.add('expanded');
       expandButton.textContent = '▼';
       expandButton.classList.add('expanded');
+    }
+  }
+  
+  // Method to expand the Build folder after successful builds
+  expandBuildFolder() {
+    try {
+      console.log('[ProjectExplorer] Attempting to expand Build folder...');
+      
+      // Find the Build folder node
+      const buildNodes = this.treeContainer.querySelectorAll('.tree-item');
+      console.log(`[ProjectExplorer] Found ${buildNodes.length} tree items to check`);
+      
+      for (const node of buildNodes) {
+        const textElement = node.querySelector('.tree-text');
+        if (textElement) {
+          const textContent = textElement.textContent.trim();
+          console.log(`[ProjectExplorer] Checking node text: "${textContent}"`);
+          
+          if (textContent === 'Build') {
+            console.log('[ProjectExplorer] Found Build folder node');
+            const expandButton = node.querySelector('.tree-expand');
+            const children = node.querySelector('.tree-children');
+            
+            console.log('[ProjectExplorer] Build folder elements:', {
+              expandButton: !!expandButton,
+              children: !!children,
+              isExpanded: children?.classList.contains('expanded')
+            });
+            
+            // Expand if not already expanded
+            if (expandButton && children && !children.classList.contains('expanded')) {
+              children.classList.add('expanded');
+              expandButton.textContent = '▼';
+              expandButton.classList.add('expanded');
+              console.log('[ProjectExplorer] Expanded Build folder after build');
+            } else {
+              console.log('[ProjectExplorer] Build folder already expanded or missing elements');
+            }
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[ProjectExplorer] Error expanding Build folder:', error);
     }
   }
   
@@ -478,7 +540,7 @@ class ProjectExplorer {
     return { allowed: true, path: 'Resources/Binary' };
   }
   
-  addFileToProject(file, path) {
+  addFileToProject(file, path, skipAutoOpen = false) {
     const parts = path.split('/');
     let current = this.projectData.structure;
     
@@ -489,36 +551,90 @@ class ProjectExplorer {
       }
     }
     
-    // Add the file
-    current[file.name] = {
+    // Handle both File objects and file metadata objects
+    let fileName, fileSize, lastModified;
+    if (file instanceof File) {
+      fileName = file.name;
+      fileSize = file.size;
+      lastModified = file.lastModified;
+    } else {
+      // File metadata object
+      fileName = file.name;
+      fileSize = 0; // Will be updated when content is loaded
+      lastModified = Date.now();
+    }
+    
+    // Add the file reference (not the content - content is in storage)
+    current[fileName] = {
       type: 'file',
-      file: file,
-      size: file.size,
-      lastModified: file.lastModified
+      path: file.path || `${path}/${fileName}`,
+      size: fileSize,
+      lastModified: lastModified,
+      isNewFile: file.isNewFile || false
     };
     
-    console.log(`[ProjectExplorer] Added file: ${file.name} to ${path}`);
+    console.log(`[ProjectExplorer] Added file reference: ${fileName} to ${path}`);
     
-    // Notify game editor if available
-    if (window.gameEditor) {
+    // Refresh the tree to show the new file
+    this.renderTree();
+    
+    // Notify game editor if available (unless skipping auto-open)
+    if (window.gameEditor && !skipAutoOpen) {
       window.gameEditor.onFileAdded(file, path, false);
     }
   }
   
-  clearBuildFolder() {
+  async clearBuildFolder() {
     console.log('[ProjectExplorer] Clearing build folder...');
+    
+    // Clean up old build files from storage first
+    await this.cleanupBuildFilesFromStorage();
+    
     // Clear existing build folder contents
     this.projectData.structure.Build.children = {};
-    
-    // Also clean up old build files from localStorage
-    this.cleanupBuildFilesFromStorage();
     
     // Update the UI
     this.renderTree();
   }
 
-  cleanupBuildFilesFromStorage() {
-    console.log('[ProjectExplorer] Cleaning up old build files from localStorage...');
+  async cleanupBuildFilesFromStorage() {
+    console.log('[ProjectExplorer] Cleaning up old build files from storage...');
+    
+    if (!window.fileManager) {
+      console.warn('[ProjectExplorer] FileManager not available, falling back to localStorage cleanup');
+      this.cleanupBuildFilesFromLocalStorageOnly();
+      return;
+    }
+    
+    try {
+      // Get all build file paths from the current build structure
+      const buildFilePaths = this.getAllBuildFilePaths();
+      
+      console.log(`[ProjectExplorer] Found ${buildFilePaths.length} build files to clean up`);
+      
+      let deletedCount = 0;
+      for (const filePath of buildFilePaths) {
+        try {
+          const success = await window.fileManager.deleteFile(filePath);
+          if (success) {
+            deletedCount++;
+            console.log(`[ProjectExplorer] Deleted build file: ${filePath}`);
+          }
+        } catch (error) {
+          console.warn(`[ProjectExplorer] Failed to delete build file ${filePath}:`, error);
+        }
+      }
+      
+      console.log(`[ProjectExplorer] Cleaned up ${deletedCount} build files via FileManager`);
+    } catch (error) {
+      console.error('[ProjectExplorer] Error cleaning up build files:', error);
+      // Fallback to localStorage cleanup
+      this.cleanupBuildFilesFromLocalStorageOnly();
+    }
+  }
+
+  cleanupBuildFilesFromLocalStorageOnly() {
+    console.log('[ProjectExplorer] Cleaning up old build files from localStorage only...');
     const keysToRemove = [];
     
     // Find all build file keys in localStorage
@@ -535,7 +651,32 @@ class ProjectExplorer {
       console.log(`[ProjectExplorer] Removed old build file: ${key}`);
     });
     
-    console.log(`[ProjectExplorer] Cleaned up ${keysToRemove.length} old build files`);
+    console.log(`[ProjectExplorer] Cleaned up ${keysToRemove.length} old build files from localStorage`);
+  }
+
+  getAllBuildFilePaths() {
+    const buildFilePaths = [];
+    
+    const traverseNode = (node, currentPath = '') => {
+      if (node && typeof node === 'object') {
+        if (node.type === 'file') {
+          buildFilePaths.push(currentPath);
+        } else if (node.children) {
+          for (const [name, child] of Object.entries(node.children)) {
+            const childPath = currentPath ? `${currentPath}/${name}` : name;
+            traverseNode(child, childPath);
+          }
+        }
+      }
+    };
+    
+    if (this.projectData?.structure?.Build?.children) {
+      for (const [name, child] of Object.entries(this.projectData.structure.Build.children)) {
+        traverseNode(child, `build/${name}`);
+      }
+    }
+    
+    return buildFilePaths;
   }
 
   async refreshBuildFolder() {
@@ -1202,6 +1343,35 @@ class ProjectExplorer {
     } else {
       console.warn(`[ProjectExplorer] File element not found for: ${fullPath}`);
     }
+  }
+  
+  clearProject() {
+    console.log('[ProjectExplorer] Clearing project structure...');
+    
+    // Reset project structure to initial state
+    this.projectData = {
+      structure: {
+        Resources: {
+          type: 'folder',
+          children: {
+            Palettes: { type: 'folder', children: {} },
+            Lua: { type: 'folder', children: {} },
+            Audio: { type: 'folder', children: {} },
+            Graphics: { type: 'folder', children: {} }
+          }
+        },
+        Build: {
+          type: 'folder',
+          children: {}
+        }
+      }
+    };
+    
+    // Clear UI
+    this.selectedNode = null;
+    this.renderTree();
+    
+    console.log('[ProjectExplorer] Project cleared');
   }
 }
 

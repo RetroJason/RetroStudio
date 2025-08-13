@@ -2,22 +2,22 @@
 // Editor for Lua script files
 
 class LuaEditor extends EditorBase {
-  constructor(file, path, isNewResource = false, templateOptions = null) {
-    console.log(`[LuaEditor] Constructor called with isNewResource: ${isNewResource}, file: ${file?.name}, path: ${path}`);
-    super(file, path, isNewResource, templateOptions);
+  constructor(path, isNewResource = false, templateOptions = null) {
+    console.log(`[LuaEditor] Constructor called with isNewResource: ${isNewResource}, path: ${path}`);
+    super(path, isNewResource, templateOptions);
     this.textArea = null;
   }
   
   // Override createElement to ensure proper initialization order
   createElement() {
-    console.log(`[LuaEditor] createElement called, isNewResource: ${this.isNewResource}, file: ${this.file?.name}`);
+    console.log(`[LuaEditor] createElement called, isNewResource: ${this.isNewResource}, path: ${this.path}`);
     
     // Call parent createElement which will call createBody where textarea gets created
     return super.createElement();
   }
   
   createBody(bodyContainer) {
-    console.log(`[LuaEditor] createBody called for ${this.file?.name}, isNewResource: ${this.isNewResource}`);
+    console.log(`[LuaEditor] createBody called for ${this.path}, isNewResource: ${this.isNewResource}`);
     
     // Create text editor container
     const editorContainer = document.createElement('div');
@@ -31,25 +31,7 @@ class LuaEditor extends EditorBase {
     // Store a backup reference to prevent loss during async operations
     this._textAreaElement = this.textArea;
     
-    console.log(`[LuaEditor] Created textarea for ${this.file?.name}`);
-    
-    // For new resources (empty files), set default content
-    // For existing resources, we'll load content after appending to DOM
-    const isLikelyNewFile = this.file && this.file.size === 0;
-    const shouldSetDefaultContent = isLikelyNewFile && (!this.path || !this.path.includes('Resources/'));
-    
-    if (shouldSetDefaultContent) {
-      // Generate template content asynchronously
-      this.generateTemplateContent().then(defaultContent => {
-        if (this.textArea && this.textArea.parentNode) {
-          this.textArea.value = defaultContent;
-          console.log(`[LuaEditor] Set default content for new resource: ${defaultContent.length} chars`);
-          this.markClean();
-        }
-      }).catch(error => {
-        console.error('[LuaEditor] Failed to set template content:', error);
-      });
-    }
+    console.log(`[LuaEditor] Created textarea for ${this.path}`);
     
     // Setup change detection
     this.textArea.addEventListener('input', () => {
@@ -64,22 +46,8 @@ class LuaEditor extends EditorBase {
     editorContainer.appendChild(this.textArea);
     bodyContainer.appendChild(editorContainer);
     
-    // Try to load content for files that might have saved content
-    const hasDefaultContent = this.textArea.value.length > 0;
-    const hasResourcePath = this.path && this.path.includes('Resources/');
-    
-    if (!hasDefaultContent && hasResourcePath) {
-      console.log(`[LuaEditor] Loading content for resource file: ${this.file.name}`);
-      // Load content immediately (don't await to avoid timing issues)
-      this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
-    } else if (hasResourcePath && hasDefaultContent) {
-      console.log(`[LuaEditor] Resource file has default content, trying to load saved content: ${this.file.name}`);
-      // Even if we have default content, try to load saved content for resource files
-      // Load content immediately (don't await to avoid timing issues)
-      this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
-    } else {
-      console.log(`[LuaEditor] Skipping content load - no resource path or already has content`);
-    }
+    // Load content using FileManager
+    this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
     
     // Focus the editor after it's added to DOM
     setTimeout(() => {
@@ -125,14 +93,22 @@ class LuaEditor extends EditorBase {
     }
   }
   
+  async refreshContent() {
+    console.log(`[LuaEditor] Refreshing content for: ${this.path}`);
+    try {
+      // Reload the file content from storage
+      await this.loadFileContent();
+      console.log(`[LuaEditor] Successfully refreshed content for: ${this.path}`);
+    } catch (error) {
+      console.error(`[LuaEditor] Failed to refresh content for ${this.path}:`, error);
+    }
+  }
+  
   async loadFileContent() {
-    console.log(`[LuaEditor] loadFileContent() called from:`, new Error().stack);
-    console.log(`[LuaEditor] Current state - isNewResource: ${this.isNewResource}, textArea exists: ${!!this.textArea}`);
+    console.log(`[LuaEditor] loadFileContent() called for: ${this.path}, isNewResource: ${this.isNewResource}`);
     
     try {
       let content = null;
-      
-      console.log(`[LuaEditor] Loading file content. Path: ${this.path}, File: ${this.file?.name}, isNewResource: ${this.isNewResource}`);
       
       // For new resources, use default template
       if (this.isNewResource) {
@@ -142,67 +118,80 @@ class LuaEditor extends EditorBase {
 function main()
     -- Your code here
 end`;
-      } else {
-        // First try to load from persistent storage if we have a path
-        if (window.fileIOService && this.path) {
-          console.log(`[LuaEditor] Attempting to load from persistent storage: ${this.path}`);
-          const storedFile = await window.fileIOService.loadFile(this.path);
-          if (storedFile && storedFile.content) {
-            console.log(`[LuaEditor] Loaded content from persistent storage: ${this.path} (${storedFile.content.length} chars)`);
-            content = storedFile.content;
+      } else if (this.path) {
+        // Use FileManager to load content
+        const fileManager = window.serviceContainer?.get('fileManager');
+        if (fileManager) {
+          console.log(`[LuaEditor] Using FileManager to load: ${this.path}`);
+          const fileObj = await fileManager.loadFile(this.path);
+          if (fileObj) {
+            // Extract content from the file object
+            let fileContent = fileObj.content || fileObj.fileContent;
+            if (fileContent) {
+              console.log(`[LuaEditor] Loaded content from FileManager: ${this.path} (${fileContent.length} chars)`);
+              content = fileContent;
+            } else {
+              console.log(`[LuaEditor] File object found but no content property:`, fileObj);
+            }
           } else {
-            console.log(`[LuaEditor] No content found in persistent storage for: ${this.path}`);
+            console.log(`[LuaEditor] No file object returned from FileManager for: ${this.path}`);
           }
         } else {
-          console.log(`[LuaEditor] No fileIOService or path available for persistent storage`);
-        }
-      }
-      
-      // If not found in persistent storage, check project structure
-      if (!content) {
-        let fileToLoad = this.file;
-        
-        if (window.gameEditor && window.gameEditor.projectExplorer && this.path) {
-          const pathParts = this.path.split('/');
-          const fileName = pathParts.pop();
-          const folderPath = pathParts.join('/');
-          
-          // Navigate to the file location
-          const parts = folderPath.split('/');
-          let current = window.gameEditor.projectExplorer.projectData.structure;
-          
-          for (const part of parts) {
-            if (current[part] && current[part].type === 'folder') {
-              current = current[part].children;
+          console.log(`[LuaEditor] FileManager not available, falling back to fileIOService`);
+          // Fallback to direct fileIOService
+          if (window.fileIOService) {
+            const storedFile = await window.fileIOService.loadFile(this.path);
+            if (storedFile && storedFile.content) {
+              console.log(`[LuaEditor] Loaded content from fileIOService: ${this.path} (${storedFile.content.length} chars)`);
+              content = storedFile.content;
             }
           }
-          
-          // Check if we have an updated version
-          if (current[fileName] && current[fileName].file) {
-            fileToLoad = current[fileName].file;
-            console.log(`[LuaEditor] Loading updated content from project structure for ${fileName}`);
-          }
+        }
+      }
+      
+      // Set content to textarea if we have valid content
+      if (content !== null && content !== undefined) {
+        // Extract content from FileManager object structure
+        if (typeof content === 'object' && content.content !== undefined) {
+          content = content.content;
         }
         
-        content = await fileToLoad.text();
-      }
-      
-      // Try multiple ways to get a valid textarea reference
-      let textarea = this.textArea || this._textAreaElement;
-      if (!textarea && this.element) {
-        textarea = this.element.querySelector('.lua-editor-textarea');
-      }
-      
-      if (textarea) {
-        console.log(`[LuaEditor] About to set content to textarea, content length: ${content.length}`);
-        textarea.value = content;
-        // Restore the main reference if it was lost
-        this.textArea = textarea;
-        console.log(`[LuaEditor] Set textarea content, length: ${content.length}`);
-        this.markClean();
-        this.applySyntaxHighlighting();
+        // Ensure we have string content
+        if (typeof content !== 'string') {
+          content = String(content);
+        }
+        
+        // Try multiple ways to get a valid textarea reference
+        let textarea = this.textArea || this._textAreaElement;
+        if (!textarea && this.element) {
+          textarea = this.element.querySelector('.lua-editor-textarea');
+        }
+        
+        if (textarea) {
+          console.log(`[LuaEditor] About to set content to textarea, content length: ${content.length}`);
+          textarea.value = content;
+          // Restore the main reference if it was lost
+          this.textArea = textarea;
+          console.log(`[LuaEditor] Set textarea content, length: ${content.length}`);
+          this.markClean();
+          this.applySyntaxHighlighting();
+        } else {
+          console.error(`[LuaEditor] Could not find any textarea to set content to`);
+        }
       } else {
-        console.error(`[LuaEditor] Could not find any textarea to set content to`);
+        console.log(`[LuaEditor] No content to load, using default template`);
+        // Load default template when no content found
+        const defaultContent = `-- Enter your Lua script here...
+
+function main()
+    -- Your code here
+end`;
+        
+        if (this.textArea) {
+          this.textArea.value = defaultContent;
+          this.markClean();
+          this.applySyntaxHighlighting();
+        }
       }
     } catch (error) {
       console.error('[LuaEditor] Failed to load file content:', error);
@@ -398,6 +387,36 @@ end`;
   }
 
   // Remove the old getUniqueFileName method since we're using the centralized one
+
+  // Static methods for creation support
+  static getCreateIcon() {
+    return '📜';
+  }
+
+  static getCreateLabel() {
+    return 'Lua Script';
+  }
+
+  static getDefaultFolder() {
+    return 'Resources/Lua';
+  }
+
+  static createNew() {
+    return `-- New Lua Script
+-- Created: ${new Date().toLocaleDateString()}
+
+function _init()
+    -- Initialize your script here
+end
+
+function _update()
+    -- Update game logic here
+end
+
+function _draw()
+    -- Draw graphics here
+end`;
+  }
 }
 
 // Export for use

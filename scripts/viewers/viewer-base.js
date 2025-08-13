@@ -2,8 +2,7 @@
 // Base class for all resource viewers
 
 class ViewerBase {
-  constructor(file, path) {
-    this.file = file;
+  constructor(path) {
     this.path = path;
     this.element = null;
     this.isDestroyed = false;

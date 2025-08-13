@@ -146,16 +146,28 @@ class BuildSystemAdapter {
     this.buildSystem = buildSystem;
     this.services = services;
     this.events = events;
-    this.pluginSystem = services.get('pluginSystem');
+    try {
+      this.pluginSystem = services.get('pluginSystem');
+    } catch (e) {
+      console.warn('[BuildSystemAdapter] Plugin system not available:', e.message);
+      this.pluginSystem = null;
+    }
     this.setupIntegration();
   }
 
   setupIntegration() {
     // Hook into build process
-    const originalBuild = this.buildSystem.build.bind(this.buildSystem);
-    this.buildSystem.build = async (projectPath) => {
-      return this.buildWithHooks(projectPath, originalBuild);
-    };
+    if (this.buildSystem && typeof this.buildSystem.buildProject === 'function') {
+      const originalBuild = this.buildSystem.buildProject.bind(this.buildSystem);
+      this.buildSystem.buildProject = async (projectPath) => {
+        return this.buildWithHooks(projectPath, originalBuild);
+      };
+      
+      // Also provide a build method alias for compatibility
+      this.buildSystem.build = this.buildSystem.buildProject;
+    } else {
+      console.warn('[BuildSystemAdapter] buildSystem does not have buildProject method');
+    }
 
     this.setupEventConnections();
   }
@@ -164,29 +176,40 @@ class BuildSystemAdapter {
     try {
       this.events.emit('build.started', { projectPath });
 
-      // Run pre-build hooks
-      await this.pluginSystem.runHook('build.beforeStart', { projectPath });
+      // Run pre-build hooks if plugin system is available
+      if (this.pluginSystem && typeof this.pluginSystem.runHook === 'function') {
+        await this.pluginSystem.runHook('build.beforeStart', { projectPath });
+      }
 
       // Execute build
       const result = await originalBuild(projectPath);
 
-      // Run post-build hooks
-      await this.pluginSystem.runHook('build.afterComplete', { 
-        projectPath, 
-        result,
-        success: true 
-      });
+      // Run post-build hooks if plugin system is available
+      if (this.pluginSystem && typeof this.pluginSystem.runHook === 'function') {
+        await this.pluginSystem.runHook('build.afterComplete', { 
+          projectPath, 
+          result,
+          success: true 
+        });
+      }
 
       this.events.emit('build.completed', { projectPath, result, success: true });
+      
+      // Emit content refresh required event for viewers to update
+      console.log('[ServiceAdapter] Emitting content.refresh.required event');
+      this.events.emit('content.refresh.required');
       
       return result;
 
     } catch (error) {
-      await this.pluginSystem.runHook('build.afterComplete', { 
-        projectPath, 
-        error,
-        success: false 
-      });
+      // Run error hooks if plugin system is available
+      if (this.pluginSystem && typeof this.pluginSystem.runHook === 'function') {
+        await this.pluginSystem.runHook('build.afterComplete', { 
+          projectPath, 
+          error,
+          success: false 
+        });
+      }
 
       this.events.emit('build.failed', { projectPath, error });
       throw error;
