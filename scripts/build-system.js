@@ -43,6 +43,12 @@ class BuildSystem {
       this.isBuilding = true;
       console.log('[BuildSystem] Starting project build...');
       
+      // Save all dirty files before building to ensure we get updated parameters
+      if (window.gameEditor && window.gameEditor.tabManager) {
+        console.log('[BuildSystem] Saving all dirty files before build...');
+        await window.gameEditor.tabManager.saveAllOpenTabs();
+      }
+      
       // Clear the build folder before starting
       if (window.gameEditor && window.gameEditor.projectExplorer) {
         await window.gameEditor.projectExplorer.clearBuildFolder();
@@ -456,66 +462,43 @@ class SfxBuilder extends BaseBuilder {
       
       const fileContent = await fileManager.loadFile(file.path);
       console.log(`[SfxBuilder] Raw file content:`, fileContent);
-      console.log(`[SfxBuilder] Type of content:`, typeof fileContent);
       
       let text;
       if (typeof fileContent === 'object' && fileContent !== null) {
-        // Try different possible content properties
         text = fileContent.content || fileContent.fileContent || fileContent.data;
-        console.log(`[SfxBuilder] Extracted text from object:`, text, `(type: ${typeof text})`);
       } else {
         text = fileContent;
-        console.log(`[SfxBuilder] Direct text:`, text);
       }
       
       if (!text || typeof text !== 'string') {
-        console.error(`[SfxBuilder] Content extraction failed:`, {
-          fileContent,
-          extractedText: text,
-          textType: typeof text
-        });
         throw new Error(`Invalid file content for ${file.path}: ${typeof text}`);
       }
       
       const parameters = this.parseParameters(text);
-      console.log(`[SfxBuilder] Parsed parameters:`, parameters);
+      console.log(`[SfxBuilder] Parsed SFXR parameters:`, parameters);
       
-      // Generate audio
-      const audioBuffer = await this.synthesizeAudio(parameters);
-      if (!audioBuffer) {
-        throw new Error('Failed to synthesize audio');
+      // Generate WAV using jsfxr
+      const wavData = await this.generateJsfxrWav(parameters);
+      if (!wavData) {
+        throw new Error('Failed to generate WAV with jsfxr');
       }
       
-      // Convert to WAV
-      const wavData = this.audioBufferToWav(audioBuffer);
       console.log(`[SfxBuilder] Generated WAV data: ${wavData.byteLength} bytes`);
       
-      // Generate output path (convert .sfx to .wav in build directory)
-      const inputPath = file.path;
-      // Remove Resources/ prefix and add build/ prefix: Resources/SFX/file.sfx -> build/SFX/file.wav
+      // Generate output path
       const outputPath = file.path.replace(/\.sfx$/i, '.wav').replace(/^Resources\//, 'build/');
       
-      console.log(`[SfxBuilder] Input path: ${inputPath}`);
+      console.log(`[SfxBuilder] Input path: ${file.path}`);
       console.log(`[SfxBuilder] Output path: ${outputPath}`);
       
-      // Save WAV file using FileManager
+      // Save WAV file
       if (fileManager) {
         await fileManager.saveFile(outputPath, wavData, {
           type: '.wav',
           binaryData: true
         });
         console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
-      } else if (window.fileIOService) {
-        // Fallback to direct fileIOService if FileManager not available
-        await window.fileIOService.saveFile(outputPath, wavData, {
-          type: '.wav',
-          binaryData: true
-        });
-        console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
       }
-      
-      // Build files are saved to localStorage under build/ prefix
-      // No automatic download - files go to virtual build directory
       
       return {
         success: true,
@@ -534,30 +517,120 @@ class SfxBuilder extends BaseBuilder {
   }
   
   parseParameters(jsonContent) {
-    // Simple JSON parsing for SFX parameters
-    const defaultParams = {
-      type: 'sine',
-      frequency: 440,
-      duration: 1.0
-    };
-    
-    if (!jsonContent.trim()) {
-      return defaultParams;
+    try {
+      const parsed = JSON.parse(jsonContent);
+      
+      // Extract SFXR parameters from the file
+      if (parsed.parameters) {
+        console.log('[SfxBuilder] Found SFXR parameters in file');
+        return parsed.parameters;
+      } else {
+        console.log('[SfxBuilder] No SFXR parameters found, using defaults');
+        // Return default SFXR parameters
+        return {
+          wave_type: 0,
+          p_base_freq: 0.3,
+          p_freq_limit: 0,
+          p_freq_ramp: 0,
+          p_freq_dramp: 0,
+          p_env_attack: 0,
+          p_env_sustain: 0.3,
+          p_env_punch: 0,
+          p_env_decay: 0.4,
+          p_vib_strength: 0,
+          p_vib_speed: 0,
+          p_arp_mod: 0,
+          p_arp_speed: 0,
+          p_duty: 0,
+          p_duty_ramp: 0,
+          p_repeat_speed: 0,
+          p_pha_offset: 0,
+          p_pha_ramp: 0,
+          p_lpf_freq: 1,
+          p_lpf_ramp: 0,
+          p_lpf_resonance: 0,
+          p_hpf_freq: 0,
+          p_hpf_ramp: 0
+        };
+      }
+    } catch (error) {
+      console.error('[SfxBuilder] Failed to parse JSON:', error);
+      throw new Error('Invalid SFX file format');
+    }
+  }
+  
+  async generateJsfxrWav(parameters) {
+    // Ensure jsfxr is available
+    if (typeof window.jsfxr === 'undefined' || typeof window.jsfxr.Params === 'undefined' || typeof window.jsfxr.SoundEffect === 'undefined') {
+      throw new Error('jsfxr library not loaded correctly');
     }
     
     try {
-      const params = JSON.parse(jsonContent);
+      // Create jsfxr parameters object
+      const params = new window.jsfxr.Params();
       
-      return {
-        type: params.type || defaultParams.type,
-        frequency: parseFloat(params.frequency) || defaultParams.frequency,
-        duration: parseFloat(params.duration) || defaultParams.duration
-      };
+      // Map our parameters to jsfxr format
+      Object.keys(parameters).forEach(key => {
+        if (params.hasOwnProperty(key)) {
+          params[key] = parameters[key];
+        }
+      });
+      
+      // Generate audio using jsfxr - use SoundEffect directly for normalized data
+      const soundEffect = new window.jsfxr.SoundEffect(params);
+      const rawBuffer = soundEffect.getRawBuffer();
+      const audioBuffer = rawBuffer.normalized; // Use normalized float array
+      
+      // Convert Float32Array to WAV format manually
+      const sampleRate = soundEffect.sampleRate || 44100;
+      const numChannels = 1;
+      const bytesPerSample = 2;
+      const blockAlign = numChannels * bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = audioBuffer.length * bytesPerSample;
+      const fileSize = 36 + dataSize;
+      
+      // Create WAV header
+      const wavBuffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(wavBuffer);
+      
+      // RIFF header
+      this.writeString(view, 0, 'RIFF');
+      view.setUint32(4, fileSize, true);
+      this.writeString(view, 8, 'WAVE');
+      
+      // fmt chunk
+      this.writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, byteRate, true);
+      view.setUint16(32, blockAlign, true);
+      view.setUint16(34, 16, true);
+      
+      // data chunk
+      this.writeString(view, 36, 'data');
+      view.setUint32(40, dataSize, true);
+      
+      // Convert float32 samples to int16
+      const samples = new Int16Array(wavBuffer, 44);
+      for (let i = 0; i < audioBuffer.length; i++) {
+        samples[i] = Math.max(-32768, Math.min(32767, audioBuffer[i] * 32767));
+      }
+      
+      return wavBuffer;
+      
     } catch (error) {
-      console.warn('[SfxBuilder] Failed to parse JSON, using defaults:', error);
+      console.error('[SfxBuilder] Error generating WAV:', error);
+      throw error;
     }
-    
-    return defaultParams;
+  }
+  
+  writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
   }
   
   async synthesizeAudio(parameters) {
