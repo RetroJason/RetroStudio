@@ -66,6 +66,11 @@ class PaletteEditor extends EditorBase {
               <div class="color-wheel-cursor"></div>
             </div>
             
+            <div class="lightness-bar-container">
+              <canvas class="lightness-bar" width="180" height="20"></canvas>
+              <div class="lightness-bar-cursor"></div>
+            </div>
+            
             <div class="color-sliders">
               <div class="slider-group">
                 <label>Red:</label>
@@ -134,6 +139,8 @@ class PaletteEditor extends EditorBase {
     this.selectedColorPreview = this.container.querySelector('.selected-color-preview');
     this.colorWheel = this.container.querySelector('.color-wheel');
     this.colorWheelCursor = this.container.querySelector('.color-wheel-cursor');
+    this.lightnessBar = this.container.querySelector('.lightness-bar');
+    this.lightnessBarCursor = this.container.querySelector('.lightness-bar-cursor');
     this.colorPicker = this.container.querySelector('.color-picker');
     this.hexInput = this.container.querySelector('.hex-input');
     
@@ -161,8 +168,9 @@ class PaletteEditor extends EditorBase {
       l: this.container.querySelector('.hsl-l')
     };
     
-    // Initialize color wheel
+    // Initialize color wheel and lightness bar
     this.initializeColorWheel();
+    this.initializeLightnessBar();
   }
   
   initializeColorWheel() {
@@ -172,22 +180,52 @@ class PaletteEditor extends EditorBase {
     const centerY = canvas.height / 2;
     const radius = Math.min(centerX, centerY) - 10;
     
-    // Draw color wheel
-    for (let angle = 0; angle < 360; angle += 1) {
-      const startAngle = (angle - 1) * Math.PI / 180;
-      const endAngle = angle * Math.PI / 180;
-      
-      for (let r = 0; r < radius; r += 1) {
-        const saturation = r / radius;
-        const lightness = 0.5;
-        const hue = angle;
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Create imageData for pixel-perfect drawing
+    const imageData = ctx.createImageData(canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    // Draw color wheel with proper HSV color space
+    for (let x = 0; x < canvas.width; x++) {
+      for (let y = 0; y < canvas.height; y++) {
+        const dx = x - centerX;
+        const dy = y - centerY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
         
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, r, startAngle, endAngle);
-        ctx.strokeStyle = `hsl(${hue}, ${saturation * 100}%, ${lightness * 100}%)`;
-        ctx.stroke();
+        if (distance <= radius) {
+          // Calculate hue from angle
+          let hue = Math.atan2(dy, dx) * 180 / Math.PI;
+          if (hue < 0) hue += 360;
+          
+          // Calculate saturation from distance (0 to 1)
+          const saturation = distance / radius;
+          
+          // Use full value (brightness) for vibrant colors
+          const value = 1.0;
+          
+          // Convert HSV to RGB
+          const rgb = this.hsvToRgb(hue, saturation, value);
+          
+          const index = (y * canvas.width + x) * 4;
+          data[index] = rgb.r;     // Red
+          data[index + 1] = rgb.g; // Green
+          data[index + 2] = rgb.b; // Blue
+          data[index + 3] = 255;   // Alpha
+        }
       }
     }
+    
+    // Draw the imageData to canvas
+    ctx.putImageData(imageData, 0, 0);
+    
+    // Add a subtle border
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.stroke();
     
     let isDragging = false;
     
@@ -198,9 +236,15 @@ class PaletteEditor extends EditorBase {
       const distance = Math.sqrt(x * x + y * y);
       
       if (distance <= radius) {
-        const angle = Math.atan2(y, x) * 180 / Math.PI;
-        const hue = (angle + 360) % 360;
-        const saturation = (distance / radius) * 100;
+        // Calculate hue from angle
+        let hue = Math.atan2(y, x) * 180 / Math.PI;
+        if (hue < 0) hue += 360;
+        
+        // Calculate saturation from distance
+        const saturation = Math.min(distance / radius, 1.0) * 100;
+        
+        // Keep current lightness from the HSL sliders, or default to 50%
+        const currentLightness = this.hslInputs?.l ? parseInt(this.hslInputs.l.value) : 50;
         
         // Update HSL inputs
         if (this.hslInputs?.h) this.hslInputs.h.value = Math.round(hue);
@@ -210,6 +254,7 @@ class PaletteEditor extends EditorBase {
         
         this.updateFromHSL();
         this.updateColorWheelCursor(hue, saturation);
+        this.drawLightnessBar(); // Redraw lightness bar with new hue/saturation
       }
     };
     
@@ -236,6 +281,106 @@ class PaletteEditor extends EditorBase {
     });
   }
 
+  initializeLightnessBar() {
+    const canvas = this.lightnessBar;
+    if (!canvas) return;
+    
+    this.drawLightnessBar();
+    
+    let isDragging = false;
+    
+    const handleLightnessBarInput = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const lightness = Math.min(Math.max((x / canvas.width) * 100, 0), 100);
+      
+      // Update HSL lightness
+      if (this.hslInputs?.l) this.hslInputs.l.value = Math.round(lightness);
+      if (this.hslSliders?.l) this.hslSliders.l.value = Math.round(lightness);
+      
+      this.updateFromHSL();
+      this.updateLightnessBarCursor(lightness);
+    };
+    
+    // Add click handler
+    canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      handleLightnessBarInput(e);
+    });
+    
+    // Add drag handler
+    canvas.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        handleLightnessBarInput(e);
+      }
+    });
+    
+    // Stop dragging
+    canvas.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('mouseleave', () => {
+      isDragging = false;
+    });
+  }
+
+  drawLightnessBar() {
+    if (!this.lightnessBar) return;
+    
+    const canvas = this.lightnessBar;
+    const ctx = canvas.getContext('2d');
+    
+    // Get current hue and saturation
+    const currentHue = this.hslInputs?.h ? parseInt(this.hslInputs.h.value) : 0;
+    const currentSaturation = this.hslInputs?.s ? parseInt(this.hslInputs.s.value) : 0;
+    
+    // Create image data for pixel-perfect drawing
+    const imageData = ctx.createImageData(canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    // Draw lightness gradient with current hue and saturation
+    for (let x = 0; x < canvas.width; x++) {
+      const lightness = (x / canvas.width) * 100;
+      const rgb = this.hslToRgb(currentHue, currentSaturation / 100, lightness / 100);
+      
+      for (let y = 0; y < canvas.height; y++) {
+        const index = (y * canvas.width + x) * 4;
+        data[index] = rgb.r;     // Red
+        data[index + 1] = rgb.g; // Green
+        data[index + 2] = rgb.b; // Blue
+        data[index + 3] = 255;   // Alpha
+      }
+    }
+    
+    // Draw the imageData to canvas
+    ctx.putImageData(imageData, 0, 0);
+    
+    // Add border
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+  }
+
+  updateLightnessBarCursor(lightness) {
+    if (!this.lightnessBarCursor || !this.lightnessBar) return;
+    
+    const canvas = this.lightnessBar;
+    const x = (lightness / 100) * canvas.width;
+    
+    // Get the canvas position within its container
+    const container = canvas.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    
+    // Calculate offset of canvas within container
+    const canvasOffsetX = canvasRect.left - containerRect.left;
+    
+    // Position cursor relative to the container, accounting for canvas offset
+    this.lightnessBarCursor.style.left = `${canvasOffsetX + x}px`;
+    this.lightnessBarCursor.style.display = 'block';
+  }
+
   updateColorWheelCursor(hue, saturation) {
     if (!this.colorWheelCursor || !this.colorWheel) return;
     
@@ -244,16 +389,58 @@ class PaletteEditor extends EditorBase {
     const centerY = canvas.height / 2;
     const radius = Math.min(centerX, centerY) - 10;
     
-    // Convert HSL to position
+    // Convert HSL to position on wheel
     const angle = (hue * Math.PI) / 180;
     const distance = (saturation / 100) * radius;
-    const x = centerX + distance * Math.cos(angle);
-    const y = centerY + distance * Math.sin(angle);
     
-    // Position cursor (CSS transform: translate(-50%, -50%) handles centering)
-    this.colorWheelCursor.style.left = `${x}px`;
-    this.colorWheelCursor.style.top = `${y}px`;
+    // Clamp distance to radius to keep cursor within wheel
+    const clampedDistance = Math.min(distance, radius);
+    
+    const x = centerX + clampedDistance * Math.cos(angle);
+    const y = centerY + clampedDistance * Math.sin(angle);
+    
+    // Get the canvas position within its container
+    const container = canvas.parentElement;
+    const containerRect = container.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    
+    // Calculate offset of canvas within container
+    const canvasOffsetX = canvasRect.left - containerRect.left;
+    const canvasOffsetY = canvasRect.top - containerRect.top;
+    
+    // Position cursor relative to the container, accounting for canvas offset
+    this.colorWheelCursor.style.left = `${canvasOffsetX + x}px`;
+    this.colorWheelCursor.style.top = `${canvasOffsetY + y}px`;
     this.colorWheelCursor.style.display = 'block';
+  }
+
+  // HSV to RGB conversion for better color wheel
+  hsvToRgb(h, s, v) {
+    const c = v * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = v - c;
+    
+    let r = 0, g = 0, b = 0;
+    
+    if (0 <= h && h < 60) {
+      r = c; g = x; b = 0;
+    } else if (60 <= h && h < 120) {
+      r = x; g = c; b = 0;
+    } else if (120 <= h && h < 180) {
+      r = 0; g = c; b = x;
+    } else if (180 <= h && h < 240) {
+      r = 0; g = x; b = c;
+    } else if (240 <= h && h < 300) {
+      r = x; g = 0; b = c;
+    } else if (300 <= h && h < 360) {
+      r = c; g = 0; b = x;
+    }
+    
+    return {
+      r: Math.round((r + m) * 255),
+      g: Math.round((g + m) * 255),
+      b: Math.round((b + m) * 255)
+    };
   }
 
   setupEventListeners() {
@@ -593,6 +780,9 @@ class PaletteEditor extends EditorBase {
     
     // Update color wheel cursor
     this.updateColorWheelCursor(hsl.h, hsl.s);
+    
+    // Update lightness bar cursor
+    this.updateLightnessBarCursor(hsl.l);
   }
 
   updateFromHex() {
@@ -645,6 +835,9 @@ class PaletteEditor extends EditorBase {
     const rgb = this.hslToRgb(h, s / 100, l / 100);
     const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
     this.setSelectedColor(hex);
+    
+    // Redraw lightness bar when hue or saturation changes
+    this.drawLightnessBar();
   }
   
   updateFromHSLSliders() {
@@ -660,6 +853,9 @@ class PaletteEditor extends EditorBase {
     const rgb = this.hslToRgb(h, s / 100, l / 100);
     const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
     this.setSelectedColor(hex);
+    
+    // Redraw lightness bar when hue or saturation changes
+    this.drawLightnessBar();
   }
 
   setSelectedColor(hex) {
