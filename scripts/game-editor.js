@@ -27,9 +27,22 @@ class GameEditor {
     // Create resource manager
     this.resourceManager = new ResourceManager(this.audioEngine);
     
-    // Initialize build system
-    this.buildSystem = new BuildSystem();
-    window.buildSystem = this.buildSystem; // Make available globally for builders
+    // Initialize build system (using service container)
+    const services = window.serviceContainer;
+    if (services) {
+      try {
+        this.buildSystem = services.get('buildSystem');
+        if (this.buildSystem) {
+          window.buildSystem = this.buildSystem; // Make available globally for builders
+        }
+      } catch (e) {
+        console.log('[GameEditor] BuildSystem service not yet available');
+        this.buildSystem = null;
+      }
+    } else {
+      console.log('[GameEditor] Service container not available, BuildSystem will be initialized later');
+      this.buildSystem = null;
+    }
     
     // Listen for audio engine events
     this.audioEngine.addEventListener('resourceLoaded', this.onResourceLoaded.bind(this));
@@ -59,6 +72,26 @@ class GameEditor {
     
     console.log('[GameEditor] Initialized successfully');
     return true;
+  }
+  
+  // Initialize BuildSystem if it wasn't available during initial setup
+  initializeBuildSystemIfNeeded() {
+    if (!this.buildSystem) {
+      const services = window.serviceContainer;
+      if (services) {
+        try {
+          console.log('[GameEditor] Late-initializing BuildSystem from service container');
+          this.buildSystem = services.get('buildSystem');
+          if (this.buildSystem) {
+            window.buildSystem = this.buildSystem;
+            return true;
+          }
+        } catch (e) {
+          console.log('[GameEditor] BuildSystem service not yet available');
+        }
+      }
+    }
+    return !!this.buildSystem;
   }
   
   setupUI() {
@@ -124,8 +157,8 @@ class GameEditor {
     if (this.tabManager) {
       try {
         console.log(`[GameEditor] Auto-opening file: ${file.name}`);
-        const fullPath = `${path}/${file.name}`;
-        await this.tabManager.openInTab(fullPath, file);
+        // Use the path directly since it already includes the filename
+        await this.tabManager.openInTab(path, file);
         
         // Only do tree operations if requested (i.e., not called from bulk file addition)
         if (doTreeOperations) {
@@ -174,9 +207,22 @@ class GameEditor {
     this.updateStatus('Building project...', 'info');
     
     try {
-      // Auto-save all open tabs before building
+      // Initialize BuildSystem if it wasn't available during startup
+      if (!this.buildSystem) {
+        if (!this.initializeBuildSystemIfNeeded()) {
+          this.updateStatus('Build system not available', 'error');
+          return;
+        }
+      }
+      
+      // Check for unsaved files before building
       if (this.tabManager) {
-        await this.tabManager.saveAllOpenTabs();
+        const unsavedTabs = this.tabManager.getUnsavedTabs();
+        if (unsavedTabs.length > 0) {
+          // Automatically save all unsaved tabs before building
+          await this.tabManager.saveAllOpenTabs();
+          this.updateStatus('Saved all files, building project...', 'info');
+        }
       }
       
       // Debug project explorer structure
@@ -191,6 +237,18 @@ class GameEditor {
       
       // Build the project using the build system (it will read from projectExplorer directly)
       const buildResult = await this.buildSystem.buildProject();
+      
+      // Refresh project explorer to show new build files from storage
+      if (this.projectExplorer && buildResult && buildResult.success !== false) {
+        console.log('[GameEditor] Refreshing project explorer after build...');
+        await this.projectExplorer.loadBuildFilesFromStorage();
+        this.projectExplorer.renderTree();
+        
+        // Expand the Build folder to show new build files (with slight delay for DOM update)
+        setTimeout(() => {
+          this.projectExplorer.expandBuildFolder();
+        }, 100);
+      }
       
       // Refresh build file tabs after successful build
       if (this.tabManager && buildResult && buildResult.success !== false) {
@@ -409,14 +467,25 @@ class GameEditor {
   }
 
   // Load an audio file on demand (called by viewers)
-  async loadAudioFileOnDemand(filename) {
-    console.log(`[GameEditor] Loading audio file on demand: ${filename}`);
+  async loadAudioFileOnDemand(filename, forceReload = false) {
+    console.log(`[GameEditor] Loading audio file on demand: ${filename}${forceReload ? ' (force reload)' : ''}`);
     
-    // Check if already loaded
-    const existingId = this.getLoadedResourceId(filename);
-    if (existingId) {
-      console.log(`[GameEditor] File ${filename} already loaded with ID: ${existingId}`);
-      return existingId;
+    // Check if already loaded, unless forcing reload
+    if (!forceReload) {
+      const existingId = this.getLoadedResourceId(filename);
+      if (existingId) {
+        console.log(`[GameEditor] File ${filename} already loaded with ID: ${existingId}`);
+        return existingId;
+      }
+    } else {
+      // Force reload: clear existing resource first
+      const existingId = this.getLoadedResourceId(filename);
+      if (existingId) {
+        console.log(`[GameEditor] Force reload: clearing existing resource ${existingId} for ${filename}`);
+        if (this.audioEngine) {
+          this.audioEngine.unloadResource(existingId);
+        }
+      }
     }
     
     // First try to find in pending files (regular project files)

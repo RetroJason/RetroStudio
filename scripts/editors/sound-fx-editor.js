@@ -2,10 +2,10 @@
 // Editor for sound effect files (.sfx)
 
 class SoundFXEditor extends CompoundEditor {
-  constructor(file, path, isNewResource = false, templateOptions = null) {
-    super(file, path, isNewResource, templateOptions);
+  constructor(path, isNewResource = false, templateOptions = null) {
+    super(path, isNewResource, templateOptions);
     
-    console.log(`[SoundFXEditor] Constructor called for ${file?.name}`);
+    console.log(`[SoundFXEditor] Constructor called for ${this.getFileName()}`);
     
     // Default sound parameters (simplified)
     this.defaultParameters = {
@@ -46,7 +46,7 @@ class SoundFXEditor extends CompoundEditor {
     this.previewSource = null;
     
     // Load parameters from file if it's an existing resource
-    if (!isNewResource && file && file.size > 0) {
+    if (!isNewResource) {
       this.loadParametersFromFile();
     }
   }
@@ -364,38 +364,31 @@ class SoundFXEditor extends CompoundEditor {
   }
   
   // XML parameter serialization
-  parametersToXml(params) {
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<soundfx>
-  <waveform>${params.type}</waveform>
-  <frequency>${params.frequency}</frequency>
-  <duration>${params.duration}</duration>
-</soundfx>`;
+  parametersToJson(params) {
+    return JSON.stringify(params, null, 2);
   }
   
-  xmlToParameters(xmlString) {
+  jsonToParameters(jsonString) {
     try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xmlString, 'text/xml');
-      
+      const params = JSON.parse(jsonString);
       return {
-        type: doc.querySelector('waveform')?.textContent || 'sine',
-        frequency: parseFloat(doc.querySelector('frequency')?.textContent || '440'),
-        duration: parseFloat(doc.querySelector('duration')?.textContent || '1.0')
+        type: params.type || 'sine',
+        frequency: parseFloat(params.frequency) || 440,
+        duration: parseFloat(params.duration) || 1.0
       };
     } catch (error) {
-      console.error('[SoundFXEditor] XML parsing failed:', error);
+      console.error('[SoundFXEditor] JSON parsing failed:', error);
       return { ...this.defaultParameters };
     }
   }
   
   getContent() {
-    return this.parametersToXml(this.parameters);
+    return this.parametersToJson(this.parameters);
   }
   
   setContent(content) {
     try {
-      this.parameters = this.xmlToParameters(content);
+      this.parameters = this.jsonToParameters(content);
       this.loadParametersIntoUI();
     } catch (error) {
       console.error('[SoundFXEditor] Failed to set content:', error);
@@ -587,10 +580,10 @@ class SoundFXEditor extends CompoundEditor {
   
   loadParametersFromFile() {
     try {
-      if (this.file && this.file.size > 0) {
+      if (this.path) {
         this.loadFileContent();
       } else {
-        console.log('[SoundFXEditor] No file content, using defaults');
+        console.log('[SoundFXEditor] No file path, using defaults');
         this.parameters = { ...this.defaultParameters };
       }
     } catch (error) {
@@ -599,15 +592,44 @@ class SoundFXEditor extends CompoundEditor {
     }
   }
   
+  async refreshContent() {
+    console.log(`[SoundFXEditor] Refreshing content for: ${this.path}`);
+    try {
+      // Reload the file content from storage
+      await this.loadFileContent();
+      console.log(`[SoundFXEditor] Successfully refreshed content for: ${this.path}`);
+    } catch (error) {
+      console.error(`[SoundFXEditor] Failed to refresh content for ${this.path}:`, error);
+    }
+  }
+  
   async loadFileContent() {
     try {
-      const text = await this.file.text();
-      if (text.trim()) {
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (!fileManager) {
+        throw new Error('FileManager not available');
+      }
+      
+      const content = await fileManager.loadFile(this.path);
+      console.log(`[SoundFXEditor] Raw content:`, content);
+      console.log(`[SoundFXEditor] Content type:`, typeof content);
+      
+      let text;
+      if (typeof content === 'object' && content !== null) {
+        text = content.content || content.fileContent || content.data;
+        console.log(`[SoundFXEditor] Extracted text:`, text, `(type: ${typeof text})`);
+      } else {
+        text = content;
+      }
+      
+      if (text && typeof text === 'string' && text.trim()) {
         console.log('[SoundFXEditor] Loading parameters from file content');
-        this.parameters = this.xmlToParameters(text);
+        this.parameters = this.jsonToParameters(text);
+        this.loadParametersIntoUI();
       } else {
         console.log('[SoundFXEditor] Empty file, using defaults');
         this.parameters = { ...this.defaultParameters };
+        this.loadParametersIntoUI();
       }
       
       // Update waveform preview after loading parameters
@@ -650,6 +672,52 @@ class SoundFXEditor extends CompoundEditor {
     if (super.cleanup) {
       super.cleanup();
     }
+  }
+
+  // Static methods for creation support
+  static getCreateIcon() {
+    return '🎵';
+  }
+
+  static getCreateLabel() {
+    return 'Sound FX';
+  }
+
+  static getDefaultFolder() {
+    return 'Resources/SFX';
+  }
+
+  static createNew() {
+    // Return basic SFX structure
+    return JSON.stringify({
+      type: 'sound_fx',
+      version: '1.0',
+      samples: [],
+      envelope: {
+        attack: 0.1,
+        decay: 0.2,
+        sustain: 0.7,
+        release: 0.3
+      },
+      effects: {
+        reverb: 0,
+        delay: 0,
+        distortion: 0
+      }
+    }, null, 2);
+  }
+  
+  // CompoundEditor required methods
+  getSourceData() {
+    return this.getContent();
+  }
+  
+  async regenerateOutputs() {
+    // This would generate the WAV file from the current parameters
+    // For now, just mark that regeneration is complete
+    console.log('[SoundFXEditor] Regenerating outputs...');
+    this.needsRegeneration = false;
+    return Promise.resolve();
   }
 }
 

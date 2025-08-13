@@ -11,7 +11,7 @@ class TabManager {
     
     // Preview tab state
     this.previewPath = null;
-    this.previewFile = null;
+    this.previewFileName = null;
     this.previewViewer = null;
     this.previewReadOnly = false;
     
@@ -84,6 +84,9 @@ class TabManager {
   }
   
   setupEventListeners() {
+    // Subscribe to content refresh events to refresh build artifact tabs
+    this.setupContentRefreshListener();
+    
     // Tab clicking
     this.tabBar.addEventListener('click', (e) => {
       const tab = e.target.closest('.tab');
@@ -118,6 +121,107 @@ class TabManager {
     });
   }
   
+  setupContentRefreshListener() {
+    const trySubscribe = () => {
+      console.log('[TabManager] Attempting to subscribe to content.refresh.required events...');
+      
+      // Try global event bus first
+      if (window.eventBus && window.eventBus.on) {
+        window.eventBus.on('content.refresh.required', () => {
+          console.log('[TabManager] Received content.refresh.required event, refreshing build artifact tabs');
+          this.refreshBuildArtifactTabs();
+        });
+        console.log('[TabManager] Successfully subscribed to content.refresh.required via global eventBus');
+        return true;
+      }
+      
+      // Try GameEditor's event system as fallback
+      if (window.gameEditor && window.gameEditor.events && window.gameEditor.events.subscribe) {
+        window.gameEditor.events.subscribe('content.refresh.required', () => {
+          console.log('[TabManager] Received content.refresh.required event, refreshing build artifact tabs');
+          this.refreshBuildArtifactTabs();
+        });
+        console.log('[TabManager] Successfully subscribed to content.refresh.required via GameEditor.events');
+        return true;
+      }
+      
+      return false;
+    };
+
+    // Try immediate subscription
+    if (!trySubscribe()) {
+      console.log('[TabManager] Event systems not ready, retrying subscription...');
+      // Retry with multiple attempts
+      let attempts = 0;
+      const maxAttempts = 10;
+      const retryInterval = setInterval(() => {
+        attempts++;
+        if (trySubscribe()) {
+          clearInterval(retryInterval);
+        } else if (attempts >= maxAttempts) {
+          clearInterval(retryInterval);
+          console.warn(`[TabManager] Failed to subscribe to events after ${maxAttempts} attempts`);
+        }
+      }, 200);
+    }
+  }
+  
+  refreshBuildArtifactTabs() {
+    console.log('[TabManager] Refreshing tabs containing build artifacts...');
+    
+    let refreshedCount = 0;
+    
+    // Check dedicated tabs
+    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
+      if (this.isBuildArtifact(tabInfo.fullPath)) {
+        console.log(`[TabManager] Refreshing build artifact tab: ${tabId} (${tabInfo.fullPath})`);
+        this.refreshTabViewer(tabInfo);
+        refreshedCount++;
+      }
+    }
+    
+    // Check preview tab if it contains a build artifact
+    if (this.previewPath && this.isBuildArtifact(this.previewPath)) {
+      console.log(`[TabManager] Refreshing build artifact in preview: ${this.previewPath}`);
+      this.refreshPreviewViewer();
+      refreshedCount++;
+    }
+    
+    console.log(`[TabManager] Refreshed ${refreshedCount} tabs containing build artifacts`);
+  }
+  
+  isBuildArtifact(filePath) {
+    if (!filePath) return false;
+    // Check if the file path indicates it's a build artifact
+    return filePath.startsWith('build/') || filePath.startsWith('Build/');
+  }
+  
+  refreshTabViewer(tabInfo) {
+    try {
+      if (tabInfo.viewer && typeof tabInfo.viewer.refreshContent === 'function') {
+        console.log(`[TabManager] Calling refreshContent on viewer for ${tabInfo.fullPath}`);
+        tabInfo.viewer.refreshContent();
+      } else {
+        console.log(`[TabManager] Viewer for ${tabInfo.fullPath} does not have refreshContent method`);
+      }
+    } catch (error) {
+      console.error(`[TabManager] Error refreshing viewer for ${tabInfo.fullPath}:`, error);
+    }
+  }
+  
+  refreshPreviewViewer() {
+    try {
+      if (this.previewViewer && typeof this.previewViewer.refreshContent === 'function') {
+        console.log(`[TabManager] Calling refreshContent on preview viewer for ${this.previewPath}`);
+        this.previewViewer.refreshContent();
+      } else {
+        console.log(`[TabManager] Preview viewer for ${this.previewPath} does not have refreshContent method`);
+      }
+    } catch (error) {
+      console.error(`[TabManager] Error refreshing preview viewer for ${this.previewPath}:`, error);
+    }
+  }
+
   // MAIN PUBLIC INTERFACE - Atomic operations
   
   /**
@@ -126,7 +230,7 @@ class TabManager {
    * @param {File} file - File object
    * @param {Object} options - { isReadOnly: boolean }
    */
-  async openInPreview(fullPath, file, options = {}) {
+  async openInPreview(fullPath, file = null, options = {}) {
     console.log(`[TabManager] openInPreview: ${fullPath}`);
     
     // Check if already open in any tab
@@ -140,8 +244,8 @@ class TabManager {
     }
     
     console.log(`[TabManager] File not found in existing tabs, opening in preview`);
-    // Open in preview tab
-    return await this._openInPreviewTab(fullPath, file, options);
+    // Open in preview tab (file parameter is now ignored, we load from storage)
+    return await this._openInPreviewTab(fullPath, null, options);
   }
   
   /**
@@ -150,7 +254,7 @@ class TabManager {
    * @param {File} file - File object
    * @param {Object} options - { isReadOnly: boolean, forceNew: boolean }
    */
-  async openInTab(fullPath, file, options = {}) {
+  async openInTab(fullPath, file = null, options = {}) {
     console.log(`[TabManager] openInTab: ${fullPath}`);
     
     // Check if already open in any tab (unless forcing new)
@@ -169,8 +273,8 @@ class TabManager {
       }
     }
     
-    // Create new dedicated tab
-    return await this._createDedicatedTab(fullPath, file, options);
+    // Create new dedicated tab (file parameter is now ignored, we load from storage)
+    return await this._createDedicatedTab(fullPath, null, options);
   }
   
   // INTERNAL IMPLEMENTATION
@@ -199,15 +303,18 @@ class TabManager {
     return null;
   }
   
-  async _openInPreviewTab(fullPath, file, options = {}) {
+  async _openInPreviewTab(fullPath, file = null, options = {}) {
     const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
     if (!previewPane) return null;
+    
+    // Extract filename from path
+    const fileName = fullPath.split('/').pop() || fullPath.split('\\').pop();
     
     // Cleanup previous preview FIRST - before any rendering starts
     this._cleanupPreview();
     
-    // Create viewer/editor
-    const viewerInfo = await this._createViewer(fullPath, file);
+    // Create viewer/editor (now loads from storage)
+    const viewerInfo = await this._createViewer(fullPath, fileName);
     if (!viewerInfo) {
       this._hidePreviewWithAnimation();
       return null;
@@ -218,7 +325,7 @@ class TabManager {
     previewPane.appendChild(viewerInfo.element);
     
     this.previewPath = fullPath;
-    this.previewFile = file;
+    this.previewFileName = fileName; // Store filename instead of file object
     this.previewViewer = viewerInfo.viewer;
     this.previewReadOnly = options.isReadOnly || false;
     
@@ -230,7 +337,7 @@ class TabManager {
     if (previewTab) {
       const title = previewTab.querySelector('.tab-title');
       const readOnlyIndicator = this.previewReadOnly ? ' 🔒' : '';
-      title.textContent = `Preview: ${file.name}${readOnlyIndicator}`;
+      title.textContent = `Preview: ${fileName}${readOnlyIndicator}`;
     }
     
     this.switchToTab('preview');
@@ -243,11 +350,14 @@ class TabManager {
     return 'preview';
   }
   
-  async _createDedicatedTab(fullPath, file, options = {}) {
+  async _createDedicatedTab(fullPath, file = null, options = {}) {
     const tabId = `tab-${this.nextTabId++}`;
     
-    // Create viewer/editor
-    const viewerInfo = await this._createViewer(fullPath, file);
+    // Extract filename from path
+    const fileName = fullPath.split('/').pop() || fullPath.split('\\').pop();
+    
+    // Create viewer/editor (now loads from storage)
+    const viewerInfo = await this._createViewer(fullPath, fileName);
     if (!viewerInfo) return null;
     
     // Create tab element
@@ -260,7 +370,7 @@ class TabManager {
     
     const readOnlyIndicator = options.isReadOnly ? ' 🔒' : '';
     tabElement.innerHTML = `
-      <span class="tab-title">${file.name}${readOnlyIndicator}</span>
+      <span class="tab-title">${fileName}${readOnlyIndicator}</span>
       <span class="tab-close" data-action="close">×</span>
     `;
     
@@ -274,11 +384,11 @@ class TabManager {
     this.tabBar.appendChild(tabElement);
     this.tabContentArea.appendChild(tabPane);
     
-    // Store tab info
+    // Store tab info (file parameter is deprecated, we use storage)
     const tabInfo = {
       tabId,
       fullPath,
-      file,
+      fileName,
       viewer: viewerInfo.viewer,
       element: tabElement,
       pane: tabPane,
@@ -296,7 +406,7 @@ class TabManager {
   }
   
   async _promotePreviewToTab() {
-    if (!this.previewViewer || !this.previewFile || !this.previewPath) {
+    if (!this.previewViewer || !this.previewFileName || !this.previewPath) {
       console.warn('[TabManager] No preview content to promote');
       return null;
     }
@@ -306,8 +416,8 @@ class TabManager {
     // Create new dedicated tab with a NEW viewer instance (don't move the preview viewer)
     const tabId = `tab-${this.nextTabId++}`;
     
-    // Create a new viewer instance for the dedicated tab
-    const viewerInfo = await this._createViewer(this.previewPath, this.previewFile);
+    // Create a new viewer instance for the dedicated tab (loads from storage)
+    const viewerInfo = await this._createViewer(this.previewPath, this.previewFileName);
     if (!viewerInfo) {
       console.error('[TabManager] Failed to create viewer for promoted tab');
       return null;
@@ -323,7 +433,7 @@ class TabManager {
     
     const readOnlyIndicator = this.previewReadOnly ? ' 🔒' : '';
     tabElement.innerHTML = `
-      <span class="tab-title">${this.previewFile.name}${readOnlyIndicator}</span>
+      <span class="tab-title">${this.previewFileName}${readOnlyIndicator}</span>
       <span class="tab-close" data-action="close">×</span>
     `;
     
@@ -340,7 +450,7 @@ class TabManager {
     const tabInfo = {
       tabId,
       fullPath: this.previewPath,
-      file: this.previewFile,
+      fileName: this.previewFileName,
       viewer: viewerInfo.viewer,
       element: tabElement,
       pane: tabPane,
@@ -360,26 +470,80 @@ class TabManager {
     return tabId;
   }
   
-  async _createViewer(fullPath, file) {
+  async _createViewer(fullPath, fileName = null) {
     // Ensure we have editors registered
     this.ensureEditorsRegistered();
     
-    const ext = this._getFileExtension(file.name);
+    // Extract filename from path if not provided
+    if (!fileName) {
+      fileName = fullPath.split('/').pop() || fullPath.split('\\').pop();
+    }
     
-    // Try to create editor first
+    const ext = this._getFileExtension(fileName);
+    console.log(`[TabManager] Creating viewer for file: ${fileName}, extension: ${ext}, path: ${fullPath}`);
+    
+    // Load content using FileManager
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager) {
+      console.error('[TabManager] FileManager not available');
+      return null;
+    }
+    
+    const fileObj = await fileManager.loadFile(fullPath);
+    if (!fileObj) {
+      console.error(`[TabManager] File not found: ${fullPath}`);
+      return null;
+    }
+    
+    console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
+    
+    // Try to use new component registry first
+    if (window.serviceContainer) {
+      const componentRegistry = window.serviceContainer.get('componentRegistry');
+      if (componentRegistry) {
+        console.log(`[TabManager] Using component registry to find editor for ${fullPath}`);
+        const editorInfo = componentRegistry.getEditorForFile(fullPath);
+        if (editorInfo) {
+          try {
+            console.log(`[TabManager] Found editor in component registry: ${editorInfo.name} (${editorInfo.editorClass.name})`);
+            // Files from storage are never "new" resources unless marked as such
+            const isNewResource = fileObj.isNew || false;
+            console.log(`[TabManager] Creating editor with path: ${fullPath}, isNewResource: ${isNewResource}`);
+            const editor = new editorInfo.editorClass(fullPath, isNewResource);
+            return {
+              type: 'editor',
+              viewer: editor,
+              element: editor.getElement()
+            };
+          } catch (error) {
+            console.error(`[TabManager] Failed to create editor for ${fileName}:`, error);
+          }
+        } else {
+          console.log(`[TabManager] No editor found in component registry for ${fullPath}`);
+        }
+      } else {
+        console.log(`[TabManager] Component registry not available`);
+      }
+    } else {
+      console.log(`[TabManager] Service container not available`);
+    }
+    
+    // Fall back to old editor registry
     const editorClass = this.editorRegistry.get(ext);
     if (editorClass) {
       try {
-        console.log(`[TabManager] Creating editor for ${ext}: ${editorClass.name}`);
-        const editor = new editorClass(file, fullPath, false);
+        console.log(`[TabManager] Creating legacy editor for ${ext}: ${editorClass.name}`);
+        const editor = new editorClass(fileObj, fullPath, fileObj.isNew || false);
         return {
           type: 'editor',
           viewer: editor,
           element: editor.getElement()
         };
       } catch (error) {
-        console.error(`[TabManager] Failed to create editor for ${file.name}:`, error);
+        console.error(`[TabManager] Failed to create legacy editor for ${fileName}:`, error);
       }
+    } else {
+      console.log(`[TabManager] No legacy editor found for ${ext}`);
     }
     
     // Fall back to viewers
@@ -392,7 +556,7 @@ class TabManager {
     }
     
     try {
-      const viewer = new (window.ViewerPlugins[viewerType])(file, fullPath);
+      const viewer = new (window.ViewerPlugins[viewerType])(fullPath);
       return {
         type: 'viewer',
         subtype: viewerType,
@@ -400,12 +564,16 @@ class TabManager {
         element: viewer.getElement()
       };
     } catch (error) {
-      console.error(`[TabManager] Failed to create viewer for ${file.name}:`, error);
+      console.error(`[TabManager] Failed to create viewer for ${fileName}:`, error);
       return null;
     }
   }
   
   _getFileExtension(filename) {
+    if (!filename) {
+      console.warn('[TabManager] _getFileExtension called with undefined filename');
+      return '';
+    }
     return filename.substring(filename.lastIndexOf('.')).toLowerCase();
   }
   
@@ -499,7 +667,7 @@ class TabManager {
     
     // Clear state FIRST to prevent any callbacks
     this.previewPath = null;
-    this.previewFile = null;
+    this.previewFileName = null;
     this.previewViewer = null;
     this.previewReadOnly = false;
     
@@ -627,7 +795,7 @@ class TabManager {
     
     // Switch to preview if this was active, but only if preview has content
     if (this.activeTabId === tabId) {
-      if (this.previewPath && this.previewFile) {
+      if (this.previewPath && this.previewFileName) {
         this.switchToTab('preview');
       } else {
         // No preview content, hide preview tab
@@ -714,7 +882,7 @@ class TabManager {
       return {
         tabId: 'preview',
         fullPath: this.previewPath,
-        file: this.previewFile,
+        fileName: this.previewFileName,
         viewer: this.previewViewer,
         isReadOnly: this.previewReadOnly
       };
@@ -730,7 +898,7 @@ class TabManager {
       allTabs.push({
         tabId: 'preview',
         fullPath: this.previewPath,
-        file: this.previewFile,
+        fileName: this.previewFileName,
         viewer: this.previewViewer,
         isReadOnly: this.previewReadOnly
       });
@@ -810,8 +978,9 @@ class TabManager {
     
     // Check preview tab
     if (this.previewViewer === viewer) {
-      this.previewFile = newFile;
-      console.log(`[TabManager] Updated file reference for preview tab: ${newFile.name}`);
+      // For storage-first approach, we don't store File objects
+      // The filename will be updated when the tab is refreshed from storage
+      console.log(`[TabManager] Preview viewer updated, file changes will be reflected from storage`);
     }
   }
   
@@ -825,13 +994,9 @@ class TabManager {
         // Update the tab info
         tabInfo.fullPath = newPath;
         
-        // Create new file object with updated name
-        if (tabInfo.file && newFileName) {
-          const newFile = new File([tabInfo.file], newFileName, {
-            type: tabInfo.file.type,
-            lastModified: tabInfo.file.lastModified || Date.now()
-          });
-          tabInfo.file = newFile;
+        // Update filename (no longer storing File objects)
+        if (newFileName) {
+          tabInfo.fileName = newFileName;
         }
         
         // Update tab title
@@ -862,12 +1027,8 @@ class TabManager {
     if (this.previewPath === oldPath) {
       this.previewPath = newPath;
       
-      if (this.previewFile && newFileName) {
-        const newFile = new File([this.previewFile], newFileName, {
-          type: this.previewFile.type,
-          lastModified: this.previewFile.lastModified || Date.now()
-        });
-        this.previewFile = newFile;
+      if (newFileName) {
+        this.previewFileName = newFileName;
       }
       
       // Update preview tab title
@@ -1011,6 +1172,32 @@ class TabManager {
   
   // SAVE OPERATIONS
   
+  getUnsavedTabs() {
+    const unsavedTabs = [];
+    
+    // Check preview tab
+    if (this.previewViewer && typeof this.previewViewer.isModified === 'function' && this.previewViewer.isModified()) {
+      unsavedTabs.push({
+        id: 'preview',
+        name: 'Preview',
+        viewer: this.previewViewer
+      });
+    }
+    
+    // Check all dedicated tabs
+    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
+      if (tabInfo.viewer && typeof tabInfo.viewer.isModified === 'function' && tabInfo.viewer.isModified()) {
+        unsavedTabs.push({
+          id: tabId,
+          name: tabInfo.name || tabId,
+          viewer: tabInfo.viewer
+        });
+      }
+    }
+    
+    return unsavedTabs;
+  }
+
   async saveAllOpenTabs() {
     console.log('[TabManager] Saving all open tabs...');
     const savePromises = [];
@@ -1066,24 +1253,15 @@ class TabManager {
   // BUILD FILES MANAGEMENT
   
   async refreshBuildTabs(buildFiles) {
-    console.log('[TabManager] Refreshing build tabs with', buildFiles?.length || 0, 'files');
+    console.log('[TabManager] refreshBuildTabs called - delegating to refreshBuildArtifactTabs');
     
-    if (!buildFiles || !Array.isArray(buildFiles)) {
-      console.warn('[TabManager] No build files provided to refreshBuildTabs');
-      return;
+    // Log the build files for reference
+    if (buildFiles && Array.isArray(buildFiles)) {
+      console.log('[TabManager] Build files received:', buildFiles.map(f => f.path || f.name));
     }
     
-    // For now, just log the build files - we can enhance this later to:
-    // 1. Update project explorer to show build files with different styling
-    // 2. Ensure build files don't conflict with resource files in tab highlighting
-    // 3. Maybe add special handling for build-only tabs
-    
-    console.log('[TabManager] Build files received:', buildFiles.map(f => f.path || f.name));
-    
-    // Emit event to notify other components about build completion
-    document.dispatchEvent(new CustomEvent('buildTabsRefreshed', {
-      detail: { buildFiles }
-    }));
+    // Use the new centralized refresh mechanism
+    this.refreshBuildArtifactTabs();
   }
 
   // Legacy property accessors
@@ -1095,9 +1273,9 @@ class TabManager {
     if (this.previewPath) {
       const previewTabData = {
         viewer: this.previewViewer,
-        file: this.previewFile,
+        fileName: this.previewFileName,
         filePath: this.previewPath,
-        filename: this.previewFile?.name,
+        filename: this.previewFileName,
         isReadOnly: this.previewReadOnly
       };
       legacyTabs.set('preview', previewTabData);
@@ -1107,15 +1285,48 @@ class TabManager {
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
       const legacyTabData = {
         viewer: tabInfo.viewer,
-        file: tabInfo.file,
+        fileName: tabInfo.fileName,
         filePath: tabInfo.fullPath,
-        filename: tabInfo.file?.name,
+        filename: tabInfo.fileName,
         isReadOnly: tabInfo.isReadOnly
       };
       legacyTabs.set(tabId, legacyTabData);
     }
     
     return legacyTabs;
+  }
+
+  // Helper method to determine if file content is default/new
+  _isDefaultContent(file, editorInfo) {
+    if (!file || file.size === 0) return true;
+    
+    // Check if the editor has a createNew method and compare content
+    if (editorInfo.editorClass.createNew) {
+      try {
+        const defaultContent = editorInfo.editorClass.createNew();
+        // For binary files or when we can't compare, assume it's new if very small
+        return file.size <= (defaultContent ? defaultContent.length + 50 : 100);
+      } catch (e) {
+        return file.size < 100; // Fallback for small files
+      }
+    }
+    
+    return file.size < 100; // Default assumption for small files
+  }
+  
+  closeAllTabs() {
+    console.log('[TabManager] Closing all tabs...');
+    
+    // Close all dedicated tabs
+    const tabIds = Array.from(this.dedicatedTabs.keys());
+    for (const tabId of tabIds) {
+      this.closeTab(tabId);
+    }
+    
+    // Close preview tab
+    this.closePreviewTab();
+    
+    console.log('[TabManager] All tabs closed');
   }
 }
 

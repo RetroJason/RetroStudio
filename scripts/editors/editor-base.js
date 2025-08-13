@@ -2,9 +2,9 @@
 // Base class for all resource editors (extends ViewerBase)
 
 class EditorBase extends ViewerBase {
-  constructor(file, path, isNewResource = false, templateOptions = null) {
+  constructor(path, isNewResource = false, templateOptions = null) {
     console.log(`[EditorBase] Constructor called with isNewResource: ${isNewResource}`);
-    super(file, path);
+    super(path);
     this.isNewResource = isNewResource;
     console.log(`[EditorBase] Set this.isNewResource to: ${this.isNewResource}`);
     this.isDirty = false;
@@ -16,6 +16,12 @@ class EditorBase extends ViewerBase {
     
     // Setup save handlers
     this.setupSaveHandlers();
+  }
+  
+  // Helper method to get filename from path
+  getFileName() {
+    if (!this.path) return 'untitled';
+    return this.path.split('/').pop() || this.path.split('\\').pop() || 'untitled';
   }
   
   setupSaveHandlers() {
@@ -102,7 +108,7 @@ class EditorBase extends ViewerBase {
   async save() {
     try {
       const content = this.getContent();
-      console.log(`[EditorBase] Saving ${this.file.name}, content length: ${content.length}, isNewResource: ${this.isNewResource}`);
+      console.log(`[EditorBase] Saving ${this.path}, content length: ${content.length}, isNewResource: ${this.isNewResource}`);
       
       if (this.isNewResource) {
         // New resource - need to save to project
@@ -113,7 +119,7 @@ class EditorBase extends ViewerBase {
       }
       
       this.markClean();
-      console.log(`[EditorBase] Saved ${this.file.name}`);
+      console.log(`[EditorBase] Saved ${this.path}`);
     } catch (error) {
       console.error('[EditorBase] Save failed:', error);
       // Keep the tab dirty since save failed
@@ -123,20 +129,17 @@ class EditorBase extends ViewerBase {
   
   // Save as new file
   async saveAs() {
-    const newName = prompt('Enter new filename:', this.file.name);
+    const newName = prompt('Enter new filename:', this.getFileName());
     if (!newName) return;
     
     try {
       const content = this.getContent();
       
-      // Create new file object
-      const newFile = new File([content], newName, { type: 'text/plain' });
-      
       // Save as new resource
       await this.saveNewResource(content, newName);
       
-      // Update editor to point to new file
-      this.file = newFile;
+      // Update editor to point to new path
+      // The new path would be updated in saveNewResource
       this.path = newName;
       this.isNewResource = false;
       this.markClean();
@@ -151,7 +154,7 @@ class EditorBase extends ViewerBase {
   async saveNewResource(content, filename = null) {
     // For now, we'll create a blob and simulate saving
     // In a real implementation, this would save to the project structure
-    const name = filename || this.file.name;
+    const name = filename || this.getFileName();
     const blob = new Blob([content], { type: 'text/plain' });
     const file = new File([blob], name, { type: 'text/plain' });
     
@@ -165,6 +168,8 @@ class EditorBase extends ViewerBase {
       targetPath = 'Resources/Music';
     } else if (extension === '.wav' || extension === '.sfx') {
       targetPath = 'Resources/SFX';
+    } else if (['.pal', '.act', '.aco'].includes(extension)) {
+      targetPath = 'Resources/Palettes';
     }
     
     const fullPath = `${targetPath}/${name}`;
@@ -185,11 +190,9 @@ class EditorBase extends ViewerBase {
     
     // Add to project explorer and update the file in the project structure
     if (window.gameEditor && window.gameEditor.projectExplorer) {
-      window.gameEditor.projectExplorer.addFileToProject(file, targetPath);
-      window.gameEditor.projectExplorer.renderTree(); // Refresh the tree view
+      window.gameEditor.projectExplorer.addFileToProject(file, targetPath, true); // Skip auto-open during save
     }
     
-    this.file = file;
     this.path = fullPath;
     this.isNewResource = false;
     
@@ -200,25 +203,31 @@ class EditorBase extends ViewerBase {
   }
   
   async saveExistingResource(content) {
-    // Create updated file with new content
-    const blob = new Blob([content], { type: 'text/plain' });
-    const file = new File([blob], this.file.name, { type: 'text/plain' });
-    
     try {
-      // Save to persistent storage using the file I/O service
-      if (window.fileIOService && this.path) {
-        await window.fileIOService.saveFile(this.path, content, {
-          type: this.getFileExtension(this.file.name),
+      // Use FileManager to save content
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (fileManager && this.path) {
+        await fileManager.saveFile(this.path, content, {
+          type: this.getFileExtension(this.path),
           editor: this.constructor.name
         });
         console.log(`[EditorBase] Saved to persistent storage: ${this.path}`);
+      } else {
+        // Fallback to direct fileIOService
+        if (window.fileIOService && this.path) {
+          await window.fileIOService.saveFile(this.path, content, {
+            type: this.getFileExtension(this.path),
+            editor: this.constructor.name
+          });
+          console.log(`[EditorBase] Saved to persistent storage: ${this.path}`);
+        }
       }
     } catch (error) {
       console.warn(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
-      // Continue with in-memory storage as fallback
+      throw error;
     }
     
-    // Update the file in the project structure
+    // Update the file in the project structure if needed
     if (window.gameEditor && window.gameEditor.projectExplorer && this.path) {
       const pathParts = this.path.split('/');
       const fileName = pathParts.pop();
@@ -234,16 +243,14 @@ class EditorBase extends ViewerBase {
         }
       }
       
-      // Update the file
+      // Update the file metadata if it exists
       if (current[fileName]) {
-        current[fileName].file = file;
-        current[fileName].lastModified = file.lastModified;
+        current[fileName].lastModified = Date.now();
         console.log(`[EditorBase] Updated existing file: ${fileName} in ${folderPath}`);
       }
     }
     
-    this.file = file;
-    console.log(`[EditorBase] Updated existing resource: ${this.file.name}`);
+    console.log(`[EditorBase] Updated existing resource: ${this.getFileName()}`);
     
     // File updated - UI will sync via events
   }
@@ -251,7 +258,7 @@ class EditorBase extends ViewerBase {
   // Check if editor can be closed (prompt if unsaved changes)
   canClose() {
     if (this.hasUnsavedChanges) {
-      const result = confirm(`${this.file.name} has unsaved changes. Close without saving?`);
+      const result = confirm(`${this.getFileName()} has unsaved changes. Close without saving?`);
       return result;
     }
     return true;
@@ -271,7 +278,7 @@ class EditorBase extends ViewerBase {
   destroy() {
     // Check for unsaved changes before destroying
     if (this.hasUnsavedChanges) {
-      const save = confirm(`${this.file.name} has unsaved changes. Save before closing?`);
+      const save = confirm(`${this.getFileName()} has unsaved changes. Save before closing?`);
       if (save) {
         this.save();
       }

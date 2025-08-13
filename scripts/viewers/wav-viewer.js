@@ -2,8 +2,8 @@
 // Viewer plugin for WAV files
 
 class WavViewer extends ViewerBase {
-  constructor(file, path) {
-    super(file, path);
+  constructor(path) {
+    super(path);
     this.audioResource = null;
     this.playButton = null;
     this.volumeSlider = null;
@@ -13,12 +13,58 @@ class WavViewer extends ViewerBase {
     // Don't load audio resource immediately - wait for DOM to be ready
   }
   
+  // Note: Event subscription is now handled centrally by TabManager
+  setupEventListeners() {
+    // This method is kept for compatibility but event subscription 
+    // is now handled centrally by the TabManager
+  }
+  
+  async refreshContent() {
+    try {
+      console.log(`[WavViewer] Starting refresh for ${this.getFileName()}, current path: ${this.path}`);
+      
+      // Clear any cached audio resources
+      if (this.audioResource) {
+        console.log(`[WavViewer] Clearing cached audio resource for ${this.getFileName()}, ID: ${this.audioResource.id}`);
+        
+        // Stop any playing audio
+        this.stopAllPlayback();
+        
+        // Clear the resource from the audio engine
+        if (window.gameEditor && window.gameEditor.audioEngine) {
+          window.gameEditor.audioEngine.unloadResource(this.audioResource.id);
+          console.log(`[WavViewer] Unloaded resource ${this.audioResource.id} from audio engine`);
+        }
+        
+        this.audioResource = null;
+      }
+      
+      // Force reload the audio resource
+      console.log(`[WavViewer] Force reloading audio resource for ${this.getFileName()}`);
+      await this.loadAudioResource(true);
+      
+      // Redraw the waveform
+      console.log(`[WavViewer] Redrawing waveform for ${this.getFileName()}`);
+      this.drawWaveform();
+      
+    } catch (error) {
+      console.error(`[WavViewer] Error refreshing content for ${this.getFileName()}:`, error);
+    }
+  }
+  
+  getFileName() {
+    return this.path ? this.path.split('/').pop() || this.path.split('\\').pop() : 'Unknown';
+  }
+  
   createBody(bodyContainer) {
+    // Extract filename from path
+    const fileName = this.getFileName();
+    
     bodyContainer.innerHTML = `
       <div class="wav-player">
         <!-- Song Title -->
         <div class="song-title">
-          <h3 id="songTitle">${this.file.name}</h3>
+          <h3 id="songTitle">${fileName}</h3>
         </div>
         
         <!-- Waveform Display -->
@@ -136,22 +182,25 @@ class WavViewer extends ViewerBase {
     this.isLooping = isLooping;
   }
   
-  async loadAudioResource() {
+  async loadAudioResource(forceReload = false) {
     if (!window.gameEditor) {
       this.updateStatus('Audio engine not available');
       return;
     }
 
     try {
-      console.log('[WavViewer] Loading audio resource for:', this.file.name);
+      console.log('[WavViewer] Loading audio resource for:', this.getFileName(), forceReload ? '(forced reload)' : '');
       
-      // First try to get already loaded resource
-      let resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+      // First try to get already loaded resource, unless forcing reload
+      let resourceId = null;
+      if (!forceReload) {
+        resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+      }
       
-      if (resourceId) {
+      if (resourceId && !forceReload) {
         // File already loaded
         this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[WavViewer] File already loaded: ${this.file.name}`);
+        console.log(`[WavViewer] File already loaded: ${this.getFileName()}`);
         this.updateStatus('Loaded');
         this.updateMetadata();
         this.updateDurationDisplay(); // Ensure duration is shown
@@ -165,11 +214,11 @@ class WavViewer extends ViewerBase {
       console.log('[WavViewer] File not loaded, loading on demand...');
       this.updateStatus('Loading...');
       
-      resourceId = await window.gameEditor.loadAudioFileOnDemand(this.file.name);
+      resourceId = await window.gameEditor.loadAudioFileOnDemand(this.getFileName(), forceReload);
       
       if (resourceId) {
         this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[WavViewer] Loaded resource for: ${this.file.name}`);
+        console.log(`[WavViewer] Loaded resource for: ${this.getFileName()}`);
         
         this.updateStatus('Loaded');
         this.updateMetadata();
@@ -256,7 +305,29 @@ class WavViewer extends ViewerBase {
   }
   
   drawWaveform() {
-    console.log('[WavViewer] drawWaveform called');
+    // Don't draw if we're cleaning up
+    if (this.isCleaningUp) {
+      return;
+    }
+    
+    // Debounce to prevent excessive logging and redrawing
+    if (this.drawWaveformTimeout) {
+      clearTimeout(this.drawWaveformTimeout);
+    }
+    
+    this.drawWaveformTimeout = setTimeout(() => {
+      if (!this.isCleaningUp) { // Double-check before drawing
+        this._drawWaveformInternal();
+      }
+    }, 16); // ~60fps
+  }
+  
+  _drawWaveformInternal() {
+    // Only log if not already logged recently
+    if (!this.lastDrawTime || Date.now() - this.lastDrawTime > 1000) {
+      console.log('[WavViewer] drawWaveform called');
+      this.lastDrawTime = Date.now();
+    }
     
     // Refresh canvas reference in case it was lost
     if (!this.waveformCanvas) {
@@ -267,7 +338,9 @@ class WavViewer extends ViewerBase {
       } else {
         this.waveformCanvas = document.querySelector('#waveformCanvas');
       }
-      console.log('[WavViewer] Refreshed canvas reference:', !!this.waveformCanvas);
+      if (!this.lastDrawTime || Date.now() - this.lastDrawTime > 1000) {
+        console.log('[WavViewer] Refreshed canvas reference:', !!this.waveformCanvas);
+      }
     }
     
     if (!this.waveformCanvas) {
@@ -482,7 +555,7 @@ class WavViewer extends ViewerBase {
     console.log('[WavViewer] Restarting loop');
     
     try {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+      const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
       if (resourceId) {
         const volume = this.volumeControl ? this.volumeControl.getNormalizedValue() : 0.7;
         
@@ -515,7 +588,7 @@ class WavViewer extends ViewerBase {
       return;
     }
     
-    const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+    const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -576,7 +649,7 @@ class WavViewer extends ViewerBase {
   loseFocus() {
     // Stop any playing sounds when tab loses focus
     console.log('[WavViewer] loseFocus called - stopping all playback');
-    console.log('[WavViewer] file:', this.file?.name);
+    console.log('[WavViewer] file:', this.getFileName());
     
     try {
       this.stopAllPlayback();
@@ -588,7 +661,21 @@ class WavViewer extends ViewerBase {
   cleanup() {
     // Complete cleanup when viewer is being destroyed
     console.log('[WavViewer] Cleaning up WAV viewer');
+    this.isCleaningUp = true; // Flag to prevent operations during cleanup
+    
     try {
+      // Cancel any pending draw operations
+      if (this.drawWaveformTimeout) {
+        clearTimeout(this.drawWaveformTimeout);
+        this.drawWaveformTimeout = null;
+      }
+      
+      // Unsubscribe from events
+      if (this.refreshListener && window.gameEditor && window.gameEditor.events) {
+        window.gameEditor.events.unsubscribe('content.refresh.required', this.refreshListener);
+        this.refreshListener = null;
+      }
+      
       this.stopAllPlayback();
       
       // Clean up control objects to prevent DOM element leakage
@@ -638,7 +725,7 @@ class WavViewer extends ViewerBase {
     }
     
     try {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+      const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
       if (resourceId) {
         console.log('[WavViewer] Stopping all sounds for resource:', resourceId);
         // Stop all instances of this sound

@@ -19,7 +19,8 @@ class ComponentRegistry {
       icon, 
       editorClass, 
       priority = 10,
-      capabilities = []
+      capabilities = [],
+      canCreate = false
     } = editorInfo;
 
     // Validate required methods
@@ -33,7 +34,8 @@ class ComponentRegistry {
       icon,
       editorClass,
       priority,
-      capabilities
+      capabilities,
+      canCreate
     });
 
     // Register file associations
@@ -112,8 +114,8 @@ class ComponentRegistry {
   }
 
   // Get best editor for file
-  getEditorForFile(file) {
-    const extension = this.getFileExtension(file.name);
+  getEditorForFile(filePath) {
+    const extension = this.getFileExtension(filePath);
     const associations = this.fileAssociations.get(extension);
     
     if (associations && associations.editors.length > 0) {
@@ -125,8 +127,8 @@ class ComponentRegistry {
   }
 
   // Get best viewer for file
-  getViewerForFile(file) {
-    const extension = this.getFileExtension(file.name);
+  getViewerForFile(filePath) {
+    const extension = this.getFileExtension(filePath);
     const associations = this.fileAssociations.get(extension);
     
     if (associations && associations.viewers.length > 0) {
@@ -135,7 +137,7 @@ class ComponentRegistry {
     }
     
     // Fallback to hex viewer
-    return this.viewers.get('hex');
+    return this.viewers.get('hex-viewer');
   }
 
   // Create editor instance
@@ -160,6 +162,17 @@ class ComponentRegistry {
     return Array.from(this.viewers.values());
   }
 
+  // Get all editors that can create new files
+  getCreatableEditors() {
+    const creatableEditors = Array.from(this.editors.values())
+      .filter(editor => editor.canCreate);
+    
+    console.log(`[ComponentRegistry] Found ${creatableEditors.length} creatable editors:`, 
+                creatableEditors.map(e => e.name));
+    
+    return creatableEditors;
+  }
+
   // Get all tools by category
   getToolsByCategory(category) {
     return Array.from(this.tools.values())
@@ -167,9 +180,9 @@ class ComponentRegistry {
   }
 
   // Utility methods
-  getFileExtension(filename) {
-    const dotIndex = filename.lastIndexOf('.');
-    return dotIndex >= 0 ? filename.substring(dotIndex).toLowerCase() : '';
+  getFileExtension(filePath) {
+    const dotIndex = filePath.lastIndexOf('.');
+    return dotIndex >= 0 ? filePath.substring(dotIndex).toLowerCase() : '';
   }
 
   validateComponent(componentClass, type) {
