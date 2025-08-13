@@ -56,12 +56,42 @@ class HexViewer extends ViewerBase {
     try {
       if (statusElement) statusElement.textContent = 'Loading file data...';
 
-      // Read file data
-      const arrayBuffer = await this.file.arrayBuffer();
+      let arrayBuffer;
+      
+      // Handle different file data types
+      if (this.file && typeof this.file.arrayBuffer === 'function') {
+        // Standard File object
+        arrayBuffer = await this.file.arrayBuffer();
+      } else if (this.file && this.file.fileContent) {
+        // RetroStudio file object with fileContent
+        const content = this.file.fileContent;
+        if (typeof content === 'string') {
+          // Convert string to ArrayBuffer
+          const encoder = new TextEncoder();
+          arrayBuffer = encoder.encode(content).buffer;
+        } else if (content instanceof ArrayBuffer) {
+          arrayBuffer = content;
+        } else if (content instanceof Uint8Array) {
+          arrayBuffer = content.buffer;
+        } else {
+          // Try to convert to JSON string then to ArrayBuffer
+          const jsonString = JSON.stringify(content);
+          const encoder = new TextEncoder();
+          arrayBuffer = encoder.encode(jsonString).buffer;
+        }
+      } else if (typeof this.file === 'string') {
+        // String content
+        const encoder = new TextEncoder();
+        arrayBuffer = encoder.encode(this.file).buffer;
+      } else {
+        throw new Error('Unsupported file data format');
+      }
+
       this.fileData = new Uint8Array(arrayBuffer);
       this.isLoaded = true;
 
-      console.log(`[HexViewer] Loaded ${this.fileData.length} bytes from ${this.file.name}`);
+      const fileName = this.file?.name || this.file?.filename || 'Unknown file';
+      console.log(`[HexViewer] Loaded ${this.fileData.length} bytes from ${fileName}`);
       
       // Show hex content and render
       const hexContent = this.element.querySelector('#hexContent');

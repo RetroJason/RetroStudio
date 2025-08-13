@@ -1,0 +1,3 @@
+[submodule "scripts/audio/external/sfxr"]
+	path = scripts/audio/external/sfxr
+	url = https://github.com/chr15m/jsfxr.git
