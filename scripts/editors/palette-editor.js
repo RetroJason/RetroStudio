@@ -22,11 +22,15 @@ class PaletteEditor extends EditorBase {
     
     this.initializeEditor();
     this.setupEventListeners();
+    // Apply read-only UI if already flagged
+    if (this.readOnly) {
+      this._applyReadOnlyPalette();
+    }
   }
 
   initializeEditor() {
     this.container = document.createElement('div');
-    this.container.className = 'palette-editor';
+  this.container.className = 'palette-editor';
     this.container.innerHTML = `
       <div class="palette-toolbar">
         <div class="palette-actions">
@@ -122,6 +126,10 @@ class PaletteEditor extends EditorBase {
 
     this.setupUIReferences();
     this.loadPalette();
+
+  // Align EditorBase root to this container so base read-only overlay/styling works
+  this.element = this.container;
+  this.element.classList.add('viewer-content', 'editor-content');
   }
 
   setupUIReferences() {
@@ -171,6 +179,32 @@ class PaletteEditor extends EditorBase {
     // Initialize color wheel and lightness bar
     this.initializeColorWheel();
     this.initializeLightnessBar();
+  }
+
+  // Toggle read-only UI state for palette editor
+  setReadOnly(isReadOnly) {
+    super.setReadOnly(isReadOnly);
+    this._applyReadOnlyPalette();
+  }
+
+  _applyReadOnlyPalette() {
+    const disableEl = (el, disabled = this.readOnly) => { if (el) el.disabled = !!disabled; };
+    // Disable mutating actions; allow export even in read-only
+    disableEl(this.randomizeBtn);
+    disableEl(this.sortBtn);
+    disableEl(this.stealBtn);
+    // Inputs
+    disableEl(this.hexInput);
+    disableEl(this.colorPicker);
+    if (this.rgbSliders) Object.values(this.rgbSliders).forEach(el => disableEl(el));
+    if (this.rgbInputs) Object.values(this.rgbInputs).forEach(el => disableEl(el));
+    if (this.hslSliders) Object.values(this.hslSliders).forEach(el => disableEl(el));
+    if (this.hslInputs) Object.values(this.hslInputs).forEach(el => disableEl(el));
+    // Canvases: block pointer interactions
+    if (this.colorWheel) this.colorWheel.style.pointerEvents = this.readOnly ? 'none' : '';
+    if (this.lightnessBar) this.lightnessBar.style.pointerEvents = this.readOnly ? 'none' : '';
+    // Container class for styling
+    if (this.container) this.container.classList.toggle('readonly', this.readOnly);
   }
   
   initializeColorWheel() {
@@ -230,6 +264,7 @@ class PaletteEditor extends EditorBase {
     let isDragging = false;
     
     const handleColorWheelInput = (e) => {
+      if (this.readOnly) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left - centerX;
       const y = e.clientY - rect.top - centerY;
@@ -260,6 +295,7 @@ class PaletteEditor extends EditorBase {
     
     // Add click handler
     canvas.addEventListener('mousedown', (e) => {
+      if (this.readOnly) return;
       isDragging = true;
       handleColorWheelInput(e);
     });
@@ -290,6 +326,7 @@ class PaletteEditor extends EditorBase {
     let isDragging = false;
     
     const handleLightnessBarInput = (e) => {
+      if (this.readOnly) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const lightness = Math.min(Math.max((x / canvas.width) * 100, 0), 100);
@@ -304,6 +341,7 @@ class PaletteEditor extends EditorBase {
     
     // Add click handler
     canvas.addEventListener('mousedown', (e) => {
+      if (this.readOnly) return;
       isDragging = true;
       handleLightnessBarInput(e);
     });
@@ -1198,7 +1236,12 @@ class PaletteEditor extends EditorBase {
   }
 
   getElement() {
-    return this.container;
+    // Ensure EditorBase-visible root matches the container
+    if (this.element !== this.container) {
+      this.element = this.container;
+      this.element.classList.add('viewer-content', 'editor-content');
+    }
+    return this.element;
   }
 
   getContent() {

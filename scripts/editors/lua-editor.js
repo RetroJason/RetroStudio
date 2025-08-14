@@ -33,9 +33,10 @@ class LuaEditor extends EditorBase {
     
     console.log(`[LuaEditor] Created textarea for ${this.path}`);
     
-    // Setup change detection
+    // Setup change detection (guarded by readOnly)
     this.textArea.addEventListener('input', () => {
-      this.markDirty();
+      if (!this.readOnly) this.markDirty();
+      else this._revertInputIfReadOnly();
     });
     
     // Setup syntax highlighting class (for future CSS styling)
@@ -43,18 +44,54 @@ class LuaEditor extends EditorBase {
       this.applySyntaxHighlighting();
     });
     
-    editorContainer.appendChild(this.textArea);
+  editorContainer.appendChild(this.textArea);
     bodyContainer.appendChild(editorContainer);
     
     // Load content using FileManager
     this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
     
-    // Focus the editor after it's added to DOM
+    // Focus the editor after it's added to DOM (skip if read-only)
     setTimeout(() => {
-      if (this.textArea && this.textArea.parentNode) {
+      if (this.textArea && this.textArea.parentNode && !this.readOnly) {
         this.textArea.focus();
       }
+      // Apply read-only attributes immediately if needed
+      if (this.readOnly) this._applyReadOnly();
     }, 100);
+  }
+
+  _applyReadOnly() {
+    if (!this.textArea) return;
+    this.textArea.readOnly = true;
+    this.textArea.disabled = true;
+    this.textArea.classList.add('is-readonly');
+  }
+
+  _clearReadOnly() {
+    if (!this.textArea) return;
+    this.textArea.readOnly = false;
+    this.textArea.disabled = false;
+    this.textArea.classList.remove('is-readonly');
+  }
+
+  _revertInputIfReadOnly() {
+    // Prevent text from changing if in read-only mode
+    if (!this.textArea) return;
+    const v = this.textArea.value;
+    // reload content without marking dirty (best-effort)
+    setTimeout(() => {
+      if (this.readOnly) {
+        this.textArea.value = v;
+      }
+    }, 0);
+  }
+
+  setReadOnly(isReadOnly) {
+    super.setReadOnly(isReadOnly);
+    if (this.textArea) {
+      if (this.readOnly) this._applyReadOnly();
+      else this._clearReadOnly();
+    }
   }
   
   applySyntaxHighlighting() {
