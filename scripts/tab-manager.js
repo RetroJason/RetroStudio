@@ -174,7 +174,13 @@ class TabManager {
         window.eventBus.on('file.deleted', async ({ path, isFolder, deletedPaths }) => {
           try {
             const paths = Array.isArray(deletedPaths) && deletedPaths.length ? deletedPaths : [path];
-            const normalize = (p) => (typeof p === 'string' ? p.replace(/^Build\//, 'build/') : p);
+            const normalize = (p) => {
+              if (typeof p !== 'string') return p;
+              if (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function') {
+                return window.ProjectPaths.normalizeStoragePath(p);
+              }
+              return p.replace(/^Build\//, 'build/');
+            };
             const deletedSet = new Set(paths.map(normalize));
             const folderPrefix = isFolder && typeof path === 'string' ? normalize(path) + '/' : null;
 
@@ -287,8 +293,11 @@ class TabManager {
   
   isBuildArtifact(filePath) {
     if (!filePath) return false;
-    // Check if the file path indicates it's a build artifact
-    return filePath.startsWith('build/') || filePath.startsWith('Build/');
+    // Use centralized classification
+    if (window.ProjectPaths && typeof window.ProjectPaths.isBuildArtifact === 'function') {
+      return window.ProjectPaths.isBuildArtifact(filePath);
+    }
+  return filePath.startsWith('build/') || filePath.startsWith('Build/');
   }
   
   refreshTabViewer(tabInfo) {
@@ -337,7 +346,9 @@ class TabManager {
       const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
       if (!fm || typeof fm.loadFile !== 'function') return true; // assume exists if we can't check
       // Normalize build path
-      const path = fullPath.replace(/^Build\//, 'build/');
+      const path = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+        ? window.ProjectPaths.normalizeStoragePath(fullPath)
+  : fullPath.replace(/^Build\//, 'build/');
       const rec = await fm.loadFile(path);
       // Consider zero-byte or missing-content records as non-existent
       if (!rec) return false;
@@ -1519,7 +1530,7 @@ class TabManager {
     }
     
     // Close preview tab
-    this.closePreviewTab();
+  this._closePreviewTab();
     
     console.log('[TabManager] All tabs closed');
   }

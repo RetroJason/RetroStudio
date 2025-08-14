@@ -99,15 +99,15 @@ class EditorRegistry {
     // Determine target folder based on extension if not specified
     if (!targetFolder) {
       if (extension === '.lua') {
-        targetFolder = 'Resources/Lua';
+  targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Lua` : 'Resources/Lua';
       } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
-        targetFolder = 'Resources/Music';
+  targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Music` : 'Resources/Music';
       } else if (extension === '.wav') {
-        targetFolder = 'Resources/SFX';
+  targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';
       } else if (extension === '.sfx') {
-        targetFolder = 'Resources/SFX';  // SFX source files go to SFX folder
+  targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';  // SFX source files go to SFX folder
       } else {
-        targetFolder = 'Resources/Binary';
+  targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Binary` : 'Resources/Binary';
       }
     }
 

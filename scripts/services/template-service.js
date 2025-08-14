@@ -6,6 +6,7 @@ class TemplateService {
     this.templateCache = new Map();
     this.ready = false;
     this.initPromise = null;
+  this.availableProjectTemplates = {};
   }
 
   /**
@@ -34,6 +35,16 @@ class TemplateService {
         empty: { name: 'Empty File', description: 'Blank file with header only' }
       }
     };
+
+    // Define available PROJECT templates (manifest-driven)
+    this.availableProjectTemplates = {
+      basic: {
+        id: 'basic',
+        name: 'Basic Project',
+        description: 'Starter project with a main.lua and folders',
+        manifestPath: 'templates/projects/basic/template.json'
+      }
+    };
   }
 
   /**
@@ -43,6 +54,14 @@ class TemplateService {
    */
   getTemplatesForEditor(editorType) {
     return this.availableTemplates[editorType] || {};
+  }
+
+  /**
+   * Get available project templates
+   * @returns {Object} Map of project templates
+   */
+  getProjectTemplates() {
+    return this.availableProjectTemplates || {};
   }
 
   /**
@@ -83,6 +102,118 @@ class TemplateService {
       // Return a basic fallback template
       return this._getFallbackTemplate(editorType, templateName, includeComments);
     }
+  }
+
+  /**
+   * Load a project template manifest by name
+   * @param {string} templateName
+   * @returns {Promise<Object>} manifest JSON
+   */
+  async loadProjectManifest(templateName) {
+    const tpl = this.availableProjectTemplates?.[templateName];
+    if (!tpl) {
+      console.warn(`[TemplateService] Unknown project template: ${templateName}, using fallback`);
+      return this._getFallbackProjectManifest(templateName);
+    }
+    const url = tpl.manifestPath;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const json = await res.json();
+      return json;
+    } catch (err) {
+      console.warn(`[TemplateService] Failed to load project manifest ${url}:`, err);
+      return this._getFallbackProjectManifest(templateName);
+    }
+  }
+
+  /**
+   * Create a new project from a template manifest
+   * Saves files through FileManager/FileIOService and returns created paths
+   * @param {string} templateName
+   * @param {Object} options - variables like { projectName }
+   * @returns {Promise<string[]>} list of created file paths
+   */
+  async createProjectFromTemplate(templateName, options = {}) {
+    // Ensure services
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) throw new Error('FileManager not available');
+
+    const manifest = await this.loadProjectManifest(templateName);
+    const variables = { projectName: 'MyProject', ...options };
+
+    const created = [];
+    if (!manifest || !Array.isArray(manifest.files)) return created;
+
+    for (const file of manifest.files) {
+      try {
+        const outPath = this.processTemplate(file.path, variables);
+
+        // Determine content
+        let content = '';
+        if (file.source === 'inline') {
+          content = this.processTemplate(file.content || '', variables);
+        } else if (file.source === 'template') {
+          const editorType = file.editorType || 'lua';
+          const tplName = file.templateName || 'basic';
+          const includeComments = file.includeComments !== false;
+          content = await this.createFromTemplate(editorType, tplName, {
+            includeComments,
+            variables: { filename: outPath.split('/').pop(), projectName: variables.projectName }
+          });
+        } else if (file.source === 'base64') {
+          // Binary from base64
+          const b64 = (file.content || '').split(',').pop();
+          content = Uint8Array.from(atob(b64), c => c.charCodeAt(0)).buffer;
+        }
+
+        // Infer metadata
+        const ext = outPath.toLowerCase().split('.').pop();
+        let builderId;
+        if (window.buildSystem?.getBuilderIdForExtension) {
+          builderId = window.buildSystem.getBuilderIdForExtension('.' + ext);
+        } else if (ext === 'sfx') {
+          builderId = 'sfx';
+        } else if (['pal', 'act', 'aco'].includes(ext)) {
+          builderId = 'pal';
+        }
+
+        // Save via FileManager (delegates to storage service)
+        await fm.saveFile(outPath, content, { builderId });
+        created.push(outPath);
+      } catch (err) {
+        console.warn('[TemplateService] Failed creating file from template:', file, err);
+      }
+    }
+
+    return created;
+  }
+
+  /**
+   * Fallback project manifest when external file is missing
+   */
+  _getFallbackProjectManifest(templateName) {
+    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Resources';
+    return {
+      name: 'Basic Project',
+      version: 1,
+      files: [
+        {
+          path: `${sourcesRoot}/Lua/main.lua`,
+          source: 'template',
+          editorType: 'lua',
+          templateName: 'game',
+          includeComments: true
+        },
+        {
+          path: `${sourcesRoot}/README.txt`,
+          source: 'inline',
+          content: `# {{projectName}}\n\nThis is your new RetroStudio project. Start in ${sourcesRoot}/Lua/main.lua.`
+        }
+      ]
+    };
   }
 
   /**

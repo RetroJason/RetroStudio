@@ -3,10 +3,12 @@
 
 class ProjectExplorer {
   constructor() {
-    this.projectData = {
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const _buildRootLog = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  this.projectData = {
       name: "Game Project",
       structure: {
-        "Resources": {
+    [sourcesRoot]: {
           type: "folder",
           children: {
             "Music": {
@@ -36,7 +38,7 @@ class ProjectExplorer {
             }
           }
         },
-        "Build": {
+    [_buildRootLog]: {
           type: "folder",
           children: {}
         }
@@ -221,8 +223,10 @@ class ProjectExplorer {
             // For files, currentPath already includes the full path, don't append filename again
             let fullPath = currentPath;
             
-            // Convert Build/ paths to build/ for storage access
-            if (fullPath.startsWith('Build/')) {
+            // Normalize using ProjectPaths
+            if (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) {
+              fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
+            } else if (fullPath.startsWith('Build/')) {
               fullPath = fullPath.replace(/^Build\//, 'build/');
             }
             
@@ -244,8 +248,10 @@ class ProjectExplorer {
           // For files, currentPath already includes the full path, don't append filename again
           let fullPath = currentPath;
           
-          // Convert Build/ paths to build/ for storage access
-          if (fullPath.startsWith('Build/')) {
+          // Normalize using ProjectPaths
+          if (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) {
+            fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
+          } else if (fullPath.startsWith('Build/')) {
             fullPath = fullPath.replace(/^Build\//, 'build/');
           }
           
@@ -310,10 +316,12 @@ class ProjectExplorer {
   getFileIconSymbol(name, type, currentPath = '') {
     if (type === 'folder') {
       // Different icons for different folder types
-      if (name === 'Resources') return '📁'; // Standard blue folder for editable resources
-      if (name === 'Build') return '📦'; // Package box for build outputs
-      if (currentPath.startsWith('Build/')) return '🗂️'; // File folder for build subfolders
-      if (currentPath.startsWith('Resources/')) {
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  if (name === sourcesRoot) return '📁'; // Standard blue folder for editable resources
+  if (name === buildRoot) return '📦'; // Package box for build outputs
+  if (currentPath.startsWith(buildRoot + '/')) return '🗂️'; // File folder for build subfolders
+  if (currentPath.startsWith(sourcesRoot + '/')) {
         // Special icons for resource type folders
         if (name === 'Music') return '🎼';
         if (name === 'SFX') return '🔊';
@@ -358,7 +366,7 @@ class ProjectExplorer {
     try {
       console.log('[ProjectExplorer] Attempting to expand Build folder...');
       
-      // Find the Build folder node
+  // Find the Build folder node
       const buildNodes = this.treeContainer.querySelectorAll('.tree-item');
       console.log(`[ProjectExplorer] Found ${buildNodes.length} tree items to check`);
       
@@ -368,7 +376,8 @@ class ProjectExplorer {
           const textContent = textElement.textContent.trim();
           console.log(`[ProjectExplorer] Checking node text: "${textContent}"`);
           
-          if (textContent === 'Build') {
+          const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+          if (textContent === buildRoot) {
             console.log('[ProjectExplorer] Found Build folder node');
             const expandButton = node.querySelector('.tree-expand');
             const children = node.querySelector('.tree-children');
@@ -427,8 +436,10 @@ class ProjectExplorer {
     newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
     
     // Rename and Delete available for files and non-root folders, but not for build files/folders
-    const isRootFolder = path === 'Resources' || path === 'Build';
-    const isBuildFile = path.startsWith('Build/');
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  const isRootFolder = path === sourcesRoot || path === buildRoot;
+  const isBuildFile = path.startsWith(buildRoot + '/');
     const canModify = !isRootFolder && !isBuildFile;
     
     if (type === 'file') {
@@ -516,8 +527,8 @@ class ProjectExplorer {
   }
   
   handleFileDrop(event, targetPath = null) {
-    const files = event.dataTransfer.files;
-    const path = targetPath || this.getDropTargetPath(event.target);
+  const files = event.dataTransfer.files;
+  const path = targetPath || this.getDropTargetPath(event.target);
     
     if (files.length > 0) {
       this.addFiles(files, path);
@@ -588,16 +599,17 @@ class ProjectExplorer {
     }
     
     // Auto-filter to appropriate folder
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
     if (musicExts.includes(ext)) {
-      return { allowed: true, path: 'Resources/Music' };
+      return { allowed: true, path: `${sourcesRoot}/Music` };
     } else if (sfxExts.includes(ext)) {
-      return { allowed: true, path: 'Resources/SFX' };
+      return { allowed: true, path: `${sourcesRoot}/SFX` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
-      return { allowed: true, path: 'Resources/Palettes' };
+      return { allowed: true, path: `${sourcesRoot}/Palettes` };
     }
     
     // Default unrecognized files to Binary folder
-    return { allowed: true, path: 'Resources/Binary' };
+    return { allowed: true, path: `${sourcesRoot}/Binary` };
   }
   
   addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
@@ -690,7 +702,8 @@ class ProjectExplorer {
     await this.cleanupBuildFilesFromStorage();
     
     // Clear existing build folder contents
-    this.projectData.structure.Build.children = {};
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  this.projectData.structure[buildRoot].children = {};
     
     // Update the UI
     this.renderTree();
@@ -746,9 +759,11 @@ class ProjectExplorer {
       }
     };
     
-    if (this.projectData?.structure?.Build?.children) {
-      for (const [name, child] of Object.entries(this.projectData.structure.Build.children)) {
-        traverseNode(child, `build/${name}`);
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
+    if (this.projectData?.structure?.[buildRoot]?.children) {
+      for (const [name, child] of Object.entries(this.projectData.structure[buildRoot].children)) {
+        traverseNode(child, `${buildPrefix}${name}`.replace(/\/$/, ''));
       }
     }
     
@@ -759,7 +774,8 @@ class ProjectExplorer {
     console.log('[ProjectExplorer] Refreshing build folder...');
     
     // Clear existing build folder contents
-    this.projectData.structure.Build.children = {};
+  const _buildRootLog = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  this.projectData.structure[_buildRootLog].children = {};
     
   // Load all build files from storage
     try {
@@ -789,13 +805,15 @@ class ProjectExplorer {
       
       // Add each cleaned build file to the project structure
       for (const [filePath, fileData] of Object.entries(cleanedBuildFiles)) {
-        if (filePath.startsWith('build/')) {
+        const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
+        if (filePath.startsWith(buildPrefix)) {
           // Remove 'build/' prefix and add to Build folder
-          let relativePath = filePath.substring(6); // Remove 'build/' prefix
+          let relativePath = filePath.substring(buildPrefix.length);
           
           // Also remove 'Resources/' prefix if it exists (legacy paths)
-          if (relativePath.startsWith('Resources/')) {
-            relativePath = relativePath.substring(10); // Remove 'Resources/' prefix
+          const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+          if (relativePath.startsWith(sourcesRoot + '/')) {
+            relativePath = relativePath.substring((sourcesRoot + '/').length);
           }
           
           console.log(`[ProjectExplorer] Adding build file: ${relativePath}`);
@@ -803,7 +821,7 @@ class ProjectExplorer {
         }
       }
       
-      console.log('[ProjectExplorer] Build folder structure:', this.projectData.structure.Build);
+  console.log('[ProjectExplorer] Build folder structure:', this.projectData.structure[_buildRootLog]);
       
       // Refresh the tree display
       this.renderTree();
@@ -906,7 +924,8 @@ class ProjectExplorer {
     }
 
     // Clear the build folder structure and refresh
-    this.projectData.structure.Build.children = {};
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  this.projectData.structure[buildRoot].children = {};
     this.renderTree();
   }
   
@@ -918,7 +937,8 @@ class ProjectExplorer {
     console.log(`[ProjectExplorer] Path parts:`, parts, `FileName: ${fileName}`);
     
     // Navigate to or create the folder structure
-    let current = this.projectData.structure.Build.children;
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  let current = this.projectData.structure[buildRoot].children;
     console.log(`[ProjectExplorer] Starting from Build.children:`, current);
     
     for (const part of parts) {
@@ -988,15 +1008,17 @@ class ProjectExplorer {
         // If dropping on a file, use its parent folder
         const parts = path.split('/');
         parts.pop();
-        return parts.join('/') || 'Resources';
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    return parts.join('/') || sourcesRoot;
       }
     }
-    
-    return 'Resources';
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  return sourcesRoot;
   }
   
   getDefaultPath() {
-    return 'Resources';
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  return sourcesRoot;
   }
   
   createNewFolder(parentPath) {
@@ -1033,7 +1055,7 @@ class ProjectExplorer {
     const node = this.getNodeByPath(path);
     const isFolder = node && node.type === 'folder';
 
-    // Build storage deletion list
+  // Build storage deletion list
     const toDelete = [];
     const collectPaths = (basePath, nodeData) => {
       if (!nodeData) return;
@@ -1057,7 +1079,7 @@ class ProjectExplorer {
       const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
       if (fm) {
         for (const p of toDelete) {
-          const storagePath = p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p;
+          const storagePath = (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) ? window.ProjectPaths.normalizeStoragePath(p) : (p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p);
           try {
             await fm.deleteFile(storagePath);
             console.log('[ProjectExplorer] Deleted from storage:', storagePath);
@@ -1531,9 +1553,11 @@ class ProjectExplorer {
     console.log('[ProjectExplorer] Clearing project structure...');
     
     // Reset project structure to initial state
-    this.projectData = {
+  const sourcesRoot2 = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const buildRoot2 = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  this.projectData = {
       structure: {
-        Resources: {
+    [sourcesRoot2]: {
           type: 'folder',
           children: {
             Palettes: { type: 'folder', children: {} },
@@ -1542,7 +1566,7 @@ class ProjectExplorer {
             Graphics: { type: 'folder', children: {} }
           }
         },
-        Build: {
+    [buildRoot2]: {
           type: 'folder',
           children: {}
         }

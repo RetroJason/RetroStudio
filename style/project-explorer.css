@@ -54,35 +54,42 @@
   position: relative;
 }
 
-/* Resources folder styling (editable) */
-.tree-item[data-path="Resources"] {
+/* Sources/Resources folder styling (editable) */
+.tree-item[data-path="Resources"],
+.tree-item[data-path="Sources"] {
   color: #4fc3f7; /* Light blue for editable resources */
 }
 
-.tree-item[data-path="Resources"] .tree-icon {
+.tree-item[data-path="Resources"] .tree-icon,
+.tree-item[data-path="Sources"] .tree-icon {
   color: #4fc3f7;
 }
 
-/* Build folder styling (read-only outputs) */
-.tree-item[data-path="Build"] {
+/* Build/Game Objects folder styling (read-only outputs) */
+.tree-item[data-path="Build"],
+.tree-item[data-path="Game Objects"] {
   color: #ff9800; /* Orange for build outputs */
 }
 
-.tree-item[data-path="Build"] .tree-icon {
+.tree-item[data-path="Build"] .tree-icon,
+.tree-item[data-path="Game Objects"] .tree-icon {
   color: #ff9800;
 }
 
-/* Build folder children inherit orange color */
-.tree-item[data-path^="Build/"] {
+/* Build/Game Objects folder children inherit orange color */
+.tree-item[data-path^="Build/"],
+.tree-item[data-path^="Game Objects/"] {
   color: #ffb74d; /* Lighter orange for build folder contents */
 }
 
-.tree-item[data-path^="Build/"] .tree-icon {
+.tree-item[data-path^="Build/"] .tree-icon,
+.tree-item[data-path^="Game Objects/"] .tree-icon {
   color: #ffb74d;
 }
 
-/* Sub-folders under Resources */
-.tree-item[data-path^="Resources/"] .tree-icon {
+/* Sub-folders under Sources/Resources */
+.tree-item[data-path^="Resources/"] .tree-icon,
+.tree-item[data-path^="Sources/"] .tree-icon {
   color: #81c784; /* Green for resource type folders */
 }
 

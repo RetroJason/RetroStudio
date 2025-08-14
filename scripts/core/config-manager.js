@@ -42,14 +42,23 @@ class ConfigManager {
         autoRefreshTabs: true,
         clearBuildOnStart: true,
         parallelBuilds: true,
-        outputDirectory: 'Build'
+  // UI label for build root (used only for display); storage always uses ProjectPaths.getBuildStoragePrefix()
+  outputDirectory: (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Game Objects'
       },
 
       // Project Configuration
       project: {
         autoLoadLastProject: true,
         maxRecentProjects: 10,
-        defaultFolders: ['Resources/Lua', 'Resources/Music', 'Resources/SFX', 'Resources/Binary']
+        // Derive from ProjectPaths to avoid drift with UI renames
+        defaultFolders: (function(){
+          try {
+            const src = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
+            return [`${src}/Lua`, `${src}/Music`, `${src}/SFX`, `${src}/Binary`];
+          } catch(_) {
+            return ['Sources/Lua', 'Sources/Music', 'Sources/SFX', 'Sources/Binary'];
+          }
+        })()
       },
 
       // Plugin Configuration
