@@ -193,3 +193,10 @@ class HexViewer extends ViewerBase {
 // Export for use
 window.HexViewer = HexViewer;
 console.log('[HexViewer] Class exported to window.HexViewer');
+
+// Static metadata for auto-registration
+HexViewer.getFileExtensions = () => ['*'];
+HexViewer.getDisplayName = () => 'Hex Viewer';
+HexViewer.getIcon = () => '🔍';
+HexViewer.getPriority = () => 1; // low priority fallback
+HexViewer.getCapabilities = () => ['binary-display'];

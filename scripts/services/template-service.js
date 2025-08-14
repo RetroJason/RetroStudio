@@ -147,7 +147,12 @@ class TemplateService {
 
     for (const file of manifest.files) {
       try {
-        const outPath = this.processTemplate(file.path, variables);
+        // Compute project-prefixed UI output path and normalized storage path
+        const baseOut = this.processTemplate(file.path, variables);
+        const uiOutPath = (window.ProjectPaths && window.ProjectPaths.withProjectPrefix)
+          ? window.ProjectPaths.withProjectPrefix(variables.projectName, baseOut)
+          : `${variables.projectName}/${baseOut}`;
+        const outPath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(uiOutPath) : uiOutPath;
 
         // Determine content
         let content = '';
@@ -168,7 +173,7 @@ class TemplateService {
         }
 
         // Infer metadata
-        const ext = outPath.toLowerCase().split('.').pop();
+  const ext = uiOutPath.toLowerCase().split('.').pop();
         let builderId;
         if (window.buildSystem?.getBuilderIdForExtension) {
           builderId = window.buildSystem.getBuilderIdForExtension('.' + ext);
@@ -178,9 +183,9 @@ class TemplateService {
           builderId = 'pal';
         }
 
-        // Save via FileManager (delegates to storage service)
-        await fm.saveFile(outPath, content, { builderId });
-        created.push(outPath);
+    // Save via FileManager (delegates to storage service)
+  await fm.saveFile(outPath, content, { builderId });
+    created.push(uiOutPath);
       } catch (err) {
         console.warn('[TemplateService] Failed creating file from template:', file, err);
       }

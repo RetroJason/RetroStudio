@@ -185,7 +185,8 @@ class TabManager {
             const folderPrefix = isFolder && typeof path === 'string' ? normalize(path) + '/' : null;
 
             // Close preview if it matches
-            if (this.previewPath && (deletedSet.has(this.previewPath) || (folderPrefix && this.previewPath.startsWith(folderPrefix)))) {
+            const previewNorm = this.previewPath ? normalize(this.previewPath) : null;
+            if (previewNorm && (deletedSet.has(previewNorm) || (folderPrefix && previewNorm.startsWith(folderPrefix)))) {
               console.log(`[TabManager] Closing preview for deleted path ${this.previewPath}`);
               this._closePreviewTab();
             }
@@ -194,8 +195,9 @@ class TabManager {
             const toClose = [];
             for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
               const tp = tabInfo.fullPath;
+              const tpNorm = tp ? normalize(tp) : null;
               if (!tp) continue;
-              if (deletedSet.has(tp) || (folderPrefix && tp.startsWith(folderPrefix))) {
+              if (deletedSet.has(tpNorm) || (folderPrefix && tpNorm.startsWith(folderPrefix))) {
                 toClose.push(tabId);
               }
             }
@@ -646,7 +648,9 @@ class TabManager {
       return null;
     }
     
-    let fileObj = await fileManager.loadFile(fullPath);
+  // Normalize to storage path for loading
+  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullPath) : fullPath;
+  let fileObj = await fileManager.loadFile(storagePath);
     if (!fileObj) {
       console.error(`[TabManager] File not found: ${fullPath}`);
       // Graceful fallback: allow viewer creation for known viewer types (e.g., mod/wav/hex)
@@ -684,7 +688,15 @@ class TabManager {
             // Files from storage are never "new" resources unless marked as such
             const isNewResource = fileObj.isNew || false;
             console.log(`[TabManager] Creating editor with path: ${fullPath}, isNewResource: ${isNewResource}`);
-            const editor = new editorInfo.editorClass(fullPath, isNewResource);
+            const EditorCtor = editorInfo.editorClass;
+            let editor;
+            // Prefer (path, isNewResource) for EditorBase-based editors
+            try {
+              editor = new EditorCtor(fullPath, isNewResource);
+            } catch (e1) {
+              console.warn('[TabManager] (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
+              editor = new EditorCtor(fileObj, fullPath, isNewResource);
+            }
             return {
               type: 'editor',
               viewer: editor,
@@ -708,7 +720,14 @@ class TabManager {
     if (editorClass) {
       try {
         console.log(`[TabManager] Creating legacy editor for ${ext}: ${editorClass.name}`);
-        const editor = new editorClass(fileObj, fullPath, fileObj.isNew || false);
+        const isNewResource = fileObj.isNew || false;
+        let editor;
+        try {
+          editor = new editorClass(fullPath, isNewResource);
+        } catch (e1) {
+          console.warn('[TabManager] Legacy (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
+          editor = new editorClass(fileObj, fullPath, isNewResource);
+        }
         return {
           type: 'editor',
           viewer: editor,

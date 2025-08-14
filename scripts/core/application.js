@@ -135,69 +135,16 @@ class RetroStudioApplication {
   async registerComponents() {
     console.log('[Application] Registering components...');
 
-    // Register built-in editors
-    this.components.registerEditor({
-      name: 'lua-editor',
-      extensions: ['.lua'],
-      displayName: 'Lua Script',
-      icon: '📜',
-      editorClass: LuaEditor,
-      priority: 10,
-      capabilities: ['syntax-highlighting', 'auto-completion'],
-      canCreate: true
-    });
+    // Auto-register built-in editors and viewers using self-describing metadata
+    const registry = this.components;
+    const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor];
+    const autoViewers = [ModViewer, WavViewer, HexViewer];
 
-    this.components.registerEditor({
-      name: 'sfx-editor',
-      extensions: ['.sfx'],
-      displayName: 'Sound FX',
-      icon: '🔊',
-      editorClass: SoundFXEditor,
-      priority: 10,
-      capabilities: ['audio-preview', 'waveform-display', 'buildable'],
-      canCreate: true
+    autoEditors.forEach((cls) => {
+      try { registry.autoRegisterEditor(cls); } catch (e) { console.error('[Application] Failed to auto-register editor', cls?.name, e); }
     });
-
-    this.components.registerEditor({
-      name: 'palette-editor',
-      extensions: ['.pal', '.act', '.aco'],
-      displayName: 'Palette Editor',
-      icon: '🎨',
-      editorClass: PaletteEditor,
-      priority: 10,
-      capabilities: ['color-editing', 'import-export', 'color-stealing'],
-      canCreate: true
-    });
-
-    // Register built-in viewers
-    this.components.registerViewer({
-      name: 'mod-viewer',
-      extensions: ['.mod', '.xm', '.s3m', '.it', '.mptm'],
-      displayName: 'MOD Viewer',
-      icon: '🎵',
-      viewerClass: ModViewer,
-      priority: 10,
-      capabilities: ['audio-playback', 'visualization']
-    });
-
-    this.components.registerViewer({
-      name: 'wav-viewer',
-      extensions: ['.wav'],
-      displayName: 'WAV Viewer',
-      icon: '🔊',
-      viewerClass: WavViewer,
-      priority: 10,
-      capabilities: ['audio-playback', 'waveform-display']
-    });
-
-    this.components.registerViewer({
-      name: 'hex-viewer',
-      extensions: ['*'],
-      displayName: 'Hex Viewer',
-      icon: '🔍',
-      viewerClass: HexViewer,
-      priority: 1,
-      capabilities: ['binary-display']
+    autoViewers.forEach((cls) => {
+      try { registry.autoRegisterViewer(cls); } catch (e) { console.error('[Application] Failed to auto-register viewer', cls?.name, e); }
     });
 
     console.log('[Application] Components registered');

@@ -1108,3 +1108,11 @@ class SoundFXEditor extends CompoundEditor {
 
 // Export the class
 window.SoundFXEditor = SoundFXEditor;
+
+// Static metadata for auto-registration
+SoundFXEditor.getFileExtensions = () => ['.sfx'];
+SoundFXEditor.getDisplayName = () => 'Sound FX';
+SoundFXEditor.getIcon = () => '🔊';
+SoundFXEditor.getPriority = () => 10;
+SoundFXEditor.getCapabilities = () => ['audio-preview', 'waveform-display', 'buildable'];
+SoundFXEditor.canCreate = true;

@@ -291,6 +291,11 @@ end`;
   static getFileExtension() {
     return '.lua';
   }
+
+  // Optional: declare multiple supported extensions for legacy registries
+  static getFileExtensions() {
+    return ['.lua', '.txt'];
+  }
   
   static getDisplayName() {
     return 'Lua Script';
@@ -299,6 +304,11 @@ end`;
   static getIcon() {
     return '🌙'; // Lua moon icon
   }
+
+  // Optional metadata for auto-registration
+  static getPriority() { return 10; }
+  static getCapabilities() { return ['syntax-highlighting']; }
+  static canCreate = true;
 
   // Custom creation dialog for Lua scripts
   static async showCreateDialog() {

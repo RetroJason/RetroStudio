@@ -64,6 +64,7 @@ class BuildSystem {
     
     try {
       this.isBuilding = true;
+  const startTime = Date.now();
       console.log('[BuildSystem] Starting project build...');
       
       // Save all dirty files before building to ensure we get updated parameters
@@ -114,7 +115,7 @@ class BuildSystem {
         }
       }
       
-      const totalTime = Date.now() - Date.now(); // Placeholder for actual timing
+  const totalTime = Date.now() - startTime;
       console.log(`[BuildSystem] Build completed: ${successCount} success, ${errorCount} errors`);
       
       // Note: Build files are added to the project explorer as they are built
@@ -166,15 +167,21 @@ class BuildSystem {
       const relativePath = outputPath.startsWith(buildPrefix)
         ? outputPath.substring(buildPrefix.length)
         : outputPath.replace(/^build\//, '');
+  // Strip Sources/ prefix if accidentally present
+  const sourcesUi = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function') ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const rel = relativePath.startsWith(sourcesUi + '/') ? relativePath.substring(sourcesUi.length + 1) : relativePath;
       
       // Add to project explorer's build folder
-      window.gameEditor.projectExplorer.addBuildFileToStructure(relativePath, {
-        content: builtFileObj.content,
-        name: builtFileObj.filename || builtFileObj.name,
+  const uiContent = (builtFileObj.content !== undefined)
+        ? builtFileObj.content
+        : (builtFileObj.fileContent !== undefined ? builtFileObj.fileContent : builtFileObj.data);
+      window.gameEditor.projectExplorer.addBuildFileToStructure(rel, {
+        content: uiContent,
+        name: builtFileObj.filename || builtFileObj.name || (rel.split('/').pop()),
         path: outputPath
       });
       
-      console.log(`[BuildSystem] Successfully added built file to explorer: ${relativePath}`);
+  console.log(`[BuildSystem] Successfully added built file to explorer: ${rel}`);
     } catch (error) {
       console.error(`[BuildSystem] Failed to add built file to explorer:`, error);
     }
@@ -210,17 +217,16 @@ class BuildSystem {
     if (window.gameEditor && window.gameEditor.projectExplorer) {
       const explorer = window.gameEditor.projectExplorer;
       console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
+      const project = explorer.getFocusedProjectName?.();
       const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
         ? window.ProjectPaths.getSourcesRootUi()
         : 'Resources';
-      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure[sourcesRoot]) {
-        console.log('[BuildSystem] Sources node:', explorer.projectData.structure[sourcesRoot]);
-        filePaths.push(
-          ...this.extractFilePathsFromNode(
-            explorer.projectData.structure[sourcesRoot],
-            sourcesRoot + '/'
-          )
-        );
+      const srcNode = project ? explorer.projectData.structure[project]?.children?.[sourcesRoot]
+                              : explorer.projectData.structure[sourcesRoot];
+      if (srcNode) {
+        console.log('[BuildSystem] Sources node:', srcNode);
+        const base = `${project ? project + '/' : ''}${sourcesRoot}/`;
+        filePaths.push(...this.extractFilePathsFromNode(srcNode, base));
       }
     }
     
@@ -261,8 +267,12 @@ class BuildSystem {
     if (!fileManager) {
       throw new Error('FileManager not available for build');
     }
-    
-    const fileObj = await fileManager.loadFile(filePath);
+
+    // Normalize UI path (project-prefixed) to storage path for loading from IndexedDB
+    const storagePath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+      ? window.ProjectPaths.normalizeStoragePath(filePath)
+      : filePath;
+    const fileObj = await fileManager.loadFile(storagePath);
     if (!fileObj) {
       throw new Error(`Failed to load file from storage: ${filePath}`);
     }
@@ -271,16 +281,16 @@ class BuildSystem {
     
     // Convert to legacy file structure for builders
     const legacyFile = {
-      name: fileObj.name,
+      name: fileObj.filename || fileObj.name,
       path: filePath,
-      content: fileObj.content,
+      content: fileObj.content !== undefined ? fileObj.content : (fileObj.fileContent !== undefined ? fileObj.fileContent : fileObj.data),
       size: fileObj.size,
       lastModified: fileObj.lastModified || Date.now()
     };
 
     // Determine builder by explicit assignment or by extension
     const explicitId = fileObj.builderId;
-    const ext = this.getFileExtension(filePath);
+  const ext = this.getFileExtension(filePath);
     const builderId = explicitId || this.getBuilderIdForExtension(ext);
     const builder = this.builderById.get(builderId) || this.getBuilderForFile(legacyFile.name);
     if (!builder) {
@@ -420,15 +430,18 @@ class CopyBuilder extends BaseBuilder {
       
       // Read file content - check persistent storage first for saved edits
       let content;
-      const fileExtension = file.path.split('.').pop().toLowerCase();
-      const textExtensions = ['.pal', '.lua', '.txt', '.json', '.xml', '.csv', '.md'];
-      const isTextFile = textExtensions.includes('.' + fileExtension);
+  const fileExtension = (file.path.split('.').pop() || '').toLowerCase();
+  const textExtensions = ['pal', 'lua', 'txt', 'json', 'xml', 'csv', 'md'];
+  const isTextFile = textExtensions.includes(fileExtension);
       
       // First try to load from persistent storage (for saved edits)
       let contentFromStorage = null;
       if (window.fileIOService) {
         try {
-          const storedFile = await window.fileIOService.loadFile(file.path);
+          const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+            ? window.ProjectPaths.normalizeStoragePath(file.path)
+            : file.path;
+          const storedFile = await window.fileIOService.loadFile(normPath);
           if (storedFile && storedFile.content) {
             contentFromStorage = storedFile.content;
             console.log(`[CopyBuilder] Found saved content for ${file.path} (${contentFromStorage.length} chars)`);
@@ -454,17 +467,31 @@ class CopyBuilder extends BaseBuilder {
       } else {
         // Fallback to reading from file object
         if (isTextFile) {
-          content = await file.file.text();
-          console.log(`[CopyBuilder] Reading ${file.path} as text from file object (${content.length} chars)`);
+          if (typeof file.content === 'string') {
+            content = file.content;
+            console.log(`[CopyBuilder] Using provided text content for ${file.path}`);
+          } else if (file.file && typeof file.file.text === 'function') {
+            content = await file.file.text();
+            console.log(`[CopyBuilder] Reading ${file.path} as text from file object (${content.length} chars)`);
+          } else {
+            content = '';
+          }
         } else {
-          content = await file.file.arrayBuffer();
-          console.log(`[CopyBuilder] Reading ${file.path} as binary from file object (${content.byteLength} bytes)`);
+          if (file.content instanceof ArrayBuffer || ArrayBuffer.isView(file.content)) {
+            content = file.content instanceof ArrayBuffer ? file.content : file.content.buffer;
+            console.log(`[CopyBuilder] Using provided binary content for ${file.path}`);
+          } else if (file.file && typeof file.file.arrayBuffer === 'function') {
+            content = await file.file.arrayBuffer();
+            console.log(`[CopyBuilder] Reading ${file.path} as binary from file object (${content.byteLength} bytes)`);
+          } else {
+            content = new ArrayBuffer(0);
+          }
         }
       }
       
       // Save to build directory using FileManager
       const fileManager = window.serviceContainer?.get('fileManager');
-      if (fileManager) {
+  if (fileManager) {
         // Ensure text files are saved as plain text (not base64)
         const saveContent = content;
         await fileManager.saveFile(outputPath, saveContent, {
@@ -521,7 +548,16 @@ class SfxBuilder extends BaseBuilder {
         throw new Error('FileManager not available');
       }
       
-      const fileContent = await fileManager.loadFile(file.path);
+      // Prefer content already provided by BuildSystem
+      let fileContent = null;
+      if (file && (typeof file.content === 'string' || file.content instanceof ArrayBuffer || ArrayBuffer.isView(file.content))) {
+        fileContent = { content: file.content };
+      } else {
+        const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+          ? window.ProjectPaths.normalizeStoragePath(file.path)
+          : file.path;
+        fileContent = await fileManager.loadFile(normPath);
+      }
       console.log(`[SfxBuilder] Raw file content:`, fileContent);
       
       let text;
@@ -826,7 +862,10 @@ class PalBuilder extends BaseBuilder {
         } else {
           // Fallback: try to load latest from storage
           const fm = window.serviceContainer?.get('fileManager');
-          const loaded = fm ? await fm.loadFile(file.path) : null;
+          const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+            ? window.ProjectPaths.normalizeStoragePath(file.path)
+            : file.path;
+          const loaded = fm ? await fm.loadFile(normPath) : null;
           const stored = loaded && (loaded.content !== undefined ? loaded.content : loaded.fileContent);
           if (typeof stored === 'string') {
             content = stored;

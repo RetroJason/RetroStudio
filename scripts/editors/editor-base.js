@@ -246,9 +246,7 @@ class EditorBase extends ViewerBase {
       // Save as new resource
       await this.saveNewResource(content, newName);
       
-      // Update editor to point to new path
-      // The new path would be updated in saveNewResource
-      this.path = newName;
+  // Path has been updated in saveNewResource to the full UI path
       this.isNewResource = false;
       this.markClean();
       
@@ -281,18 +279,22 @@ class EditorBase extends ViewerBase {
   targetPath = `${sourcesRoot}/Palettes`;
     }
     
-    const fullPath = `${targetPath}/${name}`;
+  // Build UI path (project-prefixed) and storage path (normalized)
+  const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+  const uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
+  const fullUiPath = `${uiFolderPath}/${name}`;
+  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
     
     try {
       // Save to persistent storage using the file I/O service
       if (window.fileIOService) {
         const builderId = extension === '.sfx' ? 'sfx' : undefined;
-        await window.fileIOService.saveFile(fullPath, content, {
+        await window.fileIOService.saveFile(storagePath, content, {
           type: extension,
           editor: this.constructor.name,
           ...(builderId ? { builderId } : {})
         });
-        console.log(`[EditorBase] Saved to persistent storage: ${fullPath}`);
+        console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       }
     } catch (error) {
       console.warn(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
@@ -301,10 +303,11 @@ class EditorBase extends ViewerBase {
     
     // Add to project explorer and update the file in the project structure
     if (window.gameEditor && window.gameEditor.projectExplorer) {
-      window.gameEditor.projectExplorer.addFileToProject(file, targetPath, true); // Skip auto-open during save
+      // Ensure UI path is project-prefixed for the explorer structure
+      window.gameEditor.projectExplorer.addFileToProject(file, uiFolderPath, true); // Skip auto-open during save
     }
     
-    this.path = fullPath;
+    this.path = fullUiPath;
     this.isNewResource = false;
     
     console.log(`[EditorBase] Created new resource: ${name} in ${targetPath}`);
@@ -317,20 +320,21 @@ class EditorBase extends ViewerBase {
     try {
       // Use FileManager to save content
       const fileManager = window.serviceContainer?.get('fileManager');
+      const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
       if (fileManager && this.path) {
-        await fileManager.saveFile(this.path, content, {
+        await fileManager.saveFile(storagePath, content, {
           type: this.getFileExtension(this.path),
           editor: this.constructor.name
         });
-        console.log(`[EditorBase] Saved to persistent storage: ${this.path}`);
+        console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       } else {
         // Fallback to direct fileIOService
         if (window.fileIOService && this.path) {
-          await window.fileIOService.saveFile(this.path, content, {
+          await window.fileIOService.saveFile(storagePath, content, {
             type: this.getFileExtension(this.path),
             editor: this.constructor.name
           });
-          console.log(`[EditorBase] Saved to persistent storage: ${this.path}`);
+          console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
         }
       }
     } catch (error) {

@@ -33,14 +33,36 @@ class EditorRegistry {
   }
   
   registerEditor(editorClass) {
-    if (!editorClass.getFileExtension || !editorClass.getDisplayName) {
-      console.error('[EditorRegistry] Editor class must implement getFileExtension() and getDisplayName() static methods');
+    // Support either getFileExtensions() -> string[] or getFileExtension() -> string
+    if ((!editorClass.getFileExtension && !editorClass.getFileExtensions) || !editorClass.getDisplayName) {
+      console.error('[EditorRegistry] Editor class must implement getFileExtension() or getFileExtensions() and getDisplayName()');
       return;
     }
-    
-    const extension = editorClass.getFileExtension();
-    this.editors.set(extension, editorClass);
-    console.log(`[EditorRegistry] Registered editor for ${extension}: ${editorClass.getDisplayName()}`);
+
+    let extensions = [];
+    try {
+      if (typeof editorClass.getFileExtensions === 'function') {
+        const exts = editorClass.getFileExtensions();
+        if (Array.isArray(exts)) extensions = exts;
+      }
+      if (extensions.length === 0 && typeof editorClass.getFileExtension === 'function') {
+        const ext = editorClass.getFileExtension();
+        if (ext) extensions = [ext];
+      }
+    } catch (e) {
+      console.error('[EditorRegistry] Error reading editor extensions:', e);
+      return;
+    }
+
+    if (!extensions.length) {
+      console.warn('[EditorRegistry] No extensions provided for editor', editorClass.name);
+      return;
+    }
+
+    for (const extension of extensions) {
+      this.editors.set(extension, editorClass);
+      console.log(`[EditorRegistry] Registered editor for ${extension}: ${editorClass.getDisplayName()}`);
+    }
   }
   
   getEditorForFile(file) {

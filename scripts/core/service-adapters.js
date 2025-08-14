@@ -47,10 +47,15 @@ class TabManagerAdapter {
   }
 
   setupIntegration() {
-    // Override openFile to use component registry
+    // Override openFile to use component registry, preserving original signature (file, path, options)
     const originalOpenFile = this.tabManager.openFile.bind(this.tabManager);
-    this.tabManager.openFile = (filePath, content) => {
-      return this.openFileWithComponents(filePath, content, originalOpenFile);
+    this.tabManager.openFile = (file, path, options = {}) => {
+      // Prefer explicit path; if missing and file is a string, treat it as path
+      const filePath = typeof path === 'string' && path ? path : (typeof file === 'string' ? file : null);
+      if (filePath) {
+        return this.openFileWithComponents(filePath, null, (fp) => originalOpenFile(file, path, options));
+      }
+      return originalOpenFile(file, path, options);
     };
 
     // Connect events
@@ -66,49 +71,27 @@ class TabManagerAdapter {
 
     if (editor) {
       this.events.emit('file.opening', { path: filePath, type: 'editor' });
-      return this.openWithEditor(filePath, content, editor);
+  return this.openWithEditor(filePath, content, editor);
     } else if (viewer) {
       this.events.emit('file.opening', { path: filePath, type: 'viewer' });
-      return this.openWithViewer(filePath, content, viewer);
+  return this.openWithViewer(filePath, content, viewer);
     }
 
     // Fallback to original implementation
     return fallback(filePath, content);
   }
 
-  openWithEditor(filePath, content, editorInfo) {
-    const EditorClass = editorInfo.editorClass;
-    const editor = new EditorClass();
-    
-    const tabId = this.tabManager.createTab({
-      title: this.getFileName(filePath),
-      type: 'editor',
-      filePath: filePath,
-      editor: editor,
-      icon: editorInfo.icon
-    });
-
-    editor.setContent(content);
-    this.events.emit('file.opened', { path: filePath, type: 'editor', tabId });
-    
+  async openWithEditor(filePath, content, editorInfo) {
+    // Use TabManager's public API; it will load from storage and pick the right editor via registry
+    const tabId = await this.tabManager.openInTab(filePath, null, { isReadOnly: false });
+    this.events.emit('file.opened', { path: filePath, type: 'editor', tabId, preferred: editorInfo?.name });
     return tabId;
   }
 
-  openWithViewer(filePath, content, viewerInfo) {
-    const ViewerClass = viewerInfo.viewerClass;
-    const viewer = new ViewerClass();
-    
-    const tabId = this.tabManager.createTab({
-      title: this.getFileName(filePath),
-      type: 'viewer',
-      filePath: filePath,
-      viewer: viewer,
-      icon: viewerInfo.icon
-    });
-
-    viewer.setContent(content);
-    this.events.emit('file.opened', { path: filePath, type: 'viewer', tabId });
-    
+  async openWithViewer(filePath, content, viewerInfo) {
+    // Use preview for viewers by default
+    const tabId = await this.tabManager.openInPreview(filePath, null, { isReadOnly: true });
+    this.events.emit('file.opened', { path: filePath, type: 'viewer', tabId, preferred: viewerInfo?.name });
     return tabId;
   }
 
@@ -181,19 +164,20 @@ class BuildSystemAdapter {
         await this.pluginSystem.runHook('build.beforeStart', { projectPath });
       }
 
-      // Execute build
-      const result = await originalBuild(projectPath);
+  // Execute build
+  const result = await originalBuild(projectPath);
+  const success = !!(result && result.success !== false);
 
       // Run post-build hooks if plugin system is available
       if (this.pluginSystem && typeof this.pluginSystem.runHook === 'function') {
         await this.pluginSystem.runHook('build.afterComplete', { 
           projectPath, 
           result,
-          success: true 
+          success 
         });
       }
 
-      this.events.emit('build.completed', { projectPath, result, success: true });
+      this.events.emit('build.completed', { projectPath, result, success });
       
       // Emit content refresh required event for viewers to update
       console.log('[ServiceAdapter] Emitting content.refresh.required event');
@@ -267,36 +251,104 @@ class ProjectExplorerAdapter {
   }
 
   async showEnhancedContextMenu(event, filePath, originalShow) {
-    const menuItems = [];
+  const menuItems = [];
+
+  // Determine node type via ProjectExplorer
+    const explorer = this.projectExplorer;
+    // Prefer DOM-selected node type if available
+    const selType = explorer?.selectedNode?.dataset?.type;
+    let isFolder = selType === 'folder';
+    let isProjectRoot = isFolder && filePath && !filePath.includes('/');
+    if (selType == null && explorer?.getNodeByPath) {
+      // Fallback: infer by path; if path resolves to a file node in structure
+      const parts = (filePath || '').split('/').filter(Boolean);
+      if (parts.length === 0) {
+        isFolder = true; isProjectRoot = true;
+      } else {
+        // Try to walk structure and check last segment presence
+        try {
+          let current = explorer.projectData?.structure || {};
+          for (let i = 0; i < parts.length; i++) {
+            const name = parts[i];
+            const node = current[name];
+            if (!node) { break; }
+            if (i === parts.length - 1) {
+              isFolder = node.type === 'folder';
+            }
+            if (node.type === 'folder') current = node.children || {};
+          }
+          isProjectRoot = isFolder && parts.length === 1;
+        } catch (_) {}
+      }
+    }
 
     // Get component info for file
     let editor = null, viewer = null;
     try { editor = this.componentRegistry.getEditorForFile(filePath); } catch (_) { editor = null; }
     try { viewer = this.componentRegistry.getViewerForFile(filePath); } catch (_) { viewer = null; }
 
-    // Add component-specific menu items
-    if (editor) {
-      menuItems.push({
-        label: `Edit with ${editor.displayName}`,
-        icon: editor.icon,
-        action: () => this.openWithEditor(filePath, editor)
-      });
+    // Add component-specific menu items only for files
+    if (!isFolder) {
+      if (editor) {
+        menuItems.push({
+          label: `Edit with ${editor.displayName}`,
+          icon: editor.icon,
+          action: () => this.openWithEditor(filePath, editor)
+        });
+      }
+
+      if (viewer) {
+        menuItems.push({
+          label: `View with ${viewer.displayName}`,
+          icon: viewer.icon,
+          action: () => this.openWithViewer(filePath, viewer)
+        });
+      }
     }
 
-    if (viewer) {
-      menuItems.push({
-        label: `View with ${viewer.displayName}`,
-        icon: viewer.icon,
-        action: () => this.openWithViewer(filePath, viewer)
-      });
+    // Add standard items (avoid file operations on project root)
+    if (!isProjectRoot) {
+      // For files: Open/Delete/Rename
+      if (!isFolder) {
+        menuItems.push(
+          { label: 'Open', action: () => this.openFile(filePath) },
+          { label: 'Delete', action: () => this.deleteFile(filePath) },
+          { label: 'Rename', action: () => this.renameFile(filePath) }
+        );
+      } else {
+        // For folders: Upload/New Folder plus Rename/Delete if not root of special areas
+        menuItems.push(
+          { label: 'Upload Files...', icon: '📁', action: () => {
+              try { this.projectExplorer.currentUploadPath = filePath; this.projectExplorer.fileUpload?.click?.(); } catch(_) {}
+            }
+          },
+          { label: 'New Folder', icon: '📂', action: () => this.projectExplorer.createNewFolder(filePath) }
+        );
+        menuItems.push(
+          { label: 'Rename', action: () => this.renameFile(filePath) },
+          { label: 'Delete', action: () => this.deleteFile(filePath) }
+        );
+      }
     }
 
-    // Add standard items
-    menuItems.push(
-      { label: 'Open', action: () => this.openFile(filePath) },
-      { label: 'Delete', action: () => this.deleteFile(filePath) },
-      { label: 'Rename', action: () => this.renameFile(filePath) }
-    );
+    // Project root specific actions
+    if (isProjectRoot) {
+      const alreadyActive = explorer?.getFocusedProjectName?.() === filePath;
+      if (!alreadyActive) {
+        menuItems.push({
+          label: 'Set Active Project',
+          icon: '📌',
+          action: () => {
+            try { explorer.setFocusedProjectName(filePath); } catch (_) {}
+          }
+        });
+      }
+      menuItems.push({
+        label: 'Close Project',
+        icon: '🔻',
+        action: () => explorer.closeProject(filePath)
+      });
+    }
 
     // Run plugin hooks for additional menu items
     let hookResult = null;
@@ -384,9 +436,17 @@ class ProjectExplorerAdapter {
   }
 
   setupEventConnections() {
-    this.events.on('file.open.requested', (data) => {
+    this.events.on('file.open.requested', async (data) => {
       const tabManager = this.services.get('tabManager');
-      tabManager.openFile(data.path);
+      // If a preferred component was specified, still use tabManager API; registry inside will choose best option
+      if (data && data.path) {
+        try {
+          await tabManager.openInTab(data.path);
+        } catch (e) {
+          console.warn('[ProjectExplorerAdapter] openInTab failed, trying preview:', e?.message || e);
+          await tabManager.openInPreview(data.path);
+        }
+      }
     });
 
     // Perform actual deletion when requested via context menu
