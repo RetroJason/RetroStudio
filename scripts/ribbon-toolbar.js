@@ -157,9 +157,18 @@ class RibbonToolbar {
       }
       
       try {
+        // Choose default builderId by extension
+        let builderId = 'copy';
+        if (window.buildSystem && window.buildSystem.getBuilderIdForExtension) {
+          builderId = window.buildSystem.getBuilderIdForExtension(extension);
+        } else if (extension === '.sfx') {
+          builderId = 'sfx';
+        }
+
         const fileObj = await fileManager.createAndSaveFile(fullPath, defaultContent, {
           type: extension.substring(1), // Remove the dot
-          isNew: true
+          isNew: true,
+          builderId
         });
         
         if (!fileObj) {
@@ -328,8 +337,8 @@ class RibbonToolbar {
       }
     });
     
-    this.setupButton('clearDataBtn', () => {
-      this.clearProjectData();
+    this.setupButton('clearDataBtn', async () => {
+      await this.clearProjectData();
     });
     
     // Project operations
@@ -348,7 +357,7 @@ class RibbonToolbar {
     // Note: Create buttons are now handled dynamically
   }
   
-  clearProjectData() {
+  async clearProjectData() {
     const confirmed = confirm(
       'This will clear ALL project data including:\n' +
       '• All saved files in Resources/\n' +
@@ -362,25 +371,32 @@ class RibbonToolbar {
     
     try {
       console.log('[RibbonToolbar] Clearing all project data...');
+      let clearedCount = 0;
       
-      // Clear localStorage
-      const keysToRemove = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key.startsWith('retro_studio_file_') || 
-            key.startsWith('build/') || 
-            key.startsWith('Resources/')) {
-          keysToRemove.push(key);
+      // Prefer FileIOService clearAll (IndexedDB)
+      if (window.fileIOService && typeof window.fileIOService.clearAll === 'function') {
+        try {
+          await window.fileIOService.clearAll();
+          clearedCount = -1; // unknown exact count
+          console.log('[RibbonToolbar] Cleared all records from IndexedDB');
+        } catch (e) {
+          console.warn('[RibbonToolbar] clearAll failed, falling back to enumerating files:', e);
         }
       }
-      
-      keysToRemove.forEach(key => {
-        localStorage.removeItem(key);
-        console.log(`[RibbonToolbar] Removed: ${key}`);
-      });
-      
-      console.log(`[RibbonToolbar] Cleared ${keysToRemove.length} items from localStorage`);
-      
+
+      // Fallback: enumerate via FileManager and delete
+      if (clearedCount === 0) {
+        const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+        if (fm) {
+          const files = await fm.listFiles('');
+          for (const rec of files) {
+            const p = rec.path || rec;
+            try { await fm.deleteFile(p); clearedCount++; } catch (_) {}
+          }
+          console.log(`[RibbonToolbar] Cleared ${clearedCount} files via FileManager`);
+        }
+      }
+
       // Close all tabs
       if (window.gameEditor?.tabManager) {
         window.gameEditor.tabManager.closeAllTabs();
@@ -391,7 +407,7 @@ class RibbonToolbar {
         window.gameEditor.projectExplorer.clearProject();
       }
       
-      alert(`Cleared ${keysToRemove.length} items from project data. Page will refresh.`);
+      alert(`Project data cleared. Page will refresh.`);
       
       // Refresh the page to ensure clean state
       window.location.reload();

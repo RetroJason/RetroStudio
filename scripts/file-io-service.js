@@ -17,16 +17,15 @@ class FileIOService {
     if (this.isNodeEnvironment()) {
       this.storageType = 'nodejs';
       console.log('[FileIOService] Using Node.js filesystem');
-    } else if (this.supportsFileSystemAccess()) {
-      this.storageType = 'filesystem';
-      console.log('[FileIOService] File System Access API available');
     } else if (this.supportsIndexedDB()) {
       this.storageType = 'indexeddb';
       await this.initIndexedDB();
       console.log('[FileIOService] Using IndexedDB');
+      // Note: File System Access API may also be available, but we prefer IndexedDB
     } else {
-      this.storageType = 'localstorage';
-      console.log('[FileIOService] Falling back to localStorage');
+  // Force IndexedDB-only approach; if unavailable, operations will fail loudly
+  this.storageType = 'indexeddb';
+  console.error('[FileIOService] IndexedDB not supported in this environment');
     }
     
     return this;
@@ -58,8 +57,8 @@ class FileIOService {
         const request = indexedDB.open(this.dbName, this.dbVersion);
         
         request.onerror = () => {
-          console.warn('[FileIOService] IndexedDB failed, falling back to localStorage');
-          this.storageType = 'localstorage';
+          console.error('[FileIOService] IndexedDB failed');
+          this.db = null;
           resolve();
         };
         
@@ -81,8 +80,8 @@ class FileIOService {
         };
       });
     } catch (error) {
-      console.warn('[FileIOService] IndexedDB initialization failed, falling back to localStorage:', error);
-      this.storageType = 'localstorage';
+      console.error('[FileIOService] IndexedDB initialization failed:', error);
+      this.db = null;
     }
   }
   
@@ -91,16 +90,35 @@ class FileIOService {
     // Handle binary data conversion for storage
     let processedContent = content;
     let isBinaryData = false;
-    
-    if (content instanceof ArrayBuffer) {
-      // Convert ArrayBuffer to base64 for storage
-      const bytes = new Uint8Array(content);
-      processedContent = btoa(String.fromCharCode.apply(null, bytes));
-      isBinaryData = true;
-    } else if (content instanceof Uint8Array) {
-      // Convert Uint8Array to base64 for storage
-      processedContent = btoa(String.fromCharCode.apply(null, content));
-      isBinaryData = true;
+
+    // Helper to safely convert binary to base64 without blowing the call stack
+    const toBase64 = (bufOrBytes) => {
+      const bytes = bufOrBytes instanceof Uint8Array ? bufOrBytes : new Uint8Array(bufOrBytes);
+      const chunkSize = 0x8000; // 32KB chunks to avoid argument limits
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const end = Math.min(i + chunkSize, bytes.length);
+        // Build chunk string without spread/apply to avoid stack overflow
+        let chunkStr = '';
+        for (let j = i; j < end; j++) {
+          chunkStr += String.fromCharCode(bytes[j]);
+        }
+        binary += chunkStr;
+      }
+      return btoa(binary);
+    };
+
+    try {
+      if (content instanceof ArrayBuffer) {
+        processedContent = toBase64(content);
+        isBinaryData = true;
+      } else if (content instanceof Uint8Array) {
+        processedContent = toBase64(content);
+        isBinaryData = true;
+      }
+    } catch (e) {
+      console.error('[FileIOService] Failed to encode binary content, aborting save for path:', path, e);
+      throw e;
     }
     
     const fileData = {
@@ -121,25 +139,14 @@ class FileIOService {
       switch (this.storageType) {
         case 'indexeddb':
           return await this.saveToIndexedDB(fileData);
-        case 'localstorage':
-          return await this.saveToLocalStorage(fileData);
-        case 'filesystem':
-          return await this.saveToFileSystem(fileData);
         case 'nodejs':
           return await this.saveToNodeFS(fileData);
         default:
-          // Fallback to localStorage if something goes wrong
-          console.warn('[FileIOService] Unknown storage type, using localStorage');
-          return await this.saveToLocalStorage(fileData);
+          throw new Error('Unsupported storage type');
       }
     } catch (error) {
-      console.error('[FileIOService] Save failed, trying localStorage fallback:', error);
-      try {
-        return await this.saveToLocalStorage(fileData);
-      } catch (fallbackError) {
-        console.error('[FileIOService] All save methods failed:', fallbackError);
-        throw fallbackError;
-      }
+      console.error('[FileIOService] Save failed:', error);
+      throw error;
     }
   }
   
@@ -152,33 +159,21 @@ class FileIOService {
       switch (this.storageType) {
         case 'indexeddb':
           return await this.loadFromIndexedDB(path);
-        case 'localstorage':
-          return await this.loadFromLocalStorage(path);
-        case 'filesystem':
-          return await this.loadFromFileSystem(path);
         case 'nodejs':
           return await this.loadFromNodeFS(path);
         default:
-          // Fallback to localStorage if something goes wrong
-          console.warn('[FileIOService] Unknown storage type, using localStorage');
-          return await this.loadFromLocalStorage(path);
+          throw new Error('Unsupported storage type');
       }
     } catch (error) {
-      console.error('[FileIOService] Load failed, trying localStorage fallback:', error);
-      try {
-        return await this.loadFromLocalStorage(path);
-      } catch (fallbackError) {
-        console.error('[FileIOService] All load methods failed:', fallbackError);
-        return null;
-      }
+      console.error('[FileIOService] Load failed:', error);
+      return null;
     }
   }
   
   // IndexedDB implementation
   async saveToIndexedDB(fileData) {
     if (!this.db) {
-      console.warn('[FileIOService] IndexedDB not ready, falling back to localStorage');
-      return await this.saveToLocalStorage(fileData);
+  throw new Error('IndexedDB not ready');
     }
     
     return new Promise((resolve, reject) => {
@@ -187,30 +182,22 @@ class FileIOService {
         const store = transaction.objectStore('files');
         const request = store.put(fileData);
         
-        request.onsuccess = () => {
+  request.onsuccess = () => {
           console.log(`[FileIOService] Saved to IndexedDB: ${fileData.path}`);
           resolve(fileData);
         };
-        request.onerror = () => {
-          console.warn(`[FileIOService] IndexedDB save failed, falling back to localStorage`);
-          this.saveToLocalStorage(fileData).then(resolve).catch(reject);
-        };
+  request.onerror = () => reject(request.error);
         
-        transaction.onerror = () => {
-          console.warn(`[FileIOService] IndexedDB transaction failed, falling back to localStorage`);
-          this.saveToLocalStorage(fileData).then(resolve).catch(reject);
-        };
+  transaction.onerror = () => reject(transaction.error);
       } catch (error) {
-        console.warn(`[FileIOService] IndexedDB error, falling back to localStorage:`, error);
-        this.saveToLocalStorage(fileData).then(resolve).catch(reject);
+  reject(error);
       }
     });
   }
   
   async loadFromIndexedDB(path) {
     if (!this.db) {
-      console.warn('[FileIOService] IndexedDB not ready, falling back to localStorage');
-      return await this.loadFromLocalStorage(path);
+  throw new Error('IndexedDB not ready');
     }
     
     return new Promise((resolve, reject) => {
@@ -220,81 +207,43 @@ class FileIOService {
         const request = store.get(path);
         
         request.onsuccess = () => {
-          if (request.result) {
+          const result = request.result;
+          if (result) {
+            // Decode base64 to ArrayBuffer if binary
+            if (result.binaryData && result.fileContent) {
+              try {
+                const binaryString = atob(result.fileContent);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                result.content = bytes.buffer;
+              } catch (err) {
+                console.warn(`[FileIOService] Failed to decode binary data for ${path}:`, err);
+                result.content = result.fileContent;
+              }
+            } else {
+              result.content = result.fileContent;
+            }
             console.log(`[FileIOService] Loaded from IndexedDB: ${path}`);
           }
-          resolve(request.result);
+          resolve(result);
         };
-        request.onerror = () => {
-          console.warn(`[FileIOService] IndexedDB load failed, falling back to localStorage`);
-          this.loadFromLocalStorage(path).then(resolve).catch(reject);
-        };
+  request.onerror = () => reject(request.error);
         
-        transaction.onerror = () => {
-          console.warn(`[FileIOService] IndexedDB transaction failed, falling back to localStorage`);
-          this.loadFromLocalStorage(path).then(resolve).catch(reject);
-        };
+  transaction.onerror = () => reject(transaction.error);
       } catch (error) {
-        console.warn(`[FileIOService] IndexedDB error, falling back to localStorage:`, error);
-        this.loadFromLocalStorage(path).then(resolve).catch(reject);
+  reject(error);
       }
     });
   }
   
   // localStorage implementation (for simple fallback)
-  async saveToLocalStorage(fileData) {
-    const key = `retro_studio_file_${fileData.path}`;
-    const dataToStore = JSON.stringify(fileData);
-    localStorage.setItem(key, dataToStore);
-    console.log(`[FileIOService] Saved to localStorage: ${fileData.path} (${dataToStore.length} chars)`);
-    return fileData;
-  }
-  
-  async loadFromLocalStorage(path) {
-    const key = `retro_studio_file_${path}`;
-    const data = localStorage.getItem(key);
-    if (data) {
-      const parsed = JSON.parse(data);
-      
-      // Convert base64 back to binary data if needed
-      if (parsed.binaryData && parsed.fileContent) {
-        try {
-          const binaryString = atob(parsed.fileContent);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          parsed.content = bytes.buffer; // Return as ArrayBuffer
-        } catch (error) {
-          console.warn(`[FileIOService] Failed to decode binary data for ${path}:`, error);
-          parsed.content = parsed.fileContent; // Fallback to raw data
-        }
-      } else {
-        parsed.content = parsed.fileContent; // For text data
-      }
-      
-      console.log(`[FileIOService] Loaded from localStorage: ${path} (${parsed.content?.byteLength || parsed.content?.length || 0} bytes)`);
-      return parsed;
-    } else {
-      console.log(`[FileIOService] No data found in localStorage for: ${path}`);
-      return null;
-    }
-  }
+  // Removed localStorage fallbacks for pure IndexedDB approach
   
   // File System Access API implementation
-  async saveToFileSystem(fileData) {
-    // This would require user permission and file handles
-    // For now, fall back to localStorage
-    console.log('[FileIOService] File System Access not implemented, using localStorage');
-    return await this.saveToLocalStorage(fileData);
-  }
-  
-  async loadFromFileSystem(path) {
-    // This would require stored file handles
-    // For now, fall back to localStorage
-    console.log('[FileIOService] File System Access not implemented, using localStorage');
-    return await this.loadFromLocalStorage(path);
-  }
+  async saveToFileSystem(fileData) { throw new Error('File System Access not supported'); }
+  async loadFromFileSystem(path) { throw new Error('File System Access not supported'); }
   
   // Node.js filesystem implementation
   async saveToNodeFS(fileData) {
@@ -350,8 +299,6 @@ class FileIOService {
       switch (this.storageType) {
         case 'indexeddb':
           return await this.listFromIndexedDB(directoryPath);
-        case 'localstorage':
-          return await this.listFromLocalStorage(directoryPath);
         default:
           return [];
       }
@@ -362,34 +309,43 @@ class FileIOService {
   }
   
   async listFromIndexedDB(directoryPath) {
+    // Support exact directory listing and prefix search (case-insensitive)
+    const hasDir = typeof directoryPath === 'string' && directoryPath.length > 0;
+    const dirLower = hasDir ? directoryPath.toLowerCase() : '';
+    
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['files'], 'readonly');
-      const store = transaction.objectStore('files');
-      const index = store.index('directory');
-      const request = index.getAll(directoryPath);
-      
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
+      try {
+        const transaction = this.db.transaction(['files'], 'readonly');
+        const store = transaction.objectStore('files');
+        const results = [];
+        const request = store.openCursor();
+        
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            const value = cursor.value;
+            if (!hasDir) {
+              results.push(value);
+            } else {
+              const path = (value.path || '').toLowerCase();
+              const dir = (value.directory || '').toLowerCase();
+              if (dir === dirLower || path.startsWith(dirLower + '/') || path.startsWith(dirLower)) {
+                results.push(value);
+              }
+            }
+            cursor.continue();
+          } else {
+            resolve(results);
+          }
+        };
+        request.onerror = () => reject(request.error);
+      } catch (err) {
+        reject(err);
+      }
     });
   }
   
-  async listFromLocalStorage(directoryPath) {
-    const files = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('retro_studio_file_')) {
-        try {
-          const data = JSON.parse(localStorage.getItem(key));
-          if (data.directory === directoryPath) {
-            files.push(data);
-          }
-        } catch (error) {
-          console.warn('Failed to parse stored file data:', key);
-        }
-      }
-    }
-    return files;
-  }
+  // Removed localStorage listing for pure IndexedDB approach
   
   // Delete a file
   async deleteFile(path) {
@@ -397,8 +353,6 @@ class FileIOService {
       switch (this.storageType) {
         case 'indexeddb':
           return await this.deleteFromIndexedDB(path);
-        case 'localstorage':
-          return await this.deleteFromLocalStorage(path);
         default:
           return false;
       }
@@ -419,10 +373,23 @@ class FileIOService {
     });
   }
   
-  async deleteFromLocalStorage(path) {
-    const key = `retro_studio_file_${path}`;
-    localStorage.removeItem(key);
-    return true;
+  // Removed localStorage delete for pure IndexedDB approach
+
+  // Danger: Clear all persisted files in IndexedDB
+  async clearAll() {
+    await this.ensureReady();
+    if (!this.db) return 0;
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.db.transaction(['files'], 'readwrite');
+        const store = tx.objectStore('files');
+        const clearReq = store.clear();
+        clearReq.onsuccess = () => resolve(1);
+        clearReq.onerror = () => reject(clearReq.error);
+      } catch (e) {
+        reject(e);
+      }
+    });
   }
 }
 

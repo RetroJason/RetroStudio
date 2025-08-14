@@ -23,13 +23,15 @@ class ViewerBase {
   }
 
   getFileSize() {
-    const bytes = this.file.size;
+    // Prefer a cached size if a subclass set it
+    const bytes = (this.file && this.file.size) || this.fileSize || 0;
+    if (!bytes) return 'Unknown';
     if (bytes === 0) return '0 B';
-    
+
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
+
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 

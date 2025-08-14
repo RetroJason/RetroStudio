@@ -2,8 +2,8 @@
 // Viewer plugin for MOD/XM/S3M/IT files
 
 class ModViewer extends ViewerBase {
-  constructor(file, path) {
-    super(file, path);
+  constructor(path) {
+    super(path);
     this.audioResource = null;
     this.isPlaying = false;
     this.isPaused = false;
@@ -29,7 +29,7 @@ class ModViewer extends ViewerBase {
     this.animationFrame = null;
     this.isVisualizationActive = false;
     
-    this.loadAudioResource();
+  this.loadAudioResource();
   }
   
   createActions(actionsContainer) {
@@ -48,11 +48,12 @@ class ModViewer extends ViewerBase {
   }
   
   createBody(bodyContainer) {
+  const displayName = this.getFileName();
     bodyContainer.innerHTML = `
       <div class="mod-player">
         <!-- Song Title -->
         <div class="song-title">
-          <h3 id="songTitle">${this.file.name}</h3>
+      <h3 id="songTitle">${displayName}</h3>
         </div>
         
         <!-- Equalizer Visualization Display -->
@@ -142,6 +143,10 @@ class ModViewer extends ViewerBase {
     
     // Initialize FFT visualization
     this.setupFFTVisualization();
+  }
+
+  getFileName() {
+    return this.path ? this.path.split('/').pop() || this.path.split('\\').pop() : 'Unknown';
   }
   
   setupFFTVisualization() {
@@ -487,7 +492,7 @@ class ModViewer extends ViewerBase {
         }
         
         if (this.audioResource && window.gameEditor) {
-          const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+          const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
           if (resourceId) {
             window.gameEditor.audioEngine.setSongVolume(resourceId, volume);
           }
@@ -546,15 +551,16 @@ class ModViewer extends ViewerBase {
     }
 
     try {
-      console.log('[ModViewer] Loading audio resource for:', this.file.name);
+      const name = this.getFileName();
+      console.log('[ModViewer] Loading audio resource for:', name);
       
       // First try to get already loaded resource
-      let resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+      let resourceId = window.gameEditor.getLoadedResourceId(name);
       
       if (resourceId) {
         // File already loaded
         this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[ModViewer] File already loaded: ${this.file.name}`);
+        console.log(`[ModViewer] File already loaded: ${name}`);
         
         // Get duration from the resource
         if (this.audioResource && this.audioResource.duration && this.audioResource.duration > 0) {
@@ -573,11 +579,11 @@ class ModViewer extends ViewerBase {
       console.log('[ModViewer] File not loaded, loading on demand...');
       this.updateStatus('Loading...');
       
-      resourceId = await window.gameEditor.loadAudioFileOnDemand(this.file.name);
+      resourceId = await window.gameEditor.loadAudioFileOnDemand(name);
       
       if (resourceId) {
         this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[ModViewer] Loaded resource for: ${this.file.name}`);
+        console.log(`[ModViewer] Loaded resource for: ${name}`);
         
         this.updateStatus('Loaded');
         this.updateMetadata();
@@ -627,7 +633,8 @@ class ModViewer extends ViewerBase {
     if (!metadataContent) return;
     
     if (this.audioResource) {
-      const ext = this.file.name.substring(this.file.name.lastIndexOf('.')).toLowerCase();
+  const baseName = this.getFileName();
+  const ext = baseName.substring(baseName.lastIndexOf('.')).toLowerCase();
       const formatName = this.getFormatName(ext);
       
       metadataContent.innerHTML = `
@@ -678,7 +685,7 @@ class ModViewer extends ViewerBase {
       return;
     }
 
-    const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+  const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -869,7 +876,7 @@ class ModViewer extends ViewerBase {
   loseFocus() {
     // Stop (not pause) playback when tab loses focus - MOD doesn't support true pause
     console.log('[ModViewer] loseFocus called - checking playback state');
-    console.log('[ModViewer] isPlaying:', this.isPlaying, 'file:', this.file?.name);
+  console.log('[ModViewer] isPlaying:', this.isPlaying, 'file:', this.getFileName());
     
     try {
       if (this.isPlaying) {
@@ -945,7 +952,7 @@ class ModViewer extends ViewerBase {
     }
     
     try {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
+  const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
       if (resourceId) {
         console.log('[ModViewer] Stopping song for resource:', resourceId);
         window.gameEditor.audioEngine.stopSong(resourceId);
@@ -982,7 +989,8 @@ class ModViewer extends ViewerBase {
     const baseInfo = super.getFileInfo();
     
     if (this.audioResource) {
-      baseInfo.push(`Format: ${this.getFormatName(this.file.name.substring(this.file.name.lastIndexOf('.')))}`);
+  const baseName = this.getFileName();
+  baseInfo.push(`Format: ${this.getFormatName(baseName.substring(baseName.lastIndexOf('.')))}`);
       if (this.audioResource.duration) {
         baseInfo.push(`Duration: ${this.formatDuration(this.audioResource.duration)}`);
       }
@@ -997,17 +1005,7 @@ class ModViewer extends ViewerBase {
     this.loadAudioResource();
   }
   
-  destroy() {
-    // Stop playback if active
-    if (this.isPlaying && window.gameEditor) {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.file.name);
-      if (resourceId) {
-        window.gameEditor.audioEngine.stopSong(resourceId);
-      }
-    }
-    
-    super.destroy();
-  }
+  // Remove duplicate destroy; cleanup() already stops audio and super.destroy handles DOM removal
 }
 
 // Export for use

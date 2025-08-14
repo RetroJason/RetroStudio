@@ -8,27 +8,45 @@ class GameEditor {
     this.projectExplorer = null;
     this.buildSystem = null;
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
-    
+  this._inflightLoads = new Map(); // filename -> Promise
+
     this.initialize();
   }
   
   async initialize() {
     console.log('=== Game Engine Editor ===');
     
-    // Initialize audio engine
-    this.audioEngine = new AudioEngine();
-    const audioSuccess = await this.audioEngine.initialize();
-    
-    if (!audioSuccess) {
-      console.error('[GameEditor] Failed to initialize audio engine');
-      return false;
-    }
-    
-    // Create resource manager
-    this.resourceManager = new ResourceManager(this.audioEngine);
-    
-    // Initialize build system (using service container)
+    // Prefer singletons from the service container to avoid duplicate instances
     const services = window.serviceContainer;
+
+    // Initialize or obtain AudioEngine
+    if (services) {
+      try {
+        this.audioEngine = services.get('audioEngine');
+      } catch (_) { /* not registered yet */ }
+    }
+    if (!this.audioEngine) {
+      this.audioEngine = new AudioEngine();
+      const audioSuccess = await this.audioEngine.initialize();
+      if (!audioSuccess) {
+        console.error('[GameEditor] Failed to initialize audio engine');
+        return false;
+      }
+      services?.register?.('audioEngine', this.audioEngine);
+    }
+
+    // Initialize or obtain ResourceManager
+    if (services) {
+      try {
+        this.resourceManager = services.get('resourceManager');
+      } catch (_) { /* not registered yet */ }
+    }
+    if (!this.resourceManager) {
+      this.resourceManager = new ResourceManager(this.audioEngine);
+      services?.register?.('resourceManager', this.resourceManager);
+    }
+
+    // Initialize or obtain BuildSystem
     if (services) {
       try {
         this.buildSystem = services.get('buildSystem');
@@ -48,8 +66,16 @@ class GameEditor {
     this.audioEngine.addEventListener('resourceLoaded', this.onResourceLoaded.bind(this));
     this.audioEngine.addEventListener('resourceUpdated', this.onResourceUpdated.bind(this));
     
-    // Initialize tab manager
-    this.tabManager = new TabManager();
+    // Initialize or obtain TabManager
+    if (services) {
+      try {
+        this.tabManager = services.get('tabManager');
+      } catch (_) { /* not registered yet */ }
+    }
+    if (!this.tabManager) {
+      this.tabManager = new TabManager();
+      services?.register?.('tabManager', this.tabManager);
+    }
     window.tabManager = this.tabManager; // Make available globally
     
     // Listen for tab changes to update save button state and project explorer
@@ -58,8 +84,16 @@ class GameEditor {
       // Project explorer highlighting is handled automatically in TabManager
     });
     
-    // Initialize project explorer
-    this.projectExplorer = new ProjectExplorer();
+    // Initialize or obtain ProjectExplorer
+    if (services) {
+      try {
+        this.projectExplorer = services.get('projectExplorer');
+      } catch (_) { /* not registered yet */ }
+    }
+    if (!this.projectExplorer) {
+      this.projectExplorer = new ProjectExplorer();
+      services?.register?.('projectExplorer', this.projectExplorer);
+    }
     
     // Set up UI event handlers
     this.setupUI();
@@ -151,15 +185,18 @@ class GameEditor {
       
       console.log(`[GameEditor] Registered audio file for lazy loading: ${file.name} (${audioType})`);
       this.updateStatus(`Registered ${file.name}`, 'info');
+
+  // Persistence is handled by ProjectExplorer.addFileToProject; avoid duplicate saves here
     }
     
     // Auto-open the file in a tab using unified logic
     if (this.tabManager) {
       try {
         console.log(`[GameEditor] Auto-opening file: ${file.name}`);
-        // Use the path directly since it already includes the filename
-        await this.tabManager.openInTab(path, file);
-        
+        // Ensure we pass full path including filename
+        const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
+        await this.tabManager.openInTab(fullPath, file);
+
         // Only do tree operations if requested (i.e., not called from bulk file addition)
         if (doTreeOperations) {
           // Small delay to ensure DOM is updated before tree operations
@@ -488,7 +525,14 @@ class GameEditor {
       }
     }
     
-    // First try to find in pending files (regular project files)
+    // Dedupe concurrent requests for the same filename
+    if (!forceReload && this._inflightLoads.has(filename)) {
+      console.log('[GameEditor] Returning in-flight load for', filename);
+      return this._inflightLoads.get(filename);
+    }
+
+    const loadPromise = (async () => {
+      // First try to find in pending files (regular project files)
     if (this.pendingAudioFiles) {
       for (const [fileKey, fileData] of this.pendingAudioFiles.entries()) {
         if (fileKey.endsWith(filename)) {
@@ -512,97 +556,122 @@ class GameEditor {
       }
     }
     
-    // If not found in pending files, try to load from build files in localStorage
-    console.log(`[GameEditor] File ${filename} not found in pending files, checking build files...`);
+      // If not found in pending files, try to load from build files via storage
+      console.log(`[GameEditor] File ${filename} not found in pending files, checking build files...`);
     
     try {
-      // Check localStorage for build files - prioritize cleaner paths
-      const buildKeys = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.includes('build/') && key.endsWith(filename)) {
-          buildKeys.push(key);
+      // Prefer storage backend to enumerate possible build files
+      const candidates = [];
+      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+        const buildRecords = await window.fileIOService.listFiles('build');
+        for (const rec of buildRecords) {
+          const recPath = rec.path || rec;
+          if ((recPath || '').endsWith(filename)) {
+            candidates.push(recPath);
+          }
         }
       }
-      
-      // Sort keys to prioritize cleaner paths (without .sfx/ in the middle and without Resources/)
-      buildKeys.sort((a, b) => {
-        const aHasInvalidPath = a.includes('.sfx/');
-        const bHasInvalidPath = b.includes('.sfx/');
-        const aHasResources = a.includes('/Resources/');
-        const bHasResources = b.includes('/Resources/');
-        
-        // Strongly prioritize paths without invalid patterns
-        if (aHasInvalidPath && !bHasInvalidPath) return 1;
-        if (!aHasInvalidPath && bHasInvalidPath) return -1;
-        
-        // Prefer new format paths (without Resources/)
-        if (aHasResources && !bHasResources) return 1;
-        if (!aHasResources && bHasResources) return -1;
-        
-        return 0;
+
+      // Sort to prioritize clean paths
+      candidates.sort((a, b) => {
+        const aBad = a.includes('.sfx/') || a.includes('/Resources/');
+        const bBad = b.includes('.sfx/') || b.includes('/Resources/');
+        if (aBad && !bBad) return 1;
+        if (!aBad && bBad) return -1;
+        return a.length - b.length; // prefer shorter paths
       });
-      
-      for (const key of buildKeys) {
-        console.log(`[GameEditor] Trying build file in localStorage: ${key}`);
-        
-        const data = localStorage.getItem(key);
-        if (data) {
-          // Parse the stored data (it's JSON from FileIOService)
-          const fileInfo = JSON.parse(data);
-          console.log(`[GameEditor] File info structure:`, Object.keys(fileInfo));
-          console.log(`[GameEditor] Has binaryData flag:`, fileInfo.binaryData);
-          console.log(`[GameEditor] Has fileContent:`, !!fileInfo.fileContent);
-          console.log(`[GameEditor] Has content:`, !!fileInfo.content);
-          
-          // Create a File object from the stored data
-          let fileContent;
-          if (fileInfo.binaryData && fileInfo.fileContent) {
-            try {
-              // For binary data, convert base64 back to ArrayBuffer
-              const binaryString = atob(fileInfo.fileContent);
-              const bytes = new Uint8Array(binaryString.length);
-              for (let i = 0; i < binaryString.length; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              fileContent = bytes.buffer;
-              console.log(`[GameEditor] Decoded base64 to ArrayBuffer, size: ${fileContent.byteLength}`);
-            } catch (base64Error) {
-              console.warn(`[GameEditor] Base64 decode failed for ${key}, trying raw data:`, base64Error);
-              // If base64 decode fails, the data might already be raw
-              fileContent = fileInfo.fileContent;
-            }
-          } else if (fileInfo.content) {
-            // Use content field if available (from updated FileIOService)
-            fileContent = fileInfo.content;
-            console.log(`[GameEditor] Using content field, type:`, typeof fileContent);
-          } else {
-            fileContent = fileInfo.fileContent || data;
-            console.log(`[GameEditor] Using fallback content, type:`, typeof fileContent);
-          }
-          
-          const file = new File([fileContent], filename, { 
-            type: fileInfo.type || 'audio/wav'
-          });
-          
-          console.log(`[GameEditor] Loading build file ${filename}...`);
+
+        for (const path of candidates) {
+        try {
+            const rec = window.fileIOService ? await window.fileIOService.loadFile(path) : null;
+          if (!rec) continue;
+          const buf = rec.content instanceof ArrayBuffer ? rec.content : (rec.binaryData && rec.fileContent ? (() => { const bin = atob(rec.fileContent); const bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer; })() : new TextEncoder().encode(String(rec.fileContent || rec.content || '')).buffer);
+          const file = new File([buf], filename, { type: 'audio/wav' });
           const resourceId = await this.resourceManager.loadFromFile(file, 'wav');
-          
-          // Add to loaded resources
-          this.loadedAudioResources.set(key, resourceId);
-          
-          console.log(`[GameEditor] Loaded build audio resource: ${resourceId} (${filename})`);
+          this.loadedAudioResources.set(path, resourceId);
           this.updateStatus(`Loaded ${filename}`, 'success');
-          
           return resourceId;
+        } catch (innerErr) {
+          console.warn('[GameEditor] Candidate load failed, trying next:', path, innerErr);
         }
       }
     } catch (error) {
       console.error(`[GameEditor] Error loading build file ${filename}:`, error);
     }
     
+    // If still not found, try to load directly from stored Resources by filename
+    console.log(`[GameEditor] ${filename} not found in build files, checking Resources in storage...`);
+    try {
+      const resourceCandidates = [];
+      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+        const resRecords = await window.fileIOService.listFiles('Resources');
+        for (const rec of resRecords) {
+          const recPath = rec.path || rec;
+          if ((recPath || '').endsWith(filename)) {
+            resourceCandidates.push(recPath);
+          }
+        }
+      }
+
+      // Sort to prioritize shortest paths
+      resourceCandidates.sort((a, b) => a.length - b.length);
+
+      if (resourceCandidates.length) {
+        // Determine audio type by extension
+        const lower = filename.toLowerCase();
+        const isMod = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => lower.endsWith(ext));
+        const audioType = isMod ? 'mod' : (lower.endsWith('.wav') ? 'wav' : null);
+        if (!audioType) {
+          throw new Error('Unsupported audio type for on-demand load');
+        }
+
+          for (const key of resourceCandidates) {
+          try {
+              const path = key;
+              const rec = await window.fileIOService.loadFile(path);
+            if (!rec) continue;
+            let buf;
+            if (rec.content instanceof ArrayBuffer) {
+              buf = rec.content;
+            } else if (rec.binaryData && rec.fileContent) {
+              const binaryString = atob(rec.fileContent);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+              buf = bytes.buffer;
+            } else if (typeof rec.fileContent === 'string') {
+              buf = new TextEncoder().encode(rec.fileContent).buffer;
+            } else {
+              continue;
+            }
+            const file = new File([buf], filename, { type: isMod ? 'application/octet-stream' : 'audio/wav' });
+            const resourceId = await this.resourceManager.loadFromFile(file, audioType);
+            this.loadedAudioResources.set(path, resourceId);
+            this.updateStatus(`Loaded ${filename}`, 'success');
+            return resourceId;
+          } catch (resErr) {
+            console.warn('[GameEditor] Failed to load resource candidate:', key, resErr);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[GameEditor] Error during Resources storage lookup:', error);
+    }
+
     // If we get here, the file wasn't found anywhere
     throw new Error(`File ${filename} not found in project or build files`);
+    })();
+
+    // Track in-flight and clean up when done
+    this._inflightLoads.set(filename, loadPromise);
+    try {
+      const id = await loadPromise;
+      return id;
+    } finally {
+      // Remove only if this exact promise is still the one stored
+      if (this._inflightLoads.get(filename) === loadPromise) {
+        this._inflightLoads.delete(filename);
+      }
+    }
   }
 
   onResourceLoaded(event) {
@@ -626,8 +695,10 @@ class GameEditor {
     }
     
     // Notify the tab manager to update any open viewers for this resource
-    if (this.tabManager) {
+    if (this.tabManager && typeof this.tabManager.notifyResourceUpdated === 'function') {
       this.tabManager.notifyResourceUpdated(resourceId, property, value, filename);
+    } else {
+      console.warn('[GameEditor] TabManager.notifyResourceUpdated is not available');
     }
   }
 
@@ -640,5 +711,9 @@ class GameEditor {
 
 // Initialize when page loads
 window.addEventListener('DOMContentLoaded', async () => {
-  window.gameEditor = new GameEditor();
+  if (!window.gameEditor) {
+    window.gameEditor = new GameEditor();
+  } else {
+    console.log('[GameEditor] Instance already exists, skipping initialization');
+  }
 });

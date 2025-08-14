@@ -596,9 +596,32 @@ class PaletteEditor extends EditorBase {
         
         console.log(`[PaletteEditor] Attempting to load from persistent storage: ${storagePath}`);
         const storedFile = await window.fileIOService.loadFile(storagePath);
-        if (storedFile && storedFile.content) {
-          console.log(`[PaletteEditor] Loaded content from persistent storage: ${storagePath} (${storedFile.content.length} chars)`);
-          content = storedFile.content;
+        if (storedFile) {
+          // Prefer decoded content if present; else fallback to raw fileContent
+          let raw = storedFile.content !== undefined ? storedFile.content : storedFile.fileContent;
+          // If binaryData flagged but content is a string (base64), decode to text
+          if (storedFile.binaryData && typeof raw === 'string') {
+            try {
+              const bin = atob(raw);
+              const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              raw = new TextDecoder().decode(bytes);
+              console.log(`[PaletteEditor] Decoded base64 to text for ${storagePath}`);
+            } catch (e) {
+              console.warn('[PaletteEditor] Failed to base64-decode stored content; leaving as string');
+            }
+          } else if (raw instanceof ArrayBuffer) {
+            try {
+              raw = new TextDecoder().decode(new Uint8Array(raw));
+              console.log(`[PaletteEditor] Converted ArrayBuffer to text for ${storagePath}`);
+            } catch (e) {
+              console.warn('[PaletteEditor] Failed to decode ArrayBuffer to text');
+            }
+          }
+          if (typeof raw === 'string') {
+            console.log(`[PaletteEditor] Loaded content from persistent storage: ${storagePath} (${raw.length} chars)`);
+          }
+          content = raw;
         } else {
           console.log(`[PaletteEditor] No content found in persistent storage for: ${storagePath}`);
         }
@@ -634,6 +657,17 @@ class PaletteEditor extends EditorBase {
         console.warn(`[PaletteEditor] Unexpected content type: ${typeof content}`, content);
         content = '';
       }
+    }
+    // Guard: some saved data might be base64 text; detect header and attempt decode
+    if (content && !content.startsWith('GIMP') && /^[A-Za-z0-9+/=\r\n]+$/.test(content.substring(0, 120))) {
+      try {
+        const bin = atob(content.replace(/\s+/g, ''));
+        const decoded = new TextDecoder().decode(new Uint8Array([...bin].map(c => c.charCodeAt(0))));
+        if (decoded.startsWith('GIMP')) {
+          content = decoded;
+          console.log('[PaletteEditor] Detected base64-like string; decoded to GIMP text');
+        }
+      } catch (_) { /* ignore */ }
     }
     
     console.log(`[PaletteEditor] parseGIMPPalette - content length: ${content.length}`);

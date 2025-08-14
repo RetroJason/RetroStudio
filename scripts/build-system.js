@@ -5,6 +5,7 @@ class BuildSystem {
   constructor() {
     this.builders = new Map();
     this.isBuilding = false;
+  this.builderById = new Map();
     
     // Register default builders
     this.registerDefaultBuilders();
@@ -16,6 +17,16 @@ class BuildSystem {
     
     // SFX builder for .sfx files
     this.registerBuilder('.sfx', new SfxBuilder());
+
+  // Palette builder for palette-like text formats
+  this.registerBuilder('.pal', new PalBuilder());
+  this.registerBuilder('.act', new PalBuilder());
+  this.registerBuilder('.aco', new PalBuilder());
+
+  // Also index by IDs for explicit selection
+  this.builderById.set('copy', new CopyBuilder());
+  this.builderById.set('sfx', new SfxBuilder());
+  this.builderById.set('pal', new PalBuilder());
   }
   
   registerBuilder(extension, builder) {
@@ -31,6 +42,18 @@ class BuildSystem {
   getFileExtension(filename) {
     const lastDot = filename.lastIndexOf('.');
     return lastDot !== -1 ? filename.substring(lastDot).toLowerCase() : '';
+  }
+
+  // Map extension to default builderId
+  getBuilderIdForExtension(extension) {
+    switch ((extension || '').toLowerCase()) {
+      case '.sfx': return 'sfx';
+      case '.pal':
+      case '.act':
+      case '.aco':
+        return 'pal';
+      default: return 'copy';
+    }
   }
   
   async buildProject() {
@@ -130,7 +153,7 @@ class BuildSystem {
         return;
       }
       
-      const builtFileObj = await fileManager.loadFile(outputPath);
+  const builtFileObj = await fileManager.loadFile(outputPath);
       if (!builtFileObj) {
         console.error(`[BuildSystem] Could not load built file from storage: ${outputPath}`);
         return;
@@ -142,7 +165,7 @@ class BuildSystem {
       // Add to project explorer's build folder
       window.gameEditor.projectExplorer.addBuildFileToStructure(relativePath, {
         content: builtFileObj.content,
-        name: builtFileObj.name,
+        name: builtFileObj.filename || builtFileObj.name,
         path: outputPath
       });
       
@@ -242,9 +265,17 @@ class BuildSystem {
       size: fileObj.size,
       lastModified: fileObj.lastModified || Date.now()
     };
-    
-    // Use existing buildFile method with the loaded file
-    return await this.buildFile(legacyFile);
+
+    // Determine builder by explicit assignment or by extension
+    const explicitId = fileObj.builderId;
+    const ext = this.getFileExtension(filePath);
+    const builderId = explicitId || this.getBuilderIdForExtension(ext);
+    const builder = this.builderById.get(builderId) || this.getBuilderForFile(legacyFile.name);
+    if (!builder) {
+      throw new Error(`No builder available for ${filePath}`);
+    }
+
+    return await builder.build(legacyFile);
   }
   
   getAllResourceFiles() {
@@ -392,6 +423,16 @@ class CopyBuilder extends BaseBuilder {
       
       if (contentFromStorage) {
         content = contentFromStorage;
+        // Normalize text files that may have been stored as binary ArrayBuffer
+        if (isTextFile && (content instanceof ArrayBuffer || ArrayBuffer.isView(content))) {
+          try {
+            const bytes = content instanceof ArrayBuffer ? new Uint8Array(content) : new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+            content = new TextDecoder('utf-8').decode(bytes);
+            console.log(`[CopyBuilder] Decoded text content from ArrayBuffer for ${file.path}`);
+          } catch (e) {
+            console.warn('[CopyBuilder] Failed to decode ArrayBuffer as text, leaving as-is:', e);
+          }
+        }
         console.log(`[CopyBuilder] Using saved content for ${file.path}`);
       } else {
         // Fallback to reading from file object
@@ -407,12 +448,15 @@ class CopyBuilder extends BaseBuilder {
       // Save to build directory using FileManager
       const fileManager = window.serviceContainer?.get('fileManager');
       if (fileManager) {
-        await fileManager.saveFile(outputPath, content, {
+        // Ensure text files are saved as plain text (not base64)
+        const saveContent = content;
+        await fileManager.saveFile(outputPath, saveContent, {
           binaryData: !isTextFile
         });
       } else if (window.fileIOService) {
         // Fallback to direct fileIOService if FileManager not available
-        await window.fileIOService.saveFile(outputPath, content, {
+        const saveContent = content;
+        await window.fileIOService.saveFile(outputPath, saveContent, {
           binaryData: !isTextFile
         });
       }
@@ -493,10 +537,13 @@ class SfxBuilder extends BaseBuilder {
       
       // Save WAV file
       if (fileManager) {
-        await fileManager.saveFile(outputPath, wavData, {
+        const saved = await fileManager.saveFile(outputPath, wavData, {
           type: '.wav',
           binaryData: true
         });
+        if (!saved) {
+          throw new Error('Failed to save WAV to persistent storage');
+        }
         console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
       }
       
@@ -733,8 +780,73 @@ class SfxBuilder extends BaseBuilder {
   }
 }
 
+// Palette builder - exports text palettes to build folder (e.g., .pal)
+class PalBuilder extends BaseBuilder {
+  async build(file) {
+    try {
+      const outputPath = file.path.replace(/^Resources\//, 'build/');
+
+      // Determine if text-like; palettes are text for .pal
+      let content;
+      if (typeof file.content === 'string') {
+        content = file.content;
+      } else if (file.content instanceof ArrayBuffer || ArrayBuffer.isView(file.content)) {
+        try {
+          const bytes = file.content instanceof ArrayBuffer ? new Uint8Array(file.content) : new Uint8Array(file.content.buffer, file.content.byteOffset, file.content.byteLength);
+          content = new TextDecoder('utf-8').decode(bytes);
+        } catch (e) {
+          console.warn('[PalBuilder] Failed to decode ArrayBuffer content, attempting storage load');
+        }
+      }
+      if (typeof content !== 'string') {
+        if (file.file && typeof file.file.text === 'function') {
+          content = await file.file.text();
+        } else {
+          // Fallback: try to load latest from storage
+          const fm = window.serviceContainer?.get('fileManager');
+          const loaded = fm ? await fm.loadFile(file.path) : null;
+          const stored = loaded && (loaded.content !== undefined ? loaded.content : loaded.fileContent);
+          if (typeof stored === 'string') {
+            content = stored;
+          } else if (stored instanceof ArrayBuffer || ArrayBuffer.isView(stored)) {
+            try {
+              const bytes = stored instanceof ArrayBuffer ? new Uint8Array(stored) : new Uint8Array(stored.buffer, stored.byteOffset, stored.byteLength);
+              content = new TextDecoder('utf-8').decode(bytes);
+            } catch (e) {
+              console.warn('[PalBuilder] Failed to decode stored ArrayBuffer');
+            }
+          }
+        }
+      }
+      if (typeof content !== 'string') content = '';
+
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (fileManager) {
+        await fileManager.saveFile(outputPath, content, { binaryData: false });
+      } else if (window.fileIOService) {
+        await window.fileIOService.saveFile(outputPath, content, { binaryData: false });
+      }
+
+      return {
+        success: true,
+        inputPath: file.path,
+        outputPath,
+        builder: 'pal'
+      };
+    } catch (error) {
+      return {
+        success: false,
+        inputPath: file.path,
+        error: error.message,
+        builder: 'pal'
+      };
+    }
+  }
+}
+
 // Export for global use
 window.BuildSystem = BuildSystem;
 window.BaseBuilder = BaseBuilder;
 window.CopyBuilder = CopyBuilder;
 window.SfxBuilder = SfxBuilder;
+window.PalBuilder = PalBuilder;

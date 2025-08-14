@@ -9,6 +9,13 @@ class WavViewer extends ViewerBase {
     this.volumeSlider = null;
     this.waveformCanvas = null;
     this.audioContext = null;
+  // Draw retry/visibility handling
+  this._drawRetryCount = 0;
+  this._maxDrawRetries = 12; // ~600ms total with 50ms backoff
+  this._resizeObserver = null;
+  // Async load coordination
+  this._isLoading = false;
+  this._loadSeq = 0;
     
     // Don't load audio resource immediately - wait for DOM to be ready
   }
@@ -151,6 +158,19 @@ class WavViewer extends ViewerBase {
       durationSpan: !!this.durationSpan,
       waveformCanvas: !!this.waveformCanvas
     });
+
+    // Observe canvas resize/visibility to trigger redraws when the tab becomes visible/resizes
+    if (this.waveformCanvas && 'ResizeObserver' in window) {
+      try {
+        this._resizeObserver = new ResizeObserver(() => {
+          this._drawRetryCount = 0;
+          this.drawWaveform();
+        });
+        this._resizeObserver.observe(this.waveformCanvas);
+      } catch (e) {
+        console.warn('[WavViewer] ResizeObserver not available:', e);
+      }
+    }
     
     // Now that DOM is ready, load the audio resource
     this.loadAudioResource();
@@ -189,49 +209,58 @@ class WavViewer extends ViewerBase {
     }
 
     try {
+      // Prevent overlapping loads unless forced
+      if (this._isLoading && !forceReload) {
+        console.log('[WavViewer] Load already in progress, skipping');
+        return;
+      }
+      this._isLoading = true;
+      const seq = ++this._loadSeq;
       console.log('[WavViewer] Loading audio resource for:', this.getFileName(), forceReload ? '(forced reload)' : '');
-      
+
       // First try to get already loaded resource, unless forcing reload
       let resourceId = null;
       if (!forceReload) {
         resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
-      }
-      
-      if (resourceId && !forceReload) {
-        // File already loaded
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[WavViewer] File already loaded: ${this.getFileName()}`);
-        this.updateStatus('Loaded');
-        this.updateMetadata();
-        this.updateDurationDisplay(); // Ensure duration is shown
-        
-        // Draw waveform using a more robust approach
-        this.scheduleWaveformDraw();
-        return;
+        if (resourceId) {
+          // File already loaded
+          this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+          console.log(`[WavViewer] File already loaded: ${this.getFileName()}`);
+          this.updateStatus('Loaded');
+          this.updateMetadata();
+          this.updateDurationDisplay();
+          // Only schedule draw if this load is current
+          if (seq === this._loadSeq) this.scheduleWaveformDraw();
+          this._isLoading = false;
+          return;
+        }
       }
 
       // File not loaded yet, load it on demand
       console.log('[WavViewer] File not loaded, loading on demand...');
       this.updateStatus('Loading...');
-      
+
       resourceId = await window.gameEditor.loadAudioFileOnDemand(this.getFileName(), forceReload);
-      
+
       if (resourceId) {
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
-        console.log(`[WavViewer] Loaded resource for: ${this.getFileName()}`);
-        
-        this.updateStatus('Loaded');
-        this.updateMetadata();
-        this.updateDurationDisplay(); // Ensure duration is shown
-        
-        // Draw waveform using a more robust approach
-        this.scheduleWaveformDraw();
+        if (seq === this._loadSeq) {
+          this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+          console.log(`[WavViewer] Loaded resource for: ${this.getFileName()}`);
+          this.updateStatus('Loaded');
+          this.updateMetadata();
+          this.updateDurationDisplay();
+          this.scheduleWaveformDraw();
+        } else {
+          console.log('[WavViewer] Stale load result ignored');
+        }
       } else {
         this.updateStatus('Failed to load audio resource');
       }
     } catch (error) {
       console.error('[WavViewer] Failed to load audio resource:', error);
       this.updateStatus(`Error: ${error.message}`);
+    } finally {
+      this._isLoading = false;
     }
   }
   
@@ -239,8 +268,25 @@ class WavViewer extends ViewerBase {
   scheduleWaveformDraw() {
     // Use requestAnimationFrame to ensure rendering happens after layout
     requestAnimationFrame(() => {
-      this.drawWaveform();
+  this._drawRetryCount = 0;
+  this._attemptDrawWithVisibility();
     });
+  }
+
+  // Try to resolve the audio resource synchronously from the AudioEngine if missing
+  _ensureAudioResource() {
+    if (this.audioResource) return true;
+    const ge = window.gameEditor;
+    if (!ge || !ge.audioEngine) return false;
+    const id = ge.getLoadedResourceId(this.getFileName());
+    if (!id) return false;
+    const res = ge.audioEngine.getResource(id);
+    if (!res) return false;
+    this.audioResource = res;
+    this.updateStatus('Loaded');
+    this.updateMetadata();
+    this.updateDurationDisplay();
+    return true;
   }
   
   updateStatus(status) {
@@ -269,12 +315,6 @@ class WavViewer extends ViewerBase {
         </div>
         <div class="metadata-row">
           <strong>Sample Rate:</strong> ${buffer.sampleRate} Hz
-        </div>
-        <div class="metadata-row">
-          <strong>Channels:</strong> ${buffer.numberOfChannels}
-        </div>
-        <div class="metadata-row">
-          <strong>Bit Depth:</strong> 32-bit float (decoded)
         </div>
         <div class="metadata-row">
           <strong>Samples:</strong> ${buffer.length.toLocaleString()}
@@ -349,8 +389,19 @@ class WavViewer extends ViewerBase {
     }
     
     if (!this.audioResource) {
-      console.log('[WavViewer] No audioResource found');
-      return;
+      // Attempt to resolve synchronously from engine (handles races where load finished before viewer attached)
+      const resolved = this._ensureAudioResource();
+      if (!resolved) {
+        console.log('[WavViewer] No audioResource found');
+        // If not already loading, kick off a load and retry shortly
+        if (!this._isLoading) {
+          // Fire and forget; draw will retry via schedule
+          this.loadAudioResource().catch(() => {});
+        }
+        this._scheduleRetry();
+        return;
+      }
+      // If resolved, continue and draw
     }
     
     if (!this.audioResource.audioBuffer) {
@@ -373,11 +424,9 @@ class WavViewer extends ViewerBase {
     // Set canvas size to match display size with proper DPI scaling
     const rect = canvas.getBoundingClientRect();
     console.log('[WavViewer] Canvas getBoundingClientRect:', rect);
-    
     if (rect.width === 0 || rect.height === 0) {
-      console.error('[WavViewer] Canvas has zero dimensions - this should not happen with proper initialization!');
-      console.error('[WavViewer] Canvas rect:', rect);
-      console.error('[WavViewer] Canvas parent:', canvas.parentElement);
+      console.warn('[WavViewer] Canvas has zero dimensions; retrying shortly');
+      this._scheduleRetry();
       return;
     }
     
@@ -414,8 +463,8 @@ class WavViewer extends ViewerBase {
     gradient.addColorStop(1, '#0288d1');    // Darker blue at bottom
 
     // Draw filled waveform with gradient
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
 
     // Start from bottom left
     ctx.moveTo(0, height);
@@ -478,6 +527,38 @@ class WavViewer extends ViewerBase {
     this.drawPlaybackPosition();
 
     console.log('[WavViewer] Waveform drawing completed');
+  }
+
+  _attemptDrawWithVisibility() {
+    if (this.isCleaningUp) return;
+    const canvas = this.waveformCanvas;
+    if (!canvas || !canvas.isConnected) {
+      this._scheduleRetry();
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) {
+      this._scheduleRetry();
+      return;
+    }
+    // Ensure we have the resource before attempting the draw
+    if (!this.audioResource) {
+      if (!this._ensureAudioResource()) {
+        if (!this._isLoading) this.loadAudioResource().catch(() => {});
+        this._scheduleRetry();
+        return;
+      }
+    }
+    this.drawWaveform();
+  }
+
+  _scheduleRetry() {
+    if (this._drawRetryCount >= this._maxDrawRetries) {
+      console.warn('[WavViewer] Max draw retries reached; waiting for resize/focus');
+      return;
+    }
+    this._drawRetryCount++;
+    setTimeout(() => this._attemptDrawWithVisibility(), 50);
   }
 
   drawPlaybackPosition() {
@@ -702,6 +783,10 @@ class WavViewer extends ViewerBase {
         cancelAnimationFrame(this.animationFrame);
         this.animationFrame = null;
       }
+      if (this._resizeObserver) {
+        try { this._resizeObserver.disconnect(); } catch (e) {}
+        this._resizeObserver = null;
+      }
       
     } catch (error) {
       console.error('[WavViewer] Error in cleanup:', error);
@@ -731,9 +816,6 @@ class WavViewer extends ViewerBase {
         // Stop all instances of this sound
         window.gameEditor.audioEngine.stopAllSounds(resourceId);
       }
-      
-      // Also perform comprehensive audio cleanup to prevent static
-      window.gameEditor.audioEngine.stopAllAudio();
     } catch (error) {
       console.error('[WavViewer] Error stopping all playback:', error);
       // Try emergency stop as fallback

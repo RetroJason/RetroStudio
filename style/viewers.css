@@ -843,8 +843,9 @@
 
 .hex-header {
   display: grid;
-  grid-template-columns: 80px 1fr 200px;
-  gap: 15px;
+  /* Offset: 8 hex digits + 'h' space (approx 10ch), Hex: 16 bytes * 3 chars per byte incl. space = 48ch, ASCII: 16ch */
+  grid-template-columns: 10ch 48ch 16ch;
+  column-gap: 8px; /* tighter spacing */
   padding: 8px 12px;
   background: #37373d;
   border-bottom: 2px solid #3c3c3c;
@@ -863,9 +864,9 @@
 
 .hex-row {
   display: grid;
-  grid-template-columns: 80px 1fr 200px;
-  gap: 15px;
-  padding: 2px 12px;
+  grid-template-columns: 10ch 48ch 16ch;
+  column-gap: 8px; /* tighter spacing */
+  padding: 2px 8px; /* slightly less padding */
   border-bottom: 1px solid #2d2d30;
   color: #cccccc;
 }
@@ -882,15 +883,18 @@
 .hex-bytes {
   font-family: 'Consolas', 'Courier New', monospace;
   color: #4fc3f7;
-  word-spacing: 2px;
+  letter-spacing: 0.25px; /* subtle spacing between hex pairs */
+  white-space: pre; /* keep all 16 bytes on a single line */
 }
 
 .ascii-chars {
   font-family: 'Consolas', 'Courier New', monospace;
   color: #81c784;
-  background: #2d2d30;
-  padding: 0 8px;
-  border-radius: 2px;
+  /* tighter look: no background/padding, keep spacing */
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  white-space: pre; /* preserve spacing */
 }
 
 .hex-truncated {

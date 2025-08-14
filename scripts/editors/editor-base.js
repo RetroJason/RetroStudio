@@ -177,9 +177,11 @@ class EditorBase extends ViewerBase {
     try {
       // Save to persistent storage using the file I/O service
       if (window.fileIOService) {
+        const builderId = extension === '.sfx' ? 'sfx' : undefined;
         await window.fileIOService.saveFile(fullPath, content, {
           type: extension,
-          editor: this.constructor.name
+          editor: this.constructor.name,
+          ...(builderId ? { builderId } : {})
         });
         console.log(`[EditorBase] Saved to persistent storage: ${fullPath}`);
       }
