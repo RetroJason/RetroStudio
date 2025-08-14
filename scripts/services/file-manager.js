@@ -60,8 +60,9 @@ class FileManager {
         ? content.content 
         : content;
 
-      console.log(`[FileManager] Saving file: ${path}`);
-      const success = await this.storageService.saveFile(path, actualContent);
+  console.log(`[FileManager] Saving file: ${path}`);
+  // Forward options as metadata so fields like builderId persist
+  const success = await this.storageService.saveFile(path, actualContent, options);
       
       if (success) {
         this._notifyFileChanged(path, 'saved');
@@ -91,7 +92,7 @@ class FileManager {
       console.log(`[FileManager] Loading file: ${path}`);
       const content = await this.storageService.loadFile(path);
       
-      console.log(`[FileManager] Storage service returned:`, content);
+    console.log('[FileManager] Storage service returned:', content);
       console.log(`[FileManager] Content type:`, typeof content);
       
       if (content === null) {
@@ -299,7 +300,7 @@ class FileManager {
       'lua': 'text/x-lua',
       'js': 'text/javascript',
       'json': 'application/json',
-      'pal': 'application/octet-stream',
+  'pal': 'text/plain',
       'png': 'image/png',
       'jpg': 'image/jpeg',
       'jpeg': 'image/jpeg',
@@ -315,3 +316,32 @@ class FileManager {
 window.FileManager = new FileManager();
 
 console.log('[FileManager] Service loaded');
+
+// Lightweight File wrapper for convenience (available globally)
+class RSFile {
+  constructor(record, storageService) {
+    this._record = record || {};
+    this._storage = storageService || window.fileIOService;
+  }
+  get path() { return this._record.path; }
+  get name() { return this._record.filename || (this._record.path ? this._record.path.split('/').pop() : ''); }
+  get directory() { return this._record.directory || (this._record.path ? this._record.path.substring(0, this._record.path.lastIndexOf('/')) : ''); }
+  get size() { return this._record.size || (typeof this.content === 'string' ? new Blob([this.content]).size : (this.content?.byteLength || 0)); }
+  get lastModified() { return this._record.lastModified || Date.now(); }
+  get isBinary() { return !!this._record.binaryData; }
+  get builderId() { return this._record.builderId; }
+  set builderId(id) { this._record.builderId = id; }
+  get content() { return this._record.content !== undefined ? this._record.content : this._record.fileContent; }
+  set content(val) { this._record.content = val; this._record.fileContent = val; }
+  toJSON() { return { ...this._record, content: this.content }; }
+  async read() { return this.content; }
+  async write(newContent, metadata = {}) {
+    this.content = newContent;
+    if (!this._storage || !this.path) return false;
+    const meta = { ...metadata };
+    if (this.builderId && meta.builderId === undefined) meta.builderId = this.builderId;
+    await this._storage.saveFile(this.path, newContent, meta);
+    return true;
+  }
+}
+window.RSFile = RSFile;

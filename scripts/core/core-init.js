@@ -66,6 +66,12 @@
       window.serviceContainer.registerSingleton('fileManager', window.FileManager);
       console.log('[Core] FileManager initialized and registered');
     }
+
+    // Register BuilderRegistry if available
+    if (window.BuilderRegistry) {
+      window.serviceContainer.registerSingleton('builderRegistry', window.BuilderRegistry);
+      console.log('[Core] BuilderRegistry registered');
+    }
   });
 
   // Notify that core is ready

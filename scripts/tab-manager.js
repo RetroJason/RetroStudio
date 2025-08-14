@@ -489,9 +489,27 @@ class TabManager {
       return null;
     }
     
-    const fileObj = await fileManager.loadFile(fullPath);
+    let fileObj = await fileManager.loadFile(fullPath);
     if (!fileObj) {
       console.error(`[TabManager] File not found: ${fullPath}`);
+      // Graceful fallback: allow viewer creation for known viewer types (e.g., mod/wav/hex)
+      const fallbackType = this._getViewerType(ext);
+      const FallbackViewer = window.ViewerPlugins?.[fallbackType];
+      if (FallbackViewer) {
+        try {
+          console.warn(`[TabManager] Creating ${fallbackType} viewer with path-only (no storage record)`);
+          const viewer = new FallbackViewer(fullPath);
+          return {
+            type: 'viewer',
+            subtype: fallbackType,
+            viewer,
+            element: viewer.getElement()
+          };
+        } catch (err) {
+          console.error('[TabManager] Fallback viewer creation failed:', err);
+          return null;
+        }
+      }
       return null;
     }
     
@@ -566,6 +584,26 @@ class TabManager {
     } catch (error) {
       console.error(`[TabManager] Failed to create viewer for ${fileName}:`, error);
       return null;
+    }
+  }
+
+  // Viewers can be notified when an underlying resource updates (e.g., duration ready)
+  notifyResourceUpdated(resourceId, property, value, filename) {
+    // Update preview viewer if it matches the filename
+    if (this.previewViewer && typeof this.previewViewer.onResourceUpdated === 'function') {
+      const previewName = (this.previewPath || '').split('/').pop();
+      if (!filename || filename === previewName) {
+        try { this.previewViewer.onResourceUpdated(property, value); } catch (e) { console.warn('preview onResourceUpdated error', e); }
+      }
+    }
+    // Update any dedicated viewers that expose onResourceUpdated
+    for (const [, tabInfo] of this.dedicatedTabs.entries()) {
+      const tabName = (tabInfo.fullPath || '').split('/').pop();
+      if (tabInfo.viewer && typeof tabInfo.viewer.onResourceUpdated === 'function') {
+        if (!filename || filename === tabName) {
+          try { tabInfo.viewer.onResourceUpdated(property, value); } catch (e) { console.warn('tab onResourceUpdated error', e); }
+        }
+      }
     }
   }
   

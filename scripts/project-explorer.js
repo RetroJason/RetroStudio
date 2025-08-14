@@ -16,7 +16,7 @@ class ProjectExplorer {
             },
             "SFX": {
               type: "folder",
-              filter: [".wav"],
+              filter: [".wav", ".sfx"],
               children: {}
             },
             "Palettes": {
@@ -94,27 +94,44 @@ class ProjectExplorer {
       e.target.value = ''; // Reset input
     });
     
-    // Global drag and drop
+    // Global drag and drop (robust overlay handling)
+    this._dragDepth = 0;
+    const clearDragOverlay = () => {
+      this._dragDepth = 0;
+      document.body.classList.remove('drag-over');
+    };
+
+    document.addEventListener('dragenter', (e) => {
+      // Increment depth and show overlay
+      this._dragDepth++;
+      document.body.classList.add('drag-over');
+    });
+
     document.addEventListener('dragover', (e) => {
       e.preventDefault();
-      // Add visual feedback for drag over
       document.body.classList.add('drag-over');
     });
     
     document.addEventListener('dragleave', (e) => {
-      // Only remove if we're leaving the document entirely
-      if (!e.relatedTarget || e.relatedTarget.nodeName === 'HTML') {
+      // Decrement depth; when it reaches 0, we're outside
+      this._dragDepth = Math.max(0, (this._dragDepth || 0) - 1);
+      if (this._dragDepth === 0) {
         document.body.classList.remove('drag-over');
       }
     });
     
     document.addEventListener('drop', (e) => {
       e.preventDefault();
-      // Remove visual feedback
-      document.body.classList.remove('drag-over');
+      // Remove visual feedback and reset depth
+      clearDragOverlay();
       // Handle file drops anywhere on the page
       this.handleFileDrop(e);
     });
+
+    // Safety nets to ensure overlay is cleared
+    window.addEventListener('dragend', clearDragOverlay);
+    window.addEventListener('blur', clearDragOverlay);
+    document.addEventListener('mouseleave', clearDragOverlay);
   }
   
   setupTabManagerEventListener() {
@@ -482,43 +499,59 @@ class ProjectExplorer {
     }
   }
   
-  addFiles(files, targetPath) {
+  async addFiles(files, targetPath) {
+    const fileList = Array.from(files || []);
+    const multiDrop = fileList.length > 1;
     let lastAddedFile = null;
     let lastAddedPath = null;
-    
-    for (const file of files) {
+    const persistPromises = [];
+
+    for (const file of fileList) {
       const filtered = this.filterFile(file, targetPath);
-      if (filtered.allowed) {
-        this.addFileToProject(file, filtered.path);
-        lastAddedFile = file;
-        lastAddedPath = filtered.path;
-      } else {
-        console.warn(`[ProjectExplorer] File ${file.name} not allowed in ${targetPath}. Redirected to ${filtered.path || 'nowhere'}`);
-        if (filtered.path) {
-          this.addFileToProject(file, filtered.path);
-          lastAddedFile = file;
-          lastAddedPath = filtered.path;
-        }
+      const destPath = filtered.allowed ? filtered.path : (filtered.path || null);
+      if (!destPath) {
+        console.warn(`[ProjectExplorer] File ${file.name} not allowed in ${targetPath} and no redirect path`);
+        continue;
       }
+
+      // During multi-drop, skip auto-open and skip per-file re-render to avoid thrash
+      const skipAutoOpen = multiDrop;
+      const skipRender = true;
+      persistPromises.push(this.addFileToProject(file, destPath, skipAutoOpen, skipRender));
+      lastAddedFile = file;
+      lastAddedPath = destPath;
     }
-    
-    // Re-render tree after all files are added
+
+    // Wait for all content to be persisted before continuing (prevents partial builds)
+    if (persistPromises.length) {
+      try {
+        await Promise.allSettled(persistPromises);
+      } catch (_) { /* ignore */ }
+    }
+
+    // Render once after batch
     this.renderTree();
-    
-    // Only highlight the last added file to avoid multiple selections
+
+    // Highlight and optionally auto-open the last file only (prevents duplicate opens)
     if (lastAddedFile && lastAddedPath) {
-      setTimeout(() => {
+      setTimeout(async () => {
         this.expandToPath(lastAddedPath);
-        // Don't auto-select files - let tab manager control highlighting
         console.log(`[ProjectExplorer] Expanded to show last added file: ${lastAddedFile.name}`);
+        if (multiDrop && window.gameEditor && typeof window.gameEditor.onFileAdded === 'function') {
+          try {
+            await window.gameEditor.onFileAdded(lastAddedFile, lastAddedPath, true);
+          } catch (e) {
+            console.warn('[ProjectExplorer] Auto-open of last file failed:', e);
+          }
+        }
       }, 50);
     }
   }
   
   filterFile(file, targetPath) {
-    const ext = this.getFileExtension(file.name).toLowerCase();
-    const musicExts = ['.mod', '.xm', '.s3m', '.it', '.mptm'];
-    const sfxExts = ['.wav'];
+  const ext = this.getFileExtension(file.name).toLowerCase();
+  const musicExts = ['.mod', '.xm', '.s3m', '.it', '.mptm'];
+  const sfxExts = ['.wav'];
     
     // Get the target folder data
     const folderData = this.getNodeByPath(targetPath);
@@ -534,13 +567,18 @@ class ProjectExplorer {
       return { allowed: true, path: 'Resources/Music' };
     } else if (sfxExts.includes(ext)) {
       return { allowed: true, path: 'Resources/SFX' };
+    } else if (['.pal', '.act', '.aco'].includes(ext)) {
+      return { allowed: true, path: 'Resources/Palettes' };
     }
     
     // Default unrecognized files to Binary folder
     return { allowed: true, path: 'Resources/Binary' };
   }
   
-  addFileToProject(file, path, skipAutoOpen = false) {
+  addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
+    // Return a promise that resolves after persistence (if any)
+    let persistResolve;
+    const persistDone = new Promise((resolve) => { persistResolve = resolve; });
     const parts = path.split('/');
     let current = this.projectData.structure;
     
@@ -551,7 +589,7 @@ class ProjectExplorer {
       }
     }
     
-    // Handle both File objects and file metadata objects
+  // Handle both File objects and file metadata objects
     let fileName, fileSize, lastModified;
     if (file instanceof File) {
       fileName = file.name;
@@ -565,23 +603,59 @@ class ProjectExplorer {
     }
     
     // Add the file reference (not the content - content is in storage)
+  const ext = this.getFileExtension(fileName).toLowerCase();
+  const builderId = ext === '.sfx' ? 'sfx' : (['.pal', '.act', '.aco'].includes(ext) ? 'pal' : undefined);
+
     current[fileName] = {
       type: 'file',
       path: file.path || `${path}/${fileName}`,
       size: fileSize,
       lastModified: lastModified,
-      isNewFile: file.isNewFile || false
+      isNewFile: file.isNewFile || false,
+      builderId
     };
     
     console.log(`[ProjectExplorer] Added file reference: ${fileName} to ${path}`);
+
+    // Persist content to storage for storage-first workflows
+    const fullPath = file.path || `${path}/${fileName}`;
+  if (file instanceof File) {
+      try {
+    // Palette-like formats are text for our editors; keep as text
+    const isBinary = ['.wav', '.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext);
+    const readPromise = isBinary ? file.arrayBuffer() : file.text();
+        readPromise.then(async (content) => {
+          if (window.fileIOService) {
+            await window.fileIOService.saveFile(fullPath, content, {
+        binaryData: isBinary,
+              builderId
+            });
+            console.log(`[ProjectExplorer] Persisted dropped file to storage: ${fullPath}`);
+          }
+        }).catch(err => console.warn('[ProjectExplorer] Failed reading dropped file:', err)).finally(() => {
+          // Resolve persist promise regardless of success (so caller can proceed)
+          persistResolve();
+        });
+      } catch (e) {
+        console.warn('[ProjectExplorer] Error persisting dropped file:', e);
+        persistResolve();
+      }
+    } else {
+      // No persistence to perform
+      persistResolve();
+    }
     
-    // Refresh the tree to show the new file
-    this.renderTree();
+    // Refresh the tree to show the new file (unless we're batching)
+    if (!skipRender) {
+      this.renderTree();
+    }
     
     // Notify game editor if available (unless skipping auto-open)
     if (window.gameEditor && !skipAutoOpen) {
       window.gameEditor.onFileAdded(file, path, false);
     }
+
+    return persistDone;
   }
   
   async clearBuildFolder() {
@@ -600,9 +674,9 @@ class ProjectExplorer {
   async cleanupBuildFilesFromStorage() {
     console.log('[ProjectExplorer] Cleaning up old build files from storage...');
     
-    if (!window.fileManager) {
-      console.warn('[ProjectExplorer] FileManager not available, falling back to localStorage cleanup');
-      this.cleanupBuildFilesFromLocalStorageOnly();
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) {
+      console.warn('[ProjectExplorer] FileManager not available yet, skipping cleanup');
       return;
     }
     
@@ -613,9 +687,9 @@ class ProjectExplorer {
       console.log(`[ProjectExplorer] Found ${buildFilePaths.length} build files to clean up`);
       
       let deletedCount = 0;
-      for (const filePath of buildFilePaths) {
+    for (const filePath of buildFilePaths) {
         try {
-          const success = await window.fileManager.deleteFile(filePath);
+      const success = await fm.deleteFile(filePath);
           if (success) {
             deletedCount++;
             console.log(`[ProjectExplorer] Deleted build file: ${filePath}`);
@@ -627,31 +701,8 @@ class ProjectExplorer {
       
       console.log(`[ProjectExplorer] Cleaned up ${deletedCount} build files via FileManager`);
     } catch (error) {
-      console.error('[ProjectExplorer] Error cleaning up build files:', error);
-      // Fallback to localStorage cleanup
-      this.cleanupBuildFilesFromLocalStorageOnly();
+  console.error('[ProjectExplorer] Error cleaning up build files:', error);
     }
-  }
-
-  cleanupBuildFilesFromLocalStorageOnly() {
-    console.log('[ProjectExplorer] Cleaning up old build files from localStorage only...');
-    const keysToRemove = [];
-    
-    // Find all build file keys in localStorage
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('retro_studio_file_build/')) {
-        keysToRemove.push(key);
-      }
-    }
-    
-    // Remove old build files
-    keysToRemove.forEach(key => {
-      localStorage.removeItem(key);
-      console.log(`[ProjectExplorer] Removed old build file: ${key}`);
-    });
-    
-    console.log(`[ProjectExplorer] Cleaned up ${keysToRemove.length} old build files from localStorage`);
   }
 
   getAllBuildFilePaths() {
@@ -685,7 +736,7 @@ class ProjectExplorer {
     // Clear existing build folder contents
     this.projectData.structure.Build.children = {};
     
-    // Load all build files from localStorage
+  // Load all build files from storage
     try {
       const buildFiles = await this.loadBuildFilesFromStorage();
       console.log('[ProjectExplorer] Found build files:', Object.keys(buildFiles));
@@ -740,62 +791,95 @@ class ProjectExplorer {
   
   async loadBuildFilesFromStorage() {
     const buildFiles = {};
-    
-    console.log('[ProjectExplorer] Scanning localStorage for build files...');
-    console.log('[ProjectExplorer] localStorage length:', localStorage.length);
-    
-    // Check localStorage for build files
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      console.log(`[ProjectExplorer] localStorage key ${i}: ${key}`);
-      
-      // Look for keys that contain build/ path (accounting for retro_studio_file_ prefix)
-      if (key && key.includes('build/')) {
+    console.log('[ProjectExplorer] Listing build files from storage service...');
+
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) {
+      console.warn('[ProjectExplorer] FileManager not available, returning empty list');
+      return buildFiles;
+    }
+
+    try {
+      const records = await fm.listFiles('build');
+      for (const rec of records) {
+        const path = rec.path || rec; // support both record and string paths
+        if (typeof path !== 'string' || !path.startsWith('build/')) continue;
         try {
-          const data = localStorage.getItem(key);
-          console.log(`[ProjectExplorer] Found build file: ${key}, size: ${data.length}`);
-          
-          // Extract the build path from the key (remove prefix if present)
-          let buildPath = key;
-          if (key.startsWith('retro_studio_file_')) {
-            buildPath = key.substring('retro_studio_file_'.length);
+          // Load to get content size and ensure it exists
+          const obj = await fm.loadFile(path);
+          if (!obj) continue;
+
+          // Normalize to ArrayBuffer for binary files, or UTF-8 for text
+          let contentBuf = null;
+          if (obj.content instanceof ArrayBuffer) {
+            contentBuf = obj.content;
+          } else if (obj.binaryData && typeof obj.fileContent === 'string') {
+            // Base64 decode; guard against malformed base64
+            try {
+              const bin = atob(obj.fileContent);
+              const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              contentBuf = bytes.buffer;
+            } catch (e) {
+              console.warn('[ProjectExplorer] Skipping malformed base64 build item:', path, e);
+              continue;
+            }
+          } else if (typeof obj.fileContent === 'string') {
+            contentBuf = new TextEncoder().encode(obj.fileContent).buffer;
+          } else if (obj.content) {
+            // Last resort: try to coerce other content types
+            try {
+              const blob = new Blob([obj.content]);
+              contentBuf = await blob.arrayBuffer();
+            } catch (e) {
+              console.warn('[ProjectExplorer] Unable to normalize content for', path, e);
+              continue;
+            }
+          } else {
+            continue; // Nothing to add
           }
-          
-          buildFiles[buildPath] = {
-            content: data,
-            name: buildPath.split('/').pop(),
-            path: buildPath
+
+          buildFiles[path] = {
+            content: contentBuf,
+            name: path.split('/').pop(),
+            path
           };
-        } catch (error) {
-          console.warn(`[ProjectExplorer] Failed to load build file ${key}:`, error);
+        } catch (perItemErr) {
+          console.warn('[ProjectExplorer] Skipping build record due to error:', path, perItemErr);
+          continue;
         }
       }
+    } catch (err) {
+      console.error('[ProjectExplorer] Error listing build files from storage:', err);
     }
-    
+
     console.log('[ProjectExplorer] Total build files found:', Object.keys(buildFiles).length);
     return buildFiles;
   }
   
-  clearBuildFiles() {
-    console.log('[ProjectExplorer] Clearing build files from localStorage...');
-    const keysToRemove = [];
-    
-    // Find all build-related keys
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.includes('build/')) {
-        keysToRemove.push(key);
-      }
+  async clearBuildFiles() {
+    console.log('[ProjectExplorer] Clearing build files from storage...');
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) {
+      console.warn('[ProjectExplorer] FileManager not available, cannot clear build files');
+      return;
     }
-    
-    // Remove them
-    keysToRemove.forEach(key => {
-      localStorage.removeItem(key);
-      console.log(`[ProjectExplorer] Removed: ${key}`);
-    });
-    
-    console.log(`[ProjectExplorer] Cleared ${keysToRemove.length} build files`);
-    
+
+    try {
+      const records = await fm.listFiles('build');
+      let removed = 0;
+      for (const rec of records) {
+        const path = rec.path || rec;
+        if (typeof path === 'string' && path.startsWith('build/')) {
+          const ok = await fm.deleteFile(path);
+          if (ok) removed++;
+        }
+      }
+      console.log(`[ProjectExplorer] Cleared ${removed} build files`);
+    } catch (err) {
+      console.error('[ProjectExplorer] Error clearing build files:', err);
+    }
+
     // Clear the build folder structure and refresh
     this.projectData.structure.Build.children = {};
     this.renderTree();
@@ -825,10 +909,18 @@ class ProjectExplorer {
     }
     
     // Add the file
+    let size = 0;
+    const content = fileData.content;
+    if (content instanceof ArrayBuffer) size = content.byteLength;
+    else if (ArrayBuffer.isView(content)) size = content.byteLength;
+    else if (typeof content === 'string') size = content.length;
+    else if (content && typeof content.size === 'number') size = content.size;
+
     current[fileName] = {
       type: 'file',
-      file: new File([fileData.content], fileName),
-      size: fileData.content.length,
+      name: fileName,
+      file: new File([content], fileName),
+      size,
       lastModified: Date.now(),
       isBuildFile: true,
       isReadOnly: true  // Mark build files as read-only
@@ -970,8 +1062,8 @@ class ProjectExplorer {
       
       console.log(`[ProjectExplorer] Found node data:`, nodeData);
       
-      // Handle file renaming (update storage)
-      if (type === 'file' && nodeData.file) {
+      // Handle file renaming (update storage) regardless of in-memory file presence
+      if (type === 'file') {
         await this.renameFileInStorage(path, newPath, nodeData.file);
       }
       
@@ -1144,23 +1236,32 @@ class ProjectExplorer {
     return { valid: true };
   }
   
-  async renameFileInStorage(oldPath, newPath, file) {
-    // Remove old file from storage
-    const oldKey = `retro_studio_file_${oldPath}`;
-    const newKey = `retro_studio_file_${newPath}`;
-    
+  async renameFileInStorage(oldPath, newPath, _file) {
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) {
+      console.warn('[ProjectExplorer] FileManager not available, skipping storage rename');
+      return;
+    }
     try {
-      // Get the old file content
-      const oldContent = localStorage.getItem(oldKey);
-      if (oldContent) {
-        // Store with new key
-        localStorage.setItem(newKey, oldContent);
-        // Remove old key
-        localStorage.removeItem(oldKey);
-        console.log(`[ProjectExplorer] Moved file in storage: ${oldKey} → ${newKey}`);
+      // Load existing record from storage
+      const record = await fm.loadFile(oldPath);
+      if (!record) {
+        console.log(`[ProjectExplorer] No stored content for ${oldPath}, nothing to move`);
+        return;
       }
+      // Determine content and metadata
+      const content = record.content !== undefined ? record.content : (record.fileContent || '');
+      const isBinary = !!record.binaryData || (content instanceof ArrayBuffer);
+      const metadata = { binaryData: isBinary };
+      if (record.builderId) metadata.builderId = record.builderId;
+      // Save under new path
+      const saved = await fm.saveFile(newPath, content, metadata);
+      if (!saved) throw new Error('Save under new path failed');
+      // Delete old record
+      await fm.deleteFile(oldPath);
+      console.log(`[ProjectExplorer] Renamed in storage: ${oldPath} → ${newPath}`);
     } catch (error) {
-      console.error(`[ProjectExplorer] Failed to rename file in storage:`, error);
+      console.error('[ProjectExplorer] Failed to rename file in storage:', error);
       throw new Error('Failed to update file storage');
     }
   }

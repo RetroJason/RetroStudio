@@ -2,15 +2,15 @@
 // Generic hex editor viewer for any file type with lazy loading
 
 class HexViewer extends ViewerBase {
-  constructor(file, path) {
-    super(file, path);
+  constructor(path) {
+    super(path);
     this.fileData = null;
     this.bytesPerRow = 16; // Fixed to 16 columns
     this.maxBytesToLoad = 64 * 1024; // Load max 64KB initially for performance
     this.currentOffset = 0;
     this.isLoaded = false;
     this.isLoading = false;
-    
+
     this.initializeUI();
     // Auto-load the file data immediately
     this.loadFileData();
@@ -57,41 +57,42 @@ class HexViewer extends ViewerBase {
       if (statusElement) statusElement.textContent = 'Loading file data...';
 
       let arrayBuffer;
-      
-      // Handle different file data types
-      if (this.file && typeof this.file.arrayBuffer === 'function') {
-        // Standard File object
-        arrayBuffer = await this.file.arrayBuffer();
-      } else if (this.file && this.file.fileContent) {
-        // RetroStudio file object with fileContent
-        const content = this.file.fileContent;
-        if (typeof content === 'string') {
-          // Convert string to ArrayBuffer
-          const encoder = new TextEncoder();
-          arrayBuffer = encoder.encode(content).buffer;
-        } else if (content instanceof ArrayBuffer) {
-          arrayBuffer = content;
-        } else if (content instanceof Uint8Array) {
-          arrayBuffer = content.buffer;
-        } else {
-          // Try to convert to JSON string then to ArrayBuffer
-          const jsonString = JSON.stringify(content);
-          const encoder = new TextEncoder();
-          arrayBuffer = encoder.encode(jsonString).buffer;
-        }
-      } else if (typeof this.file === 'string') {
-        // String content
+
+      // Load from FileManager using the path-first storage
+      const fileManager = window.serviceContainer?.get('fileManager') || window.FileManager;
+      const record = await fileManager?.loadFile(this.path);
+      if (!record) throw new Error('File not found in storage');
+
+      // Cache size for ViewerBase.getFileSize()
+      this.fileSize = record.size || 0;
+
+      const content = record.content !== undefined ? record.content : record.fileContent;
+      if (content instanceof ArrayBuffer) {
+        arrayBuffer = content;
+      } else if (content instanceof Uint8Array) {
+        arrayBuffer = content.buffer;
+      } else if (typeof content === 'string') {
         const encoder = new TextEncoder();
-        arrayBuffer = encoder.encode(this.file).buffer;
+        arrayBuffer = encoder.encode(content).buffer;
+      } else if (content && content.base64) {
+        // Not expected, but handle base64 payloads
+        const binary = atob(content.base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+        arrayBuffer = bytes.buffer;
       } else {
-        throw new Error('Unsupported file data format');
+        // Fallback: try JSON stringify
+        const jsonString = JSON.stringify(content ?? '');
+        const encoder = new TextEncoder();
+        arrayBuffer = encoder.encode(jsonString).buffer;
       }
 
       this.fileData = new Uint8Array(arrayBuffer);
       this.isLoaded = true;
 
-      const fileName = this.file?.name || this.file?.filename || 'Unknown file';
-      console.log(`[HexViewer] Loaded ${this.fileData.length} bytes from ${fileName}`);
+  const fileName = this.path ? (this.path.split('/').pop() || this.path.split('\\').pop()) : 'Unknown file';
+  console.log(`[HexViewer] Loaded ${this.fileData.length} bytes from ${fileName}`);
       
       // Show hex content and render
       const hexContent = this.element.querySelector('#hexContent');
@@ -138,7 +139,9 @@ class HexViewer extends ViewerBase {
     for (let i = 0; i < this.bytesPerRow; i++) {
       if (i < rowData.length) {
         const byte = rowData[i];
-        hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+  // Append hex byte; add a space after each except the last to keep width predictable
+  hexStr += byte.toString(16).padStart(2, '0').toUpperCase();
+  if (i !== this.bytesPerRow - 1) hexStr += ' ';
         
         // Convert to ASCII, show . for non-printable characters
         if (byte >= 32 && byte <= 126) {
@@ -147,7 +150,8 @@ class HexViewer extends ViewerBase {
           asciiStr += '.';
         }
       } else {
-        hexStr += '   '; // 3 spaces for missing byte
+  // For missing bytes, add two spaces to match a "byte" width plus separator
+  hexStr += (i !== this.bytesPerRow - 1) ? '   ' : '  ';
         asciiStr += ' ';
       }
     }
