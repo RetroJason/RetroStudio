@@ -37,10 +37,15 @@ if (isset($_POST['update']) && isset($_SESSION['admin_logged_in'])) {
     
     // Simple git pull operation
     exec('git pull origin ' . GIT_BRANCH . ' 2>&1', $output, $return_code);
+
+    // Initialize and update submodules
+    if ($return_code_pull === 0) { // Only proceed if the pull was successful
+        exec('git submodule update --init --recursive 2>&1', $output_submodules, $return_code_submodules);
+    }
     
     $update_result = [
         'success' => $return_code === 0,
-        'output' => implode("\n", $output),
+        'output' => implode("\n", $output) + implode("\n", $output_submodules),
         'return_code' => $return_code
     ];
 }
