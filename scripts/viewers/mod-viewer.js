@@ -1010,3 +1010,10 @@ class ModViewer extends ViewerBase {
 
 // Export for use
 window.ModViewer = ModViewer;
+
+// Static metadata for auto-registration
+ModViewer.getFileExtensions = () => ['.mod', '.xm', '.s3m', '.it', '.mptm'];
+ModViewer.getDisplayName = () => 'MOD Viewer';
+ModViewer.getIcon = () => '🎵';
+ModViewer.getPriority = () => 10;
+ModViewer.getCapabilities = () => ['audio-playback', 'visualization'];

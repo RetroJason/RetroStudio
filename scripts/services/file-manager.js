@@ -19,6 +19,18 @@ class FileManager {
     console.log('[FileManager] Initialized with storage service');
   }
 
+  // Normalize any UI path (project-prefixed, UI labels) to storage path
+  _normalizePath(path) {
+    try {
+      if (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function') {
+        return window.ProjectPaths.normalizeStoragePath(path);
+      }
+    } catch (e) {
+      // no-op
+    }
+    return path;
+  }
+
   /**
    * Create a standardized in-memory file object
    * @param {string} name - File name
@@ -60,9 +72,10 @@ class FileManager {
         ? content.content 
         : content;
 
-  console.log(`[FileManager] Saving file: ${path}`);
+  const normPath = this._normalizePath(path);
+  console.log(`[FileManager] Saving file: ${normPath}`);
   // Forward options as metadata so fields like builderId persist
-  const success = await this.storageService.saveFile(path, actualContent, options);
+  const success = await this.storageService.saveFile(normPath, actualContent, options);
       
       if (success) {
         this._notifyFileChanged(path, 'saved');
@@ -89,8 +102,9 @@ class FileManager {
     }
 
     try {
-      console.log(`[FileManager] Loading file: ${path}`);
-      const content = await this.storageService.loadFile(path);
+      const normPath = this._normalizePath(path);
+      console.log(`[FileManager] Loading file: ${normPath}`);
+      const content = await this.storageService.loadFile(normPath);
       
     console.log('[FileManager] Storage service returned:', content);
       console.log(`[FileManager] Content type:`, typeof content);
@@ -101,7 +115,7 @@ class FileManager {
       }
 
       // Extract filename from path
-      const fileName = path.split('/').pop() || path.split('\\').pop();
+  const fileName = normPath.split('/').pop() || normPath.split('\\').pop();
       
       // The storage service returns an object with properties, we want to return it directly
       // instead of wrapping it in another createFileObject call
@@ -112,7 +126,7 @@ class FileManager {
       
       // Fallback: create file object if storage service returned plain content
       const fileObj = this.createFileObject(fileName, content, {
-        path,
+        path: normPath,
         isNew: false,
         isDirty: false
       });
@@ -136,7 +150,8 @@ class FileManager {
     }
 
     try {
-      const content = await this.storageService.loadFile(path);
+      const normPath = this._normalizePath(path);
+      const content = await this.storageService.loadFile(normPath);
       return content !== null;
     } catch (error) {
       console.error(`[FileManager] Error checking file existence ${path}:`, error);
@@ -156,8 +171,9 @@ class FileManager {
     }
 
     try {
-      console.log(`[FileManager] Deleting file: ${path}`);
-      const success = await this.storageService.deleteFile(path);
+      const normPath = this._normalizePath(path);
+      console.log(`[FileManager] Deleting file: ${normPath}`);
+      const success = await this.storageService.deleteFile(normPath);
       
       if (success) {
         this._notifyFileChanged(path, 'deleted');
@@ -183,8 +199,9 @@ class FileManager {
     }
 
     try {
-      const files = await this.storageService.listFiles(prefix);
-      console.log(`[FileManager] Listed ${files.length} files with prefix: ${prefix}`);
+      const normPrefix = this._normalizePath(prefix);
+      const files = await this.storageService.listFiles(normPrefix);
+      console.log(`[FileManager] Listed ${files.length} files with prefix: ${normPrefix}`);
       return files;
     } catch (error) {
       console.error(`[FileManager] Error listing files:`, error);
@@ -201,18 +218,19 @@ class FileManager {
    */
   async createAndSaveFile(path, content = '', options = {}) {
     try {
+      const normPath = this._normalizePath(path);
       // First save to storage
-      const saveSuccess = await this.saveFile(path, content, options);
+      const saveSuccess = await this.saveFile(normPath, content, options);
       if (!saveSuccess) {
-        console.error(`[FileManager] Failed to save new file: ${path}`);
+        console.error(`[FileManager] Failed to save new file: ${normPath}`);
         return null;
       }
 
       // Then load it back to get a consistent file object
-      const fileObj = await this.loadFile(path);
+      const fileObj = await this.loadFile(normPath);
       if (fileObj) {
         fileObj.isNew = true; // Mark as newly created
-        this._notifyFileChanged(path, 'created');
+        this._notifyFileChanged(normPath, 'created');
       }
 
       return fileObj;

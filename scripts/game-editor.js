@@ -275,13 +275,8 @@ class GameEditor {
       // Build the project using the build system (it will read from projectExplorer directly)
       const buildResult = await this.buildSystem.buildProject();
       
-      // Refresh project explorer to show new build files from storage
+      // Expand the Build folder to show new build files (they are added as they are built)
       if (this.projectExplorer && buildResult && buildResult.success !== false) {
-        console.log('[GameEditor] Refreshing project explorer after build...');
-        await this.projectExplorer.loadBuildFilesFromStorage();
-        this.projectExplorer.renderTree();
-        
-        // Expand the Build folder to show new build files (with slight delay for DOM update)
         setTimeout(() => {
           this.projectExplorer.expandBuildFolder();
         }, 100);
@@ -305,8 +300,10 @@ class GameEditor {
     // Get all files from the Build folder in project explorer
     const buildFiles = [];
     
+  const project = this.projectExplorer?.getFocusedProjectName?.();
   const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  if (!this.projectExplorer || !this.projectExplorer.projectData || !this.projectExplorer.projectData.structure[buildRoot]) {
+  const buildNode = project ? this.projectExplorer.projectData.structure[project]?.children?.[buildRoot] : this.projectExplorer?.projectData?.structure?.[buildRoot];
+  if (!buildNode) {
       return buildFiles;
     }
     
@@ -326,7 +323,7 @@ class GameEditor {
     };
     
   // Start collecting from Build folder
-  collectFiles(this.projectExplorer.projectData.structure[buildRoot], buildRoot);
+  collectFiles(buildNode, `${project ? project + '/' : ''}${buildRoot}`);
     
     console.log(`[GameEditor] Found ${buildFiles.length} build files:`, buildFiles);
     return buildFiles;
@@ -334,8 +331,10 @@ class GameEditor {
   
   findMainLuaScript() {
     // Look for main.lua in the Lua directory
+  const project = this.projectExplorer?.getFocusedProjectName?.();
   const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  const luaFolder = this.projectExplorer.projectData.structure[sourcesRoot]?.Lua?.children;
+  const luaFolder = project ? this.projectExplorer.projectData.structure[project]?.children?.[sourcesRoot]?.children?.Lua?.children
+                : this.projectExplorer.projectData.structure[sourcesRoot]?.Lua?.children;
     if (luaFolder && luaFolder['main.lua']) {
       return luaFolder['main.lua'];
     }

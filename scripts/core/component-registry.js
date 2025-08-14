@@ -51,6 +51,122 @@ class ComponentRegistry {
     console.log(`[ComponentRegistry] Registered editor: ${name} for ${extensionList.join(', ')}`);
   }
 
+  // Derive a kebab-case unique name from a class, stripping common suffixes
+  _deriveName(componentClass, typeHint) {
+    const clsName = componentClass?.name || 'component';
+    let base = clsName
+      .replace(/(Editor|Viewer)$/i, '')
+      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+      .toLowerCase();
+    if (!base) base = typeHint || 'component';
+    return `${base}-${typeHint || 'component'}`;
+  }
+
+  // Try to get supported extensions from a class
+  _deriveExtensions(componentClass, fallback = ['*']) {
+    try {
+      if (typeof componentClass.getFileExtensions === 'function') {
+        const exts = componentClass.getFileExtensions();
+        if (Array.isArray(exts) && exts.length) return exts;
+      }
+      if (typeof componentClass.getFileExtension === 'function') {
+        const ext = componentClass.getFileExtension();
+        if (ext) return [ext];
+      }
+      // Also allow instance prototype methods
+      if (typeof componentClass.prototype?.getFileExtensions === 'function') {
+        const exts = componentClass.prototype.getFileExtensions();
+        if (Array.isArray(exts) && exts.length) return exts;
+      }
+      if (typeof componentClass.prototype?.getFileExtension === 'function') {
+        const ext = componentClass.prototype.getFileExtension();
+        if (ext) return [ext];
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  _deriveDisplayName(componentClass, defaultName) {
+    try {
+      if (typeof componentClass.getDisplayName === 'function') return componentClass.getDisplayName();
+      if (typeof componentClass.prototype?.getDisplayName === 'function') return componentClass.prototype.getDisplayName();
+    } catch (_) {}
+    // Title-case the default
+    const t = (defaultName || 'Component').replace(/(^|[-_])([a-z])/g, (_, p1, p2) => (p1 ? ' ' : '') + p2.toUpperCase());
+    return t;
+  }
+
+  _deriveIcon(componentClass, defaultIcon = '') {
+    try {
+      if (typeof componentClass.getIcon === 'function') return componentClass.getIcon();
+    } catch (_) {}
+    return defaultIcon;
+  }
+
+  _derivePriority(componentClass, defaultPriority = 10) {
+    try {
+      if (typeof componentClass.getPriority === 'function') return componentClass.getPriority();
+    } catch (_) {}
+    return defaultPriority;
+  }
+
+  _deriveCapabilities(componentClass) {
+    try {
+      if (typeof componentClass.getCapabilities === 'function') return componentClass.getCapabilities() || [];
+    } catch (_) {}
+    return [];
+  }
+
+  _deriveCanCreate(editorClass) {
+    try {
+      if (typeof editorClass.canCreate === 'boolean') return editorClass.canCreate;
+      if (typeof editorClass.showCreateDialog === 'function') return true;
+      if (typeof editorClass.createNew === 'function') return true;
+    } catch (_) {}
+    return false;
+  }
+
+  // Public helpers to auto-register by class
+  autoRegisterEditor(editorClass) {
+    const name = this._deriveName(editorClass, 'editor');
+    const extensions = this._deriveExtensions(editorClass, []);
+    const displayName = this._deriveDisplayName(editorClass, name);
+    const icon = this._deriveIcon(editorClass, '✏️');
+    const priority = this._derivePriority(editorClass, 10);
+    const capabilities = this._deriveCapabilities(editorClass);
+    const canCreate = this._deriveCanCreate(editorClass);
+
+    this.registerEditor({
+      name,
+      extensions,
+      displayName,
+      icon,
+      editorClass,
+      priority,
+      capabilities,
+      canCreate
+    });
+  }
+
+  autoRegisterViewer(viewerClass) {
+    const name = this._deriveName(viewerClass, 'viewer');
+    const extensions = this._deriveExtensions(viewerClass, ['*']);
+    const displayName = this._deriveDisplayName(viewerClass, name);
+    const icon = this._deriveIcon(viewerClass, '👁️');
+    const priority = this._derivePriority(viewerClass, 10);
+    const capabilities = this._deriveCapabilities(viewerClass);
+
+    this.registerViewer({
+      name,
+      extensions,
+      displayName,
+      icon,
+      viewerClass,
+      priority,
+      capabilities
+    });
+  }
+
   // Register a viewer
   registerViewer(viewerInfo) {
     const { 
@@ -136,8 +252,14 @@ class ComponentRegistry {
       return this.viewers.get(viewerName);
     }
     
-    // Fallback to hex viewer
-    return this.viewers.get('hex-viewer');
+    // Fallback: find any viewer registered for '*' (wildcard), prefer lowest priority
+    let fallback = null;
+    for (const v of this.viewers.values()) {
+      if (Array.isArray(v.extensions) && v.extensions.includes('*')) {
+        if (!fallback || v.priority < fallback.priority) fallback = v;
+      }
+    }
+    return fallback;
   }
 
   // Create editor instance

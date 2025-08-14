@@ -1360,3 +1360,11 @@ class PaletteEditor extends EditorBase {
 
 // Export for use
 window.PaletteEditor = PaletteEditor;
+
+// Static metadata for auto-registration
+PaletteEditor.getFileExtensions = () => ['.pal', '.act', '.aco'];
+PaletteEditor.getDisplayName = () => 'Palette Editor';
+PaletteEditor.getIcon = () => '🎨';
+PaletteEditor.getPriority = () => 10;
+PaletteEditor.getCapabilities = () => ['color-editing', 'import-export'];
+PaletteEditor.canCreate = true;

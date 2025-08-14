@@ -3,55 +3,72 @@
 
 class ProjectExplorer {
   constructor() {
-  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  const _buildRootLog = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  this.projectData = {
-      name: "Game Project",
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    this.projectData = {
       structure: {
-    [sourcesRoot]: {
-          type: "folder",
-          children: {
-            "Music": {
-              type: "folder", 
-              filter: [".mod", ".xm", ".s3m", ".it", ".mptm"],
-              children: {}
-            },
-            "SFX": {
-              type: "folder",
-              filter: [".wav", ".sfx"],
-              children: {}
-            },
-            "Palettes": {
-              type: "folder",
-              filter: [".pal", ".act", ".aco"],
-              children: {}
-            },
-            "Lua": {
-              type: "folder",
-              filter: [".lua"],
-              children: {}
-            },
-            "Binary": {
-              type: "folder",
-              filter: ["*"], // Accepts any file type
-              children: {}
-            }
-          }
-        },
-    [_buildRootLog]: {
-          type: "folder",
-          children: {}
-        }
+        // Projects will be added as top-level folders; start with a default one
       }
     };
-    
+
+    this.focusedProjectName = null;
     this.selectedNode = null;
     this.treeContainer = null;
     this.contextMenu = null;
     this.fileUpload = null;
     this.pendingTreeOperations = [];
+  this.collapsedPaths = new Set(); // Track user-collapsed folders by path
+
+    // Create a default project so the UI isn't empty on first load
+    const defaultProject = 'Game Project';
+    this.addProject(defaultProject);
+    this.setFocusedProjectName(defaultProject);
     
     this.initialize();
+  }
+
+  addProject(projectName) {
+    if (!projectName) return;
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    if (!this.projectData.structure[projectName]) {
+      this.projectData.structure[projectName] = {
+        type: 'folder',
+        children: {
+          [sourcesRoot]: {
+            type: 'folder',
+            children: {
+              Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
+              SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
+              Palettes: { type: 'folder', filter: ['.pal', '.act', '.aco'], children: {} },
+              Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
+              Binary: { type: 'folder', filter: ['*'], children: {} }
+            }
+          },
+          [buildRoot]: { type: 'folder', children: {} }
+        }
+      };
+    }
+    // Re-render if initialized
+    if (this.treeContainer) this.renderTree();
+  }
+
+  setFocusedProjectName(name) {
+  if (!name || !this.projectData.structure[name]) return;
+  const prev = this.focusedProjectName;
+  if (prev === name) return;
+  this.focusedProjectName = name;
+  // Notify listeners about focus change
+  try { window.eventBus?.emit?.('project.focus.changed', { project: name, previous: prev }); } catch (_) {}
+  // Update UI to reflect active marker
+  if (this.treeContainer) this.renderTree();
+  }
+
+  getFocusedProjectName() {
+    if (this.focusedProjectName && this.projectData.structure[this.focusedProjectName]) return this.focusedProjectName;
+    // Fallback to first project
+    const keys = Object.keys(this.projectData.structure || {});
+    return keys[0] || null;
   }
   
   initialize() {
@@ -164,7 +181,7 @@ class ProjectExplorer {
     const rootList = document.createElement('ul');
     rootList.className = 'tree-node';
     
-    this.renderNode(this.projectData.structure, rootList, '');
+  this.renderNode(this.projectData.structure, rootList, '');
     this.treeContainer.appendChild(rootList);
   }
   
@@ -183,7 +200,10 @@ class ProjectExplorer {
       const expand = document.createElement('span');
       expand.className = 'tree-expand';
       if (data.type === 'folder' && Object.keys(data.children || {}).length > 0) {
-        expand.textContent = '▶';
+        // Default expanded unless explicitly collapsed
+        const shouldExpand = !this.collapsedPaths.has(currentPath);
+        expand.textContent = shouldExpand ? '▼' : '▶';
+        if (shouldExpand) expand.classList.add('expanded');
         expand.addEventListener('click', (e) => {
           e.stopPropagation();
           this.toggleNode(li, expand);
@@ -200,7 +220,13 @@ class ProjectExplorer {
       // Label
       const label = document.createElement('span');
       label.className = 'tree-label';
-      label.textContent = name;
+      // Add active project indicator on root label
+      if (data.type === 'folder' && !currentPath.includes('/')) {
+        const isActive = (this.getFocusedProjectName && this.getFocusedProjectName()) === name;
+        label.textContent = isActive ? `${name} (active)` : name;
+      } else {
+        label.textContent = name;
+      }
       
       item.appendChild(expand);
       item.appendChild(icon);
@@ -214,23 +240,25 @@ class ProjectExplorer {
         
         // Don't auto-select here - let tab manager control highlighting via highlightActiveFile
         
+        // If clicking a top-level project root, set focus to that project
+        if (data.type === 'folder' && !currentPath.includes('/')) {
+          this.setFocusedProjectName(name);
+        }
+
         // Delay single-click action to check for double-click
         clearTimeout(clickTimeout);
         clickTimeout = setTimeout(() => {
           // Show in preview if it's a file (only if not double-clicked)
           if (data.type === 'file' && window.tabManager) {
             const isReadOnly = data.isReadOnly || data.isBuildFile;
-            // For files, currentPath already includes the full path, don't append filename again
             let fullPath = currentPath;
-            
-            // Normalize using ProjectPaths
-            if (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) {
-              fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
-            } else if (fullPath.startsWith('Build/')) {
-              fullPath = fullPath.replace(/^Build\//, 'build/');
+            // Only normalize build artifacts to storage path; keep project prefix for sources
+            if (window.ProjectPaths?.isBuildArtifact?.(currentPath)) {
+              fullPath = window.ProjectPaths.normalizeStoragePath(currentPath);
+            } else if (currentPath.startsWith('Build/')) {
+              fullPath = currentPath.replace(/^Build\//, 'build/');
             }
-            
-            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", fullPath="${fullPath}"`);
+            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", openPath="${fullPath}"`);
             window.tabManager.openInPreview(fullPath, data.file, { isReadOnly });
           }
         }, 200); // 200ms delay to detect double-click
@@ -248,8 +276,8 @@ class ProjectExplorer {
           // For files, currentPath already includes the full path, don't append filename again
           let fullPath = currentPath;
           
-          // Normalize using ProjectPaths
-          if (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) {
+          // Only normalize build artifacts to storage path; keep project prefix for sources
+          if (window.ProjectPaths?.isBuildArtifact?.(currentPath)) {
             fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
           } else if (fullPath.startsWith('Build/')) {
             fullPath = fullPath.replace(/^Build\//, 'build/');
@@ -259,6 +287,10 @@ class ProjectExplorer {
           // TabManager now loads from storage, no need to pass file object
           window.tabManager.openInTab(fullPath, null, { isReadOnly });
         } else if (data.type === 'folder') {
+          // If double-clicking a top-level project root, also set focus
+          if (!currentPath.includes('/')) {
+            this.setFocusedProjectName(name);
+          }
           // Toggle folder on double-click
           this.toggleNode(li, expand);
         }
@@ -296,6 +328,10 @@ class ProjectExplorer {
         const childrenUl = document.createElement('ul');
         childrenUl.className = 'tree-children';
         this.renderNode(data.children, childrenUl, currentPath);
+        // Default expanded unless explicitly collapsed
+        if (!this.collapsedPaths.has(currentPath)) {
+          childrenUl.classList.add('expanded');
+        }
         li.appendChild(childrenUl);
       }
       
@@ -316,12 +352,17 @@ class ProjectExplorer {
   getFileIconSymbol(name, type, currentPath = '') {
     if (type === 'folder') {
       // Different icons for different folder types
-  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  if (name === sourcesRoot) return '📁'; // Standard blue folder for editable resources
-  if (name === buildRoot) return '📦'; // Package box for build outputs
-  if (currentPath.startsWith(buildRoot + '/')) return '🗂️'; // File folder for build subfolders
-  if (currentPath.startsWith(sourcesRoot + '/')) {
+      const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+      const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+      // If this is a top-level project node
+      if (!currentPath.includes('/')) return '�️';
+      // Remove project prefix for checks
+      const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(currentPath) : { rest: currentPath };
+      const rest = pp.rest || currentPath;
+      if (name === sourcesRoot && rest === sourcesRoot) return '�'; // Sources root
+      if (name === buildRoot && rest === buildRoot) return '📦'; // Build root
+      if (rest.startsWith(buildRoot + '/')) return '🗂️'; // Build subfolders
+      if (rest.startsWith(sourcesRoot + '/')) {
         // Special icons for resource type folders
         if (name === 'Music') return '🎼';
         if (name === 'SFX') return '🔊';
@@ -347,17 +388,19 @@ class ProjectExplorer {
   toggleNode(li, expandButton) {
     const children = li.querySelector('.tree-children');
     if (!children) return;
-    
+    const path = li.querySelector('.tree-item')?.dataset?.path;
     const isExpanded = children.classList.contains('expanded');
     
     if (isExpanded) {
       children.classList.remove('expanded');
       expandButton.textContent = '▶';
       expandButton.classList.remove('expanded');
+      if (path) this.collapsedPaths.add(path);
     } else {
       children.classList.add('expanded');
       expandButton.textContent = '▼';
       expandButton.classList.add('expanded');
+      if (path) this.collapsedPaths.delete(path);
     }
   }
   
@@ -426,20 +469,25 @@ class ProjectExplorer {
     const type = this.selectedNode.dataset.type;
     
     // Show/hide menu items based on selection
-    const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
+  const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
     const newFolderItem = this.contextMenu.querySelector('[data-action="newfolder"]');
     const renameItem = this.contextMenu.querySelector('[data-action="rename"]');
     const deleteItem = this.contextMenu.querySelector('[data-action="delete"]');
+  const closeProjectItem = this.contextMenu.querySelector('[data-action="closeproject"]');
+  const setActiveItem = this.contextMenu.querySelector('[data-action="setactive"]');
     
-    // Upload and New Folder only available for folders
-    uploadItem.style.display = type === 'folder' ? 'block' : 'none';
-    newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
+  // Upload and New Folder only available for folders
+  uploadItem.style.display = type === 'folder' ? 'block' : 'none';
+  newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
     
-    // Rename and Delete available for files and non-root folders, but not for build files/folders
+  // Rename and Delete available for files and non-root folders, but not for build files/folders
+  const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: null, rest: path };
+  const rest = pp.rest || '';
   const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
   const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  const isRootFolder = path === sourcesRoot || path === buildRoot;
-  const isBuildFile = path.startsWith(buildRoot + '/');
+  const isProjectRoot = !rest; // path like 'ProjectName'
+  const isRootFolder = isProjectRoot || rest === sourcesRoot || rest === buildRoot;
+  const isBuildFile = rest.startsWith(buildRoot + '/');
     const canModify = !isRootFolder && !isBuildFile;
     
     if (type === 'file') {
@@ -449,9 +497,19 @@ class ProjectExplorer {
       renameItem.style.display = canModify ? 'block' : 'none';
       deleteItem.style.display = canModify ? 'block' : 'none';
     }
+
+    // Close Project only on project root
+    if (closeProjectItem) {
+      closeProjectItem.style.display = isProjectRoot ? 'block' : 'none';
+    }
+    // Set Active Project only on project root (hide if already active)
+    if (setActiveItem) {
+      const alreadyActive = isProjectRoot && this.getFocusedProjectName && (this.getFocusedProjectName() === path);
+      setActiveItem.style.display = isProjectRoot && !alreadyActive ? 'block' : 'none';
+    }
     
     // Check if any menu items are visible before showing the context menu
-    const visibleItems = [uploadItem, newFolderItem, renameItem, deleteItem].filter(item => 
+  const visibleItems = [uploadItem, newFolderItem, renameItem, deleteItem, closeProjectItem, setActiveItem].filter(item => 
       item && item.style.display !== 'none'
     );
     
@@ -518,7 +576,95 @@ class ProjectExplorer {
       case 'delete':
   this.deleteNode(path);
         break;
+      case 'setactive': {
+        // Only valid for root project items
+        const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: path, rest: '' };
+        const projectName = pp.project || path;
+        this.setFocusedProjectName(projectName);
+        // Emit event so other systems can react
+        try { window.eventBus?.emit?.('project.focus.changed', { project: projectName }); } catch (_) {}
+        // Re-render to update labels
+        this.renderTree();
+        break;
+      }
+      case 'closeproject':
+        this.closeProject(path);
+        break;
     }
+  }
+
+  async closeProject(projectPath) {
+    // projectPath is the project name (no slash) when invoked from root
+    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(projectPath) : { project: null, rest: projectPath };
+    const projectName = pp.project || (projectPath.includes('/') ? projectPath.split('/')[0] : projectPath);
+    if (!projectName || !this.projectData.structure[projectName]) return;
+
+    const confirmed = await this._confirm('Close Project', `Close project "${projectName}"? Open tabs for its files will be closed.`, { okText: 'Close Project', cancelText: 'Cancel' });
+    if (!confirmed) return;
+
+    // Collect all file paths (sources + build) for deletion from storage
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const toDelete = [];
+    const addPaths = (node, base) => {
+      if (!node) return;
+      if (node.type === 'file') {
+        toDelete.push(base);
+      } else if (node.children) {
+        for (const [name, child] of Object.entries(node.children)) {
+          addPaths(child, base ? `${base}/${name}` : name);
+        }
+      }
+    };
+    addPaths(this.projectData.structure[projectName]?.children?.[sourcesRoot], `${projectName}/${sourcesRoot}`);
+    addPaths(this.projectData.structure[projectName]?.children?.[buildRoot], `${projectName}/${buildRoot}`);
+
+    // Delete from storage via FileManager, normalizing paths
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (fm) {
+      for (const p of toDelete) {
+        const norm = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : p.replace(/^Build\//, 'build/');
+        try { await fm.deleteFile(norm); } catch (_) {}
+      }
+    }
+
+    // Signal deletions to other systems (TabManager will close affected tabs)
+    try {
+      if (window.eventBus && typeof window.eventBus.emit === 'function') {
+        const normalizedDeleted = toDelete.map(p => (window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : p.replace(/^Build\//, 'build/')));
+        await window.eventBus.emit('file.deleted', { path: projectName, isFolder: true, deletedPaths: normalizedDeleted });
+      }
+    } catch (_) { /* ignore */ }
+
+    // Fallback: directly close any open tabs that match deleted files (normalized compare)
+    try {
+      if (window.gameEditor?.tabManager) {
+        const normalize = (p) => (window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : (typeof p === 'string' ? p.replace(/^Build\//, 'build/') : p));
+        const deletedSet = new Set(toDelete.map(normalize));
+        const tabs = window.gameEditor.tabManager.getAllTabs();
+        for (const t of tabs) {
+          const tp = t.fullPath;
+          const tpNorm = normalize(tp);
+          if (tpNorm && deletedSet.has(tpNorm)) {
+            if (t.tabId && t.tabId !== 'preview') {
+              window.gameEditor.tabManager.closeTab(t.tabId);
+            } else if (t.tabId === 'preview') {
+              window.gameEditor.tabManager._closePreviewTab();
+            }
+          }
+        }
+      }
+    } catch (_) { /* ignore */ }
+
+    // Remove project from structure
+    delete this.projectData.structure[projectName];
+
+    // Focus another project if any
+    const remaining = Object.keys(this.projectData.structure);
+    this.focusedProjectName = remaining[0] || null;
+
+    // Re-render
+    this.renderTree();
   }
   
   handleFileUpload(files) {
@@ -599,30 +745,31 @@ class ProjectExplorer {
     }
     
     // Auto-filter to appropriate folder
+    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(targetPath) : { project: this.getFocusedProjectName(), rest: targetPath };
+    const project = pp.project || this.getFocusedProjectName();
     const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
     if (musicExts.includes(ext)) {
-      return { allowed: true, path: `${sourcesRoot}/Music` };
+      return { allowed: true, path: `${project}/${sourcesRoot}/Music` };
     } else if (sfxExts.includes(ext)) {
-      return { allowed: true, path: `${sourcesRoot}/SFX` };
+      return { allowed: true, path: `${project}/${sourcesRoot}/SFX` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
-      return { allowed: true, path: `${sourcesRoot}/Palettes` };
+      return { allowed: true, path: `${project}/${sourcesRoot}/Palettes` };
     }
-    
     // Default unrecognized files to Binary folder
-    return { allowed: true, path: `${sourcesRoot}/Binary` };
+    return { allowed: true, path: `${project}/${sourcesRoot}/Binary` };
   }
   
   addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
     // Return a promise that resolves after persistence (if any)
     let persistResolve;
     const persistDone = new Promise((resolve) => { persistResolve = resolve; });
-    const parts = path.split('/');
+  const parts = path.split('/');
     let current = this.projectData.structure;
     
     // Navigate to the target folder
-    for (const part of parts) {
+  for (const part of parts) {
       if (current[part] && current[part].type === 'folder') {
-        current = current[part].children;
+    current = current[part].children;
       }
     }
     
@@ -655,7 +802,8 @@ class ProjectExplorer {
     console.log(`[ProjectExplorer] Added file reference: ${fileName} to ${path}`);
 
     // Persist content to storage for storage-first workflows
-    const fullPath = file.path || `${path}/${fileName}`;
+  const uiFullPath = file.path || `${path}/${fileName}`;
+  const storageFullPath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(uiFullPath) : uiFullPath;
   if (file instanceof File) {
       try {
     // Palette-like formats are text for our editors; keep as text
@@ -663,11 +811,11 @@ class ProjectExplorer {
     const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
           if (window.fileIOService) {
-            await window.fileIOService.saveFile(fullPath, content, {
+            await window.fileIOService.saveFile(storageFullPath, content, {
         binaryData: isBinary,
               builderId
             });
-            console.log(`[ProjectExplorer] Persisted dropped file to storage: ${fullPath}`);
+            console.log(`[ProjectExplorer] Persisted dropped file to storage: ${storageFullPath}`);
           }
         }).catch(err => console.warn('[ProjectExplorer] Failed reading dropped file:', err)).finally(() => {
           // Resolve persist promise regardless of success (so caller can proceed)
@@ -702,8 +850,11 @@ class ProjectExplorer {
     await this.cleanupBuildFilesFromStorage();
     
     // Clear existing build folder contents
-  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  this.projectData.structure[buildRoot].children = {};
+    const project = this.getFocusedProjectName();
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    if (project && this.projectData.structure[project]?.children?.[buildRoot]) {
+      this.projectData.structure[project].children[buildRoot].children = {};
+    }
     
     // Update the UI
     this.renderTree();
@@ -761,8 +912,10 @@ class ProjectExplorer {
     
     const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
     const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
-    if (this.projectData?.structure?.[buildRoot]?.children) {
-      for (const [name, child] of Object.entries(this.projectData.structure[buildRoot].children)) {
+    const project = this.getFocusedProjectName();
+    const node = project ? this.projectData?.structure?.[project]?.children?.[buildRoot]?.children : null;
+    if (node) {
+      for (const [name, child] of Object.entries(node)) {
         traverseNode(child, `${buildPrefix}${name}`.replace(/\/$/, ''));
       }
     }
@@ -774,8 +927,11 @@ class ProjectExplorer {
     console.log('[ProjectExplorer] Refreshing build folder...');
     
     // Clear existing build folder contents
-  const _buildRootLog = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  this.projectData.structure[_buildRootLog].children = {};
+    const _buildRootLog = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const project = this.getFocusedProjectName();
+    if (project && this.projectData.structure[project]?.children?.[_buildRootLog]) {
+      this.projectData.structure[project].children[_buildRootLog].children = {};
+    }
     
   // Load all build files from storage
     try {
@@ -821,7 +977,7 @@ class ProjectExplorer {
         }
       }
       
-  console.log('[ProjectExplorer] Build folder structure:', this.projectData.structure[_buildRootLog]);
+  console.log('[ProjectExplorer] Build folder structure (focused project):', this.projectData.structure[this.getFocusedProjectName()]?.children?.[_buildRootLog]);
       
       // Refresh the tree display
       this.renderTree();
@@ -924,8 +1080,11 @@ class ProjectExplorer {
     }
 
     // Clear the build folder structure and refresh
-  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  this.projectData.structure[buildRoot].children = {};
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const project = this.getFocusedProjectName();
+    if (project && this.projectData.structure[project]?.children?.[buildRoot]) {
+      this.projectData.structure[project].children[buildRoot].children = {};
+    }
     this.renderTree();
   }
   
@@ -938,7 +1097,8 @@ class ProjectExplorer {
     
     // Navigate to or create the folder structure
   const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  let current = this.projectData.structure[buildRoot].children;
+  const project = this.getFocusedProjectName();
+  let current = project ? this.projectData.structure[project].children[buildRoot].children : this.projectData.structure[buildRoot].children;
     console.log(`[ProjectExplorer] Starting from Build.children:`, current);
     
     for (const part of parts) {
@@ -1008,17 +1168,22 @@ class ProjectExplorer {
         // If dropping on a file, use its parent folder
         const parts = path.split('/');
         parts.pop();
-    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-    return parts.join('/') || sourcesRoot;
+    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: this.getFocusedProjectName(), rest: parts.join('/') };
+    const project = pp.project || this.getFocusedProjectName();
+    const fallback = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const joined = parts.join('/') || `${project}/${fallback}`;
+    return joined;
       }
     }
+  const project = this.getFocusedProjectName();
   const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  return sourcesRoot;
+  return project ? `${project}/${sourcesRoot}` : sourcesRoot;
   }
   
   getDefaultPath() {
+  const project = this.getFocusedProjectName();
   const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  return sourcesRoot;
+  return project ? `${project}/${sourcesRoot}` : sourcesRoot;
   }
   
   createNewFolder(parentPath) {
@@ -1074,12 +1239,12 @@ class ProjectExplorer {
       toDelete.push(path);
     }
 
-    // Delete from storage (FileManager preferred)
+  // Delete from storage (FileManager preferred)
     try {
       const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
       if (fm) {
         for (const p of toDelete) {
-          const storagePath = (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) ? window.ProjectPaths.normalizeStoragePath(p) : (p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p);
+      const storagePath = (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) ? window.ProjectPaths.normalizeStoragePath(p) : (p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p);
           try {
             await fm.deleteFile(storagePath);
             console.log('[ProjectExplorer] Deleted from storage:', storagePath);
@@ -1347,7 +1512,9 @@ class ProjectExplorer {
     }
     try {
       // Load existing record from storage
-      const record = await fm.loadFile(oldPath);
+  const oldStorage = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(oldPath) : oldPath;
+  const newStorage = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(newPath) : newPath;
+  const record = await fm.loadFile(oldStorage);
       if (!record) {
         console.log(`[ProjectExplorer] No stored content for ${oldPath}, nothing to move`);
         return;
@@ -1358,11 +1525,11 @@ class ProjectExplorer {
       const metadata = { binaryData: isBinary };
       if (record.builderId) metadata.builderId = record.builderId;
       // Save under new path
-      const saved = await fm.saveFile(newPath, content, metadata);
+  const saved = await fm.saveFile(newStorage, content, metadata);
       if (!saved) throw new Error('Save under new path failed');
       // Delete old record
-      await fm.deleteFile(oldPath);
-      console.log(`[ProjectExplorer] Renamed in storage: ${oldPath} → ${newPath}`);
+  await fm.deleteFile(oldStorage);
+  console.log(`[ProjectExplorer] Renamed in storage: ${oldStorage} → ${newStorage}`);
     } catch (error) {
       console.error('[ProjectExplorer] Failed to rename file in storage:', error);
       throw new Error('Failed to update file storage');
@@ -1470,24 +1637,62 @@ class ProjectExplorer {
       console.log(`[ProjectExplorer] No path provided, cleared all selections`);
       return;
     }
-    
-    // Find the tree item with this exact path
-    const allItems = this.treeContainer.querySelectorAll('.tree-item[data-type="file"]');
-    for (const item of allItems) {
-      const itemPath = item.dataset.path;
-      if (itemPath === fullPath) {
-        // Expand tree to show this file
-        this.expandToPath(itemPath);
-        
-        // Select the file
-        item.classList.add('selected');
-        this.selectedNode = item;
-        console.log(`[ProjectExplorer] Selected file at exact path: ${fullPath}`);
-        
-        // Scroll into view if needed
-        item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        break;
+
+    const findItemForPath = (p) => {
+      // 1) Try exact UI path match
+      let candidate = this.treeContainer.querySelector(`.tree-item[data-type="file"][data-path="${CSS.escape(p)}"]`);
+      if (candidate) return candidate;
+
+      const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
+      const sourcesUi = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+      const buildUi = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+
+      // 2) If it's a storage build path, map to each project's UI path
+      if (p.startsWith(buildPrefix)) {
+        const rel = p.substring(buildPrefix.length);
+        const projects = Object.keys(this.projectData.structure || {});
+        for (const proj of projects) {
+          const uiPath = `${proj}/${buildUi}/${rel}`;
+          candidate = this.treeContainer.querySelector(`.tree-item[data-type="file"][data-path="${CSS.escape(uiPath)}"]`);
+          if (candidate) return candidate;
+        }
+        // Fallback: endsWith search across items
+        const allItems = Array.from(this.treeContainer.querySelectorAll('.tree-item[data-type="file"]'));
+        const suffix = `/${buildUi}/${rel}`;
+        candidate = allItems.find(it => (it.dataset.path || '').endsWith(suffix));
+        if (candidate) return candidate;
       }
+
+      // 3) If it's a storage sources path, map to each project's UI sources path
+      if (p.startsWith('Sources/') || p.startsWith('Resources/')) {
+        const prefix = p.startsWith('Sources/') ? 'Sources/' : 'Resources/';
+        const rel = p.substring(prefix.length);
+        const projects = Object.keys(this.projectData.structure || {});
+        for (const proj of projects) {
+          const uiPath = `${proj}/${sourcesUi}/${rel}`;
+          candidate = this.treeContainer.querySelector(`.tree-item[data-type="file"][data-path="${CSS.escape(uiPath)}"]`);
+          if (candidate) return candidate;
+        }
+        // Fallback: endsWith search across items
+        const allItems = Array.from(this.treeContainer.querySelectorAll('.tree-item[data-type="file"]'));
+        const suffix = `/${sourcesUi}/${rel}`;
+        candidate = allItems.find(it => (it.dataset.path || '').endsWith(suffix));
+        if (candidate) return candidate;
+      }
+
+      return null;
+    };
+
+    const item = findItemForPath(fullPath);
+    if (item) {
+      const itemPath = item.dataset.path;
+      this.expandToPath(itemPath);
+      item.classList.add('selected');
+      this.selectedNode = item;
+      console.log(`[ProjectExplorer] Selected file: ${itemPath}`);
+      item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      console.log(`[ProjectExplorer] No matching tree item for path: ${fullPath}`);
     }
   }
 
@@ -1552,26 +1757,11 @@ class ProjectExplorer {
   clearProject() {
     console.log('[ProjectExplorer] Clearing project structure...');
     
-    // Reset project structure to initial state
-  const sourcesRoot2 = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  const buildRoot2 = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  this.projectData = {
-      structure: {
-    [sourcesRoot2]: {
-          type: 'folder',
-          children: {
-            Palettes: { type: 'folder', children: {} },
-            Lua: { type: 'folder', children: {} },
-            Audio: { type: 'folder', children: {} },
-            Graphics: { type: 'folder', children: {} }
-          }
-        },
-    [buildRoot2]: {
-          type: 'folder',
-          children: {}
-        }
-      }
-    };
+  // Create a fresh empty project set with a single default project
+  this.projectData = { structure: {} };
+  const defaultProject = 'Game Project';
+  this.addProject(defaultProject);
+  this.setFocusedProjectName(defaultProject);
     
     // Clear UI
     this.selectedNode = null;

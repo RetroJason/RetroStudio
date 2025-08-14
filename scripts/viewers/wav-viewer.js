@@ -846,3 +846,10 @@ class WavViewer extends ViewerBase {
 
 // Export for use
 window.WavViewer = WavViewer;
+
+// Static metadata for auto-registration
+WavViewer.getFileExtensions = () => ['.wav'];
+WavViewer.getDisplayName = () => 'WAV Viewer';
+WavViewer.getIcon = () => '🔊';
+WavViewer.getPriority = () => 10;
+WavViewer.getCapabilities = () => ['audio-playback', 'waveform-display'];

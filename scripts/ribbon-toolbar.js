@@ -15,6 +15,13 @@ class RibbonToolbar {
     
     // Wait for component registry to be available
     this.waitForComponentRegistry();
+
+    // React to project focus changes
+    try {
+      window.eventBus?.on?.('project.focus.changed', () => {
+        // No-op for now; create buttons already use focused project at click time
+      });
+    } catch (_) {}
     
     console.log('[RibbonToolbar] Initialized');
   }
@@ -143,12 +150,15 @@ class RibbonToolbar {
                             editorInfo.editorClass.createNew() : 
                             '';
       
-      // Generate paths
-      const extension = editorInfo.extensions[0];
-      const fullPath = `${defaultFolder}/${filename}${extension}`;
-      const displayFilename = `${filename}${extension}`;
+  // Generate paths
+  const extension = editorInfo.extensions[0];
+  const focusedProject = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+  const uiFolder = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(focusedProject, defaultFolder) : (focusedProject ? `${focusedProject}/${defaultFolder}` : defaultFolder);
+  const displayFilename = `${filename}${extension}`;
+  const fullUiPath = `${uiFolder}/${displayFilename}`;
+  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
       
-      console.log(`[RibbonToolbar] Creating new file: ${displayFilename}, Full path: ${fullPath}`);
+  console.log(`[RibbonToolbar] Creating new file: ${displayFilename}, UI path: ${fullUiPath}`);
       
       // Use FileManager to create and save the file
       const fileManager = window.serviceContainer?.get('fileManager');
@@ -165,7 +175,7 @@ class RibbonToolbar {
           builderId = 'sfx';
         }
 
-        const fileObj = await fileManager.createAndSaveFile(fullPath, defaultContent, {
+  const fileObj = await fileManager.createAndSaveFile(storagePath, defaultContent, {
           type: extension.substring(1), // Remove the dot
           isNew: true,
           builderId
@@ -175,7 +185,7 @@ class RibbonToolbar {
           throw new Error('Failed to create file');
         }
         
-        console.log(`[RibbonToolbar] Created and saved new file: ${fullPath}`);
+  console.log(`[RibbonToolbar] Created and saved new file: ${storagePath}`);
         
         // Add to project explorer structure (as a reference to the persisted file)
         if (window.gameEditor && window.gameEditor.projectExplorer) {
@@ -183,9 +193,9 @@ class RibbonToolbar {
           if (typeof window.gameEditor.projectExplorer.addFileToProject === 'function') {
             window.gameEditor.projectExplorer.addFileToProject({
               name: displayFilename,
-              path: fullPath,
+              path: fullUiPath,
               isNewFile: true
-            }, defaultFolder, true); // skipAutoOpen = true, we'll open manually
+            }, uiFolder, true); // skipAutoOpen = true, we'll open manually
             console.log(`[RibbonToolbar] File added to project explorer`);
           } else {
             console.error(`[RibbonToolbar] addFileToProject method not found`);
@@ -195,7 +205,7 @@ class RibbonToolbar {
         // Now open from storage
         if (window.gameEditor && window.gameEditor.tabManager) {
           console.log(`[RibbonToolbar] Opening file from storage...`);
-          await window.gameEditor.tabManager.openInTab(fullPath);
+          await window.gameEditor.tabManager.openInTab(fullUiPath);
         }
         
       } catch (error) {
@@ -384,35 +394,11 @@ class RibbonToolbar {
       const { projectName, template } = result;
       console.log('[RibbonToolbar] New Project form result:', { projectName, template });
 
-      // Confirm destructive action
-      const confirmed = await (window.ModalUtils?.showConfirm('Create New Project', `This will clear current project data and create a new project "${projectName}". Continue?`, { danger: true, okText: 'Create' })
-        ?? Promise.resolve(confirm('Clear current data and create new project?')));
-      if (!confirmed) return;
-
-      // Close all tabs first
-      if (window.gameEditor?.tabManager) {
-        console.log('[RibbonToolbar] Closing all tabs before creating project...');
-        await window.gameEditor.tabManager.closeAllTabs?.();
-      }
-
-      // Clear storage (IndexedDB)
-      if (window.fileIOService?.clearAll) {
-        console.log('[RibbonToolbar] Clearing IndexedDB records...');
-        await window.fileIOService.clearAll();
-      } else if (window.serviceContainer?.get?.('fileManager')) {
-        console.log('[RibbonToolbar] Clearing files via FileManager (fallback)...');
-        const fm = window.serviceContainer.get('fileManager');
-        const files = await fm.listFiles('');
-        for (const rec of files) {
-          const p = rec.path || rec;
-          try { await fm.deleteFile(p); } catch (_) {}
-        }
-      }
-
-      // Reset ProjectExplorer structure in-memory without reloading the page
+      // Multi-project: no destructive action; create alongside existing projects
+      // Ensure project root exists in explorer and set focus
       if (window.gameEditor?.projectExplorer) {
-        console.log('[RibbonToolbar] Resetting ProjectExplorer structure...');
-        window.gameEditor.projectExplorer.clearProject();
+        window.gameEditor.projectExplorer.addProject(projectName);
+        window.gameEditor.projectExplorer.setFocusedProjectName(projectName);
       }
 
       // Create files from template
@@ -432,7 +418,8 @@ class RibbonToolbar {
       }
 
       // Open main script if exists
-  const mainPath = (window.ProjectPaths && window.ProjectPaths.getDefaultMainScriptPath) ? window.ProjectPaths.getDefaultMainScriptPath() : 'Resources/Lua/main.lua';
+      const mainRel = (window.ProjectPaths && window.ProjectPaths.getDefaultMainScriptPath) ? window.ProjectPaths.getDefaultMainScriptPath() : 'Resources/Lua/main.lua';
+      const mainPath = `${projectName}/${mainRel}`;
       if (createdPaths.includes(mainPath) && window.gameEditor?.tabManager) {
         await window.gameEditor.tabManager.openInTab(mainPath);
       }
