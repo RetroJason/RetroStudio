@@ -1,3 +1,6 @@
 [submodule "scripts/audio/external/sfxr"]
 	path = scripts/audio/external/sfxr
 	url = https://github.com/chr15m/jsfxr.git
+[submodule "scripts/audio/external/BassoonTracker"]
+	path = scripts/audio/external/BassoonTracker
+	url = https://github.com/steffest/BassoonTracker.git
