@@ -159,8 +159,13 @@ class BuildSystem {
         return;
       }
       
-      // Extract the relative path from the build path (remove "build/" prefix)
-      const relativePath = outputPath.replace(/^build\//, '');
+      // Extract the relative path from the build path using dynamic build prefix
+      const buildPrefix = (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
+        ? window.ProjectPaths.getBuildStoragePrefix()
+        : 'build/';
+      const relativePath = outputPath.startsWith(buildPrefix)
+        ? outputPath.substring(buildPrefix.length)
+        : outputPath.replace(/^build\//, '');
       
       // Add to project explorer's build folder
       window.gameEditor.projectExplorer.addBuildFileToStructure(relativePath, {
@@ -205,10 +210,17 @@ class BuildSystem {
     if (window.gameEditor && window.gameEditor.projectExplorer) {
       const explorer = window.gameEditor.projectExplorer;
       console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
-      
-      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure.Resources) {
-        console.log('[BuildSystem] Resources node:', explorer.projectData.structure.Resources);
-        filePaths.push(...this.extractFilePathsFromNode(explorer.projectData.structure.Resources, 'Resources/'));
+      const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+        ? window.ProjectPaths.getSourcesRootUi()
+        : 'Resources';
+      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure[sourcesRoot]) {
+        console.log('[BuildSystem] Sources node:', explorer.projectData.structure[sourcesRoot]);
+        filePaths.push(
+          ...this.extractFilePathsFromNode(
+            explorer.projectData.structure[sourcesRoot],
+            sourcesRoot + '/'
+          )
+        );
       }
     }
     
@@ -288,9 +300,12 @@ class BuildSystem {
       const explorer = window.gameEditor.projectExplorer;
       console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
       
-      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure.Resources) {
-        console.log('[BuildSystem] Resources node:', explorer.projectData.structure.Resources);
-        files.push(...this.extractFilesFromNode(explorer.projectData.structure.Resources, 'Resources/'));
+      const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+        ? window.ProjectPaths.getSourcesRootUi()
+        : 'Resources';
+      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure[sourcesRoot]) {
+        console.log('[BuildSystem] Sources node:', explorer.projectData.structure[sourcesRoot]);
+        files.push(...this.extractFilesFromNode(explorer.projectData.structure[sourcesRoot], sourcesRoot + '/'));
       }
     }
     
@@ -398,8 +413,10 @@ class BaseBuilder {
 class CopyBuilder extends BaseBuilder {
   async build(file) {
     try {
-      // Remove Resources/ prefix and add build/ prefix: Resources/Lua/file.lua -> build/Lua/file.lua
-      const outputPath = file.path.replace(/^Resources\//, 'build/');
+      // Map source path to build output via ProjectPaths
+      const outputPath = (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
+        ? window.ProjectPaths.toBuildOutputPath(file.path)
+        : file.path.replace(/^Resources\//, 'build/');
       
       // Read file content - check persistent storage first for saved edits
       let content;
@@ -530,7 +547,10 @@ class SfxBuilder extends BaseBuilder {
       console.log(`[SfxBuilder] Generated WAV data: ${wavData.byteLength} bytes`);
       
       // Generate output path
-      const outputPath = file.path.replace(/\.sfx$/i, '.wav').replace(/^Resources\//, 'build/');
+      const outUiPath = file.path.replace(/\.sfx$/i, '.wav');
+      const outputPath = (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
+        ? window.ProjectPaths.toBuildOutputPath(outUiPath)
+        : outUiPath.replace(/^Resources\//, 'build/');
       
       console.log(`[SfxBuilder] Input path: ${file.path}`);
       console.log(`[SfxBuilder] Output path: ${outputPath}`);
@@ -784,7 +804,9 @@ class SfxBuilder extends BaseBuilder {
 class PalBuilder extends BaseBuilder {
   async build(file) {
     try {
-      const outputPath = file.path.replace(/^Resources\//, 'build/');
+      const outputPath = (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
+        ? window.ProjectPaths.toBuildOutputPath(file.path)
+        : file.path.replace(/^Resources\//, 'build/');
 
       // Determine if text-like; palettes are text for .pal
       let content;

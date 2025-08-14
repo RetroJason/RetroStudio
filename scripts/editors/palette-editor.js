@@ -636,11 +636,11 @@ class PaletteEditor extends EditorBase {
       // First try to load from persistent storage if we have a path
       if (window.fileIOService && this.path) {
         // Fix path case for build files: Build/... -> build/...
-        let storagePath = this.path;
-        if (this.path.startsWith('Build/')) {
-          storagePath = this.path.replace('Build/', 'build/');
-          console.log(`[PaletteEditor] Converted build path: ${this.path} -> ${storagePath}`);
-        }
+          let storagePath = window.ProjectPaths && window.ProjectPaths.normalizeStoragePath ? 
+            window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
+          if (this.path.startsWith('Build/')) {
+            console.log(`[PaletteEditor] Converted build path: ${this.path} -> ${storagePath}`);
+          }
         
         console.log(`[PaletteEditor] Attempting to load from persistent storage: ${storagePath}`);
         const storedFile = await window.fileIOService.loadFile(storagePath);
@@ -1263,7 +1263,8 @@ class PaletteEditor extends EditorBase {
   }
 
   static getDefaultFolder() {
-    return 'Resources/Palettes';
+    return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? 
+      `${window.ProjectPaths.getSourcesRootUi()}/Palettes` : 'Resources/Palettes';
   }
 
   static createNew() {

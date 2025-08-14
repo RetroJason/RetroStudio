@@ -268,16 +268,17 @@ class EditorBase extends ViewerBase {
     
     // Determine the appropriate directory based on file extension
     const extension = this.getFileExtension(name);
-    let targetPath = 'Resources/Binary'; // Default fallback
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  let targetPath = `${sourcesRoot}/Binary`; // Default fallback
     
     if (extension === '.lua') {
-      targetPath = 'Resources/Lua';
+  targetPath = `${sourcesRoot}/Lua`;
     } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
-      targetPath = 'Resources/Music';
+  targetPath = `${sourcesRoot}/Music`;
     } else if (extension === '.wav' || extension === '.sfx') {
-      targetPath = 'Resources/SFX';
+  targetPath = `${sourcesRoot}/SFX`;
     } else if (['.pal', '.act', '.aco'].includes(extension)) {
-      targetPath = 'Resources/Palettes';
+  targetPath = `${sourcesRoot}/Palettes`;
     }
     
     const fullPath = `${targetPath}/${name}`;

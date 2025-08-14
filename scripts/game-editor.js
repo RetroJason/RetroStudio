@@ -305,7 +305,8 @@ class GameEditor {
     // Get all files from the Build folder in project explorer
     const buildFiles = [];
     
-    if (!this.projectExplorer || !this.projectExplorer.projectData || !this.projectExplorer.projectData.structure.Build) {
+  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  if (!this.projectExplorer || !this.projectExplorer.projectData || !this.projectExplorer.projectData.structure[buildRoot]) {
       return buildFiles;
     }
     
@@ -324,8 +325,8 @@ class GameEditor {
       }
     };
     
-    // Start collecting from Build folder
-    collectFiles(this.projectExplorer.projectData.structure.Build, 'Build');
+  // Start collecting from Build folder
+  collectFiles(this.projectExplorer.projectData.structure[buildRoot], buildRoot);
     
     console.log(`[GameEditor] Found ${buildFiles.length} build files:`, buildFiles);
     return buildFiles;
@@ -333,7 +334,8 @@ class GameEditor {
   
   findMainLuaScript() {
     // Look for main.lua in the Lua directory
-    const luaFolder = this.projectExplorer.projectData.structure.Resources?.Lua?.children;
+  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const luaFolder = this.projectExplorer.projectData.structure[sourcesRoot]?.Lua?.children;
     if (luaFolder && luaFolder['main.lua']) {
       return luaFolder['main.lua'];
     }
@@ -601,10 +603,11 @@ class GameEditor {
     
     // If still not found, try to load directly from stored Resources by filename
     console.log(`[GameEditor] ${filename} not found in build files, checking Resources in storage...`);
-    try {
+  try {
       const resourceCandidates = [];
       if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
-        const resRecords = await window.fileIOService.listFiles('Resources');
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const resRecords = await window.fileIOService.listFiles(sourcesRoot);
         for (const rec of resRecords) {
           const recPath = rec.path || rec;
           if ((recPath || '').endsWith(filename)) {

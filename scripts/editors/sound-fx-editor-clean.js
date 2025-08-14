@@ -574,7 +574,7 @@ class SoundFXEditor extends CompoundEditor {
   }
 
   static getDirectory() {
-    return 'Resources/SFX';
+  return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';
   }
 
   static createNew() {

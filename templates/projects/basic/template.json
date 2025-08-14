@@ -1,0 +1,18 @@
+{
+  "name": "Basic Project",
+  "version": 1,
+  "files": [
+    {
+  "path": "Sources/Lua/main.lua",
+      "source": "template",
+      "editorType": "lua",
+      "templateName": "game",
+      "includeComments": true
+    },
+    {
+  "path": "Sources/README.txt",
+      "source": "inline",
+  "content": "# {{projectName}}\n\nThis is your new RetroStudio project. Start in Sources/Lua/main.lua."
+    }
+  ]
+}

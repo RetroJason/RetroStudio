@@ -134,9 +134,9 @@ class RibbonToolbar {
       }
       
       // Get default folder for this editor type
-      const defaultFolder = editorInfo.editorClass.getDefaultFolder ? 
-                            editorInfo.editorClass.getDefaultFolder() : 
-                            'Resources';
+  const defaultFolder = editorInfo.editorClass.getDefaultFolder ? 
+            editorInfo.editorClass.getDefaultFolder() : 
+            ((window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources');
       
       // Get default content
       const defaultContent = editorInfo.editorClass.createNew ? 
@@ -341,6 +341,11 @@ class RibbonToolbar {
       await this.clearProjectData();
     });
     
+    // New Project
+    this.setupButton('newProjectBtn', async () => {
+      await this.createNewProject();
+    });
+    
     // Project operations
     this.setupButton('buildBtn', () => {
       if (window.gameEditor) {
@@ -356,14 +361,96 @@ class RibbonToolbar {
     
     // Note: Create buttons are now handled dynamically
   }
+
+  async createNewProject() {
+    try {
+      // Ensure template service is ready
+      if (!window.templateService?.ready) {
+        await window.templateService.init();
+      }
+
+  const templates = window.templateService.getProjectTemplates();
+  const options = Object.entries(templates).map(([key, info]) => ({ value: key, text: info.name }));
+      const defaultTemplate = options[0]?.value || 'basic';
+      console.log('[RibbonToolbar] New Project templates available:', options);
+
+      // Ask user for project name and template
+      const result = await (window.ModalUtils?.showForm?.('New Project', [
+        { name: 'projectName', type: 'text', label: 'Project Name', required: true, placeholder: 'MyProject' },
+        { name: 'template', type: 'select', label: 'Template', options, required: true, defaultValue: defaultTemplate }
+      ], { okText: 'Create Project' }) ?? Promise.resolve(null));
+      if (!result) return;
+
+      const { projectName, template } = result;
+      console.log('[RibbonToolbar] New Project form result:', { projectName, template });
+
+      // Confirm destructive action
+      const confirmed = await (window.ModalUtils?.showConfirm('Create New Project', `This will clear current project data and create a new project "${projectName}". Continue?`, { danger: true, okText: 'Create' })
+        ?? Promise.resolve(confirm('Clear current data and create new project?')));
+      if (!confirmed) return;
+
+      // Close all tabs first
+      if (window.gameEditor?.tabManager) {
+        console.log('[RibbonToolbar] Closing all tabs before creating project...');
+        await window.gameEditor.tabManager.closeAllTabs?.();
+      }
+
+      // Clear storage (IndexedDB)
+      if (window.fileIOService?.clearAll) {
+        console.log('[RibbonToolbar] Clearing IndexedDB records...');
+        await window.fileIOService.clearAll();
+      } else if (window.serviceContainer?.get?.('fileManager')) {
+        console.log('[RibbonToolbar] Clearing files via FileManager (fallback)...');
+        const fm = window.serviceContainer.get('fileManager');
+        const files = await fm.listFiles('');
+        for (const rec of files) {
+          const p = rec.path || rec;
+          try { await fm.deleteFile(p); } catch (_) {}
+        }
+      }
+
+      // Reset ProjectExplorer structure in-memory without reloading the page
+      if (window.gameEditor?.projectExplorer) {
+        console.log('[RibbonToolbar] Resetting ProjectExplorer structure...');
+        window.gameEditor.projectExplorer.clearProject();
+      }
+
+      // Create files from template
+      console.log('[RibbonToolbar] Creating project from template...', template);
+      const createdPaths = await window.templateService.createProjectFromTemplate(template || defaultTemplate, { projectName });
+      console.log('[RibbonToolbar] Project files created:', createdPaths);
+
+      // Add created files to explorer (as references)
+      if (window.gameEditor?.projectExplorer) {
+        for (const fullPath of createdPaths) {
+          const parts = fullPath.split('/');
+          const fileName = parts.pop();
+          const folder = parts.join('/');
+          window.gameEditor.projectExplorer.addFileToProject({ name: fileName, path: fullPath, isNewFile: true }, folder, true, true);
+        }
+        window.gameEditor.projectExplorer.renderTree?.();
+      }
+
+      // Open main script if exists
+  const mainPath = (window.ProjectPaths && window.ProjectPaths.getDefaultMainScriptPath) ? window.ProjectPaths.getDefaultMainScriptPath() : 'Resources/Lua/main.lua';
+      if (createdPaths.includes(mainPath) && window.gameEditor?.tabManager) {
+        await window.gameEditor.tabManager.openInTab(mainPath);
+      }
+    } catch (err) {
+      console.error('[RibbonToolbar] Failed to create new project:', err?.stack || err);
+      alert('Failed to create project: ' + (err?.message || String(err)));
+    }
+  }
   
   async clearProjectData() {
-    const message = 'This will clear ALL project data including:\n' +
-      '• All saved files in Resources/\n' +
-      '• All build outputs in build/\n' +
-      '• Project structure\n' +
-      '• Open tabs\n\n' +
-      'This action cannot be undone. Continue?';
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
+    const message = `This will clear ALL project data including:\n` +
+      `\u2022 All saved files in ${sourcesRoot}/\n` +
+      `\u2022 All build outputs in ${buildPrefix}\n` +
+      `• Project structure\n` +
+      `• Open tabs\n\n` +
+      `This action cannot be undone. Continue?`;
     const confirmed = await (window.ModalUtils?.showConfirm('Clear project data', message, { okText: 'Clear All', cancelText: 'Cancel', danger: true })
       ?? Promise.resolve(confirm(message)));
     if (!confirmed) return;

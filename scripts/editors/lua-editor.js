@@ -435,7 +435,7 @@ end`;
   }
 
   static getDefaultFolder() {
-    return 'Resources/Lua';
+  return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Lua` : 'Resources/Lua';
   }
 
   static createNew() {
