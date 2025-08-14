@@ -453,13 +453,16 @@ class TabManager {
     }
     
     // Setup preview content BEFORE showing animation
-    previewPane.innerHTML = '';
-    previewPane.appendChild(viewerInfo.element);
+  previewPane.innerHTML = '';
+  previewPane.appendChild(viewerInfo.element);
     
     this.previewPath = fullPath;
     this.previewFileName = fileName; // Store filename instead of file object
     this.previewViewer = viewerInfo.viewer;
     this.previewReadOnly = options.isReadOnly || false;
+    if (this.previewReadOnly && viewerInfo.viewer && typeof viewerInfo.viewer.setReadOnly === 'function') {
+      try { viewerInfo.viewer.setReadOnly(true); } catch (_) {}
+    }
     
     // Show preview with animation AFTER content is ready
     this._showPreviewWithAnimation();
@@ -507,10 +510,10 @@ class TabManager {
     `;
     
     // Create content pane
-    const tabPane = document.createElement('div');
+  const tabPane = document.createElement('div');
     tabPane.className = 'tab-pane';
     tabPane.dataset.tabId = tabId;
-    tabPane.appendChild(viewerInfo.element);
+  tabPane.appendChild(viewerInfo.element);
     
     // Add to DOM
     this.tabBar.appendChild(tabElement);
@@ -524,12 +527,17 @@ class TabManager {
       viewer: viewerInfo.viewer,
       element: tabElement,
       pane: tabPane,
-      isReadOnly: options.isReadOnly || false,
+  isReadOnly: options.isReadOnly || false,
       viewerType: viewerInfo.type
     };
     
     this.dedicatedTabs.set(tabId, tabInfo);
     
+    // Apply read-only to editor if requested
+    if (tabInfo.isReadOnly && tabInfo.viewer && typeof tabInfo.viewer.setReadOnly === 'function') {
+      try { tabInfo.viewer.setReadOnly(true); } catch (_) {}
+    }
+
     // Switch to new tab
     this.switchToTab(tabId);
     
@@ -569,16 +577,17 @@ class TabManager {
       <span class="tab-close" data-action="close">×</span>
     `;
     
-    // Create content pane (copied from _createDedicatedTab)
+  // Create content pane (copied from _createDedicatedTab)
     const tabPane = document.createElement('div');
     tabPane.className = 'tab-pane';
     tabPane.dataset.tabId = tabId;
-    tabPane.appendChild(viewerInfo.viewer.getElement());
+  const elem = viewerInfo.viewer.getElement();
+  tabPane.appendChild(elem);
     
     this.tabBar.appendChild(tabElement);
     this.tabContentArea.appendChild(tabPane);
     
-    // Store tab info
+  // Store tab info
     const tabInfo = {
       tabId,
       fullPath: this.previewPath,
@@ -587,11 +596,16 @@ class TabManager {
       element: tabElement,
       pane: tabPane,
       isReadOnly: this.previewReadOnly,
-      viewerType: viewerInfo.type
+  viewerType: viewerInfo.type
     };
     
     this.dedicatedTabs.set(tabId, tabInfo);
     
+    // Apply read-only if the preview was read-only
+    if (this.previewReadOnly && viewerInfo.viewer && typeof viewerInfo.viewer.setReadOnly === 'function') {
+      try { viewerInfo.viewer.setReadOnly(true); } catch (_) {}
+    }
+
     // Clear and hide preview since it's now been promoted
     this._clearAndHidePreview();
     

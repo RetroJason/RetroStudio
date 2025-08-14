@@ -10,12 +10,120 @@ class EditorBase extends ViewerBase {
     this.isDirty = false;
     this.hasUnsavedChanges = false;
     this.templateOptions = templateOptions;
+  this.readOnly = false;
+  this._readonlyGuardsInstalled = false;
+  this._boundGuards = null;
     
     // Add editor-specific classes
     this.element.classList.add('editor-content');
     
     // Setup save handlers
     this.setupSaveHandlers();
+  }
+
+  // Enable/disable read-only mode for editors
+  setReadOnly(isReadOnly) {
+    this.readOnly = !!isReadOnly;
+    if (this.element) {
+      this.element.classList.toggle('readonly', this.readOnly);
+    }
+    if (this.readOnly) {
+      this._installReadOnlyGuards();
+  this._showReadOnlyOverlay();
+    } else {
+      this._removeReadOnlyGuards();
+  this._hideReadOnlyOverlay();
+    }
+  }
+
+  _installReadOnlyGuards() {
+    if (!this.element || this._readonlyGuardsInstalled) return;
+    const root = this.element;
+    const onBeforeInput = (e) => {
+      const t = e.target;
+      if (this._isEditableTarget(t)) {
+        e.preventDefault(); e.stopPropagation();
+      }
+    };
+    const onKeyDown = (e) => {
+      const t = e.target;
+      if (!this._isEditableTarget(t)) return;
+      // Allow navigation and copy/select all
+      const allowedCombos = (
+        (e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'a')
+      ) || ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown','Tab','Escape'].includes(e.key);
+      if (!allowedCombos) {
+        e.preventDefault(); e.stopPropagation();
+      }
+    };
+    const onPaste = (e) => {
+      const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    const onDrop = (e) => {
+      const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    const onClick = (e) => {
+      // Block interactive controls (buttons, links, elements with data-action)
+      const t = e.target.closest('button, [role="button"], a[href], [data-action], .toolbar button');
+      if (t && root.contains(t)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    // Capture phase to intercept early
+    root.addEventListener('beforeinput', onBeforeInput, true);
+    root.addEventListener('keydown', onKeyDown, true);
+    root.addEventListener('paste', onPaste, true);
+    root.addEventListener('drop', onDrop, true);
+    root.addEventListener('click', onClick, true);
+    this._boundGuards = { onBeforeInput, onKeyDown, onPaste, onDrop, onClick };
+    this._readonlyGuardsInstalled = true;
+  }
+
+  _removeReadOnlyGuards() {
+    if (!this.element || !this._readonlyGuardsInstalled || !this._boundGuards) return;
+    const root = this.element;
+    const { onBeforeInput, onKeyDown, onPaste, onDrop, onClick } = this._boundGuards;
+    root.removeEventListener('beforeinput', onBeforeInput, true);
+    root.removeEventListener('keydown', onKeyDown, true);
+    root.removeEventListener('paste', onPaste, true);
+    root.removeEventListener('drop', onDrop, true);
+    root.removeEventListener('click', onClick, true);
+    this._boundGuards = null;
+    this._readonlyGuardsInstalled = false;
+  }
+
+  _showReadOnlyOverlay() {
+    if (!this.element) return;
+    if (this._roOverlay && this._roOverlay.parentNode) return; // already present
+    const overlay = document.createElement('div');
+    overlay.className = 'editor-readonly-overlay';
+    // Optional badge text
+    const badge = document.createElement('div');
+    badge.className = 'editor-readonly-badge';
+    badge.textContent = 'Read-only';
+    overlay.appendChild(badge);
+    // Ensure root can position overlay
+    this.element.style.position = this.element.style.position || 'relative';
+    this.element.appendChild(overlay);
+    this._roOverlay = overlay;
+  }
+
+  _hideReadOnlyOverlay() {
+    if (this._roOverlay && this._roOverlay.parentNode) {
+      this._roOverlay.parentNode.removeChild(this._roOverlay);
+    }
+    this._roOverlay = null;
+  }
+
+  _isEditableTarget(t) {
+    if (!t) return false;
+    if (t.closest && t.closest('.editor-content.readonly') == null) return false;
+    const tag = (t.tagName || '').toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return true;
+    if (tag === 'input') {
+      const type = (t.getAttribute('type') || 'text').toLowerCase();
+      return type !== 'hidden';
+    }
+    if (t.isContentEditable) return true;
+    return false;
   }
   
   // Helper method to get filename from path
