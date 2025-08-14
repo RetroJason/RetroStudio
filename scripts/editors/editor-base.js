@@ -260,8 +260,21 @@ class EditorBase extends ViewerBase {
   // Check if editor can be closed (prompt if unsaved changes)
   canClose() {
     if (this.hasUnsavedChanges) {
-      const result = confirm(`${this.getFileName()} has unsaved changes. Close without saving?`);
-      return result;
+      if (this._discardConfirmed) {
+        return true;
+      }
+      if (window.ModalUtils && typeof window.ModalUtils.showConfirm === 'function') {
+  // Return a promise so TabManager can await; track discard confirmation
+  return window.ModalUtils.showConfirm(
+          'Unsaved changes',
+          `${this.getFileName()} has unsaved changes. Close without saving?`,
+          { okText: 'Discard', cancelText: 'Cancel', danger: true }
+  ).then((ok) => { this._discardConfirmed = !!ok; return ok; });
+      } else {
+        const result = confirm(`${this.getFileName()} has unsaved changes. Close without saving?`);
+  this._discardConfirmed = !!result;
+  return result;
+      }
     }
     return true;
   }
@@ -280,9 +293,24 @@ class EditorBase extends ViewerBase {
   destroy() {
     // Check for unsaved changes before destroying
     if (this.hasUnsavedChanges) {
-      const save = confirm(`${this.getFileName()} has unsaved changes. Save before closing?`);
-      if (save) {
-        this.save();
+      if (this._discardConfirmed) {
+        // User already chose to discard; don't prompt again
+      } else {
+      const ask = async () => {
+        if (window.ModalUtils && typeof window.ModalUtils.showConfirm === 'function') {
+          const save = await window.ModalUtils.showConfirm(
+            'Save changes',
+            `${this.getFileName()} has unsaved changes. Save before closing?`,
+            { okText: 'Save', cancelText: 'Don\'t Save' }
+          );
+          if (save) await this.save();
+        } else {
+          const save = confirm(`${this.getFileName()} has unsaved changes. Save before closing?`);
+          if (save) this.save();
+        }
+      };
+      // Fire and forget; Tab close flow should have already confirmed discard if needed
+      ask();
       }
     }
     

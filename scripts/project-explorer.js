@@ -457,6 +457,31 @@ class ProjectExplorer {
   hideContextMenu() {
     this.contextMenu.style.display = 'none';
   }
+
+  // Ensure custom modal utils are available (dynamic load fallback)
+  async _ensureModalUtils() {
+    if (window.ModalUtils && typeof window.ModalUtils.showConfirm === 'function') return true;
+    if (this._modalUtilsLoading) return this._modalUtilsLoading;
+    this._modalUtilsLoading = new Promise((resolve) => {
+      const script = document.createElement('script');
+      const cacheBust = Date.now();
+      script.src = `scripts/utils/modal-utils.js?v=${cacheBust}`;
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+    return this._modalUtilsLoading;
+  }
+
+  async _confirm(title, message, options = {}) {
+    const ok = await this._ensureModalUtils();
+    if (ok && window.ModalUtils) {
+      return window.ModalUtils.showConfirm(title, message, options);
+    }
+    // If modal utils cannot be loaded, default to cancelling destructive actions
+    console.warn('[ProjectExplorer] ModalUtils unavailable; cancelling action');
+    return false;
+  }
   
   handleContextAction(action) {
     if (!this.selectedNode) return;
@@ -480,7 +505,7 @@ class ProjectExplorer {
         this.renameNode(path, type);
         break;
       case 'delete':
-        this.deleteNode(path);
+  this.deleteNode(path);
         break;
     }
   }
@@ -996,21 +1021,77 @@ class ProjectExplorer {
     }
   }
   
-  deleteNode(path) {
-    if (confirm(`Are you sure you want to delete "${path}"?`)) {
-      const parts = path.split('/');
-      const fileName = parts.pop();
-      let current = this.projectData.structure;
-      
-      for (const part of parts) {
-        if (current[part] && current[part].type === 'folder') {
-          current = current[part].children;
+  async deleteNode(path) {
+    const confirmed = await this._confirm(
+      'Delete',
+      `Are you sure you want to delete "${path}"?`,
+      { okText: 'Delete', cancelText: 'Cancel', danger: true }
+    );
+    if (!confirmed) return;
+
+    // Determine if path is file or folder from structure
+    const node = this.getNodeByPath(path);
+    const isFolder = node && node.type === 'folder';
+
+    // Build storage deletion list
+    const toDelete = [];
+    const collectPaths = (basePath, nodeData) => {
+      if (!nodeData) return;
+      if (nodeData.type === 'file') {
+        toDelete.push(basePath);
+      } else if (nodeData.children) {
+        for (const [name, child] of Object.entries(nodeData.children)) {
+          collectPaths(`${basePath}/${name}`.replace(/\\/g, '/'), child);
         }
       }
-      
-      delete current[fileName];
-      this.renderTree();
-      console.log(`[ProjectExplorer] Deleted: ${path}`);
+    };
+
+    if (isFolder) {
+      collectPaths(path, node);
+    } else {
+      toDelete.push(path);
+    }
+
+    // Delete from storage (FileManager preferred)
+    try {
+      const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      if (fm) {
+        for (const p of toDelete) {
+          const storagePath = p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p;
+          try {
+            await fm.deleteFile(storagePath);
+            console.log('[ProjectExplorer] Deleted from storage:', storagePath);
+          } catch (e) {
+            console.warn('[ProjectExplorer] Failed to delete from storage:', storagePath, e);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[ProjectExplorer] FileManager unavailable for deletion');
+    }
+
+    // Remove from in-memory structure
+    const parts = path.split('/');
+    const name = parts.pop();
+    let current = this.projectData.structure;
+    for (const part of parts) {
+      if (current[part] && current[part].type === 'folder') {
+        current = current[part].children;
+      }
+    }
+    delete current[name];
+
+    // Re-render tree
+    this.renderTree();
+    console.log(`[ProjectExplorer] Deleted: ${path}`);
+
+    // Emit deletion event for other systems (e.g., TabManager)
+    try {
+      if (window.eventBus && typeof window.eventBus.emit === 'function') {
+        await window.eventBus.emit('file.deleted', { path, isFolder, deletedPaths: toDelete });
+      }
+    } catch (e) {
+      console.warn('[ProjectExplorer] Failed to emit file.deleted:', e);
     }
   }
   

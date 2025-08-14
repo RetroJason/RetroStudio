@@ -340,9 +340,14 @@ class TabManager {
     
     // Check if can close
     if (tabInfo.viewer && typeof tabInfo.viewer.canClose === 'function') {
-      if (!tabInfo.viewer.canClose()) {
-        return; // User cancelled
-      }
+      try {
+        const res = tabInfo.viewer.canClose();
+        if (res && typeof res.then === 'function') {
+          res.then((ok) => { if (ok) this.closeTab(tabId); }).catch(() => {});
+          return;
+        }
+        if (!res) return;
+      } catch (_) { return; }
     }
     
     // Cleanup

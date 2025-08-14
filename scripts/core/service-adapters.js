@@ -236,7 +236,30 @@ class ProjectExplorerAdapter {
   setupIntegration() {
     // Enhanced context menu with component awareness
     const originalShowContextMenu = this.projectExplorer.showContextMenu.bind(this.projectExplorer);
-    this.projectExplorer.showContextMenu = (event, filePath) => {
+    this.projectExplorer.showContextMenu = (eventOrX, maybeY) => {
+      // Support both legacy (x, y) and new (event, filePath) signatures
+      let event = null;
+      let filePath = null;
+
+      if (typeof eventOrX === 'object' && eventOrX && 'clientX' in eventOrX) {
+        // Called with MouseEvent
+        event = eventOrX;
+      } else if (typeof eventOrX === 'number' && typeof maybeY === 'number') {
+        // Called with coordinates
+        event = { pageX: eventOrX, pageY: maybeY };
+      } else {
+        // Fallback: synthesize at 0,0
+        event = { pageX: 0, pageY: 0 };
+      }
+
+      // Derive filePath from currently selected node when not provided
+      try {
+        const sel = this.projectExplorer.selectedNode;
+        if (sel && typeof sel.dataset?.path === 'string') {
+          filePath = sel.dataset.path;
+        }
+      } catch (_) { /* ignore */ }
+
       return this.showEnhancedContextMenu(event, filePath, originalShowContextMenu);
     };
 
@@ -247,8 +270,9 @@ class ProjectExplorerAdapter {
     const menuItems = [];
 
     // Get component info for file
-    const editor = this.componentRegistry.getEditorForFile(filePath);
-    const viewer = this.componentRegistry.getViewerForFile(filePath);
+    let editor = null, viewer = null;
+    try { editor = this.componentRegistry.getEditorForFile(filePath); } catch (_) { editor = null; }
+    try { viewer = this.componentRegistry.getViewerForFile(filePath); } catch (_) { viewer = null; }
 
     // Add component-specific menu items
     if (editor) {
@@ -275,11 +299,21 @@ class ProjectExplorerAdapter {
     );
 
     // Run plugin hooks for additional menu items
-    const hookResult = await this.pluginSystem.runHook('ui.createContextMenu', {
-      filePath,
-      menuItems,
-      event
-    });
+    let hookResult = null;
+    try {
+      if (this.pluginSystem && typeof this.pluginSystem.runHook === 'function') {
+        hookResult = await this.pluginSystem.runHook('ui.createContextMenu', {
+          filePath,
+          menuItems,
+          event
+        });
+      } else if (this.pluginSystem && typeof this.pluginSystem.executeHook === 'function') {
+        const results = await this.pluginSystem.executeHook('ui.createContextMenu', { filePath, menuItems, event });
+        hookResult = Array.isArray(results) && results.length ? results[results.length - 1] : null;
+      }
+    } catch (e) {
+      console.warn('[ServiceAdapter] Context menu hook failed:', e);
+    }
 
     if (hookResult && hookResult.menuItems) {
       menuItems.push(...hookResult.menuItems);
@@ -296,11 +330,22 @@ class ProjectExplorerAdapter {
     const menu = document.createElement('div');
     menu.className = 'context-menu';
     
+    // Helper to remove the menu
+    const removeMenu = () => {
+      if (menu.parentNode) {
+        menu.parentNode.removeChild(menu);
+      }
+      document.removeEventListener('click', removeMenu);
+    };
+
     items.forEach(item => {
       const menuItem = document.createElement('div');
-      menuItem.className = 'context-menu-item';
+  // Use class that matches existing CSS (.context-item) for proper hover highlight
+  menuItem.className = 'context-item';
       menuItem.innerHTML = `${item.icon || ''} ${item.label}`;
-      menuItem.onclick = item.action;
+      menuItem.onclick = (e) => {
+        try { item.action?.(e); } finally { removeMenu(); }
+      };
       menu.appendChild(menuItem);
     });
 
@@ -308,14 +353,7 @@ class ProjectExplorerAdapter {
     menu.style.left = event.pageX + 'px';
     menu.style.top = event.pageY + 'px';
 
-    // Remove on click outside
-    const removeMenu = () => {
-      if (menu.parentNode) {
-        menu.parentNode.removeChild(menu);
-      }
-      document.removeEventListener('click', removeMenu);
-    };
-    
+  // Also remove on click outside
     setTimeout(() => document.addEventListener('click', removeMenu), 0);
   }
 
@@ -349,6 +387,28 @@ class ProjectExplorerAdapter {
     this.events.on('file.open.requested', (data) => {
       const tabManager = this.services.get('tabManager');
       tabManager.openFile(data.path);
+    });
+
+    // Perform actual deletion when requested via context menu
+    this.events.on('file.delete.requested', async (data) => {
+      try {
+        if (!data || !data.path) return;
+        await this.projectExplorer.deleteNode(data.path);
+      } catch (e) {
+        console.warn('[ProjectExplorerAdapter] Failed handling file.delete.requested:', e);
+      }
+    });
+
+    // Optional: handle rename requests emitted by context menu
+    this.events.on('file.rename.requested', async (data) => {
+      try {
+        if (!data || !data.path) return;
+        const node = this.projectExplorer.getNodeByPath(data.path);
+        if (!node) return;
+        await this.projectExplorer.renameNode(data.path, node.type);
+      } catch (e) {
+        console.warn('[ProjectExplorerAdapter] Failed handling file.rename.requested:', e);
+      }
     });
   }
 }

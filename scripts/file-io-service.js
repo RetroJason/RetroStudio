@@ -226,8 +226,11 @@ class FileIOService {
               result.content = result.fileContent;
             }
             console.log(`[FileIOService] Loaded from IndexedDB: ${path}`);
+            resolve(result);
+          } else {
+            // Normalize missing record to null
+            resolve(null);
           }
-          resolve(result);
         };
   request.onerror = () => reject(request.error);
         

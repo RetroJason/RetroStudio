@@ -362,7 +362,7 @@ class ModalUtils {
         </div>
         <div class="modal-footer">
           <button class="modal-btn modal-btn-secondary" id="modal-cancel">${options.cancelText || 'Cancel'}</button>
-          <button class="modal-btn modal-btn-primary" id="modal-ok">${options.okText || 'OK'}</button>
+          <button class="modal-btn ${options.danger ? 'modal-btn-danger' : 'modal-btn-primary'}" id="modal-ok">${options.okText || 'OK'}</button>
         </div>
       `;
       

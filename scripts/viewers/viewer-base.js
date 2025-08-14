@@ -21,6 +21,20 @@ class ViewerBase {
     
     this.element.appendChild(body);
   }
+  
+  // Standard reload hook used by TabManager after builds/updates
+  async reload() {
+    if (typeof this.refreshContent === 'function') {
+      try {
+        await this.refreshContent();
+        return true;
+      } catch (e) {
+        console.warn('[ViewerBase] reload() failed via refreshContent:', e);
+        return false;
+      }
+    }
+    return false;
+  }
 
   getFileSize() {
     // Prefer a cached size if a subclass set it
