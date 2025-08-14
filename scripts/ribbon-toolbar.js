@@ -19,7 +19,9 @@ class RibbonToolbar {
     // React to project focus changes
     try {
       window.eventBus?.on?.('project.focus.changed', () => {
-        // No-op for now; create buttons already use focused project at click time
+        try {
+          this.setupDynamicCreateButtons();
+        } catch (_) {}
       });
     } catch (_) {}
     
@@ -89,7 +91,11 @@ class RibbonToolbar {
     // Add buttons for each creatable editor
     creatableEditors.forEach(editorInfo => {
       console.log(`[RibbonToolbar] Adding button for ${editorInfo.displayName}`);
-      this.addCreateButton(createSection, editorInfo);
+      const btn = this.addCreateButton(createSection, editorInfo);
+      // Disable if no active project
+      const hasProject = !!(window.gameEditor?.projectExplorer?.getFocusedProjectName?.());
+      btn.disabled = !hasProject;
+      btn.style.opacity = hasProject ? '1' : '0.5';
     });
     
     console.log('[RibbonToolbar] Dynamic create buttons setup complete');
@@ -123,14 +129,20 @@ class RibbonToolbar {
       this.createNewResourceFromEditor(editorInfo);
     });
 
-    container.appendChild(button);
+  container.appendChild(button);
     
-    console.log(`[RibbonToolbar] Successfully added create button for ${editorInfo.displayName}`);
+  console.log(`[RibbonToolbar] Successfully added create button for ${editorInfo.displayName}`);
+  return button;
   }
 
   async createNewResourceFromEditor(editorInfo) {
     try {
       console.log(`[RibbonToolbar] Creating new ${editorInfo.displayName}`);
+      const focusedProject = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      if (!focusedProject) {
+        alert('No active project');
+        return;
+      }
       
       // Generate simple filename with counter
       const counter = this.getNextFileCounter();
@@ -152,7 +164,6 @@ class RibbonToolbar {
       
   // Generate paths
   const extension = editorInfo.extensions[0];
-  const focusedProject = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
   const uiFolder = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(focusedProject, defaultFolder) : (focusedProject ? `${focusedProject}/${defaultFolder}` : defaultFolder);
   const displayFilename = `${filename}${extension}`;
   const fullUiPath = `${uiFolder}/${displayFilename}`;
@@ -340,20 +351,24 @@ class RibbonToolbar {
   }
   
   setupButtons() {
-    // File operations
-    this.setupButton('saveBtn', () => {
+  // File operations
+  this.setupButton('saveBtn', () => {
       if (window.gameEditor) {
         window.gameEditor.saveActiveEditor();
       }
     });
     
-    this.setupButton('clearDataBtn', async () => {
-      await this.clearProjectData();
-    });
-    
     // New Project
     this.setupButton('newProjectBtn', async () => {
       await this.createNewProject();
+    });
+
+    // Import/Export RWP
+    this.setupButton('exportRwpBtn', async () => {
+      await this.exportProjectRwp();
+    });
+    this.setupButton('importRwpBtn', async () => {
+      await this.importProjectRwp();
     });
     
     // Project operations
@@ -372,124 +387,80 @@ class RibbonToolbar {
     // Note: Create buttons are now handled dynamically
   }
 
+  // Export current focused project as .rwp
+  async exportProjectRwp() {
+    try {
+      const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+      const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+      if (!svc) return alert('Project export service unavailable');
+      await svc.exportProject(project);
+    } catch (e) {
+      console.error('[RibbonToolbar] Export failed:', e);
+      alert('Export failed: ' + (e?.message || e));
+    }
+  }
+
+  // Import a .rwp file and create a project
+  async importProjectRwp() {
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.rwp,application/octet-stream,application/gzip,application/json';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+        if (!svc) return alert('Project import service unavailable');
+        await svc.importProject(file);
+      };
+      input.click();
+    } catch (e) {
+      console.error('[RibbonToolbar] Import failed:', e);
+      alert('Import failed: ' + (e?.message || e));
+    }
+  }
+
   async createNewProject() {
     try {
-      // Ensure template service is ready
-      if (!window.templateService?.ready) {
-        await window.templateService.init();
-      }
+      // Ask for project name first
+      const form = await (window.ModalUtils?.showForm?.('New Project', [
+        { name: 'projectName', type: 'text', label: 'Project Name', required: true, placeholder: 'MyProject' }
+      ], { okText: 'Next' }) ?? Promise.resolve(null));
+      if (!form) return;
+      const projectName = (form.projectName || '').trim();
+      if (!projectName) return;
 
-  const templates = window.templateService.getProjectTemplates();
-  const options = Object.entries(templates).map(([key, info]) => ({ value: key, text: info.name }));
-      const defaultTemplate = options[0]?.value || 'basic';
-      console.log('[RibbonToolbar] New Project templates available:', options);
+      // Fetch templates (stubbed service)
+      const catalog = window.serviceContainer?.get?.('templateCatalog') || window.templateCatalog;
+      const templates = (await (catalog?.fetchProjectTemplates?.() ?? [])) || [];
+      if (!templates.length) return alert('No templates available');
 
-      // Ask user for project name and template
-      const result = await (window.ModalUtils?.showForm?.('New Project', [
-        { name: 'projectName', type: 'text', label: 'Project Name', required: true, placeholder: 'MyProject' },
-        { name: 'template', type: 'select', label: 'Template', options, required: true, defaultValue: defaultTemplate }
+      // Build options for selection
+      const options = templates.map(t => ({ value: t.id, text: `${t.icon || ''} ${t.name} — ${t.description}`.trim() }));
+      const pick = await (window.ModalUtils?.showForm?.('Choose Template', [
+        { name: 'templateId', type: 'select', label: 'Template', options, required: true }
       ], { okText: 'Create Project' }) ?? Promise.resolve(null));
-      if (!result) return;
+      if (!pick) return;
 
-      const { projectName, template } = result;
-      console.log('[RibbonToolbar] New Project form result:', { projectName, template });
+      const chosen = templates.find(t => t.id === pick.templateId);
+      if (!chosen) return;
 
-      // Multi-project: no destructive action; create alongside existing projects
-      // Ensure project root exists in explorer and set focus
-      if (window.gameEditor?.projectExplorer) {
-        window.gameEditor.projectExplorer.addProject(projectName);
-        window.gameEditor.projectExplorer.setFocusedProjectName(projectName);
-      }
+      // Load the .rwp file via fetch and pass a File/Blob to import
+      const resp = await fetch(chosen.path, { cache: 'no-store' });
+      if (!resp.ok) throw new Error(`Failed to load template: ${resp.status}`);
+      const blob = await resp.blob();
+      const file = new File([blob], `${chosen.name}.rwp`, { type: 'application/zip' });
 
-      // Create files from template
-      console.log('[RibbonToolbar] Creating project from template...', template);
-      const createdPaths = await window.templateService.createProjectFromTemplate(template || defaultTemplate, { projectName });
-      console.log('[RibbonToolbar] Project files created:', createdPaths);
-
-      // Add created files to explorer (as references)
-      if (window.gameEditor?.projectExplorer) {
-        for (const fullPath of createdPaths) {
-          const parts = fullPath.split('/');
-          const fileName = parts.pop();
-          const folder = parts.join('/');
-          window.gameEditor.projectExplorer.addFileToProject({ name: fileName, path: fullPath, isNewFile: true }, folder, true, true);
-        }
-        window.gameEditor.projectExplorer.renderTree?.();
-      }
-
-      // Open main script if exists
-      const mainRel = (window.ProjectPaths && window.ProjectPaths.getDefaultMainScriptPath) ? window.ProjectPaths.getDefaultMainScriptPath() : 'Resources/Lua/main.lua';
-      const mainPath = `${projectName}/${mainRel}`;
-      if (createdPaths.includes(mainPath) && window.gameEditor?.tabManager) {
-        await window.gameEditor.tabManager.openInTab(mainPath);
-      }
+      const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+      if (!svc) return alert('Project import service unavailable');
+      await svc.importProject(file, { projectNameOverride: projectName });
     } catch (err) {
       console.error('[RibbonToolbar] Failed to create new project:', err?.stack || err);
       alert('Failed to create project: ' + (err?.message || String(err)));
     }
   }
   
-  async clearProjectData() {
-    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-    const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix) ? window.ProjectPaths.getBuildStoragePrefix() : 'build/';
-    const message = `This will clear ALL project data including:\n` +
-      `\u2022 All saved files in ${sourcesRoot}/\n` +
-      `\u2022 All build outputs in ${buildPrefix}\n` +
-      `• Project structure\n` +
-      `• Open tabs\n\n` +
-      `This action cannot be undone. Continue?`;
-    const confirmed = await (window.ModalUtils?.showConfirm('Clear project data', message, { okText: 'Clear All', cancelText: 'Cancel', danger: true })
-      ?? Promise.resolve(confirm(message)));
-    if (!confirmed) return;
-    
-    try {
-      console.log('[RibbonToolbar] Clearing all project data...');
-      let clearedCount = 0;
-      
-      // Prefer FileIOService clearAll (IndexedDB)
-      if (window.fileIOService && typeof window.fileIOService.clearAll === 'function') {
-        try {
-          await window.fileIOService.clearAll();
-          clearedCount = -1; // unknown exact count
-          console.log('[RibbonToolbar] Cleared all records from IndexedDB');
-        } catch (e) {
-          console.warn('[RibbonToolbar] clearAll failed, falling back to enumerating files:', e);
-        }
-      }
-
-      // Fallback: enumerate via FileManager and delete
-      if (clearedCount === 0) {
-        const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
-        if (fm) {
-          const files = await fm.listFiles('');
-          for (const rec of files) {
-            const p = rec.path || rec;
-            try { await fm.deleteFile(p); clearedCount++; } catch (_) {}
-          }
-          console.log(`[RibbonToolbar] Cleared ${clearedCount} files via FileManager`);
-        }
-      }
-
-      // Close all tabs
-      if (window.gameEditor?.tabManager) {
-        window.gameEditor.tabManager.closeAllTabs();
-      }
-      
-      // Clear project structure
-      if (window.gameEditor?.projectExplorer) {
-        window.gameEditor.projectExplorer.clearProject();
-      }
-      
-      alert(`Project data cleared. Page will refresh.`);
-      
-      // Refresh the page to ensure clean state
-      window.location.reload();
-      
-    } catch (error) {
-      console.error('[RibbonToolbar] Error clearing project data:', error);
-      alert('Error clearing project data: ' + error.message);
-    }
-  }
   
   setupButton(id, handler) {
     const button = document.getElementById(id);
