@@ -358,15 +358,14 @@ class RibbonToolbar {
   }
   
   async clearProjectData() {
-    const confirmed = confirm(
-      'This will clear ALL project data including:\n' +
+    const message = 'This will clear ALL project data including:\n' +
       '• All saved files in Resources/\n' +
       '• All build outputs in build/\n' +
       '• Project structure\n' +
       '• Open tabs\n\n' +
-      'This action cannot be undone. Continue?'
-    );
-    
+      'This action cannot be undone. Continue?';
+    const confirmed = await (window.ModalUtils?.showConfirm('Clear project data', message, { okText: 'Clear All', cancelText: 'Cancel', danger: true })
+      ?? Promise.resolve(confirm(message)));
     if (!confirmed) return;
     
     try {

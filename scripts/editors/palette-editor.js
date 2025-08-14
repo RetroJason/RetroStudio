@@ -572,10 +572,20 @@ class PaletteEditor extends EditorBase {
     console.log(`[PaletteEditor] Refreshing content for: ${this.path}`);
     try {
       // Reload the file content from storage
-      await this.loadFileContent();
-      console.log(`[PaletteEditor] Successfully refreshed content for: ${this.path}`);
+  await this.loadFileContent();
+  if (!this.file || typeof this.file.content !== 'string') {
+    // Treat as not found or unsupported content
+    throw new Error('Content not found');
+  }
+  // Re-parse and re-render after loading
+  this.parsePaletteFile();
+  this.renderPaletteGrid();
+  this.updateColorEditor();
+  console.log(`[PaletteEditor] Successfully refreshed content for: ${this.path}`);
     } catch (error) {
       console.error(`[PaletteEditor] Failed to refresh content for ${this.path}:`, error);
+      // Bubble up so TabManager can decide to close the tab
+      throw error;
     }
   }
 

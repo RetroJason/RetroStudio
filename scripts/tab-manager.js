@@ -86,6 +86,8 @@ class TabManager {
   setupEventListeners() {
     // Subscribe to content refresh events to refresh build artifact tabs
     this.setupContentRefreshListener();
+  // Subscribe to file deletion events to close affected tabs
+  this.setupFileDeletionListener();
     
     // Tab clicking
     this.tabBar.addEventListener('click', (e) => {
@@ -165,29 +167,122 @@ class TabManager {
       }, 200);
     }
   }
+
+  setupFileDeletionListener() {
+    const subscribe = () => {
+      if (window.eventBus && typeof window.eventBus.on === 'function') {
+        window.eventBus.on('file.deleted', async ({ path, isFolder, deletedPaths }) => {
+          try {
+            const paths = Array.isArray(deletedPaths) && deletedPaths.length ? deletedPaths : [path];
+            const normalize = (p) => (typeof p === 'string' ? p.replace(/^Build\//, 'build/') : p);
+            const deletedSet = new Set(paths.map(normalize));
+            const folderPrefix = isFolder && typeof path === 'string' ? normalize(path) + '/' : null;
+
+            // Close preview if it matches
+            if (this.previewPath && (deletedSet.has(this.previewPath) || (folderPrefix && this.previewPath.startsWith(folderPrefix)))) {
+              console.log(`[TabManager] Closing preview for deleted path ${this.previewPath}`);
+              this._closePreviewTab();
+            }
+
+            // Close any dedicated tabs that match
+            const toClose = [];
+            for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
+              const tp = tabInfo.fullPath;
+              if (!tp) continue;
+              if (deletedSet.has(tp) || (folderPrefix && tp.startsWith(folderPrefix))) {
+                toClose.push(tabId);
+              }
+            }
+            toClose.forEach(id => {
+              console.log(`[TabManager] Closing tab ${id} due to deletion`);
+              this.closeTab(id);
+            });
+          } catch (e) {
+            console.warn('[TabManager] Error handling file.deleted:', e);
+          }
+        });
+        return true;
+      }
+      return false;
+    };
+
+    if (!subscribe()) {
+      let tries = 0; const h = setInterval(() => { tries++; if (subscribe() || tries > 20) clearInterval(h); }, 200);
+    }
+  }
   
-  refreshBuildArtifactTabs() {
+  async refreshBuildArtifactTabs() {
     console.log('[TabManager] Refreshing tabs containing build artifacts...');
-    
+
     let refreshedCount = 0;
-    
-    // Check dedicated tabs
+    let closedCount = 0;
+
+    // Dedicated tabs: close if artifact removed; else reload
+    const reloads = [];
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-      if (this.isBuildArtifact(tabInfo.fullPath)) {
-        console.log(`[TabManager] Refreshing build artifact tab: ${tabId} (${tabInfo.fullPath})`);
-        this.refreshTabViewer(tabInfo);
-        refreshedCount++;
+      const path = tabInfo.fullPath;
+      if (this.isBuildArtifact(path)) {
+        const exists = await this._fileExists(path);
+        if (!exists) {
+          console.log(`[TabManager] Closing tab ${tabId}; build artifact missing: ${path}`);
+          this.closeTab(tabId);
+          closedCount++;
+          continue;
+        }
+
+        // Try reload; if it fails or returns false, close the tab
+        console.log(`[TabManager] Reloading build artifact tab: ${tabId} (${path})`);
+        reloads.push(
+          (async () => {
+            try {
+              const res = await this.refreshTabViewer(tabInfo);
+              // If viewer reports failure explicitly
+              if (res === false) {
+                console.log(`[TabManager] Reload returned false; closing tab ${tabId} (${path})`);
+                this.closeTab(tabId);
+                closedCount++;
+                return false;
+              }
+              refreshedCount++;
+              return true;
+            } catch (err) {
+              console.warn(`[TabManager] Reload error for ${path}; closing tab ${tabId}`, err);
+              this.closeTab(tabId);
+              closedCount++;
+              return false;
+            }
+          })()
+        );
       }
     }
-    
-    // Check preview tab if it contains a build artifact
+    await Promise.allSettled(reloads);
+
+    // Preview: close if artifact removed; else reload
     if (this.previewPath && this.isBuildArtifact(this.previewPath)) {
-      console.log(`[TabManager] Refreshing build artifact in preview: ${this.previewPath}`);
-      this.refreshPreviewViewer();
-      refreshedCount++;
+      const exists = await this._fileExists(this.previewPath);
+      if (!exists) {
+        console.log(`[TabManager] Closing preview; build artifact missing: ${this.previewPath}`);
+        this._closePreviewTab();
+      } else {
+        console.log(`[TabManager] Reloading build artifact in preview: ${this.previewPath}`);
+        try {
+          const res = await this.refreshPreviewViewer();
+          if (res === false) {
+            console.log('[TabManager] Preview reload returned false; closing preview');
+            this._closePreviewTab();
+            closedCount++;
+          } else {
+            refreshedCount++;
+          }
+        } catch (e) {
+          console.warn('[TabManager] Preview reload error; closing preview', e);
+          this._closePreviewTab();
+          closedCount++;
+        }
+      }
     }
-    
-    console.log(`[TabManager] Refreshed ${refreshedCount} tabs containing build artifacts`);
+
+    console.log(`[TabManager] Build refresh complete. Reloaded ${refreshedCount} tabs; closed ${closedCount}.`);
   }
   
   isBuildArtifact(filePath) {
@@ -198,9 +293,16 @@ class TabManager {
   
   refreshTabViewer(tabInfo) {
     try {
-      if (tabInfo.viewer && typeof tabInfo.viewer.refreshContent === 'function') {
-        console.log(`[TabManager] Calling refreshContent on viewer for ${tabInfo.fullPath}`);
-        tabInfo.viewer.refreshContent();
+      if (tabInfo.viewer) {
+        if (typeof tabInfo.viewer.reload === 'function') {
+          console.log(`[TabManager] Calling reload() on viewer for ${tabInfo.fullPath}`);
+          return tabInfo.viewer.reload();
+        } else if (typeof tabInfo.viewer.refreshContent === 'function') {
+          console.log(`[TabManager] Calling refreshContent() on viewer for ${tabInfo.fullPath}`);
+          return tabInfo.viewer.refreshContent();
+        } else {
+          console.log(`[TabManager] Viewer for ${tabInfo.fullPath} has no reload/refreshContent`);
+        }
       } else {
         console.log(`[TabManager] Viewer for ${tabInfo.fullPath} does not have refreshContent method`);
       }
@@ -211,14 +313,44 @@ class TabManager {
   
   refreshPreviewViewer() {
     try {
-      if (this.previewViewer && typeof this.previewViewer.refreshContent === 'function') {
-        console.log(`[TabManager] Calling refreshContent on preview viewer for ${this.previewPath}`);
-        this.previewViewer.refreshContent();
+      if (this.previewViewer) {
+        if (typeof this.previewViewer.reload === 'function') {
+          console.log(`[TabManager] Calling reload() on preview viewer for ${this.previewPath}`);
+          return this.previewViewer.reload();
+        } else if (typeof this.previewViewer.refreshContent === 'function') {
+          console.log(`[TabManager] Calling refreshContent() on preview viewer for ${this.previewPath}`);
+          return this.previewViewer.refreshContent();
+        } else {
+          console.log(`[TabManager] Preview viewer for ${this.previewPath} has no reload/refreshContent`);
+        }
       } else {
         console.log(`[TabManager] Preview viewer for ${this.previewPath} does not have refreshContent method`);
       }
     } catch (error) {
       console.error(`[TabManager] Error refreshing preview viewer for ${this.previewPath}:`, error);
+    }
+  }
+
+  async _fileExists(fullPath) {
+    if (!fullPath) return false;
+    try {
+      const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      if (!fm || typeof fm.loadFile !== 'function') return true; // assume exists if we can't check
+      // Normalize build path
+      const path = fullPath.replace(/^Build\//, 'build/');
+      const rec = await fm.loadFile(path);
+      // Consider zero-byte or missing-content records as non-existent
+      if (!rec) return false;
+      const size = typeof rec.size === 'number' ? rec.size : undefined;
+      const content = rec.fileContent ?? rec.content;
+      const hasContent = (typeof content === 'string' && content.length > 0)
+        || (content && typeof content.byteLength === 'number' && content.byteLength > 0)
+        || (Array.isArray(content) && content.length > 0);
+      if (size === 0 && !hasContent) return false;
+      if (size !== undefined) return size > 0 || hasContent;
+      return hasContent; // fallback if size not provided
+    } catch (_) {
+      return false;
     }
   }
 
@@ -812,10 +944,21 @@ class TabManager {
     const tabInfo = this.dedicatedTabs.get(tabId);
     if (!tabInfo) return;
     
-    // Check if can close
+    // Check if can close (supports sync boolean or Promise<boolean>)
     if (tabInfo.viewer && typeof tabInfo.viewer.canClose === 'function') {
-      if (!tabInfo.viewer.canClose()) {
-        return; // User cancelled
+      try {
+        const res = tabInfo.viewer.canClose();
+        if (res && typeof res.then === 'function') {
+          // Defer actual close until resolved
+          res.then((ok) => { if (ok) this.closeTab(tabId); }).catch(() => {});
+          return;
+        }
+        if (!res) {
+          return; // User cancelled
+        }
+      } catch (_) {
+        // If canClose throws, default to cancel
+        return;
       }
     }
     

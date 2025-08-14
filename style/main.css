@@ -188,6 +188,16 @@
   background: #4a4a4a;
 }
 
+/* Destructive action button */
+.modal-btn-danger {
+  background: #d32f2f;
+  color: #ffffff;
+}
+
+.modal-btn-danger:hover {
+  background: #b71c1c;
+}
+
 /* End Custom Modal Dialog */
 
 /* Global drag and drop feedback */

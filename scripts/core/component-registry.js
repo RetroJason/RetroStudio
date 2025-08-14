@@ -181,8 +181,21 @@ class ComponentRegistry {
 
   // Utility methods
   getFileExtension(filePath) {
-    const dotIndex = filePath.lastIndexOf('.');
-    return dotIndex >= 0 ? filePath.substring(dotIndex).toLowerCase() : '';
+    // Accept strings, file records, or File objects; return safe extension or empty string
+    if (filePath == null) return '';
+    let fp = filePath;
+    if (typeof fp !== 'string') {
+      // Try common shapes
+      if (fp && typeof fp.path === 'string') {
+        fp = fp.path;
+      } else if (fp && typeof fp.name === 'string') {
+        fp = fp.name;
+      } else {
+        return '';
+      }
+    }
+    const dotIndex = fp.lastIndexOf('.');
+    return dotIndex >= 0 ? fp.substring(dotIndex).toLowerCase() : '';
   }
 
   validateComponent(componentClass, type) {

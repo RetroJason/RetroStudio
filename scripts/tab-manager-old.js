@@ -529,11 +529,15 @@ class TabManager {
     if (!tabData) return;
     
     // Check if this is an editor with unsaved changes
-    if (tabData.isEditor && tabData.viewer && typeof tabData.viewer.canClose === 'function') {
-      if (!tabData.viewer.canClose()) {
-        console.log(`[TabManager] Close cancelled for tab: ${tabId}`);
-        return; // User cancelled close
-      }
+      if (tabData.viewer && typeof tabData.viewer.canClose === 'function') {
+        try {
+          const res = tabData.viewer.canClose();
+          if (res && typeof res.then === 'function') {
+            res.then((ok) => { if (ok) this.closeTab(tabId); }).catch(() => {});
+            return;
+          }
+          if (!res) return;
+        } catch (_) { return; }
     }
     
     // Cleanup viewer using standardized interface

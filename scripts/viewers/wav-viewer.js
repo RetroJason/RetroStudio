@@ -49,6 +49,11 @@ class WavViewer extends ViewerBase {
       // Force reload the audio resource
       console.log(`[WavViewer] Force reloading audio resource for ${this.getFileName()}`);
       await this.loadAudioResource(true);
+
+      // After attempting reload, ensure the resource exists; if not, signal failure
+      if (!this._ensureAudioResource()) {
+        throw new Error(`Missing audio resource for ${this.getFileName()}`);
+      }
       
       // Redraw the waveform
       console.log(`[WavViewer] Redrawing waveform for ${this.getFileName()}`);
@@ -56,6 +61,8 @@ class WavViewer extends ViewerBase {
       
     } catch (error) {
       console.error(`[WavViewer] Error refreshing content for ${this.getFileName()}:`, error);
+  // Propagate error so ViewerBase.reload can return false
+  throw error;
     }
   }
   
