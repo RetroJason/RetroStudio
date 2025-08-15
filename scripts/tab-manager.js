@@ -426,8 +426,8 @@ class TabManager {
       }
     }
     
-    // Create new dedicated tab (file parameter is now ignored, we load from storage)
-    return await this._createDedicatedTab(fullPath, null, options);
+  // Create new dedicated tab (file parameter is now ignored, we load from storage)
+  return await this._createDedicatedTab(fullPath, null, options);
   }
   
   // INTERNAL IMPLEMENTATION
@@ -515,6 +515,55 @@ class TabManager {
     // Create viewer/editor (now loads from storage)
     const viewerInfo = await this._createViewer(fullPath, fileName);
     if (!viewerInfo) return null;
+
+    // Enforce single-instance editors: if the created viewer is an editor whose
+    // class is marked singleInstance in the component registry, reuse existing tab.
+    try {
+      const compReg = window.serviceContainer?.get('componentRegistry');
+      if (compReg && viewerInfo.type === 'editor') {
+        const editorClass = viewerInfo.viewer?.constructor;
+        // Find this editor in the registry to check singleInstance flag
+        let isSingle = false;
+        for (const info of compReg.editors.values()) {
+          if (info && info.editorClass === editorClass) {
+            isSingle = !!info.singleInstance;
+            break;
+          }
+        }
+    if (isSingle) {
+          // Look for an existing tab with the same editor class
+          for (const [existingId, t] of this.dedicatedTabs.entries()) {
+            if (t.viewer && t.viewer.constructor === editorClass) {
+              console.log(`[TabManager] Reusing single-instance editor tab ${existingId} for ${fullPath}`);
+              // Update tab info to new path/name
+              t.fullPath = fullPath;
+              t.fileName = fileName;
+              // Update tab title
+              const titleEl = t.element?.querySelector('.tab-title');
+              if (titleEl) {
+                const ro = t.isReadOnly ? ' 🔒' : '';
+                titleEl.textContent = fileName + ro;
+              }
+      // Dispose of the newly-created, unused viewer
+      try { if (viewerInfo.viewer?.cleanup) viewerInfo.viewer.cleanup(); } catch (_) {}
+      try { if (viewerInfo.viewer?.destroy) viewerInfo.viewer.destroy(); } catch (_) {}
+              // Notify the editor of the new file path and trigger reload/load
+              try {
+                if (typeof t.viewer.updateFilePath === 'function') t.viewer.updateFilePath(fullPath, fileName);
+                if (typeof t.viewer.loadPath === 'function') await t.viewer.loadPath(fullPath);
+                else if (typeof t.viewer.reload === 'function') await t.viewer.reload();
+              } catch (e) {
+                console.warn('[TabManager] Error updating single-instance editor content:', e);
+              }
+              this.switchToTab(existingId);
+              return existingId;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[TabManager] Single-instance check failed:', e);
+    }
     
     // Create tab element
     const tabElement = document.createElement('div');
@@ -583,6 +632,40 @@ class TabManager {
       console.error('[TabManager] Failed to create viewer for promoted tab');
       return null;
     }
+
+    // If single-instance editor already exists, reuse instead of promoting
+    try {
+      const compReg = window.serviceContainer?.get('componentRegistry');
+      if (compReg && viewerInfo.type === 'editor') {
+        const editorClass = viewerInfo.viewer?.constructor;
+        let isSingle = false;
+        for (const info of compReg.editors.values()) {
+          if (info && info.editorClass === editorClass) { isSingle = !!info.singleInstance; break; }
+        }
+    if (isSingle) {
+          for (const [existingId, t] of this.dedicatedTabs.entries()) {
+            if (t.viewer && t.viewer.constructor === editorClass) {
+              console.log(`[TabManager] Reusing single-instance editor tab ${existingId} for promoted preview ${this.previewPath}`);
+              t.fullPath = this.previewPath;
+              t.fileName = this.previewFileName;
+              const titleEl = t.element?.querySelector('.tab-title');
+              if (titleEl) { const ro = t.isReadOnly ? ' 🔒' : ''; titleEl.textContent = this.previewFileName + ro; }
+      // Dispose of the newly-created, unused viewer
+      try { if (viewerInfo.viewer?.cleanup) viewerInfo.viewer.cleanup(); } catch (_) {}
+      try { if (viewerInfo.viewer?.destroy) viewerInfo.viewer.destroy(); } catch (_) {}
+              try {
+                if (typeof t.viewer.updateFilePath === 'function') t.viewer.updateFilePath(this.previewPath, this.previewFileName);
+                if (typeof t.viewer.loadPath === 'function') await t.viewer.loadPath(this.previewPath);
+                else if (typeof t.viewer.reload === 'function') await t.viewer.reload();
+              } catch (_) {}
+              this._clearAndHidePreview();
+              this.switchToTab(existingId);
+              return existingId;
+            }
+          }
+        }
+      }
+    } catch (e) { console.warn('[TabManager] Single-instance check during promote failed:', e); }
     
     // Create tab element (copied from _createDedicatedTab)
     const tabElement = document.createElement('div');
@@ -754,9 +837,9 @@ class TabManager {
       console.log(`[TabManager] No legacy editor found for ${ext}`);
     }
     
-    // Fall back to viewers
-    let viewerType = this._getViewerType(ext);
-    const ViewerClass = window.ViewerPlugins?.[viewerType];
+  // Fall back to viewers
+  let viewerType = this._getViewerType(ext);
+  const ViewerClass = window.ViewerPlugins?.[viewerType];
     
     if (!ViewerClass) {
       console.error(`[TabManager] No viewer found for ${ext}, using hex viewer`);
@@ -765,6 +848,39 @@ class TabManager {
     
     try {
       const viewer = new (window.ViewerPlugins[viewerType])(fullPath);
+      // Check if this viewer is single-instance via component registry
+      try {
+        const compReg = window.serviceContainer?.get('componentRegistry');
+        if (compReg) {
+          // Find the registered viewer info for this class
+          let isSingleViewer = false;
+          for (const info of compReg.viewers.values()) {
+            if (info && info.viewerClass === ViewerClass) { isSingleViewer = !!info.singleInstance; break; }
+          }
+          if (isSingleViewer) {
+            for (const [existingId, t] of this.dedicatedTabs.entries()) {
+              if (t.viewer && t.viewer.constructor === ViewerClass) {
+                console.log(`[TabManager] Reusing single-instance viewer tab ${existingId} for ${fullPath}`);
+                t.fullPath = fullPath;
+                t.fileName = fileName;
+                const titleEl = t.element?.querySelector('.tab-title');
+                if (titleEl) { const ro = t.isReadOnly ? ' 🔒' : ''; titleEl.textContent = fileName + ro; }
+                try { if (typeof t.viewer.updateFilePath === 'function') t.viewer.updateFilePath(fullPath, fileName); } catch (_) {}
+                this.switchToTab(existingId);
+                // Dispose the new temporary viewer
+                try { viewer.cleanup?.(); } catch (_) {}
+                try { viewer.destroy?.(); } catch (_) {}
+                return {
+                  type: 'viewer',
+                  subtype: viewerType,
+                  viewer: t.viewer,
+                  element: t.viewer.getElement()
+                };
+              }
+            }
+          }
+        }
+      } catch (_) {}
       return {
         type: 'viewer',
         subtype: viewerType,

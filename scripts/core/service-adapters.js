@@ -99,11 +99,13 @@ class TabManagerAdapter {
     // Tab switching
     const originalSwitchToTab = this.tabManager.switchToTab.bind(this.tabManager);
     this.tabManager.switchToTab = (tabId) => {
-      const previousTabId = this.tabManager.activeTabId;
+      const rawPrev = this.tabManager.activeTabId;
+      const previousTabId = (typeof rawPrev === 'string') ? rawPrev : (rawPrev && rawPrev.tabId ? rawPrev.tabId : (rawPrev != null ? String(rawPrev) : ''));
       const result = originalSwitchToTab(tabId);
       
       if (previousTabId !== tabId) {
-        this.events.emit('tab.switched', { tabId, previousTabId });
+        const safeTabId = (typeof tabId === 'string') ? tabId : (tabId && tabId.tabId ? tabId.tabId : (tabId != null ? String(tabId) : ''));
+        this.events.emit('tab.switched', { tabId: safeTabId, previousTabId });
       }
       
       return result;
