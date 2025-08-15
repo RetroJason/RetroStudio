@@ -345,7 +345,15 @@ class TabManager {
   async _fileExists(fullPath) {
     if (!fullPath) return false;
     try {
-      const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      // Safe-get FileManager without throwing if not registered yet
+      let fm = null;
+      try { fm = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
+      fm = fm || window.FileManager || window.fileManager;
+      // If available but uninitialized, wire it to the storage and register for future calls
+      if (fm && !fm.storageService && window.fileIOService && typeof fm.initialize === 'function') {
+        try { fm.initialize(window.fileIOService); } catch (_) {}
+        try { window.serviceContainer?.registerSingleton?.('fileManager', fm); } catch (_) {}
+      }
       if (!fm || typeof fm.loadFile !== 'function') return true; // assume exists if we can't check
       // Normalize build path
       const path = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
@@ -641,9 +649,15 @@ class TabManager {
     const ext = this._getFileExtension(fileName);
     console.log(`[TabManager] Creating viewer for file: ${fileName}, extension: ${ext}, path: ${fullPath}`);
     
-    // Load content using FileManager
-    const fileManager = window.serviceContainer?.get('fileManager');
-    if (!fileManager) {
+    // Load content using FileManager (safe-get and self-register if needed)
+    let fileManager = null;
+    try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
+    fileManager = fileManager || window.FileManager || window.fileManager;
+    if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
+      try { fileManager.initialize(window.fileIOService); } catch (_) {}
+      try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
+    }
+    if (!fileManager || typeof fileManager.loadFile !== 'function') {
       console.error('[TabManager] FileManager not available');
       return null;
     }

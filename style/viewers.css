@@ -844,7 +844,8 @@
 .hex-header {
   display: grid;
   /* Offset: 8 hex digits + 'h' space (approx 10ch), Hex: 16 bytes * 3 chars per byte incl. space = 48ch, ASCII: 16ch */
-  grid-template-columns: 10ch 48ch 16ch;
+  /* Give the hex column a tiny safety margin to avoid overflow with various fonts */
+  grid-template-columns: 10ch 49ch 16ch;
   column-gap: 8px; /* tighter spacing */
   padding: 8px 12px;
   background: #37373d;
@@ -864,7 +865,8 @@
 
 .hex-row {
   display: grid;
-  grid-template-columns: 10ch 48ch 16ch;
+  /* Match header widths; add a small buffer to the hex column */
+  grid-template-columns: 10ch 49ch 16ch;
   column-gap: 8px; /* tighter spacing */
   padding: 2px 8px; /* slightly less padding */
   border-bottom: 1px solid #2d2d30;
@@ -883,8 +885,12 @@
 .hex-bytes {
   font-family: 'Consolas', 'Courier New', monospace;
   color: #4fc3f7;
-  letter-spacing: 0.25px; /* subtle spacing between hex pairs */
+  /* Avoid layout overflow that could cause text to bleed into the ASCII column */
   white-space: pre; /* keep all 16 bytes on a single line */
+  overflow: hidden;
+  text-overflow: clip;
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 .ascii-chars {
@@ -895,6 +901,9 @@
   padding: 0;
   border-radius: 0;
   white-space: pre; /* preserve spacing */
+  overflow: hidden; /* ensure no bleed from long lines */
+  font-variant-ligatures: none;
+  -webkit-font-smoothing: antialiased;
 }
 
 .hex-truncated {

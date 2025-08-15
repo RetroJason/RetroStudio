@@ -1,0 +1,45 @@
+{
+  "title": "Playlists",
+  "modules": [
+    {
+      "title": "Demo Songs",
+      "url": "playlist-demosongs",
+      "info": "A curated list"
+    },
+    {
+      "title": "My Favorites",
+      "info": "heart heart heart",
+      "url": "favorites",
+      "icon": "favbig",
+      "iconsmall": "playlistfav"
+    },
+    {
+      "title": "DemoScene 2025",
+      "url": "playlist-demoscene2025",
+      "info": "Tracked Compo Entries"
+    },
+    {
+      "title": "DemoScene 2024",
+      "url": "playlist-demoscene2024",
+      "info": "Tracked Compo Entries"
+    },
+    {
+      "title": "DemoScene 2023",
+      "url": "playlist-demoscene2023",
+      "info": "Tracked Compo Entries"
+    },
+    {
+      "title": "DSR 2024",
+      "url": "playlist-DSR2024",
+      "info": "Tracked Music releases"
+    },
+    {
+      "title": "Chippies",
+      "url": "playlist-chippies"
+    },
+    {
+      "title": "RAW diskmag",
+      "url": "playlist-raw_diskmag"
+    }
+  ]
+}

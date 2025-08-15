@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BassoonTracker — Plugin Solo</title>
+    <style>
+      html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #1e1e1e; color: #e0e0e0; }
+      #root { position: fixed; inset: 0; display: block; }
+      #container { position: absolute; inset: 0; overflow: hidden; }
+      #container > canvas { position: absolute; top: 0; left: 0; display: block; image-rendering: pixelated; }
+      #hud { position: absolute; top: 8px; left: 8px; z-index: 10; font: 12px/1.4 system-ui, Segoe UI, Arial; color: #ddd; background: rgba(0,0,0,0.35); padding: 6px 8px; border-radius: 4px; }
+      #hud button { font-size: 12px; margin-right: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="container"></div>
+      <div id="hud">
+        <button id="btnDpi" title="Log DPI and canvas sizing to console">DPI</button>
+        <button id="btnDemo" title="Load a bundled demo module">Load Demo</button>
+  <button id="btnShowUI" title="Force show top main UI">Show UI</button>
+        <span>Drag & drop a .mod/.xm file to load</span>
+      </div>
+    </div>
+
+    <!-- Use the patched loader (no auto-init, no layout hacks) -->
+    <script src="scripts/audio/external/BassoonTracker/versions/0.4.0/bassoontracker-plugin-loader.js"></script>
+    <script>
+      (function(){
+        // Global error handlers for visibility
+        window.addEventListener('error', (e) => console.error('[Solo] window.onerror:', e.message, e.error || e));
+        window.addEventListener('unhandledrejection', (e) => console.error('[Solo] unhandledrejection:', e.reason));
+
+    const baseUrl = 'scripts/audio/external/BassoonTracker/';
+    const container = document.getElementById('container');
+  const btnDpi = document.getElementById('btnDpi');
+  const btnDemo = document.getElementById('btnDemo');
+  const btnShowUI = document.getElementById('btnShowUI');
+        const canvas = document.createElement('canvas');
+        canvas.width = 16; canvas.height = 16; // starter; BT manages backing store
+        canvas.tabIndex = 0; // allow keyboard focus
+        container.appendChild(canvas);
+
+        console.info('[Solo] Page boot, baseUrl =', baseUrl);
+
+        // Quick asset probe to confirm baseUrl is correct
+        (function probeAssets(){
+          const img = new Image();
+          img.onload = () => console.info('[Solo] Skin spritesheet_v4 loaded OK');
+          img.onerror = () => console.warn('[Solo] Skin spritesheet_v4 failed to load at', baseUrl + 'skin/spritesheet_v4.png');
+          img.src = baseUrl + 'skin/spritesheet_v4.png';
+        })();
+
+        function deriveFileNameFromUrl(urlStr) {
+          try {
+            const u = new URL(urlStr, location.href);
+            const pathName = u.pathname || '';
+            const last = pathName.split('/').filter(Boolean).pop() || '';
+            return last || 'module.mod';
+          } catch (_) {
+            return 'module.mod';
+          }
+        }
+
+        async function loadModuleFromUrlString(urlStr) {
+          try {
+            console.info('[Solo] Fetching module from URL param…', urlStr);
+            const res = await fetch(urlStr);
+            if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+            const buf = await res.arrayBuffer();
+            const name = deriveFileNameFromUrl(urlStr);
+            const blob = new Blob([buf], { type: 'application/octet-stream' });
+            const objUrl = URL.createObjectURL(blob) + '#' + encodeURIComponent(name);
+            console.info('[Solo] Loading module via fetched blob URL', name);
+            if (window.BassoonTracker?.load) window.BassoonTracker.load(objUrl);
+          } catch (e) {
+            console.warn('[Solo] Param fetch failed. blob: URLs may not be readable across pages. Use an http(s) URL, drop a file, or click Load Demo. Error:', e);
+          }
+        }
+
+        function fit43(maxW, maxH) {
+          const aspectW = 4, aspectH = 3;
+          const nativeW = 800, nativeH = 600;
+          const W = Math.max(100, Math.min(nativeW, Math.floor(maxW)));
+          const H = Math.max(100, Math.min(nativeH, Math.floor(maxH)));
+          let w = W, h = Math.floor((w * aspectH) / aspectW);
+          if (h > H) { h = H; w = Math.floor((h * aspectW) / aspectH); }
+          w = Math.max(320, w); h = Math.max(240, h);
+          return { w, h };
+        }
+
+        function sizeToWindow() {
+          const b = container.getBoundingClientRect();
+          const { w, h } = fit43(b.width, b.height);
+          // Resize by attributes (no CSS scaling)
+          if (canvas.width !== Math.floor(w)) canvas.width = Math.floor(w);
+          if (canvas.height !== Math.floor(h)) canvas.height = Math.floor(h);
+          canvas.style.width = w + 'px';
+          canvas.style.height = h + 'px';
+          // Let BT layout know the new logical size
+          try { if (window.BassoonTracker?.UI?.setSize) window.BassoonTracker.UI.setSize(w, h); } catch(_){ }
+          try { container.scrollTop = 0; } catch(_){ }
+          // Refresh input bounds after resize
+          try {
+            if (window.Input?.setCanvas) window.Input.setCanvas(canvas);
+            if (window.Input?.updateBounds) window.Input.updateBounds();
+            else if (window.Input?.onResize) window.Input.onResize();
+          } catch(_){}
+          // Debug pointer overlay (tiny red dot)
+          if (!window.__soloDot) {
+            const dot = document.createElement('div');
+            dot.style.position = 'absolute'; dot.style.width = '6px'; dot.style.height = '6px';
+            dot.style.borderRadius = '50%'; dot.style.background = '#f00'; dot.style.transform = 'translate(-3px,-3px)';
+            dot.style.pointerEvents = 'none'; dot.style.zIndex = '20';
+            window.__soloDot = dot; container.appendChild(dot);
+            canvas.addEventListener('mousemove', (e) => {
+              const r = canvas.getBoundingClientRect();
+              const x = e.clientX - r.left, y = e.clientY - r.top;
+              window.__soloDot.style.left = x + 'px'; window.__soloDot.style.top = y + 'px';
+            });
+          }
+        }
+
+        function dpiInfo() {
+          const dpr = window.devicePixelRatio || 1;
+          const rect = canvas.getBoundingClientRect();
+          const cssW = Math.round(rect.width), cssH = Math.round(rect.height);
+          const cw = canvas.width, ch = canvas.height;
+          const scaleX = cssW ? (cw / cssW) : 0; const scaleY = cssH ? (ch / cssH) : 0;
+          console.groupCollapsed('[Solo] DPI info');
+          console.log('devicePixelRatio:', dpr);
+          console.log('canvas attr:', cw+'x'+ch, 'CSS:', cssW+'x'+cssH, 'top:', Math.round(rect.top), 'left:', Math.round(rect.left));
+          console.log('scale factors:', 'X=', scaleX.toFixed(3), 'Y=', scaleY.toFixed(3));
+          console.groupEnd();
+        }
+
+        btnDpi.addEventListener('click', dpiInfo);
+        btnDemo.addEventListener('click', () => {
+          try {
+            const url = baseUrl + 'demomods/Tinytune.mod';
+            console.info('[Solo] Loading demo module', url);
+            if (window.BassoonTracker?.load) window.BassoonTracker.load(url);
+          } catch (e) { console.error('[Solo] Demo load failed:', e); }
+        });
+        btnShowUI.addEventListener('click', () => {
+          try {
+            const BT = window.BassoonTracker;
+            if (BT?.App?.doCommand && BT?.COMMAND?.showTopMain) {
+              console.info('[Solo] Forcing showTopMain (button)');
+              BT.App.doCommand(BT.COMMAND.showTopMain);
+            } else {
+              console.warn('[Solo] showTopMain command not available');
+            }
+          } catch (e) { console.warn('[Solo] showTopMain button failed:', e); }
+        });
+
+        function initWhenReady() {
+          if (!(window.BassoonTracker && typeof window.BassoonTracker.init === 'function')) {
+            return void setTimeout(initWhenReady, 30);
+          }
+          console.info('[Solo] BassoonTracker detected. Starting init…');
+          try {
+            window.BassoonTracker.init({
+              plugin: true,
+              canvas,
+              baseUrl,
+              isMaster: true,
+              callback: function onReady(){
+                console.info('[Solo] BassoonTracker ready');
+                try {
+                  // Keep pointer mapping 1:1
+                  if (window.BassoonTracker?.UI?.scaleToDevicePixelRatio) {
+                    window.BassoonTracker.UI.scaleToDevicePixelRatio(false);
+                  } else if (window.BassoonTracker?.Settings) {
+                    window.BassoonTracker.Settings.scaleToDevicePixelRatio = false;
+                  }
+                } catch(_){}
+                sizeToWindow();
+                requestAnimationFrame(() => {
+                  try {
+                    if (window.Input) {
+                      if (typeof window.Input.setCanvas === 'function') window.Input.setCanvas(canvas);
+                      if (typeof window.Input.init === 'function') window.Input.init();
+                      if (typeof window.Input.updateBounds === 'function') window.Input.updateBounds();
+                      else if (typeof window.Input.onResize === 'function') window.Input.onResize();
+                    }
+                  } catch(_){}
+                  try { canvas.focus(); } catch(_){}
+                  // Hook events and create a blank song if none is loaded
+                  try {
+                    const BT = window.BassoonTracker; const EV = BT?.EVENT; const Bus = BT?.EventBus;
+                    if (Bus && EV) {
+                      Bus.on?.(EV.songLoaded, () => console.info('[Solo] songLoaded'));
+                      Bus.on?.(EV.command, (cmd) => console.debug('[Solo] command:', cmd));
+                    }
+                  } catch(_){}
+                  // Force show top UI if available
+                  try {
+                    const BT = window.BassoonTracker;
+                    if (BT?.App?.doCommand && BT?.COMMAND?.showTopMain) {
+                      console.info('[Solo] Forcing showTopMain');
+                      BT.App.doCommand(BT.COMMAND.showTopMain);
+                    }
+                  } catch (e) { console.warn('[Solo] showTopMain failed:', e); }
+                  // Auto-load from ?file= if present; otherwise, create a new blank song
+                  try {
+                    const qs = new URLSearchParams(location.search);
+                    const fileParam = qs.get('file');
+                    if (fileParam) {
+                      // Use in-page fetch -> blob URL for reliability
+                      loadModuleFromUrlString(decodeURIComponent(fileParam));
+                    } else {
+                      const BT = window.BassoonTracker;
+                      if (BT?.EventBus && BT?.EVENT && BT?.COMMAND) {
+                        BT.EventBus.trigger(BT.EVENT.command, BT.COMMAND.newFile);
+                        console.info('[Solo] Triggered newFile');
+                      } else if (BT?.Tracker?.new) {
+                        BT.Tracker.new(); console.info('[Solo] Tracker.new() to create blank song');
+                      }
+                    }
+                  } catch(err){ console.warn('[Solo] ?file handler/newFile failed:', err); }
+                });
+              }
+            });
+          } catch (e) {
+            console.error('BassoonTracker.init failed:', e);
+          }
+        }
+
+        window.addEventListener('resize', () => {
+          sizeToWindow();
+          requestAnimationFrame(() => {
+            try {
+              if (window.Input?.updateBounds) window.Input.updateBounds();
+              else if (window.Input?.onResize) window.Input.onResize();
+            } catch(_){}
+          });
+        });
+
+        // Drag & drop loader
+        window.addEventListener('dragover', e => { e.preventDefault(); });
+        window.addEventListener('drop', e => {
+          e.preventDefault();
+          const file = e.dataTransfer?.files?.[0];
+          if (!file) return;
+          const name = file.name || 'module.mod';
+          const reader = new FileReader();
+          reader.onload = function() {
+            try {
+              const blob = new Blob([reader.result], { type: 'application/octet-stream' });
+              const url = URL.createObjectURL(blob) + '#' + encodeURIComponent(name);
+              if (window.BassoonTracker?.load) {
+                console.info('[Solo] Loading module from blob URL with name', name);
+                window.BassoonTracker.load(url);
+              } else {
+                console.warn('[Solo] BassoonTracker.load not available');
+              }
+            } catch (err) {
+              console.warn('Load module failed:', err);
+            }
+          };
+          reader.readAsArrayBuffer(file);
+        });
+
+        // Kick off
+        initWhenReady();
+      })();
+    </script>
+  </body>
+</html>
