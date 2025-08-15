@@ -19,8 +19,9 @@ class ComponentRegistry {
       icon, 
       editorClass, 
       priority = 10,
-      capabilities = [],
-      canCreate = false
+  capabilities = [],
+  canCreate = false,
+  singleInstance = false
     } = editorInfo;
 
     // Validate required methods
@@ -35,7 +36,8 @@ class ComponentRegistry {
       editorClass,
       priority,
       capabilities,
-      canCreate
+      canCreate,
+      singleInstance
     });
 
     // Register file associations
@@ -117,6 +119,14 @@ class ComponentRegistry {
     return [];
   }
 
+  _deriveSingleInstance(componentClass) {
+    try {
+      if (typeof componentClass.singleInstance === 'boolean') return componentClass.singleInstance;
+      if (typeof componentClass.getSingleInstance === 'function') return !!componentClass.getSingleInstance();
+    } catch (_) {}
+    return false;
+  }
+
   _deriveCanCreate(editorClass) {
     try {
       if (typeof editorClass.canCreate === 'boolean') return editorClass.canCreate;
@@ -135,6 +145,7 @@ class ComponentRegistry {
     const priority = this._derivePriority(editorClass, 10);
     const capabilities = this._deriveCapabilities(editorClass);
     const canCreate = this._deriveCanCreate(editorClass);
+    const singleInstance = this._deriveSingleInstance(editorClass);
 
     this.registerEditor({
       name,
@@ -144,7 +155,8 @@ class ComponentRegistry {
       editorClass,
       priority,
       capabilities,
-      canCreate
+      canCreate,
+      singleInstance
     });
   }
 
@@ -176,7 +188,8 @@ class ComponentRegistry {
       icon, 
       viewerClass, 
       priority = 10,
-      capabilities = []
+  capabilities = [],
+  singleInstance = false
     } = viewerInfo;
 
     // Validate required methods
@@ -190,7 +203,8 @@ class ComponentRegistry {
       icon,
       viewerClass,
       priority,
-      capabilities
+      capabilities,
+      singleInstance
     });
 
     // Register file associations

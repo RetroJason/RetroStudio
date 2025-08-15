@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    html,body{
+      height: 100%;
+      overflow: hidden;
+    }
+    body{
+      background-color: black;
+      margin: 0;
+      padding: 0;
+    }
+
+    canvas{
+      margin: auto;
+      display: block;
+      cursor: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAMAAADzapwJAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyZpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNi1jMTExIDc5LjE1ODMyNSwgMjAxNS8wOS8xMC0wMToxMDoyMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTUgKFdpbmRvd3MpIiB4bXBNTTpJbnN0YW5jZUlEPSJ4bXAuaWlkOjMzMjE5MTBBNkJENDExRTg5OTkyRDA3Njg4MTYwMUQ5IiB4bXBNTTpEb2N1bWVudElEPSJ4bXAuZGlkOjMzMjE5MTBCNkJENDExRTg5OTkyRDA3Njg4MTYwMUQ5Ij4gPHhtcE1NOkRlcml2ZWRGcm9tIHN0UmVmOmluc3RhbmNlSUQ9InhtcC5paWQ6MzMyMTkxMDg2QkQ0MTFFODk5OTJEMDc2ODgxNjAxRDkiIHN0UmVmOmRvY3VtZW50SUQ9InhtcC5kaWQ6MzMyMTkxMDk2QkQ0MTFFODk5OTJEMDc2ODgxNjAxRDkiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz56Mwk0AAAADFBMVEXeICH///8AAAAAAABbVXbAAAAABHRSTlP///8AQCqp9AAAAEhJREFUeNqUz0EKACAIRFHL+985wtKpGMxZtHgfoqTD1CeUmy8CZ1mrMGLOlbvtjMBY1b59Bs57GHLG8MMWnksoz3A9EHkIMACNUwPV+QXmtwAAAABJRU5ErkJggg==) 1 2, auto;
+    }
+    canvas:focus { outline:none; }
+
+    /* Padded test container (fixed full-viewport with padding) */
+    #bt-frame {
+      position: fixed;
+      inset: 0;
+      padding: 100px;
+      box-sizing: border-box;
+    }
+    #bt-frame-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0b0b0b;
+      border: 1px solid #2a2a2a;
+      outline: 2px dashed #e74c3c; /* visual debug: container */
+    }
+    #bt-frame-inner > canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: block;
+      border: 2px solid #2ecc71; /* visual debug: canvas */
+    }
+
+    /* Optional message box (not used, but keep valid) */
+    .message{
+      font-family: sans-serif;
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      min-height: 30px;
+      padding: 20px;
+      background-color: rgba(243,33,70,0.5);
+      color: rgba(255, 255, 255, 0.8);
+      text-align: center;
+    }
+    .message a{ color: white; }
+    .message button{ padding: 10px 20px; border-radius: 10px; }
+
+    /* On-screen HUD for quick size readout */
+    #bt-debug {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 9999;
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      font: 12px/1.3 Segoe UI, system-ui, Arial;
+      padding: 6px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+  </style>
+
+  <title>BassoonTracker - Local build test</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width user-scalable=no">
+
+  <!-- Provide version/build so query params in asset URLs are sane -->
+  <script>
+    window.versionNumber = 'dev';
+    window.buildNumber = String(Date.now());
+  </script>
+
+  <!-- Override HostIntegration BEFORE the bundle runs so initial size uses the container -->
+  <script>
+    (function(){
+      const DEBUG = true;
+      const log = (...a) => { if (DEBUG) console.log('[BT-TEST]', ...a); };
+      let gvCount = 0;
+      let roScheduled = false;
+
+      // Inject HUD once DOM is ready
+      const hud = document.createElement('div');
+      hud.id = 'bt-debug';
+      hud.textContent = 'debug…';
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+          document.body.appendChild(hud);
+        }, { once: true });
+      } else {
+        document.body.appendChild(hud);
+      }
+
+      function getViewportSizeFromContainer(){
+        const c = document.getElementById('bt-frame-inner');
+        if (!c) return { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio || 1 };
+        const w = c.clientWidth|0, h = c.clientHeight|0;
+        const val = { width: Math.max(1,w), height: Math.max(1,h), dpr: window.devicePixelRatio || 1 };
+        gvCount++;
+        if (gvCount <= 5 || gvCount % 60 === 0) log('getViewportSize ->', val);
+        return val;
+      }
+      function clampSizeToContainer(w,h){
+        const s = getViewportSizeFromContainer();
+        return { width: Math.min(w, s.width), height: Math.min(h, s.height) };
+      }
+      function canApply(){
+        const ok = !!(window.BassoonHost && typeof window.BassoonHost.set === 'function' && document.getElementById('bt-frame-inner'));
+        if (!ok) log('canApply: waiting…', { hasHost: !!window.BassoonHost, hasSet: !!(window.BassoonHost && window.BassoonHost.set), hasContainer: !!document.getElementById('bt-frame-inner') });
+        return ok;
+      }
+      function apply(){
+        const first = getViewportSizeFromContainer();
+        log('Applying HostIntegration.set with container size', first);
+        window.BassoonHost.set({ getViewportSize: getViewportSizeFromContainer, clampSize: clampSizeToContainer });
+        const c = document.getElementById('bt-frame-inner');
+        if (c && 'ResizeObserver' in window){
+          const ro = new ResizeObserver(() => {
+            if (!roScheduled) {
+              roScheduled = true;
+              requestAnimationFrame(() => {
+                roScheduled = false;
+                log('ResizeObserver: container changed -> dispatch resize');
+                window.dispatchEvent(new Event('resize'));
+              });
+            }
+          });
+          ro.observe(c);
+        }
+        // Kick once after DOM is ready so UI picks up the container size
+        log('Dispatch initial resize');
+        window.dispatchEvent(new Event('resize'));
+      }
+      function boot(){
+        log('boot start (readyState=' + document.readyState + ')');
+        if (canApply()) { apply(); return; }
+        let attempts = 0;
+        const iv = setInterval(() => {
+          if (canApply()) { clearInterval(iv); apply(); }
+          else if (++attempts > 400) { clearInterval(iv); log('boot timeout waiting for HostIntegration/container'); }
+        }, 25);
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { log('DOMContentLoaded'); boot(); }, { once: true });
+      } else {
+        boot();
+      }
+
+      // Optional: log canvas/container after load to verify sizes
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          const ctn = document.getElementById('bt-frame-inner');
+          const cvs = document.getElementById('canvas');
+          const rect = cvs ? cvs.getBoundingClientRect() : { width: 0, height: 0 };
+          log('onload snapshot', {
+            container: ctn ? { w: ctn.clientWidth, h: ctn.clientHeight } : null,
+            canvasAttr: cvs ? { w: cvs.width, h: cvs.height } : null,
+            canvasCSS: { w: Math.round(rect.width), h: Math.round(rect.height) },
+            dpr: window.devicePixelRatio || 1
+          });
+          const hudEl = document.getElementById('bt-debug');
+          if (hudEl) hudEl.textContent = `container: ${ctn?.clientWidth||0}x${ctn?.clientHeight||0} | canvas attr: ${cvs?.width||0}x${cvs?.height||0} | canvas css: ${Math.round(rect.width)}x${Math.round(rect.height)} | dpr: ${window.devicePixelRatio||1}`;
+
+          // Start a lightweight debug border drawer on the known canvas id.
+          // Draws a crisp 1px frame at CSS pixel boundaries (same method as last version).
+          try {
+            const ctx = cvs && cvs.getContext && cvs.getContext('2d');
+            if (ctx) {
+              let rafId = 0;
+              const drawBorder = () => {
+                // Read current backing size and compute CSS-space size
+                const dpr = window.devicePixelRatio || 1;
+                const wCSS = (cvs.width || 0) / dpr;
+                const hCSS = (cvs.height || 0) / dpr;
+                if (wCSS > 0 && hCSS > 0) {
+                  ctx.save();
+                  // Reset any transforms the engine may have left
+                  if (ctx.setTransform) ctx.setTransform(1, 0, 0, 1, 0, 0);
+                  // Draw in CSS pixel space for a 1px crisp border
+                  if (dpr !== 1) ctx.scale(dpr, dpr);
+                  ctx.globalCompositeOperation = 'source-over';
+                  ctx.lineWidth = 1;
+                  ctx.strokeStyle = '#444';
+                  ctx.strokeRect(0.5, 0.5, Math.max(0, wCSS - 1), Math.max(0, hCSS - 1));
+                  ctx.restore();
+                }
+                rafId = window.requestAnimationFrame(drawBorder);
+              };
+              rafId = window.requestAnimationFrame(drawBorder);
+              // Store cancel handle for future if needed
+              window.__btTestCancelBorder = () => { if (rafId) cancelAnimationFrame(rafId); };
+              log('debug border: running');
+            } else {
+              log('debug border: 2D context not available on #canvas');
+            }
+          } catch (e) {
+            log('debug border: failed to start', e);
+          }
+        }, 150);
+      });
+
+      let lastLog = 0;
+      window.addEventListener('resize', () => {
+        const now = Date.now();
+        if (now - lastLog > 250) {
+          lastLog = now;
+          const s = getViewportSizeFromContainer();
+          const cvs = document.getElementById('canvas');
+          const rect = cvs ? cvs.getBoundingClientRect() : { width: 0, height: 0 };
+          log('window.resize', { provider: s, canvasAttr: cvs ? { w: cvs.width, h: cvs.height } : null, canvasCSS: { w: Math.round(rect.width), h: Math.round(rect.height) } });
+          const ctn = document.getElementById('bt-frame-inner');
+          const hudEl = document.getElementById('bt-debug');
+          if (hudEl) hudEl.textContent = `container: ${ctn?.clientWidth||0}x${ctn?.clientHeight||0} | canvas attr: ${cvs?.width||0}x${cvs?.height||0} | canvas css: ${Math.round(rect.width)}x${Math.round(rect.height)} | dpr: ${window.devicePixelRatio||1}`;
+        }
+      });
+    })();
+  </script>
+
+  <!-- Load the built BassoonTracker bundle with an absolute path from the site root -->
+  <script type="module" crossorigin src="/scripts/audio/external/BassoonTracker/build/main-DFmPkb4g.js"></script>
+</head>
+<body>
+  <div id="bt-frame">
+    <div id="bt-frame-inner">
+      <canvas id="canvas" tabindex="1"></canvas>
+    </div>
+  </div>
+
+  <!-- No late override needed; handled in HEAD before bundle load. -->
+</body>
+</html>

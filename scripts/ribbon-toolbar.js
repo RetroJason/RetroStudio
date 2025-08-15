@@ -171,8 +171,14 @@ class RibbonToolbar {
       
   console.log(`[RibbonToolbar] Creating new file: ${displayFilename}, UI path: ${fullUiPath}`);
       
-      // Use FileManager to create and save the file
-      const fileManager = window.serviceContainer?.get('fileManager');
+      // Use FileManager to create and save the file (robust resolution)
+      let fileManager = null;
+      try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
+      fileManager = fileManager || window.FileManager || window.fileManager;
+      if (fileManager && !fileManager.storageService && window.fileIOService) {
+        try { fileManager.initialize(window.fileIOService); } catch (_) {}
+        try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
+      }
       if (!fileManager) {
         throw new Error('FileManager not available');
       }

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BT Host (Simple)</title>
+  <style>
+    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
+    #canvas { display:block; width:100%; height:100%; box-sizing:border-box; }
+    #status { position:absolute; top:4px; left:8px; font:12px monospace; color:#9cf; background:rgba(0,0,0,.4); padding:2px 6px; border-radius:4px; pointer-events:none; }
+  </style>
+  <script>
+    // HostBridge: allow internal initial demo load for quick UI
+    window.HostBridge = {
+      init() {},
+      signalReady() {},
+  useInitialLoad: true, // will flip to false dynamically if external file queued before tracker ready
+      useUrlParams: false,
+      useWebWorkers: true,
+      showInternalMenu: true,
+      // Return empty so the bundle uses relative paths once; we embed under same root already
+      getBaseUrl() { return ''; },
+      getRemoteUrl() { return ''; }
+    };
+    // Respect skipDemo query parameter ASAP (before bundle executes)
+    try {
+      const usp = new URLSearchParams(window.location.search);
+      if (usp.get('skipDemo') === '1') { window.HostBridge.useInitialLoad = false; }
+    } catch(_){}
+    function setStatus(t){ try { document.getElementById('status').textContent = t; } catch(_){} }
+    document.addEventListener('DOMContentLoaded', () => setStatus('booting...'));
+    const BT_BASE = 'scripts/audio/external/BassoonTracker/';
+    const queue = [];
+    function processQueue(){
+      if (!window.BassoonTracker || typeof window.BassoonTracker.load !== 'function') return;
+      while(queue.length){ const job = queue.shift(); job(); }
+    }
+    // Wrap BT.load once available to notify parent of every load attempt
+    function wrapBtLoad(){
+      const BT = window.BassoonTracker;
+      if(!BT || typeof BT.load!=='function' || BT.__notifyWrap) return;
+      const orig = BT.load.bind(BT);
+      BT.load = function(url){
+        try { parent.postMessage({type:'bt-load-invoked', url}, '*'); } catch(_){}
+        return orig(url);
+      };
+      BT.__notifyWrap = true;
+      try { console.log('[bt-host] BT.load wrapped for notifications'); } catch(_){}
+    }
+    function scheduleWrap(){ wrapBtLoad(); requestAnimationFrame(scheduleWrap); }
+    scheduleWrap();
+
+    // Direct project file loader (pulls bytes from parent environment)
+    (function(){
+      const projectLoadQueue = [];
+      async function fetchRecord(path){
+        try {
+          const parentWin = parent;
+          const fm = parentWin?.serviceContainer?.get ? parentWin.serviceContainer.get('fileManager') : null;
+          if(!fm){ console.warn('[bt-host] fileManager not available in parent'); return null; }
+          // Normalize path: strip project prefix if present
+          let p = path;
+          try {
+            const proj = parentWin.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+            if (proj && p.startsWith(proj + '/')) p = p.substring(proj.length + 1);
+          } catch(_){ }
+          const rec = await fm.loadFile(p);
+          return rec;
+        } catch(e){ console.warn('[bt-host] fetchRecord failed', e); return null; }
+      }
+      async function recordToObjectUrl(rec){
+        if(!rec) return null;
+        let content = rec.content || rec.fileContent;
+        if (typeof content === 'string') {
+          // assume base64
+            try { const bin = atob(content); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); content = arr.buffer; } catch(e){ console.warn('[bt-host] base64 decode failed', e); return null; }
+        }
+        if (content instanceof ArrayBuffer) {
+          const blob = new Blob([content], {type:'application/octet-stream'});
+          return URL.createObjectURL(blob) + '#' + encodeURIComponent(rec.filename || 'module.mod');
+        }
+        console.warn('[bt-host] record has no usable content');
+        return null;
+      }
+      async function processProjectQueue(){
+        if(!window.BassoonTracker || typeof window.BassoonTracker.load !== 'function') return;
+        while(projectLoadQueue.length){
+          const job = projectLoadQueue.shift();
+          try {
+            const rec = job.rec || await fetchRecord(job.path);
+            // If raw buffer API is available, prefer it to avoid object URL races
+            let usedRaw = false;
+            try {
+              const content = rec?.content || rec?.fileContent;
+              if (content && window.BassoonTracker.loadModuleBuffer) {
+                let buf = content;
+                if (typeof buf === 'string') { const bin = atob(buf); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); buf = arr.buffer; }
+                if (buf instanceof ArrayBuffer && buf.byteLength>0) {
+                  if (window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo();
+                  setStatus('loading module (raw)');
+                  console.log('[bt-host] loading raw buffer', {path:job.path, size: buf.byteLength});
+                  await window.BassoonTracker.loadModuleBuffer(buf, rec?.filename || 'module.mod');
+                  usedRaw = true;
+                }
+              }
+            } catch(e){ console.warn('[bt-host] raw load failed, falling back', e); }
+            if(!usedRaw){
+              const url = await recordToObjectUrl(rec);
+              if(url){
+                if (window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo();
+                setStatus('loading project file');
+                console.log('[bt-host] loading project file', {path:job.path, url});
+                window.BassoonTracker.load(url);
+              } else {
+                console.warn('[bt-host] failed to create URL for', job.path);
+              }
+            } else {
+              // no record, nothing to do
+            }
+          } catch(e){ console.error('[bt-host] project load failed', e); }
+        }
+      }
+      window.loadProjectFile = function(path){
+        projectLoadQueue.push({path});
+        processProjectQueue();
+      };
+      window.loadProjectFileRecord = function(rec){
+        if(rec && rec.filename) projectLoadQueue.push({path:rec.path || rec.filename, rec});
+        processProjectQueue();
+      };
+      setInterval(processProjectQueue, 250);
+    })();
+    window.addEventListener('message', (e)=>{
+      const msg = e.data || {}; if(!msg || !msg.type) return;
+      try { console.log('[bt-host] message received', msg.type, msg); } catch(_) {}
+      if (msg.type === 'ping') { try { parent.postMessage({type:'bt-ready'}, '*'); console.log('[bt-host] sent bt-ready (ping)'); } catch(_){} return; }
+      
+      // Handle new FileIOService-based file loading
+      if (msg.type === 'load-file-from-service' && msg.filePath) {
+        const run = async () => {
+          const BT = window.BassoonTracker; 
+          if (!BT || typeof BT.loadFromFileService !== 'function') { 
+            queue.push(run); 
+            return; 
+          }
+          try {
+            setStatus('loading from file service');
+            console.log('[bt-host] loading from FileIOService', {filePath: msg.filePath, filename: msg.filename});
+            const result = await BT.loadFromFileService(msg.filePath, msg.filename);
+            try { parent.postMessage({type:'file-load-result', success: result, filePath: msg.filePath}, '*'); } catch(_){}
+          } catch(err) { 
+            console.error('[bt-host] loadFromFileService failed', err); 
+            try { parent.postMessage({type:'file-load-result', success: false, error: err.message, filePath: msg.filePath}, '*'); } catch(_){}
+          }
+        };
+        run();
+        return;
+      }
+      
+      const run = ()=>{
+        const BT = window.BassoonTracker; if(!BT || typeof BT.load!=='function'){ queue.push(run); return; }
+        if(msg.type==='load-bytes' && msg.bytes){
+          try {
+            const blob = new Blob([new Uint8Array(msg.bytes)], {type:'application/octet-stream'});
+            const url = URL.createObjectURL(blob)+(msg.name?('#'+encodeURIComponent(msg.name)):'');
+            setStatus('loading file');
+            console.log('[bt-host] loading bytes via URL', {name:msg.name, size: msg.bytes.byteLength});
+            BT.load(url);
+          } catch(err){ console.error('[bt-host] load-bytes failed', err); }
+        } else if (msg.type==='load-demo') {
+          setStatus('loading demo');
+          console.log('[bt-host] loading demo Tinytune');
+          BT.load(BT_BASE + 'demomods/Tinytune.mod');
+        }
+      };
+      run();
+    });
+  </script>
+  <!-- Load ESM bundle directly so import.meta works -->
+    <script type="module" src="scripts/audio/external/BassoonTracker/build/main-o2jTqh8b.js"></script>
+</head>
+<body>
+  <div id="status">loading…</div>
+  <canvas id="canvas" tabindex="1"></canvas>
+</body>
+</html>
