@@ -459,6 +459,13 @@
   height: 100%;
   overflow: auto;
   position: relative; /* Enable positioning for transform animations */
+  padding: 0; /* Ensure editors use full height with no extra spacing */
+  box-sizing: border-box;
+}
+
+/* When an embedded full-canvas editor is active, lock scrolling */
+.tab-pane.no-scroll {
+  overflow: hidden !important;
 }
 
 .tab-pane.active {
@@ -518,9 +525,26 @@
 
 .viewer-body {
   flex: 1;
-  padding: 15px;
+  padding: 0; /* No default padding; editors can add their own */
   overflow: auto;
   background-color: #1e1e1e;
+}
+
+/* Ensure editor bodies can host a toolbar + content stack reliably */
+.viewer-body.editor-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* allow child flex to shrink */
+}
+
+.viewer-body.editor-body > .editor-toolbar {
+  flex: 0 0 auto;
+  z-index: 5; /* sit above any absolute content below */
+}
+
+.viewer-body.editor-body > .tracker-plugin-container {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* Scrollbar styling - Dark Theme */

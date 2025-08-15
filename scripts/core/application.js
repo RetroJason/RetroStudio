@@ -123,6 +123,15 @@ class RetroStudioApplication {
     this.services.registerService('buildSystem', BuildSystem);
     this.services.registerService('projectExplorer', ProjectExplorer);
     this.services.registerService('tabManager', TabManager);
+    // Register RWP import/export as a singleton if script loaded
+    try {
+      if (window.RwpService && !this.services.has('rwpService')) {
+        const rwp = new window.RwpService(this.services);
+        this.services.registerSingleton('rwpService', rwp);
+      }
+    } catch (e) {
+      console.warn('[Application] Unable to register rwpService:', e?.message || e);
+    }
 
     // Create service instances
     const audioEngine = this.services.get('audioEngine');
@@ -137,7 +146,7 @@ class RetroStudioApplication {
 
     // Auto-register built-in editors and viewers using self-describing metadata
     const registry = this.components;
-    const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor];
+  const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor, ModXmTrackerEditor];
     const autoViewers = [ModViewer, WavViewer, HexViewer];
 
     autoEditors.forEach((cls) => {

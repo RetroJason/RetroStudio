@@ -84,6 +84,12 @@ class PanelResizer {
     
     // Apply the new width
     this.projectExplorer.style.width = `${newWidth}px`;
+
+  // Notify listeners that layout width changed (throttled to animation frame)
+  this._scheduleResizeEvent();
+
+  // Emit a custom event with the live width so editors can resize precisely
+  this._emitResized(newWidth);
   }
   
   stopResize() {
@@ -101,6 +107,12 @@ class PanelResizer {
     
     // Save the width preference to localStorage
     this.saveWidthPreference(finalWidth);
+
+  // Fire a final resize notification after drag ends
+  try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+
+  // Emit final width via custom event
+  this._emitResized(finalWidth);
   }
   
   saveWidthPreference(width) {
@@ -142,6 +154,25 @@ class PanelResizer {
   
   resetToDefault() {
     this.setWidth(300); // Default width
+  }
+
+  _scheduleResizeEvent() {
+    if (this._resizeScheduled) return;
+    this._resizeScheduled = true;
+    requestAnimationFrame(() => {
+      this._resizeScheduled = false;
+      try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+    });
+  }
+
+  _emitResized(width) {
+    try {
+      const evt = new CustomEvent('project-explorer.resized', { detail: { width } });
+      window.dispatchEvent(evt);
+    } catch (_) {
+      // Fallback if CustomEvent unsupported (very old browsers)
+      try { window.dispatchEvent(new Event('project-explorer.resized')); } catch (__) {}
+    }
   }
 }
 

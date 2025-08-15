@@ -19,11 +19,9 @@ class ProjectExplorer {
     this.pendingTreeOperations = [];
   this.collapsedPaths = new Set(); // Track user-collapsed folders by path
 
-    // Create a default project so the UI isn't empty on first load
-    const defaultProject = 'Game Project';
-    this.addProject(defaultProject);
-    this.setFocusedProjectName(defaultProject);
-    
+  // Start with no project by default; user can create/import later
+  this.focusedProjectName = null;
+
     this.initialize();
   }
 
@@ -65,10 +63,9 @@ class ProjectExplorer {
   }
 
   getFocusedProjectName() {
-    if (this.focusedProjectName && this.projectData.structure[this.focusedProjectName]) return this.focusedProjectName;
-    // Fallback to first project
-    const keys = Object.keys(this.projectData.structure || {});
-    return keys[0] || null;
+  if (this.focusedProjectName && this.projectData.structure[this.focusedProjectName]) return this.focusedProjectName;
+  const keys = Object.keys(this.projectData.structure || {});
+  return keys.length ? keys[0] : null;
   }
   
   initialize() {
@@ -672,12 +669,35 @@ class ProjectExplorer {
     this.addFiles(files, targetPath);
   }
   
-  handleFileDrop(event, targetPath = null) {
-  const files = event.dataTransfer.files;
-  const path = targetPath || this.getDropTargetPath(event.target);
-    
-    if (files.length > 0) {
-      this.addFiles(files, path);
+  async handleFileDrop(event, targetPath = null) {
+    const files = event.dataTransfer.files;
+    const path = targetPath || this.getDropTargetPath(event.target);
+
+    if (!files || files.length === 0) return;
+
+    // Special-case: .rwp archives should trigger project import, not add as binary
+    try {
+      const all = Array.from(files);
+      const rwpFiles = all.filter(f => typeof f?.name === 'string' && f.name.toLowerCase().endsWith('.rwp'));
+      const otherFiles = all.filter(f => !f.name.toLowerCase().endsWith('.rwp'));
+
+      if (rwpFiles.length > 0) {
+        const svc = (window.serviceContainer?.get?.('rwpService')) || window.rwpService;
+        if (svc && typeof svc.importProject === 'function') {
+          for (const f of rwpFiles) {
+            try { await svc.importProject(f); } catch (e) { console.warn('[ProjectExplorer] RWP import failed:', e); }
+          }
+        } else {
+          console.warn('[ProjectExplorer] rwpService unavailable; skipping .rwp import');
+        }
+      }
+
+      if (otherFiles.length > 0) {
+        this.addFiles(otherFiles, path);
+      }
+      return;
+    } catch (e) {
+      console.warn('[ProjectExplorer] Error handling file drop:', e);
     }
   }
   
@@ -806,13 +826,14 @@ class ProjectExplorer {
   const storageFullPath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(uiFullPath) : uiFullPath;
   if (file instanceof File) {
       try {
-    // Palette-like formats are text for our editors; keep as text
-    const isBinary = ['.wav', '.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext);
-    const readPromise = isBinary ? file.arrayBuffer() : file.text();
+        // Decide binary vs text: known text types stay text; everything else treated as binary
+        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco'];
+        const isBinary = !textExts.includes(ext);
+        const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
           if (window.fileIOService) {
             await window.fileIOService.saveFile(storageFullPath, content, {
-        binaryData: isBinary,
+              binaryData: isBinary,
               builderId
             });
             console.log(`[ProjectExplorer] Persisted dropped file to storage: ${storageFullPath}`);
@@ -835,9 +856,16 @@ class ProjectExplorer {
       this.renderTree();
     }
     
-    // Notify game editor if available (unless skipping auto-open)
+    // Notify game editor if available (unless skipping auto-open),
+    // but only after persistence completes to avoid race where storage isn't ready yet
     if (window.gameEditor && !skipAutoOpen) {
-      window.gameEditor.onFileAdded(file, path, false);
+      persistDone.then(() => {
+        try {
+          window.gameEditor.onFileAdded(file, path, false);
+        } catch (e) {
+          console.warn('[ProjectExplorer] Auto-open failed after persist:', e);
+        }
+      });
     }
 
     return persistDone;
@@ -1768,6 +1796,34 @@ class ProjectExplorer {
     this.renderTree();
     
     console.log('[ProjectExplorer] Project cleared');
+  }
+
+  // Non-destructive remove: close project from UI without deleting stored files
+  async removeProjectFromUI(projectName) {
+    if (!projectName || !this.projectData?.structure?.[projectName]) return;
+
+    // Close open tabs for this project's files
+    try {
+      const tm = window.gameEditor?.tabManager;
+      if (tm && typeof tm.getAllTabs === 'function') {
+        const tabs = tm.getAllTabs();
+        for (const t of tabs) {
+          const full = t.fullPath || '';
+          if (typeof full === 'string' && full.startsWith(projectName + '/')) {
+            if (t.tabId && t.tabId !== 'preview') tm.closeTab(t.tabId);
+            else if (t.tabId === 'preview' && tm._closePreviewTab) tm._closePreviewTab();
+          }
+        }
+      }
+    } catch (_) { /* ignore */ }
+
+    // Remove from structure and re-focus
+    delete this.projectData.structure[projectName];
+    const remaining = Object.keys(this.projectData.structure || {});
+    this.focusedProjectName = remaining[0] || null;
+    this.renderTree();
+
+    try { window.eventBus?.emit?.('project.closed', { project: projectName, removed: true }); } catch (_) {}
   }
 }
 

@@ -578,6 +578,53 @@ body.no-select {
   height: 100vh;
 }
 
+/* Inline editor toolbars (per-editor) */
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #2d2d30; /* ensure contrast on dark background */
+  border-bottom: 1px solid #2d2d2d;
+  position: relative; /* create stacking context above canvas */
+  z-index: 5;
+}
+
+.editor-toolbar button {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid #555555;
+  background: #3c3c3c;
+  color: #cccccc;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.editor-toolbar button:hover {
+  background: #484848;
+}
+
+/* Tracker plugin container: no scaling, horizontally centered at top, vertical scroll allowed */
+.tracker-plugin-container {
+  position: relative;
+  display: flex; /* center the canvas horizontally */
+  justify-content: center; /* horizontal center */
+  align-items: flex-start; /* stick to top */
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow-x: hidden; /* no horizontal scroll; keep canvas native size */
+  overflow-y: auto;   /* allow vertical scrolling when content taller */
+  height: 100%;
+  width: 100%;
+}
+
+.tracker-plugin-container > canvas {
+  position: static !important; /* allow flex centering */
+  margin: 0 !important;
+  display: block;
+}
+
 /* Content wrapper for project explorer and main content */
 .content-wrapper {
   display: flex;

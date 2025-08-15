@@ -1,0 +1,67 @@
+{
+  "title": "Demo Songs",
+  "info": "A curated list",
+  "modules": [
+    {
+      "title": "Demomusic",
+      "author": "4mat",
+      "url": "demomods/demomusic.mod"
+    },
+    {
+      "title": "Stardust Memories",
+      "author": "Jester",
+      "group" : "Sanity",
+      "info" : "1992",
+      "url": "demomods/StardustMemories.mod"
+    },
+    {
+      "title": "Space Debris",
+      "url": "demomods/spacedeb.mod",
+      "author" : "Captain / Markus Kaarlonen",
+      "info" : "1991",
+      "link": "https://markuskaarlonen.com/space-debris"
+    },
+    {
+      "title": "Tinytune",
+      "author": "Spaceman",
+      "url": "demomods/Tinytune.mod"
+    },
+    {
+      "title": "Lotus 2",
+      "author": "Shaun Southern",
+      "url": "demomods/lotus20.mod"
+    },
+    {
+      "title": "ProfessionalTracker",
+      "author": "H0ffman & Daytripper",
+      "info": "1st @ Revision 2014",
+      "url": "demomods/hoffman_and_daytripper_-_professional_tracker.mod",
+      "link" : "https://demozoo.org/music/108920/"
+    },
+    {
+      "title": "Monday",
+      "author": "Random Voice",
+      "url": "demomods/Monday.mod"
+    },
+    {
+      "title": "Sound of Da Lunatic",
+      "author" : "$volkraq",
+      "url": "demomods/sound-of-da-lunatic.mod"
+    },
+    {
+      "title": "Ambrozia",
+      "author" : "Jogeir Liljedahl",
+      "url": "demomods/Ambrozia.xm"
+    },
+    {
+      "title": "Aquarium",
+      "author" : "Awesome",
+      "url": "demomods/aws_aqua.xm"
+    },
+    {
+      "title": "8CHN: Block Shockin'",
+      "author" : "Aceman",
+      "url": "demomods/AceMan.mod"
+    }
+  ]
+}

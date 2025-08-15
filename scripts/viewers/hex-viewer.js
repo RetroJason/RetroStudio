@@ -16,6 +16,16 @@ class HexViewer extends ViewerBase {
     this.loadFileData();
   }
 
+  // Escape HTML to safely render arbitrary bytes as text
+  escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   formatFileSize(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -70,7 +80,8 @@ class HexViewer extends ViewerBase {
       if (content instanceof ArrayBuffer) {
         arrayBuffer = content;
       } else if (content instanceof Uint8Array) {
-        arrayBuffer = content.buffer;
+        // Respect view offsets to avoid pulling unrelated bytes
+        arrayBuffer = content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength);
       } else if (typeof content === 'string') {
         const encoder = new TextEncoder();
         arrayBuffer = encoder.encode(content).buffer;
@@ -156,11 +167,12 @@ class HexViewer extends ViewerBase {
       }
     }
 
-    return `
+  const asciiEscaped = this.escapeHtml(asciiStr);
+  return `
       <div class="hex-row">
         <div class="offset">${offsetStr}</div>
         <div class="hex-bytes">${hexStr}</div>
-        <div class="ascii-chars">${asciiStr}</div>
+    <div class="ascii-chars">${asciiEscaped}</div>
       </div>
     `;
   }
