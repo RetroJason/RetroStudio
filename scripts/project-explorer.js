@@ -675,6 +675,50 @@ class ProjectExplorer {
 
     if (!files || files.length === 0) return;
 
+    // Check if there's an active project before allowing file drops
+    const activeProject = this.getFocusedProjectName();
+    if (!activeProject) {
+      console.log('[ProjectExplorer] No active project - blocking file drop');
+      // Show a visual indication that the drop was blocked
+      const dropOverlay = document.createElement('div');
+      dropOverlay.className = 'drop-blocked-overlay';
+      dropOverlay.innerHTML = `
+        <div class="drop-blocked-message">
+          <div class="warning-icon">⚠</div>
+          <p>Please create or open a project first</p>
+          <small>Files can only be added to an active project</small>
+        </div>
+      `;
+      dropOverlay.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+        background: rgba(0,0,0,0.7); z-index: 10000; 
+        display: flex; align-items: center; justify-content: center;
+        color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      `;
+      dropOverlay.querySelector('.drop-blocked-message').style.cssText = `
+        background: #dc3545; padding: 2rem; border-radius: 8px; text-align: center;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3); max-width: 400px;
+      `;
+      dropOverlay.querySelector('.warning-icon').style.cssText = `
+        font-size: 3rem; margin-bottom: 1rem; display: block;
+      `;
+      dropOverlay.querySelector('p').style.cssText = `
+        margin: 0 0 0.5rem 0; font-size: 1.2rem; font-weight: 600;
+      `;
+      dropOverlay.querySelector('small').style.cssText = `
+        opacity: 0.8; font-size: 0.9rem;
+      `;
+      
+      document.body.appendChild(dropOverlay);
+      setTimeout(() => {
+        dropOverlay.style.opacity = '0';
+        dropOverlay.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => dropOverlay.remove(), 300);
+      }, 2000);
+      
+      return;
+    }
+
     // Special-case: .rwp archives should trigger project import, not add as binary
     try {
       const all = Array.from(files);

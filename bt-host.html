@@ -27,7 +27,20 @@
       const usp = new URLSearchParams(window.location.search);
       if (usp.get('skipDemo') === '1') { window.HostBridge.useInitialLoad = false; }
     } catch(_){}
-    function setStatus(t){ try { document.getElementById('status').textContent = t; } catch(_){} }
+    function setStatus(t){ 
+      try { 
+        const statusEl = document.getElementById('status');
+        if (statusEl) {
+          statusEl.textContent = t;
+          // Auto-hide non-error status after file loads complete
+          if (t && !t.toLowerCase().includes('error') && !t.toLowerCase().includes('loading')) {
+            setTimeout(() => {
+              if (statusEl.textContent === t) statusEl.textContent = '';
+            }, 2000);
+          }
+        }
+      } catch(_){} 
+    }
     document.addEventListener('DOMContentLoaded', () => setStatus('booting...'));
     const BT_BASE = 'scripts/audio/external/BassoonTracker/';
     const queue = [];
@@ -35,19 +48,71 @@
       if (!window.BassoonTracker || typeof window.BassoonTracker.load !== 'function') return;
       while(queue.length){ const job = queue.shift(); job(); }
     }
-    // Wrap BT.load once available to notify parent of every load attempt
+    // Wrap both BT.load and internal Tracker.load to catch all file loading
     function wrapBtLoad(){
       const BT = window.BassoonTracker;
       if(!BT || typeof BT.load!=='function' || BT.__notifyWrap) return;
       const orig = BT.load.bind(BT);
-      BT.load = function(url){
-        try { parent.postMessage({type:'bt-load-invoked', url}, '*'); } catch(_){}
-        return orig(url);
+      BT.load = function(url, skipHistory, next, initial, silent){
+        try { parent.postMessage({type:'bt-load-invoked', url, skipHistory, initial, silent}, '*'); } catch(_){}
+        return orig(url, skipHistory, next, initial, silent);
       };
+      
+      // Also wrap loadModuleBuffer if available
+      if (typeof BT.loadModuleBuffer === 'function' && !BT.__loadModuleBufferWrap) {
+        const origBuffer = BT.loadModuleBuffer.bind(BT);
+        BT.loadModuleBuffer = function(arrayBuffer, filename) {
+          try { parent.postMessage({type:'bt-load-invoked', url: `buffer://${filename}`, filename}, '*'); } catch(_){}
+          return origBuffer(arrayBuffer, filename);
+        };
+        BT.__loadModuleBufferWrap = true;
+      }
+      
       BT.__notifyWrap = true;
       try { console.log('[bt-host] BT.load wrapped for notifications'); } catch(_){}
     }
-    function scheduleWrap(){ wrapBtLoad(); requestAnimationFrame(scheduleWrap); }
+    
+    // Separate function to wrap Tracker.load when it becomes available
+    function wrapTrackerLoad(){
+      // Try to access Tracker via multiple possible paths
+      const TrackerRef = window.Tracker || 
+                        (window.BassoonTracker && window.BassoonTracker.Tracker) ||
+                        (typeof Tracker !== 'undefined' ? Tracker : null);
+      
+      if (TrackerRef && typeof TrackerRef.load === 'function' && !TrackerRef.__loadWrap) {
+        const origTrackerLoad = TrackerRef.load;
+        TrackerRef.load = function(url, skipHistory, next, initial, silent) {
+          try { 
+            console.log('[bt-host] Tracker.load called:', url);
+            parent.postMessage({type:'bt-load-invoked', url, skipHistory, initial, silent, source: 'tracker'}, '*'); 
+          } catch(_){}
+          return origTrackerLoad.call(this, url, skipHistory, next, initial, silent);
+        };
+        TrackerRef.__loadWrap = true;
+        try { console.log('[bt-host] Tracker.load wrapped for playlist notifications'); } catch(_){}
+      }
+      
+      // Alternative approach: Hook into XMLHttpRequest to catch module loads
+      if (!window.__xmlHttpHooked) {
+        const origOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url, ...args) {
+          if (url && (url.includes('.mod') || url.includes('.xm') || url.includes('.s3m'))) {
+            try {
+              console.log('[bt-host] XMLHttpRequest intercepted:', url);
+              parent.postMessage({type:'bt-load-invoked', url, source: 'xhr'}, '*');
+            } catch(_){}
+          }
+          return origOpen.call(this, method, url, ...args);
+        };
+        window.__xmlHttpHooked = true;
+        try { console.log('[bt-host] XMLHttpRequest hooked for module loading'); } catch(_){}
+      }
+    }
+    function scheduleWrap(){ 
+      wrapBtLoad(); 
+      wrapTrackerLoad(); 
+      requestAnimationFrame(scheduleWrap); 
+    }
     scheduleWrap();
 
     // Direct project file loader (pulls bytes from parent environment)
@@ -137,6 +202,9 @@
       
       // Handle new FileIOService-based file loading
       if (msg.type === 'load-file-from-service' && msg.filePath) {
+        // Disable initial demo loading since we're loading a specific file
+        window.HostBridge.useInitialLoad = false;
+        
         const run = async () => {
           const BT = window.BassoonTracker; 
           if (!BT || typeof BT.loadFromFileService !== 'function') { 
@@ -147,9 +215,11 @@
             setStatus('loading from file service');
             console.log('[bt-host] loading from FileIOService', {filePath: msg.filePath, filename: msg.filename});
             const result = await BT.loadFromFileService(msg.filePath, msg.filename);
+            setStatus(''); // Clear status after successful load
             try { parent.postMessage({type:'file-load-result', success: result, filePath: msg.filePath}, '*'); } catch(_){}
           } catch(err) { 
             console.error('[bt-host] loadFromFileService failed', err); 
+            setStatus(''); // Clear status after error
             try { parent.postMessage({type:'file-load-result', success: false, error: err.message, filePath: msg.filePath}, '*'); } catch(_){}
           }
         };
@@ -171,13 +241,59 @@
           setStatus('loading demo');
           console.log('[bt-host] loading demo Tinytune');
           BT.load(BT_BASE + 'demomods/Tinytune.mod');
+          // Clear status after demo loads
+          setTimeout(() => setStatus(''), 2000);
         }
       };
       run();
     });
+
+    // Set up BassoonHost override for save functionality
+    function setupHostIntegration() {
+      if (window.BassoonHost) {
+        window.BassoonHost.set({
+          saveFile: function(blob, filename, target) {
+            try {
+              if (target === "project") {
+                // Save to project instead of downloading
+                console.log('[bt-host] saving to project:', filename);
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                  const arrayBuffer = e.target.result;
+                  try {
+                    parent.postMessage({
+                      type: 'save-to-project',
+                      filename: filename,
+                      data: Array.from(new Uint8Array(arrayBuffer)),
+                      mimeType: blob.type
+                    }, '*');
+                  } catch (err) {
+                    console.error('[bt-host] failed to send save message:', err);
+                  }
+                };
+                reader.readAsArrayBuffer(blob);
+                return true; // Indicate we handled the save
+              }
+              // For non-project saves, return false to use default download behavior
+              return false;
+            } catch (err) {
+              console.error('[bt-host] save override error:', err);
+              return false;
+            }
+          }
+        });
+        console.log('[bt-host] BassoonHost save override configured');
+      } else {
+        // Retry if BassoonHost isn't available yet
+        setTimeout(setupHostIntegration, 100);
+      }
+    }
+    
+    // Start trying to set up host integration
+    setupHostIntegration();
   </script>
   <!-- Load ESM bundle directly so import.meta works -->
-    <script type="module" src="scripts/audio/external/BassoonTracker/build/main-o2jTqh8b.js"></script>
+    <script type="module" src="scripts/audio/external/BassoonTracker/build/main-Bg7F0w7t.js"></script>
 </head>
 <body>
   <div id="status">loading…</div>

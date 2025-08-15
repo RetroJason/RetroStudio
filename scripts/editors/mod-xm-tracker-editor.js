@@ -19,8 +19,11 @@ class ModXmTrackerEditor extends EditorBase {
     this._iframe = null;
     this._logPrefix = '[ModXmTrackerEditor]';
     this._readyReceived = false;
+    this._initialLoadSent = false; // Track if initial file/demo load has been sent
     this._initialFileRecord = fileRecord;
     this._id = 'mod-xm-tracker-' + Math.random().toString(36).substring(2);
+    this._hasLoadedNewSong = false; // Track when new songs are loaded
+    this._currentFilename = null; // Current loaded song filename
     
     try { 
       console.log(this._logPrefix, 'constructor completed', { 
@@ -39,6 +42,7 @@ class ModXmTrackerEditor extends EditorBase {
   static canCreate = true;
   static getCreateLabel() { return 'Music'; }
   static getDefaultFolder() { return 'Sources/Music'; }
+  static needsFilenamePrompt() { return false; } // Skip prompt since demo always loads
   
   // iframe-based embedding for clean isolation
   createBody(body) {
@@ -52,7 +56,11 @@ class ModXmTrackerEditor extends EditorBase {
     // Create iframe element directly for better control
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html';
+    
+    // For existing files (not temp:// paths), disable demo loading by adding skipDemo parameter
+    const isExistingFile = !this.isNewResource && this.path && !this.path.startsWith('temp://');
+    const iframeSrc = isExistingFile ? 'bt-host.html?skipDemo=1' : 'bt-host.html';
+    this._iframe.src = iframeSrc;
     this._iframe.style.cssText = 'width: 100%; height: 100%; border: none; display: block;';
     
     // Remove all possible restrictions for iframe communication
@@ -119,6 +127,19 @@ class ModXmTrackerEditor extends EditorBase {
         } else {
           console.error(`${this._logPrefix} File load failed:`, msg.error);
         }
+      } else if (msg.type === 'bt-load-invoked') {
+        console.log(`${this._logPrefix} BassoonTracker loaded new file internally:`, msg.url);
+        this._handleInternalFileLoad(msg.url);
+        // Mark that a new song has been loaded
+        this._hasLoadedNewSong = true;
+        // Extract filename from URL for display
+        if (msg.url) {
+          const urlParts = msg.url.split('/');
+          this._currentFilename = urlParts[urlParts.length - 1];
+        }
+      } else if (msg.type === 'save-to-project') {
+        console.log(`${this._logPrefix} Save to project requested:`, msg.filename);
+        this._handleSaveToProject(msg.filename, msg.data, msg.mimeType);
       }
     };
     
@@ -236,6 +257,11 @@ class ModXmTrackerEditor extends EditorBase {
       return;
     }
     
+    if (this._initialLoadSent) {
+      console.log(`${this._logPrefix} Initial load already sent, skipping`);
+      return;
+    }
+    
     if (!this._iframe) {
       console.error(`${this._logPrefix} iframe element is null - attempting recovery`);
       this._iframe = document.getElementById(`${this._id}-iframe`) || this._iframeRef || window[`_iframe_${this._id}`];
@@ -258,7 +284,8 @@ class ModXmTrackerEditor extends EditorBase {
     }
 
     // Determine what to load
-    if (!this.isNewResource && this.path) {
+    const isExistingFile = !this.isNewResource && this.path && !this.path.startsWith('temp://');
+    if (isExistingFile) {
       // Load existing file via FileIOService
       console.log(`${this._logPrefix} Loading existing file from path: ${this.path}`);
       const filename = this._initialFileRecord?.filename || this.path.split('/').pop() || 'untitled.mod';
@@ -268,6 +295,7 @@ class ModXmTrackerEditor extends EditorBase {
           filePath: this.path,
           filename: filename
         }, '*');
+        this._initialLoadSent = true; // Mark as sent
       } catch (e) {
         console.error(`${this._logPrefix} Failed to send file load message:`, e);
       }
@@ -276,6 +304,7 @@ class ModXmTrackerEditor extends EditorBase {
       console.log(`${this._logPrefix} Loading demo for new file`);
       try {
         this._iframe.contentWindow.postMessage({type: 'load-demo'}, '*');
+        this._initialLoadSent = true; // Mark as sent
       } catch (e) {
         console.error(`${this._logPrefix} Failed to send demo load message:`, e);
       }
@@ -410,6 +439,282 @@ class ModXmTrackerEditor extends EditorBase {
     try { if (this._onTabSwitched && window.eventBus?.off) window.eventBus.off('tab.switched', this._onTabSwitched); } catch (_) {}
     
     console.log(`${this._logPrefix} cleanup completed`);
+  }
+
+  _handleInternalFileLoad(url) {
+    console.log(`${this._logPrefix} handling internal file load:`, url);
+    
+    // Extract filename from URL 
+    let newFilename = 'untitled.mod';
+    try {
+      if (url) {
+        // Handle object URLs with fragment (blob:...#filename.mod)
+        if (url.includes('#')) {
+          newFilename = decodeURIComponent(url.split('#')[1]);
+        } else {
+          // Extract from regular URL path
+          const urlPath = url.split('/').pop().split('?')[0];
+          if (urlPath && urlPath.length > 0) {
+            newFilename = urlPath;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`${this._logPrefix} failed to extract filename from URL:`, e);
+    }
+
+    console.log(`${this._logPrefix} extracted filename: ${newFilename}`);
+
+    // Update tab to reflect the new file
+    this._updateTabForNewFile(newFilename, url);
+  }
+
+  _handleSaveToProject(filename, dataArray, mimeType) {
+    console.log(`${this._logPrefix} handling save to project:`, { filename, dataLength: dataArray?.length, mimeType });
+    
+    try {
+      // Convert data array back to Uint8Array
+      const content = new Uint8Array(dataArray);
+      
+      // For temporary files OR when loading a new song, always prompt for filename
+      if (this.path.startsWith('temp://') || this._hasLoadedNewSong) {
+        // Use the current loaded filename as suggestion, or the passed filename
+        let suggestedName = this._currentFilename || filename || 'song.mod';
+        
+        // Remove path and extension for cleaner suggestion
+        if (suggestedName.includes('/')) {
+          suggestedName = suggestedName.split('/').pop();
+        }
+        if (suggestedName.includes('.')) {
+          suggestedName = suggestedName.substring(0, suggestedName.lastIndexOf('.'));
+        }
+        
+        const finalFilename = prompt('Save as:', suggestedName);
+        if (!finalFilename) {
+          console.log(`${this._logPrefix} save cancelled by user`);
+          return;
+        }
+        
+        // Check if file exists and prompt for overwrite
+        const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+        const defaultFolder = this.constructor.getDefaultFolder();
+        const extension = finalFilename.includes('.') ? '' : '.mod'; // Add .mod if no extension
+        const fullFilename = finalFilename + extension;
+        
+        const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
+          window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
+          (project ? `${project}/${defaultFolder}` : defaultFolder);
+        const fullUiPath = `${uiFolder}/${fullFilename}`;
+        
+        // Check if file exists
+        if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
+          if (!confirm(`File "${fullFilename}" already exists. Overwrite?`)) {
+            console.log(`${this._logPrefix} overwrite cancelled by user`);
+            return;
+          }
+        }
+        
+        // Convert to non-temporary path and mark for new file creation
+        this.path = fullUiPath;
+        this.isNewResource = true;
+        this._currentFilename = fullFilename;
+        this._hasLoadedNewSong = false; // Reset flag
+        
+        // Update tab title to reflect new filename
+        const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
+        if (tabManager) {
+          const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
+          if (currentTabId && tabManager.updateTabTitle) {
+            tabManager.updateTabTitle(currentTabId, `🎵 ${fullFilename}`);
+          }
+        }
+      }
+      
+      // Save using the parent class method with the binary content
+      this._saveContentToProject(content);
+      
+    } catch (error) {
+      console.error(`${this._logPrefix} save to project failed:`, error);
+      alert(`Failed to save to project: ${error.message}`);
+    }
+  }
+
+  async _saveContentToProject(content) {
+    try {
+      // Use the EditorBase saveNewResource method
+      const name = this.getFileName();
+      
+      // Get project and folder info
+      const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      const defaultFolder = this.constructor.getDefaultFolder();
+      const extension = this.getFileExtension(name);
+      
+      // Build paths
+      const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
+        window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
+        (project ? `${project}/${defaultFolder}` : defaultFolder);
+      const fullUiPath = `${uiFolder}/${name}`;
+      const storagePath = window.ProjectPaths?.normalizeStoragePath ? 
+        window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
+      
+      // Save to persistent storage using the file I/O service
+      if (window.fileIOService) {
+        await window.fileIOService.saveFile(storagePath, content, {
+          type: extension.substring(1), // Remove the dot
+          editor: this.constructor.name
+        });
+        console.log(`${this._logPrefix} saved to persistent storage: ${storagePath}`);
+      }
+      
+      // Add to project explorer
+      if (window.gameEditor && window.gameEditor.projectExplorer) {
+        const file = new File([content], name, { type: 'application/octet-stream' });
+        window.gameEditor.projectExplorer.addFileToProject(file, uiFolder, true); // Skip auto-open during save
+      }
+      
+      // Update path and mark as saved
+      this.path = fullUiPath;
+      this.isNewResource = false;
+      this.markClean();
+      
+      console.log(`${this._logPrefix} successfully saved to project: ${name}`);
+      
+    } catch (error) {
+      console.error(`${this._logPrefix} failed to save content to project:`, error);
+      throw error;
+    }
+  }
+
+  _updateTabForNewFile(filename, sourceUrl) {
+    console.log(`${this._logPrefix} updating tab for new file:`, { filename, sourceUrl });
+    
+    // Get the tab manager to update the tab
+    const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
+    if (!tabManager) {
+      console.warn(`${this._logPrefix} tabManager not available for tab update`);
+      return;
+    }
+
+    // Find the current tab
+    const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
+    if (!currentTabId) {
+      console.warn(`${this._logPrefix} no active tab found`);
+      return;
+    }
+
+    // Update the tab title and properties to reflect the new file
+    try {
+      // Mark as modified/different from original
+      this.isNewResource = true;
+      this._currentFilename = filename;
+      this._currentSourceUrl = sourceUrl;
+      
+      // Update the display name to show it's a new file
+      const displayName = filename.endsWith('.mod') || filename.endsWith('.xm') ? 
+        filename : `${filename} (MOD/XM)`;
+      
+      // Try to update the tab title
+      if (tabManager.updateTabTitle) {
+        tabManager.updateTabTitle(currentTabId, `🎵 ${displayName} (loaded)`);
+      } else {
+        // Fallback: find and update tab element directly
+        const tabElement = document.querySelector(`[data-tab-id="${currentTabId}"] .tab-title`);
+        if (tabElement) {
+          tabElement.textContent = `🎵 ${displayName} (loaded)`;
+        }
+      }
+
+      // Update window title if this is the active tab
+      if (currentTabId === tabManager.getActiveTabId?.()) {
+        document.title = `RetroStudio - ${displayName}`;
+      }
+
+      console.log(`${this._logPrefix} tab updated for new file: ${displayName}`);
+
+    } catch (e) {
+      console.error(`${this._logPrefix} failed to update tab:`, e);
+    }
+  }
+
+  // Save functionality - required for EditorBase
+  getContent() {
+    // For MOD/XM files, we need to get the current file data from BassoonTracker
+    // This will be the binary data of the current module
+    try {
+      if (this._iframe && this._iframe.contentWindow) {
+        // Try to get the current module data from BassoonTracker
+        const btWindow = this._iframe.contentWindow;
+        if (btWindow.tracker && btWindow.tracker.getModuleData) {
+          const moduleData = btWindow.tracker.getModuleData();
+          if (moduleData) {
+            return moduleData; // Should be ArrayBuffer or Uint8Array
+          }
+        }
+        
+        // Alternative: try to export current module
+        if (btWindow.exportCurrentModule) {
+          return btWindow.exportCurrentModule();
+        }
+      }
+    } catch (e) {
+      console.warn(`${this._logPrefix} failed to get content from BassoonTracker:`, e);
+    }
+    
+    // Fallback: return empty MOD file data or default content
+    return new Uint8Array(0);
+  }
+
+  // Override save to handle filename prompting for temporary files
+  async save() {
+    try {
+      // If this is a temporary file (starts with temp://) prompt for filename
+      if (this.path.startsWith('temp://')) {
+        const currentFilename = this._currentFilename || 'untitled.mod';
+        const filename = prompt('Save as:', currentFilename);
+        if (!filename) {
+          return; // User cancelled
+        }
+        
+        // Check if file exists and prompt for overwrite
+        const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+        const defaultFolder = this.constructor.getDefaultFolder();
+        const extension = filename.includes('.') ? '' : '.mod'; // Add .mod if no extension
+        const fullFilename = filename + extension;
+        
+        const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
+          window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
+          (project ? `${project}/${defaultFolder}` : defaultFolder);
+        const fullUiPath = `${uiFolder}/${fullFilename}`;
+        
+        // Check if file exists
+        if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
+          if (!confirm(`File "${fullFilename}" already exists. Overwrite?`)) {
+            return; // User cancelled overwrite
+          }
+        }
+        
+        // Convert to non-temporary path and mark as new resource
+        this.path = fullUiPath;
+        this.isNewResource = true;
+        this._currentFilename = fullFilename;
+        
+        // Update tab title to reflect new filename
+        const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
+        if (tabManager) {
+          const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
+          if (currentTabId && tabManager.updateTabTitle) {
+            tabManager.updateTabTitle(currentTabId, `🎵 ${fullFilename}`);
+          }
+        }
+      }
+      
+      // Call parent save method
+      await super.save();
+      
+    } catch (error) {
+      console.error(`${this._logPrefix} save failed:`, error);
+      alert(`Failed to save: ${error.message}`);
+    }
   }
 
   destroy() {
