@@ -147,9 +147,35 @@ class RibbonToolbar {
       // Generate simple filename with counter
       const counter = this.getNextFileCounter();
       const defaultName = `new_${counter}`;
-      const filename = await this.promptForFilename(defaultName, editorInfo.extensions[0]);
-      if (!filename) {
-        return; // User cancelled
+      
+      // Check if editor needs filename prompt (some editors like MOD/XM always load demo)
+      let filename;
+      if (editorInfo.needsFilenamePrompt === false) {
+        // For editors that don't need filename prompt, create temporary editor without adding to project
+        console.log(`[RibbonToolbar] Creating temporary ${editorInfo.displayName} (no file created yet)`);
+        
+        // Create a temporary path for the editor
+        const counter = this.getNextFileCounter();
+        const tempName = `untitled_${counter}${editorInfo.extensions[0]}`;
+        const tempPath = `temp:///${tempName}`;
+        
+        // Open the editor directly without creating a file
+        if (window.gameEditor && window.gameEditor.tabManager) {
+          // Use the tab manager's normal opening flow but with a temporary path
+          try {
+            await window.gameEditor.tabManager.openInTab(tempPath, null, { forceNew: true, isTemporary: true });
+            console.log(`[RibbonToolbar] Opened temporary ${editorInfo.displayName}: ${tempName}`);
+          } catch (error) {
+            console.error(`[RibbonToolbar] Failed to open temporary editor:`, error);
+            alert(`Failed to create ${editorInfo.displayName}: ${error.message}`);
+          }
+        }
+        return; // Exit early for temporary editors
+      } else {
+        filename = await this.promptForFilename(defaultName, editorInfo.extensions[0]);
+        if (!filename) {
+          return; // User cancelled
+        }
       }
       
       // Get default folder for this editor type

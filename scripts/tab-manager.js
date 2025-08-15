@@ -732,6 +732,37 @@ class TabManager {
     const ext = this._getFileExtension(fileName);
     console.log(`[TabManager] Creating viewer for file: ${fileName}, extension: ${ext}, path: ${fullPath}`);
     
+    // Handle temporary paths (for editors that don't need initial files)
+    if (fullPath.startsWith('temp://')) {
+      console.log(`[TabManager] Creating temporary editor for: ${fileName}`);
+      
+      // Find appropriate editor for this extension
+      const componentRegistry = window.serviceContainer?.get('componentRegistry');
+      if (!componentRegistry) {
+        console.error('[TabManager] ComponentRegistry not available');
+        return null;
+      }
+      
+      const editorInfo = this._getEditorForExtension(ext);
+      if (editorInfo && editorInfo.editorClass) {
+        try {
+          const editor = new editorInfo.editorClass(fullPath, true); // isNewResource = true
+          return {
+            type: 'editor',
+            subtype: editorInfo.name,
+            viewer: editor,
+            element: editor.getElement()
+          };
+        } catch (error) {
+          console.error('[TabManager] Failed to create temporary editor:', error);
+          return null;
+        }
+      } else {
+        console.error(`[TabManager] No editor found for extension: ${ext}`);
+        return null;
+      }
+    }
+    
     // Load content using FileManager (safe-get and self-register if needed)
     let fileManager = null;
     try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
@@ -745,9 +776,9 @@ class TabManager {
       return null;
     }
     
-  // Normalize to storage path for loading
-  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullPath) : fullPath;
-  let fileObj = await fileManager.loadFile(storagePath);
+    // Normalize to storage path for loading
+    const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullPath) : fullPath;
+    let fileObj = await fileManager.loadFile(storagePath);
     if (!fileObj) {
       console.error(`[TabManager] File not found: ${fullPath}`);
       // Graceful fallback: allow viewer creation for known viewer types (e.g., mod/wav/hex)
@@ -1682,6 +1713,42 @@ class TabManager {
   this._closePreviewTab();
     
     console.log('[TabManager] All tabs closed');
+  }
+
+  updateTabTitle(tabId, newTitle) {
+    console.log(`[TabManager] Updating tab title: ${tabId} -> ${newTitle}`);
+    
+    if (tabId === 'preview') {
+      // Update preview tab
+      const previewTab = document.querySelector('[data-tab-id="preview"]');
+      if (previewTab) {
+        const titleEl = previewTab.querySelector('.tab-title');
+        if (titleEl) {
+          titleEl.textContent = newTitle;
+        }
+      }
+    } else {
+      // Update dedicated tab
+      const tabInfo = this.dedicatedTabs.get(tabId);
+      if (tabInfo && tabInfo.element) {
+        const titleEl = tabInfo.element.querySelector('.tab-title');
+        if (titleEl) {
+          titleEl.textContent = newTitle;
+        }
+      }
+    }
+  }
+
+  // Helper method to get editor for extension
+  _getEditorForExtension(ext) {
+    const componentRegistry = window.serviceContainer?.get('componentRegistry');
+    if (!componentRegistry) {
+      return null;
+    }
+    
+    // Use the component registry's method to find editor by file extension
+    const tempPath = `temp${ext}`; // Create a temporary path with the extension
+    return componentRegistry.getEditorForFile(tempPath);
   }
 }
 

@@ -19,9 +19,10 @@ class ComponentRegistry {
       icon, 
       editorClass, 
       priority = 10,
-  capabilities = [],
-  canCreate = false,
-  singleInstance = false
+      capabilities = [],
+      canCreate = false,
+      singleInstance = false,
+      needsFilenamePrompt = true
     } = editorInfo;
 
     // Validate required methods
@@ -37,7 +38,8 @@ class ComponentRegistry {
       priority,
       capabilities,
       canCreate,
-      singleInstance
+      singleInstance,
+      needsFilenamePrompt
     });
 
     // Register file associations
@@ -136,6 +138,14 @@ class ComponentRegistry {
     return false;
   }
 
+  _deriveNeedsFilenamePrompt(editorClass) {
+    try {
+      if (typeof editorClass.needsFilenamePrompt === 'function') return editorClass.needsFilenamePrompt();
+      if (typeof editorClass.needsFilenamePrompt === 'boolean') return editorClass.needsFilenamePrompt;
+    } catch (_) {}
+    return true; // Default to true for existing behavior
+  }
+
   // Public helpers to auto-register by class
   autoRegisterEditor(editorClass) {
     const name = this._deriveName(editorClass, 'editor');
@@ -146,6 +156,7 @@ class ComponentRegistry {
     const capabilities = this._deriveCapabilities(editorClass);
     const canCreate = this._deriveCanCreate(editorClass);
     const singleInstance = this._deriveSingleInstance(editorClass);
+    const needsFilenamePrompt = this._deriveNeedsFilenamePrompt(editorClass);
 
     this.registerEditor({
       name,
@@ -156,7 +167,8 @@ class ComponentRegistry {
       priority,
       capabilities,
       canCreate,
-      singleInstance
+      singleInstance,
+      needsFilenamePrompt
     });
   }
 
