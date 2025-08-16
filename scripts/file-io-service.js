@@ -202,6 +202,13 @@ class FileIOService {
     
     return new Promise((resolve, reject) => {
       try {
+        // Validate the path parameter
+        if (!path || typeof path !== 'string') {
+          console.error('[FileIOService] Invalid path for IndexedDB get:', typeof path, path);
+          reject(new Error(`Invalid path: ${path}`));
+          return;
+        }
+        
         const transaction = this.db.transaction(['files'], 'readonly');
         const store = transaction.objectStore('files');
         const request = store.get(path);

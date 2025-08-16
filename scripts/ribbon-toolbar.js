@@ -144,117 +144,15 @@ class RibbonToolbar {
         return;
       }
       
-      // Generate simple filename with counter
-      const counter = this.getNextFileCounter();
-      const defaultName = `new_${counter}`;
-      
-      // Check if editor needs filename prompt (some editors like MOD/XM always load demo)
-      let filename;
-      if (editorInfo.needsFilenamePrompt === false) {
-        // For editors that don't need filename prompt, create temporary editor without adding to project
-        console.log(`[RibbonToolbar] Creating temporary ${editorInfo.displayName} (no file created yet)`);
-        
-        // Create a temporary path for the editor
-        const counter = this.getNextFileCounter();
-        const tempName = `untitled_${counter}${editorInfo.extensions[0]}`;
-        const tempPath = `temp:///${tempName}`;
-        
-        // Open the editor directly without creating a file
-        if (window.gameEditor && window.gameEditor.tabManager) {
-          // Use the tab manager's normal opening flow but with a temporary path
-          try {
-            await window.gameEditor.tabManager.openInTab(tempPath, editorInfo, { forceNew: true, isTemporary: true });
-            console.log(`[RibbonToolbar] Opened temporary ${editorInfo.displayName}: ${tempName}`);
-          } catch (error) {
-            console.error(`[RibbonToolbar] Failed to open temporary editor:`, error);
-            alert(`Failed to create ${editorInfo.displayName}: ${error.message}`);
-          }
+      // Simply open a new editor with no file object - let the editor handle filename prompting
+      if (window.gameEditor && window.gameEditor.tabManager) {
+        try {
+          await window.gameEditor.tabManager.openNewEditor(editorInfo);
+          console.log(`[RibbonToolbar] Opened new ${editorInfo.displayName} editor`);
+        } catch (error) {
+          console.error(`[RibbonToolbar] Failed to open new editor:`, error);
+          alert(`Failed to create ${editorInfo.displayName}: ${error.message}`);
         }
-        return; // Exit early for temporary editors
-      } else {
-        filename = await this.promptForFilename(defaultName, editorInfo.extensions[0]);
-        if (!filename) {
-          return; // User cancelled
-        }
-      }
-      
-      // Get default folder for this editor type
-  const defaultFolder = editorInfo.editorClass.getDefaultFolder ? 
-            editorInfo.editorClass.getDefaultFolder() : 
-            ((window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources');
-      
-      // Get default content
-      const defaultContent = editorInfo.editorClass.createNew ? 
-                            editorInfo.editorClass.createNew() : 
-                            '';
-      
-  // Generate paths
-  const extension = editorInfo.extensions[0];
-  const uiFolder = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(focusedProject, defaultFolder) : (focusedProject ? `${focusedProject}/${defaultFolder}` : defaultFolder);
-  const displayFilename = `${filename}${extension}`;
-  const fullUiPath = `${uiFolder}/${displayFilename}`;
-  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
-      
-  console.log(`[RibbonToolbar] Creating new file: ${displayFilename}, UI path: ${fullUiPath}`);
-      
-      // Use FileManager to create and save the file (robust resolution)
-      let fileManager = null;
-      try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
-      fileManager = fileManager || window.FileManager || window.fileManager;
-      if (fileManager && !fileManager.storageService && window.fileIOService) {
-        try { fileManager.initialize(window.fileIOService); } catch (_) {}
-        try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
-      }
-      if (!fileManager) {
-        throw new Error('FileManager not available');
-      }
-      
-      try {
-        // Choose default builderId by extension
-        let builderId = 'copy';
-        if (window.buildSystem && window.buildSystem.getBuilderIdForExtension) {
-          builderId = window.buildSystem.getBuilderIdForExtension(extension);
-        } else if (extension === '.sfx') {
-          builderId = 'sfx';
-        }
-
-  const fileObj = await fileManager.createAndSaveFile(storagePath, defaultContent, {
-          type: extension.substring(1), // Remove the dot
-          isNew: true,
-          builderId
-        });
-        
-        if (!fileObj) {
-          throw new Error('Failed to create file');
-        }
-        
-  console.log(`[RibbonToolbar] Created and saved new file: ${storagePath}`);
-        
-        // Add to project explorer structure (as a reference to the persisted file)
-        if (window.gameEditor && window.gameEditor.projectExplorer) {
-          console.log(`[RibbonToolbar] Adding file to project explorer...`);
-          if (typeof window.gameEditor.projectExplorer.addFileToProject === 'function') {
-            window.gameEditor.projectExplorer.addFileToProject({
-              name: displayFilename,
-              path: fullUiPath,
-              isNewFile: true
-            }, uiFolder, true); // skipAutoOpen = true, we'll open manually
-            console.log(`[RibbonToolbar] File added to project explorer`);
-          } else {
-            console.error(`[RibbonToolbar] addFileToProject method not found`);
-          }
-        }
-        
-        // Now open from storage
-        if (window.gameEditor && window.gameEditor.tabManager) {
-          console.log(`[RibbonToolbar] Opening file from storage...`);
-          await window.gameEditor.tabManager.openInTab(fullUiPath, editorInfo);
-        }
-        
-      } catch (error) {
-        console.error(`[RibbonToolbar] Failed to create file: ${error.message}`);
-        alert(`Failed to create file: ${error.message}`);
-        return;
       }
       
     } catch (error) {
@@ -384,9 +282,19 @@ class RibbonToolbar {
   
   setupButtons() {
   // File operations
-  this.setupButton('saveBtn', () => {
-      if (window.gameEditor) {
-        window.gameEditor.saveActiveEditor();
+  this.setupButton('saveBtn', async () => {
+      if (window.gameEditor && window.gameEditor.tabManager) {
+        try {
+          const savedCount = await window.gameEditor.tabManager.saveAllOpenTabs();
+          if (savedCount > 0) {
+            window.gameEditor.updateStatus(`Saved ${savedCount} file(s)`, 'success');
+          } else {
+            window.gameEditor.updateStatus('No modified files to save', 'info');
+          }
+        } catch (error) {
+          console.error('[RibbonToolbar] Failed to save files:', error);
+          window.gameEditor.updateStatus(`Failed to save files: ${error.message}`, 'error');
+        }
       }
     });
     
@@ -569,19 +477,40 @@ class RibbonToolbar {
   }
   
   updateSaveButton() {
-    // Update save button based on whether there's an active editor
-    const hasActiveEditor = window.gameEditor && 
-                           window.gameEditor.tabManager && 
-                           window.gameEditor.tabManager.activeTabId;
+    // Update save button based on whether there are any modified tabs
+    let hasModifiedTabs = false;
     
-    this.updateButtonState('saveBtn', hasActiveEditor);
+    if (window.gameEditor && window.gameEditor.tabManager) {
+      const tabManager = window.gameEditor.tabManager;
+      
+      // Check if preview tab is modified
+      if (tabManager.previewViewer && 
+          typeof tabManager.previewViewer.isModified === 'function' && 
+          tabManager.previewViewer.isModified()) {
+        hasModifiedTabs = true;
+      }
+      
+      // Check dedicated tabs for modifications
+      if (!hasModifiedTabs) {
+        for (const [tabId, tabInfo] of tabManager.dedicatedTabs.entries()) {
+          if (tabInfo.viewer && 
+              typeof tabInfo.viewer.isModified === 'function' && 
+              tabInfo.viewer.isModified()) {
+            hasModifiedTabs = true;
+            break;
+          }
+        }
+      }
+    }
+    
+    this.updateButtonState('saveBtn', hasModifiedTabs);
     
     const saveBtn = this.buttons['saveBtn'];
     if (saveBtn) {
-      if (hasActiveEditor) {
-        saveBtn.title = 'Save Active File';
+      if (hasModifiedTabs) {
+        saveBtn.title = 'Save All Modified Files';
       } else {
-        saveBtn.title = 'No active file to save';
+        saveBtn.title = 'No modified files to save';
       }
     }
   }

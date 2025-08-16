@@ -291,7 +291,8 @@ class ComponentRegistry {
   // Create editor instance
   createEditor(editorInfo, file, path, isNewResource = false, options = {}) {
     const { editorClass } = editorInfo;
-    return new editorClass(file, path, isNewResource, options);
+    // Use new constructor signature: (fileObject, readOnly)
+    return new editorClass(file, options.readOnly || false);
   }
 
   // Create viewer instance

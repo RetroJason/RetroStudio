@@ -43,8 +43,8 @@ class TabManager {
     // Hide preview tab by default
     this._hidePreviewByDefault();
     
-    // Start monitoring dirty state
-    this._startDirtyStateMonitoring();
+    // Setup event-driven dirty state tracking
+    this._setupEventListeners();
     
     console.log('[TabManager] Initialized');
   }
@@ -1089,13 +1089,9 @@ class TabManager {
         // Create editor instance
         const isNewResource = fileObj.isNew || false;
         console.log(`[TabManager] Creating editor with path: ${fullPath}, isNewResource: ${isNewResource}`);
-        let editor;
-        try {
-          editor = new Component(fullPath, isNewResource);
-        } catch (e1) {
-          console.warn('[TabManager] (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
-          editor = new Component(fileObj, fullPath, isNewResource);
-        }
+        
+        // Clean constructor: (fileObject, readOnly)
+        const editor = new Component(fileObj, false); // Never read-only from tab manager
 
         return {
           viewer: editor,
@@ -1600,7 +1596,10 @@ class TabManager {
     
     // Update dedicated tabs
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-      if (tabInfo.fullPath === oldPath) {
+      // Handle new files that were saved (oldPath might be 'untitled' or null)
+      const isNewFileSave = (oldPath === 'untitled' || oldPath === null) && tabInfo.fullPath === null && tabInfo.fileName === 'Untitled';
+      
+      if (tabInfo.fullPath === oldPath || isNewFileSave) {
         // Update the tab info
         tabInfo.fullPath = newPath;
         
@@ -1617,6 +1616,16 @@ class TabManager {
             const readOnlyIndicator = tabInfo.isReadOnly ? ' 🔒' : '';
             titleElement.textContent = newFileName + readOnlyIndicator;
           }
+        } else {
+          // For openNewEditor tabs, find the tab element by tabId
+          const tabElement = this.tabBar.querySelector(`[data-tab-id="${tabId}"]`);
+          if (tabElement) {
+            const titleElement = tabElement.querySelector('.tab-title');
+            if (titleElement && newFileName) {
+              const readOnlyIndicator = tabInfo.isReadOnly ? ' 🔒' : '';
+              titleElement.textContent = newFileName + readOnlyIndicator;
+            }
+          }
         }
         
         // Notify the viewer of the path change if it supports it
@@ -1629,6 +1638,11 @@ class TabManager {
         // If this is the active tab, update project explorer highlighting
         if (this.activeTabId === tabId) {
           this._notifyTabFocus(tabId);
+        }
+        
+        // Mark the tab as clean since it was just saved
+        if (isNewFileSave) {
+          this.markTabClean(tabId);
         }
       }
     }
@@ -1672,6 +1686,11 @@ class TabManager {
     if (tabElement && !tabElement.classList.contains('dirty')) {
       console.log(`[TabManager] Marking tab ${tabId} as dirty`);
       tabElement.classList.add('dirty');
+      
+      // Update save button state
+      if (window.gameEditor) {
+        window.gameEditor.updateSaveButtonState();
+      }
     }
   }
   
@@ -1680,6 +1699,42 @@ class TabManager {
     if (tabElement && tabElement.classList.contains('dirty')) {
       console.log(`[TabManager] Marking tab ${tabId} as clean`);
       tabElement.classList.remove('dirty');
+      
+      // Update save button state
+      if (window.gameEditor) {
+        window.gameEditor.updateSaveButtonState();
+      }
+    }
+  }
+
+  updateTabName(tabId, newFileName, newFullPath = null) {
+    console.log(`[TabManager] Updating tab ${tabId} name to: ${newFileName}`);
+    
+    // Update tab element
+    const tabElement = this.tabBar.querySelector(`[data-tab-id="${tabId}"]`);
+    if (tabElement) {
+      const titleSpan = tabElement.querySelector('.tab-title');
+      if (titleSpan) {
+        const readOnlyIndicator = tabElement.classList.contains('readonly-tab') ? ' 🔒' : '';
+        titleSpan.textContent = `${newFileName}${readOnlyIndicator}`;
+      }
+    }
+    
+    // Update stored tab info
+    const tabInfo = this.dedicatedTabs.get(tabId);
+    if (tabInfo) {
+      tabInfo.fileName = newFileName;
+      if (newFullPath) {
+        tabInfo.fullPath = newFullPath;
+      }
+    }
+    
+    // Update preview tab if it's the active one
+    if (tabId === 'preview') {
+      this.previewFileName = newFileName;
+      if (newFullPath) {
+        this.previewPath = newFullPath;
+      }
     }
   }
   
@@ -1753,30 +1808,32 @@ class TabManager {
     }
   }
   
-  // Periodic check for dirty state changes
-  _startDirtyStateMonitoring() {
-    if (this._dirtyStateInterval) {
-      clearInterval(this._dirtyStateInterval);
-    }
-    
-    this._dirtyStateInterval = setInterval(() => {
-      // Check all tabs for dirty state changes
-      if (this.previewViewer) {
-        this.updateTabDirtyState(this.previewViewer);
-      }
-      
-      for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-        if (tabInfo.viewer) {
-          this.updateTabDirtyState(tabInfo.viewer);
+  // Event-driven dirty state tracking setup
+  _setupEventListeners() {
+    // Listen for content change events from editors
+    if (window.eventBus) {
+      window.eventBus.on('editor.content.changed', (data) => {
+        if (data.editor) {
+          this.notifyContentChanged(data.editor);
         }
-      }
-    }, 1000); // Check every second
+      });
+      
+      window.eventBus.on('editor.content.saved', (data) => {
+        if (data.editor) {
+          this.notifyContentSaved(data.editor);
+        }
+      });
+      
+      console.log('[TabManager] Event-driven dirty state tracking initialized');
+    } else {
+      console.warn('[TabManager] EventBus not available for dirty state tracking');
+    }
   }
   
-  _stopDirtyStateMonitoring() {
-    if (this._dirtyStateInterval) {
-      clearInterval(this._dirtyStateInterval);
-      this._dirtyStateInterval = null;
+  _stopEventListeners() {
+    if (window.eventBus) {
+      window.eventBus.off('editor.content.changed');
+      window.eventBus.off('editor.content.saved');
     }
   }
   
@@ -1973,6 +2030,69 @@ class TabManager {
     // Use the component registry's method to find editor by file extension
     const tempPath = `temp${ext}`; // Create a temporary path with the extension
     return componentRegistry.getEditorForFile(tempPath);
+  }
+
+  // Open a new editor with no file object - let editor handle filename prompting
+  async openNewEditor(editorInfo) {
+    console.log(`[TabManager] Opening new editor: ${editorInfo.displayName}`);
+    
+    // Create editor with no file object (new file mode)
+    const Component = editorInfo.editorClass;
+    const editor = new Component(); // No arguments = new file mode
+    
+    // Generate a temporary tab ID
+    const tabId = `new-${Date.now()}`;
+    
+    // Create tab element
+    const tabElement = document.createElement('div');
+    tabElement.className = 'tab';
+    tabElement.dataset.tabId = tabId;
+    tabElement.innerHTML = `
+      <span class="tab-title">Untitled</span>
+      <span class="tab-close" data-action="close">×</span>
+    `;
+    
+    // Create content pane
+    const tabPane = document.createElement('div');
+    tabPane.className = 'tab-pane';
+    tabPane.dataset.tabId = tabId;
+    tabPane.appendChild(editor.getElement());
+    
+    // Add to DOM
+    this.tabBar.appendChild(tabElement);
+    this.tabContentArea.appendChild(tabPane);
+    
+    // Store tab info
+    this.dedicatedTabs.set(tabId, {
+      viewer: editor,
+      fileName: 'Untitled',
+      fullPath: null,
+      isReadOnly: false,
+      componentInfo: editorInfo
+    });
+    
+    // Mark new file as dirty immediately since it has unsaved content
+    this.markTabDirty(tabId);
+    
+    // Also mark the editor as dirty to ensure consistency
+    if (editor && typeof editor.markDirty === 'function') {
+      // Use setTimeout to ensure the editor is fully initialized
+      setTimeout(() => {
+        editor.markDirty();
+        console.log(`[TabManager] Marked new editor as dirty`);
+      }, 0);
+    }
+    
+    // Switch to the new tab
+    this.switchToTab(tabId);
+    
+    console.log(`[TabManager] Created new editor tab: ${tabId}`);
+  }
+  
+  // Cleanup method
+  destroy() {
+    this._stopEventListeners();
+    console.log('[TabManager] Destroyed and cleaned up event listeners');
   }
 }
 
