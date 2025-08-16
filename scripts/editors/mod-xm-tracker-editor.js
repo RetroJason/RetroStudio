@@ -129,13 +129,24 @@ class ModXmTrackerEditor extends EditorBase {
         }
       } else if (msg.type === 'bt-load-invoked') {
         console.log(`${this._logPrefix} BassoonTracker loaded new file internally:`, msg.url);
-        this._handleInternalFileLoad(msg.url);
-        // Mark that a new song has been loaded
-        this._hasLoadedNewSong = true;
-        // Extract filename from URL for display
+        
+        // Only handle internal loads (not FileIOService buffer loads)
+        if (!msg.url || !msg.url.startsWith('buffer://')) {
+          this._handleInternalFileLoad(msg.url);
+          // Mark that a new song has been loaded
+          this._hasLoadedNewSong = true;
+        }
+        
+        // Extract filename from URL for display (for all loads)
         if (msg.url) {
-          const urlParts = msg.url.split('/');
-          this._currentFilename = urlParts[urlParts.length - 1];
+          if (msg.url.startsWith('buffer://')) {
+            // For buffer loads, use the filename from the message or extract from buffer URL
+            this._currentFilename = msg.filename || msg.url.substring(9); // Remove 'buffer://'
+          } else {
+            // For regular URLs, extract filename from path
+            const urlParts = msg.url.split('/');
+            this._currentFilename = urlParts[urlParts.length - 1];
+          }
         }
       } else if (msg.type === 'save-to-project') {
         console.log(`${this._logPrefix} Save to project requested:`, msg.filename);
@@ -469,7 +480,7 @@ class ModXmTrackerEditor extends EditorBase {
     this._updateTabForNewFile(newFilename, url);
   }
 
-  _handleSaveToProject(filename, dataArray, mimeType) {
+  async _handleSaveToProject(filename, dataArray, mimeType) {
     console.log(`${this._logPrefix} handling save to project:`, { filename, dataLength: dataArray?.length, mimeType });
     
     try {
@@ -485,11 +496,18 @@ class ModXmTrackerEditor extends EditorBase {
         if (suggestedName.includes('/')) {
           suggestedName = suggestedName.split('/').pop();
         }
+        // Strip URL parameters and query strings for cleaner suggestion
+        if (suggestedName.includes('?')) {
+          suggestedName = suggestedName.split('?')[0];
+        }
+        if (suggestedName.includes('#')) {
+          suggestedName = suggestedName.split('#')[0];
+        }
         if (suggestedName.includes('.')) {
           suggestedName = suggestedName.substring(0, suggestedName.lastIndexOf('.'));
         }
         
-        const finalFilename = prompt('Save as:', suggestedName);
+        const finalFilename = await window.ModalUtils.showPrompt('Save as:', 'Enter filename:', suggestedName);
         if (!finalFilename) {
           console.log(`${this._logPrefix} save cancelled by user`);
           return;
@@ -508,7 +526,8 @@ class ModXmTrackerEditor extends EditorBase {
         
         // Check if file exists
         if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
-          if (!confirm(`File "${fullFilename}" already exists. Overwrite?`)) {
+          const shouldOverwrite = await window.ModalUtils.showConfirm('File Exists', `File "${fullFilename}" already exists. Overwrite?`);
+          if (!shouldOverwrite) {
             console.log(`${this._logPrefix} overwrite cancelled by user`);
             return;
           }
@@ -670,7 +689,17 @@ class ModXmTrackerEditor extends EditorBase {
       // If this is a temporary file (starts with temp://) prompt for filename
       if (this.path.startsWith('temp://')) {
         const currentFilename = this._currentFilename || 'untitled.mod';
-        const filename = prompt('Save as:', currentFilename);
+        
+        // Strip URL parameters and query strings for cleaner suggestion
+        let cleanFilename = currentFilename;
+        if (cleanFilename.includes('?')) {
+          cleanFilename = cleanFilename.split('?')[0];
+        }
+        if (cleanFilename.includes('#')) {
+          cleanFilename = cleanFilename.split('#')[0];
+        }
+        
+        const filename = await window.ModalUtils.showPrompt('Save as:', 'Enter filename:', cleanFilename);
         if (!filename) {
           return; // User cancelled
         }
@@ -688,7 +717,8 @@ class ModXmTrackerEditor extends EditorBase {
         
         // Check if file exists
         if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
-          if (!confirm(`File "${fullFilename}" already exists. Overwrite?`)) {
+          const shouldOverwrite = await window.ModalUtils.showConfirm('File Exists', `File "${fullFilename}" already exists. Overwrite?`);
+          if (!shouldOverwrite) {
             return; // User cancelled overwrite
           }
         }

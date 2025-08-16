@@ -333,6 +333,45 @@
   margin: 4px 0;
 }
 
+/* Context menu submenu styles */
+.context-submenu {
+  position: relative;
+}
+
+.submenu-trigger::after {
+  content: '▶';
+  margin-left: auto;
+  font-size: 10px;
+}
+
+.submenu-content {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background: #2d2d30;
+  border: 1px solid #555555;
+  border-radius: 4px;
+  padding: 4px 0;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  z-index: 1001;
+  min-width: 180px;
+  color: #cccccc;
+  display: none;
+}
+
+.context-submenu:hover .submenu-content {
+  display: block;
+}
+
+.context-item.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.context-item.disabled:hover {
+  background-color: transparent;
+}
+
 /* Drag and drop styles */
 .drop-zone {
   border: 2px dashed #555555;

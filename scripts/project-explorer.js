@@ -256,7 +256,15 @@ class ProjectExplorer {
               fullPath = currentPath.replace(/^Build\//, 'build/');
             }
             console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", openPath="${fullPath}"`);
-            window.tabManager.openInPreview(fullPath, data.file, { isReadOnly });
+            
+            // Get appropriate component for preview (prefer viewer for single-click)
+            const componentInfo = this._getComponentForFile(fullPath, false);
+            if (componentInfo) {
+              window.tabManager.openInPreview(fullPath, componentInfo, { isReadOnly });
+            } else {
+              console.warn(`[ProjectExplorer] No component found for ${fullPath}, using legacy method`);
+              window.tabManager.openInPreview(fullPath, data.file, { isReadOnly });
+            }
           }
         }, 200); // 200ms delay to detect double-click
       });
@@ -281,8 +289,15 @@ class ProjectExplorer {
           }
           
           console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fullPath="${fullPath}"`);
-          // TabManager now loads from storage, no need to pass file object
-          window.tabManager.openInTab(fullPath, null, { isReadOnly });
+          
+          // Get appropriate component for tab (prefer editor for double-click)
+          const componentInfo = this._getComponentForFile(fullPath, true);
+          if (componentInfo) {
+            window.tabManager.openInTab(fullPath, componentInfo, { isReadOnly });
+          } else {
+            console.warn(`[ProjectExplorer] No component found for ${fullPath}, using legacy method`);
+            window.tabManager.openInTab(fullPath, null, { isReadOnly });
+          }
         } else if (data.type === 'folder') {
           // If double-clicking a top-level project root, also set focus
           if (!currentPath.includes('/')) {
@@ -466,25 +481,36 @@ class ProjectExplorer {
     const type = this.selectedNode.dataset.type;
     
     // Show/hide menu items based on selection
-  const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
+    const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
     const newFolderItem = this.contextMenu.querySelector('[data-action="newfolder"]');
     const renameItem = this.contextMenu.querySelector('[data-action="rename"]');
     const deleteItem = this.contextMenu.querySelector('[data-action="delete"]');
-  const closeProjectItem = this.contextMenu.querySelector('[data-action="closeproject"]');
-  const setActiveItem = this.contextMenu.querySelector('[data-action="setactive"]');
+    const closeProjectItem = this.contextMenu.querySelector('[data-action="closeproject"]');
+    const setActiveItem = this.contextMenu.querySelector('[data-action="setactive"]');
+    const openWithItem = this.contextMenu.querySelector('[data-action="openwith"]');
     
-  // Upload and New Folder only available for folders
-  uploadItem.style.display = type === 'folder' ? 'block' : 'none';
-  newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
+    // Upload and New Folder only available for folders
+    uploadItem.style.display = type === 'folder' ? 'block' : 'none';
+    newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
     
-  // Rename and Delete available for files and non-root folders, but not for build files/folders
-  const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: null, rest: path };
-  const rest = pp.rest || '';
-  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-  const isProjectRoot = !rest; // path like 'ProjectName'
-  const isRootFolder = isProjectRoot || rest === sourcesRoot || rest === buildRoot;
-  const isBuildFile = rest.startsWith(buildRoot + '/');
+    // "Open with" only available for files
+    if (openWithItem) {
+      openWithItem.style.display = type === 'file' ? 'block' : 'none';
+      
+      // Populate viewer submenu for files
+      if (type === 'file') {
+        this.populateViewerSubmenu(path);
+      }
+    }
+    
+    // Rename and Delete available for files and non-root folders, but not for build files/folders
+    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: null, rest: path };
+    const rest = pp.rest || '';
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const isProjectRoot = !rest; // path like 'ProjectName'
+    const isRootFolder = isProjectRoot || rest === sourcesRoot || rest === buildRoot;
+    const isBuildFile = rest.startsWith(buildRoot + '/');
     const canModify = !isRootFolder && !isBuildFile;
     
     if (type === 'file') {
@@ -506,7 +532,7 @@ class ProjectExplorer {
     }
     
     // Check if any menu items are visible before showing the context menu
-  const visibleItems = [uploadItem, newFolderItem, renameItem, deleteItem, closeProjectItem, setActiveItem].filter(item => 
+    const visibleItems = [uploadItem, newFolderItem, openWithItem, renameItem, deleteItem, closeProjectItem, setActiveItem].filter(item => 
       item && item.style.display !== 'none'
     );
     
@@ -517,6 +543,98 @@ class ProjectExplorer {
       this.contextMenu.style.top = `${y}px`;
     } else {
       console.log('[ProjectExplorer] No context menu items available for this selection');
+    }
+  }
+
+  populateViewerSubmenu(filePath) {
+    const submenu = document.getElementById('viewerSubmenu');
+    if (!submenu) {
+      console.warn('[ProjectExplorer] Viewer submenu element not found');
+      return;
+    }
+    
+    // Clear existing items
+    submenu.innerHTML = '';
+    
+    // Get component registry
+    const componentRegistry = window.serviceContainer?.get('componentRegistry');
+    if (!componentRegistry) {
+      console.warn('[ProjectExplorer] ComponentRegistry not available for viewer submenu');
+      return;
+    }
+    
+    console.log(`[ProjectExplorer] Populating viewer submenu for: ${filePath}`);
+    
+    // Get available editors and viewers for this file
+    const editor = componentRegistry.getEditorForFile(filePath);
+    const viewer = componentRegistry.getViewerForFile(filePath);
+    const fileExt = this.getFileExtension(filePath);
+    
+    console.log(`[ProjectExplorer] File extension: ${fileExt}, Default editor:`, editor?.displayName, 'Default viewer:', viewer?.displayName);
+    
+    let hasItems = false;
+    
+    // Add editor option (if available)
+    if (editor) {
+      const editorItem = document.createElement('div');
+      editorItem.className = 'context-item';
+      editorItem.innerHTML = `${editor.icon} Edit with ${editor.displayName}`;
+      editorItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log(`[ProjectExplorer] Selected editor: ${editor.displayName}`);
+        this.openFileWithEditor(filePath, editor);
+        this.hideContextMenu();
+      });
+      submenu.appendChild(editorItem);
+      hasItems = true;
+    }
+    
+    // Add ALL available viewers (not just the default one)
+    const allViewers = componentRegistry.getAllViewers();
+    console.log(`[ProjectExplorer] All available viewers:`, allViewers.map(v => `${v.displayName} (${v.extensions.join(', ')})`));
+    
+    for (const viewerInfo of allViewers) {
+      // Check if this viewer supports this file type
+      const supportsFile = viewerInfo.extensions.includes('*') || viewerInfo.extensions.includes(fileExt);
+      console.log(`[ProjectExplorer] Checking viewer ${viewerInfo.displayName}: supports ${fileExt}? ${supportsFile}`);
+      
+      if (!supportsFile) continue;
+      
+      const viewerItem = document.createElement('div');
+      viewerItem.className = 'context-item';
+      viewerItem.innerHTML = `${viewerInfo.icon} View with ${viewerInfo.displayName}`;
+      viewerItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log(`[ProjectExplorer] Selected viewer: ${viewerInfo.displayName}`);
+        this.openFileWithViewer(filePath, viewerInfo);
+        this.hideContextMenu();
+      });
+      submenu.appendChild(viewerItem);
+      hasItems = true;
+    }
+    
+    if (!hasItems) {
+      const noItems = document.createElement('div');
+      noItems.className = 'context-item disabled';
+      noItems.innerHTML = 'No viewers available';
+      submenu.appendChild(noItems);
+    }
+    
+    console.log(`[ProjectExplorer] Added ${submenu.children.length} items to viewer submenu`);
+  }
+
+  openFileWithEditor(filePath, editorInfo) {
+    console.log(`[ProjectExplorer] Opening ${filePath} with editor: ${editorInfo.displayName}`, editorInfo);
+    if (window.tabManager) {
+      window.tabManager.openInTab(filePath, editorInfo);
+    }
+  }
+
+  openFileWithViewer(filePath, viewerInfo) {
+    console.log(`[ProjectExplorer] Opening ${filePath} with viewer: ${viewerInfo.displayName}`, viewerInfo);
+    if (window.tabManager) {
+      // Open viewers in dedicated tabs so they don't get overridden by preview
+      window.tabManager.openInTab(filePath, viewerInfo);
     }
   }
   
@@ -676,47 +794,57 @@ class ProjectExplorer {
     if (!files || files.length === 0) return;
 
     // Check if there's an active project before allowing file drops
+    // Exception: .rwp files should be allowed even without an active project (they create projects)
     const activeProject = this.getFocusedProjectName();
     if (!activeProject) {
-      console.log('[ProjectExplorer] No active project - blocking file drop');
-      // Show a visual indication that the drop was blocked
-      const dropOverlay = document.createElement('div');
-      dropOverlay.className = 'drop-blocked-overlay';
-      dropOverlay.innerHTML = `
-        <div class="drop-blocked-message">
-          <div class="warning-icon">⚠</div>
-          <p>Please create or open a project first</p>
-          <small>Files can only be added to an active project</small>
-        </div>
-      `;
-      dropOverlay.style.cssText = `
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
-        background: rgba(0,0,0,0.7); z-index: 10000; 
-        display: flex; align-items: center; justify-content: center;
-        color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      `;
-      dropOverlay.querySelector('.drop-blocked-message').style.cssText = `
-        background: #dc3545; padding: 2rem; border-radius: 8px; text-align: center;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3); max-width: 400px;
-      `;
-      dropOverlay.querySelector('.warning-icon').style.cssText = `
-        font-size: 3rem; margin-bottom: 1rem; display: block;
-      `;
-      dropOverlay.querySelector('p').style.cssText = `
-        margin: 0 0 0.5rem 0; font-size: 1.2rem; font-weight: 600;
-      `;
-      dropOverlay.querySelector('small').style.cssText = `
-        opacity: 0.8; font-size: 0.9rem;
-      `;
+      // Check if any files are .rwp files
+      const hasRwpFile = Array.from(files).some(file => 
+        file.name && file.name.toLowerCase().endsWith('.rwp')
+      );
       
-      document.body.appendChild(dropOverlay);
-      setTimeout(() => {
-        dropOverlay.style.opacity = '0';
-        dropOverlay.style.transition = 'opacity 0.3s ease';
-        setTimeout(() => dropOverlay.remove(), 300);
-      }, 2000);
-      
-      return;
+      if (!hasRwpFile) {
+        console.log('[ProjectExplorer] No active project - blocking file drop (non-RWP files)');
+        // Show a visual indication that the drop was blocked
+        const dropOverlay = document.createElement('div');
+        dropOverlay.className = 'drop-blocked-overlay';
+        dropOverlay.innerHTML = `
+          <div class="drop-blocked-message">
+            <div class="warning-icon">⚠</div>
+            <p>Please create or open a project first</p>
+            <small>Files can only be added to an active project<br>(except .rwp project files)</small>
+          </div>
+        `;
+        dropOverlay.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+          background: rgba(0,0,0,0.7); z-index: 10000; 
+          display: flex; align-items: center; justify-content: center;
+          color: white; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        `;
+        dropOverlay.querySelector('.drop-blocked-message').style.cssText = `
+          background: #dc3545; padding: 2rem; border-radius: 8px; text-align: center;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3); max-width: 400px;
+        `;
+        dropOverlay.querySelector('.warning-icon').style.cssText = `
+          font-size: 3rem; margin-bottom: 1rem; display: block;
+        `;
+        dropOverlay.querySelector('p').style.cssText = `
+          margin: 0 0 0.5rem 0; font-size: 1.2rem; font-weight: 600;
+        `;
+        dropOverlay.querySelector('small').style.cssText = `
+          opacity: 0.8; font-size: 0.9rem;
+        `;
+        
+        document.body.appendChild(dropOverlay);
+        setTimeout(() => {
+          dropOverlay.style.opacity = '0';
+          dropOverlay.style.transition = 'opacity 0.3s ease';
+          setTimeout(() => dropOverlay.remove(), 300);
+        }, 2000);
+        
+        return;
+      } else {
+        console.log('[ProjectExplorer] No active project but RWP file detected - allowing drop for project import');
+      }
     }
 
     // Special-case: .rwp archives should trigger project import, not add as binary
@@ -1868,6 +1996,57 @@ class ProjectExplorer {
     this.renderTree();
 
     try { window.eventBus?.emit?.('project.closed', { project: projectName, removed: true }); } catch (_) {}
+  }
+
+  // Helper method to get appropriate component for a file
+  _getComponentForFile(filePath, preferEditor = false) {
+    const componentRegistry = window.serviceContainer?.get('componentRegistry');
+    if (!componentRegistry) {
+      console.warn('[ProjectExplorer] ComponentRegistry not available');
+      return null;
+    }
+
+    // Get file extension
+    const fileName = filePath.split('/').pop() || filePath.split('\\').pop();
+    const extension = fileName.includes('.') ? '.' + fileName.split('.').pop().toLowerCase() : '';
+    
+    console.log(`[ProjectExplorer] Getting component for file: ${fileName}, extension: ${extension}, preferEditor: ${preferEditor}`);
+
+    let component = null;
+    
+    if (preferEditor) {
+      // Try to get an editor first
+      const editors = componentRegistry.getComponentsForExtension(extension).filter(c => c.type === 'editor');
+      component = editors.length > 0 ? editors[0] : null;
+      console.log(`[ProjectExplorer] Found ${editors.length} editors for ${extension}`);
+    }
+    
+    if (!component) {
+      // Get all compatible components (editors and viewers)
+      const allComponents = componentRegistry.getComponentsForExtension(extension);
+      console.log(`[ProjectExplorer] Found ${allComponents.length} total components for ${extension}:`, allComponents.map(c => c.name));
+      
+      // Prefer editors over viewers for double-click
+      const editors = allComponents.filter(c => c.type === 'editor');
+      const viewers = allComponents.filter(c => c.type === 'viewer');
+      
+      if (preferEditor && editors.length > 0) {
+        component = editors[0];
+      } else if (editors.length > 0) {
+        // Always prefer editors if available
+        component = editors[0];
+      } else if (viewers.length > 0) {
+        component = viewers[0];
+      }
+    }
+
+    if (component) {
+      console.log(`[ProjectExplorer] Selected component: ${component.name} (${component.type})`);
+    } else {
+      console.warn(`[ProjectExplorer] No component found for ${extension}`);
+    }
+
+    return component;
   }
 }
 

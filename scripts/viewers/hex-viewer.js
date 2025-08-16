@@ -210,5 +210,5 @@ console.log('[HexViewer] Class exported to window.HexViewer');
 HexViewer.getFileExtensions = () => ['*'];
 HexViewer.getDisplayName = () => 'Hex Viewer';
 HexViewer.getIcon = () => '🔍';
-HexViewer.getPriority = () => 1; // low priority fallback
+HexViewer.getPriority = () => 1000; // very low priority fallback
 HexViewer.getCapabilities = () => ['binary-display'];

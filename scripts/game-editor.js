@@ -195,7 +195,7 @@ class GameEditor {
         console.log(`[GameEditor] Auto-opening file: ${file.name}`);
         // Ensure we pass full path including filename
         const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
-        await this.tabManager.openInTab(fullPath, file);
+        await this.tabManager.openInTab(fullPath, null); // Let tab manager auto-detect component
 
         // Only do tree operations if requested (i.e., not called from bulk file addition)
         if (doTreeOperations) {

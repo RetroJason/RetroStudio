@@ -108,10 +108,17 @@
     <div class="context-separator"></div>
     <div class="context-item" data-action="rename">✏️ Rename</div>
     <div class="context-item" data-action="delete">🗑️ Delete</div>
-  <div class="context-separator"></div>
-  <div class="context-item" data-action="setactive">📌 Set Active Project</div>
-  <div class="context-separator"></div>
-  <div class="context-item" data-action="closeproject">🔻 Close Project</div>
+    <div class="context-separator"></div>
+    <div class="context-submenu" data-action="openwith">
+      <div class="context-item submenu-trigger">👁️ Open with ▶</div>
+      <div class="submenu-content" id="viewerSubmenu">
+        <!-- Dynamically populated with available viewers/editors -->
+      </div>
+    </div>
+    <div class="context-separator"></div>
+    <div class="context-item" data-action="setactive">📌 Set Active Project</div>
+    <div class="context-separator"></div>
+    <div class="context-item" data-action="closeproject">🔻 Close Project</div>
   </div>
   
   <!-- Hidden file input for uploads -->
