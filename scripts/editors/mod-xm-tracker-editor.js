@@ -2,38 +2,48 @@
 // Uses iframe isolation for multiple instances while avoiding ArrayBuffer serialization issues
 
 class ModXmTrackerEditor extends EditorBase {
-  constructor(arg1, arg2 = false, arg3 = null) {
-    // Support signatures: (path, isNew) OR (fileRecord, path, isNew)
-    let fileRecord = null; let path = null; let isNewResource = false;
-    if (typeof arg1 === 'object' && arg1 && arg1.filename && typeof arg2 === 'string') {
-      fileRecord = arg1; path = arg2; isNewResource = !!arg3;
+  constructor(fileObject = null, readOnly = false) {
+    // Handle both old and new constructor patterns for transition period
+    if (arguments.length >= 2 && typeof arguments[0] === 'string') {
+      // Old pattern: constructor(path, isNewResource, options)
+      const path = arguments[0];
+      const isNewResource = arguments[1];
+      // Convert to new pattern - create a file object if we have a path
+      const convertedFileObject = path ? { path: path } : null;
+      super(convertedFileObject, readOnly);
+      // For old pattern compatibility, we may need to override some base class behavior
+    } else if (arguments.length >= 2 && typeof arguments[0] === 'object' && typeof arguments[1] === 'string') {
+      // Old pattern: constructor(fileRecord, path, isNewResource)
+      const fileRecord = arguments[0];
+      const path = arguments[1]; 
+      const isNewResource = arguments[2];
+      super(fileRecord, readOnly);
     } else {
-      path = arg1; isNewResource = !!arg2;
+      // New pattern: constructor(fileObject, readOnly)
+      super(fileObject, readOnly);
     }
     
-    // MUST call super() first before accessing 'this'
-    super(path, isNewResource);
-    
-    // Initialize instance variables
+    // Initialize instance variables  
     this._container = null;
     this._iframe = null;
     this._logPrefix = '[ModXmTrackerEditor]';
     this._readyReceived = false;
     this._initialLoadSent = false; // Track if initial file/demo load has been sent
-    this._initialFileRecord = fileRecord;
+    this._initialFileRecord = fileObject;
     this._id = 'mod-xm-tracker-' + Math.random().toString(36).substring(2);
     this._hasLoadedNewSong = false; // Track when new songs are loaded
     this._currentFilename = null; // Current loaded song filename
     
     try { 
       console.log(this._logPrefix, 'constructor completed', { 
-        path, isNewResource, hasFileRecord: !!fileRecord, id: this._id 
+        path: this.path, isNewResource: this.isNewResource, hasFileRecord: !!this.file, id: this._id 
       }); 
     } catch(_) {}
   }
 
   // Metadata
   static getFileExtensions() { return ['.mod', '.xm']; }
+  static getFileExtension() { return '.mod'; }
   static getDisplayName() { return 'MOD/XM Tracker'; }
   static getIcon() { return '🎵'; }
   static getCreateIcon() { return '🎵'; }
@@ -299,7 +309,7 @@ class ModXmTrackerEditor extends EditorBase {
     if (isExistingFile) {
       // Load existing file via FileIOService
       console.log(`${this._logPrefix} Loading existing file from path: ${this.path}`);
-      const filename = this._initialFileRecord?.filename || this.path.split('/').pop() || 'untitled.mod';
+      const filename = this._initialFileRecord?.filename || (this.path ? this.path.split('/').pop() : null) || 'untitled.mod';
       try {
         this._iframe.contentWindow.postMessage({
           type: 'load-file-from-service',
@@ -487,8 +497,8 @@ class ModXmTrackerEditor extends EditorBase {
       // Convert data array back to Uint8Array
       const content = new Uint8Array(dataArray);
       
-      // For temporary files OR when loading a new song, always prompt for filename
-      if (this.path.startsWith('temp://') || this._hasLoadedNewSong) {
+      // For temporary files OR when loading a new song OR for new files, always prompt for filename
+      if (!this.path || this.path.startsWith('temp://') || this._hasLoadedNewSong) {
         // Use the current loaded filename as suggestion, or the passed filename
         let suggestedName = this._currentFilename || filename || 'song.mod';
         
@@ -503,20 +513,35 @@ class ModXmTrackerEditor extends EditorBase {
         if (suggestedName.includes('#')) {
           suggestedName = suggestedName.split('#')[0];
         }
+        // Remove existing extension for cleaner prompt
         if (suggestedName.includes('.')) {
           suggestedName = suggestedName.substring(0, suggestedName.lastIndexOf('.'));
         }
         
-        const finalFilename = await window.ModalUtils.showPrompt('Save as:', 'Enter filename:', suggestedName);
-        if (!finalFilename) {
+        // Use the centralized save dialog for consistency
+        const defaultFolder = this.constructor.getDefaultFolder();
+        const extension = this._getCorrectFileExtension();
+        
+        const result = await window.ModalUtils.showForm('Save MOD File', [
+          {
+            name: 'filename',
+            label: `Filename (${extension})`,
+            type: 'text',
+            value: suggestedName,
+            required: true,
+            hint: 'Enter filename without extension'
+          }
+        ]);
+        
+        if (!result) {
           console.log(`${this._logPrefix} save cancelled by user`);
           return;
         }
         
+        const finalFilename = result.filename;
+        
         // Check if file exists and prompt for overwrite
         const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-        const defaultFolder = this.constructor.getDefaultFolder();
-        const extension = finalFilename.includes('.') ? '' : '.mod'; // Add .mod if no extension
         const fullFilename = finalFilename + extension;
         
         const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
@@ -683,62 +708,38 @@ class ModXmTrackerEditor extends EditorBase {
     return new Uint8Array(0);
   }
 
+  // Determine the correct file extension based on current file
+  _getCorrectFileExtension() {
+    // If we have a current filename, use its extension
+    if (this._currentFilename) {
+      const currentExt = this._currentFilename.toLowerCase();
+      if (currentExt.endsWith('.xm')) {
+        return '.xm';
+      } else if (currentExt.endsWith('.mod')) {
+        return '.mod';
+      }
+    }
+    
+    // Default to .mod if we can't determine the format
+    return '.mod';
+  }
+
   // Override save to handle filename prompting for temporary files
   async save() {
     try {
-      // If this is a temporary file (starts with temp://) prompt for filename
-      if (this.path.startsWith('temp://')) {
-        const currentFilename = this._currentFilename || 'untitled.mod';
-        
-        // Strip URL parameters and query strings for cleaner suggestion
-        let cleanFilename = currentFilename;
-        if (cleanFilename.includes('?')) {
-          cleanFilename = cleanFilename.split('?')[0];
-        }
-        if (cleanFilename.includes('#')) {
-          cleanFilename = cleanFilename.split('#')[0];
+      // If this is a temporary file (starts with temp://) or new file (null path), use saveNewResource
+      if (!this.path || this.path.startsWith('temp://')) {
+        const content = await this._getBinaryContent();
+        if (!content) {
+          throw new Error('No content available to save');
         }
         
-        const filename = await window.ModalUtils.showPrompt('Save as:', 'Enter filename:', cleanFilename);
-        if (!filename) {
-          return; // User cancelled
-        }
-        
-        // Check if file exists and prompt for overwrite
-        const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-        const defaultFolder = this.constructor.getDefaultFolder();
-        const extension = filename.includes('.') ? '' : '.mod'; // Add .mod if no extension
-        const fullFilename = filename + extension;
-        
-        const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
-          window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
-          (project ? `${project}/${defaultFolder}` : defaultFolder);
-        const fullUiPath = `${uiFolder}/${fullFilename}`;
-        
-        // Check if file exists
-        if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
-          const shouldOverwrite = await window.ModalUtils.showConfirm('File Exists', `File "${fullFilename}" already exists. Overwrite?`);
-          if (!shouldOverwrite) {
-            return; // User cancelled overwrite
-          }
-        }
-        
-        // Convert to non-temporary path and mark as new resource
-        this.path = fullUiPath;
-        this.isNewResource = true;
-        this._currentFilename = fullFilename;
-        
-        // Update tab title to reflect new filename
-        const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
-        if (tabManager) {
-          const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
-          if (currentTabId && tabManager.updateTabTitle) {
-            tabManager.updateTabTitle(currentTabId, `🎵 ${fullFilename}`);
-          }
-        }
+        // Use the standardized save dialog from EditorBase
+        await this.saveNewResource(content);
+        return;
       }
       
-      // Call parent save method
+      // Call parent save method for existing files
       await super.save();
       
     } catch (error) {

@@ -31,38 +31,16 @@ class RibbonToolbar {
   waitForComponentRegistry() {
     console.log('[RibbonToolbar] Waiting for component registry...');
     
-    const trySetupButtons = () => {
-      if (window.serviceContainer && window.serviceContainer.has('componentRegistry')) {
-        console.log('[RibbonToolbar] Component registry found, setting up buttons');
-        this.componentRegistry = window.serviceContainer.get('componentRegistry');
+    // Use event-driven approach instead of polling
+    window.serviceContainer.waitForService('componentRegistry', 5000)
+      .then((componentRegistry) => {
+        console.log('[RibbonToolbar] Component registry is ready');
+        this.componentRegistry = componentRegistry;
         this.setupDynamicCreateButtons();
-        return true;
-      }
-      return false;
-    };
-
-    // Try immediately
-    if (!trySetupButtons()) {
-      // If not available, poll every 100ms for up to 5 seconds
-      let attempts = 0;
-      const maxAttempts = 50;
-      
-      const pollForRegistry = () => {
-        attempts++;
-        if (trySetupButtons()) {
-          console.log(`[RibbonToolbar] Component registry found after ${attempts} attempts`);
-          return;
-        }
-        
-        if (attempts < maxAttempts) {
-          setTimeout(pollForRegistry, 100);
-        } else {
-          console.error('[RibbonToolbar] Timeout waiting for component registry');
-        }
-      };
-      
-      setTimeout(pollForRegistry, 100);
-    }
+      })
+      .catch((error) => {
+        console.error('[RibbonToolbar] Timeout waiting for component registry:', error);
+      });
   }
 
   setupDynamicCreateButtons() {

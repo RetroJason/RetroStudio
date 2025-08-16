@@ -2,10 +2,10 @@
 // Base class for editors that manage multiple related files (source + generated outputs)
 
 class CompoundEditor extends EditorBase {
-  constructor(path, isNewResource = false, templateOptions = null) {
-    super(path, isNewResource, templateOptions);
+  constructor(fileObject = null, readOnly = false, templateOptions = null) {
+    super(fileObject, readOnly);
     
-    console.log(`[CompoundEditor] Constructor called for ${this.getFileName()}`);
+    console.log(`[CompoundEditor] Constructor called with NEW SIGNATURE`);
     
     // Define the files this editor manages
     // Override in subclass to define specific file relationships

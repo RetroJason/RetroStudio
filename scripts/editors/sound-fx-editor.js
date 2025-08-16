@@ -1,9 +1,12 @@
 // sound-fx-editor.js - Clean implementation with proper jsfxr integration
+// VERSION: 2.1 - Added Create New button and save prompting functionality
+
+console.log('[SoundFXEditor] Class definition loading - NEW CONSTRUCTOR VERSION 2.1');
 
 class SoundFXEditor extends CompoundEditor {
-  constructor(path, isNewResource = false) {
-    super(path, isNewResource);
-    console.log(`[SoundFXEditor] Constructor called for ${path}, isNewResource: ${isNewResource}`);
+  constructor(fileObject = null, readOnly = false) {
+    super(fileObject, readOnly);
+    console.log(`[SoundFXEditor] Constructor called with NEW SIGNATURE: ${fileObject} ${readOnly}`);
     
     this.audioContext = null;
     this.audioBuffer = null;
@@ -42,20 +45,26 @@ class SoundFXEditor extends CompoundEditor {
     this.parameters = { ...this.defaultParameters };
     this.isInitializing = true; // Flag to prevent operations during setup
     
-    // Load file data if not a new resource
-    if (!isNewResource) {
+    // Load file data if we have a file object
+    if (fileObject && !this.isNewResource) {
       this.loadFileData();
     }
   }
 
   async loadFileData() {
+    console.log(`[SoundFXEditor] loadFileData called with path: ${this.path}`);
     try {
       const fileManager = window.serviceContainer?.get('fileManager');
       if (fileManager) {
         const fileObj = await fileManager.loadFile(this.path);
         if (fileObj && fileObj.fileContent) {
+          console.log(`[SoundFXEditor] Loaded file content for: ${this.path}, content length: ${fileObj.fileContent.length}`);
           this.setFileData(fileObj.fileContent);
+        } else {
+          console.warn(`[SoundFXEditor] No file content found for: ${this.path}`);
         }
+      } else {
+        console.error('[SoundFXEditor] FileManager not available');
       }
     } catch (error) {
       console.error('[SoundFXEditor] Failed to load file data:', error);
@@ -63,9 +72,21 @@ class SoundFXEditor extends CompoundEditor {
   }
 
   setFileData(content) {
+    console.log(`[SoundFXEditor] setFileData called with content type: ${typeof content}`);
+    console.log(`[SoundFXEditor] setFileData content preview:`, typeof content === 'string' ? content.substring(0, 100) + '...' : content);
+    
+    // Check if content is base64 encoded - this should NEVER happen for SFX files
+    if (typeof content === 'string' && this.isBase64(content)) {
+      const error = new Error('SFX files must be JSON format, not base64. Base64 encoding is not supported for SFX files.');
+      console.error('[SoundFXEditor] REJECTED base64 content:', error.message);
+      console.error('[SoundFXEditor] Base64 content that was rejected:', content.substring(0, 200) + '...');
+      throw error;
+    }
+    
     try {
       let data;
       if (typeof content === 'string') {
+        // Parse as JSON directly - SFX files are always JSON
         data = JSON.parse(content);
       } else {
         data = content;
@@ -78,9 +99,21 @@ class SoundFXEditor extends CompoundEditor {
         this.parameters = { ...this.defaultParameters };
       }
     } catch (error) {
-      console.error('[SoundFXEditor] Failed to parse file data:', error);
-      this.parameters = { ...this.defaultParameters };
+      console.error('[SoundFXEditor] Failed to parse JSON file data:', error);
+      console.error('[SoundFXEditor] Content that failed to parse:', content);
+      throw new Error(`Invalid SFX file format: ${error.message}`);
     }
+  }
+
+  // Helper method to detect base64 content
+  isBase64(str) {
+    // Base64 strings are typically long, contain only base64 characters, and don't start with JSON characters
+    if (str.length < 10) return false;
+    if (str.trim().startsWith('{') || str.trim().startsWith('[')) return false; // Looks like JSON
+    
+    // Check if it contains only base64 characters (and is reasonably long)
+    const base64Regex = /^[A-Za-z0-9+/]+=*$/;
+    return base64Regex.test(str.trim()) && str.length > 50;
   }
 
   getDisplayName() {
@@ -255,6 +288,7 @@ class SoundFXEditor extends CompoundEditor {
             <label class="loop-control">
               <input type="checkbox" id="loop-checkbox"> Loop
             </label>
+            <button id="create-new-btn" class="control-btn">💾 Save New FX</button>
           </div>
           <div class="preset-group">
             <label>Presets:</label>
@@ -504,6 +538,9 @@ class SoundFXEditor extends CompoundEditor {
     if (!this.controlsContainer) return;
 
     // Control buttons
+    const createNewBtn = this.controlsContainer.querySelector('#create-new-btn');
+    console.log('[SoundFXEditor] Create New button found:', createNewBtn);
+    
     const playPauseBtn = this.controlsContainer.querySelector('#play-pause-btn');
     const mutateBtn = this.controlsContainer.querySelector('#mutate-btn');
     const randomizeBtn = this.controlsContainer.querySelector('#randomize-btn');
@@ -511,6 +548,12 @@ class SoundFXEditor extends CompoundEditor {
     const waveformContainer = this.controlsContainer.querySelector('.compact-waveform-unique');
     const waveformCanvas = waveformContainer ? waveformContainer.querySelector('#waveform-display') : null;
 
+    if (createNewBtn) {
+      createNewBtn.addEventListener('click', () => this.createNewSoundFX());
+      console.log('[SoundFXEditor] Create New button event listener attached');
+    } else {
+      console.error('[SoundFXEditor] Create New button not found!');
+    }
     if (playPauseBtn) playPauseBtn.addEventListener('click', () => this.togglePlayPause());
     if (mutateBtn) mutateBtn.addEventListener('click', () => {
       this.mutateParameters();
@@ -1000,7 +1043,10 @@ class SoundFXEditor extends CompoundEditor {
 
   // File handling methods
   getContent() {
-    return this.parametersToJson(this.parameters);
+    const jsonContent = this.parametersToJson(this.parameters);
+    console.log('[SoundFXEditor] getContent() returning JSON:', typeof jsonContent, jsonContent.length, 'chars');
+    console.log('[SoundFXEditor] getContent() preview:', jsonContent.substring(0, 100) + '...');
+    return jsonContent;
   }
 
   setContent(content) {
@@ -1025,6 +1071,60 @@ class SoundFXEditor extends CompoundEditor {
       console.error('[SoundFXEditor] Error setting content:', error);
       this.parameters = { ...this.defaultParameters };
     }
+  }
+
+  // Method to create a new sound FX file while keeping the current one open
+  async createNewSoundFX() {
+    console.log('[SoundFXEditor] Creating new sound FX file...');
+    
+    try {
+      // Use the same save logic as the regular save - just call saveAsNewFile directly
+      await this.saveAsNewFile();
+      console.log(`[SoundFXEditor] Successfully created new sound FX file via saveAsNewFile`);
+      
+    } catch (error) {
+      console.error('[SoundFXEditor] Failed to create new sound FX file:', error);
+      alert(`Failed to create new sound FX file: ${error.message}`);
+    }
+  }
+
+  // Override save method to handle new files with filename prompting
+  async save() {
+    console.log('[SoundFXEditor] save() method called!');
+    console.log(`[SoundFXEditor] save() called - isNewResource: ${this.isNewResource}, file: ${this.file}, path: ${this.path}`);
+    
+    if (this.isNewResource) {
+      console.log('[SoundFXEditor] New file detected, prompting for filename');
+      // For new files, prompt for filename and save as new
+      await this.saveAsNewFile();
+    } else {
+      console.log('[SoundFXEditor] Existing file, saving directly');
+      // For existing files, save normally
+      await this.saveExistingFile();
+    }
+  }
+  
+  async saveAsNewFile() {
+    // Get the sound data to save
+    const soundData = this.getContent();
+    
+    try {
+      // Use the standardized save dialog from EditorBase
+      await this.saveNewResource(soundData);
+      
+      console.log(`[SoundFXEditor] Successfully saved new sound effect`);
+      
+    } catch (error) {
+      console.error(`[SoundFXEditor] Error saving sound effect:`, error);
+      throw error;
+    }
+  }
+
+  async saveExistingFile() {
+    const content = this.getContent();
+    await this.saveExistingResource(content);
+    this.markClean();
+    console.log(`[SoundFXEditor] Successfully saved existing file: ${this.path}`);
   }
 
   parametersToJson(params) {
@@ -1068,10 +1168,6 @@ class SoundFXEditor extends CompoundEditor {
   return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';
   }
 
-  static getDefaultFolder() {
-  return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';
-  }
-
   static createNew() {
     // Return SFX structure with SFXR parameters
     return JSON.stringify({
@@ -1103,6 +1199,22 @@ class SoundFXEditor extends CompoundEditor {
         p_hpf_ramp: 0
       }
     }, null, 2);
+  }
+
+  // Refresh content method for tab synchronization
+  async refreshContent() {
+    console.log(`[SoundFXEditor] Refreshing content... path: ${this.path}, isNewResource: ${this.isNewResource}`);
+    if (this.path && !this.isNewResource) {
+      try {
+        await this.loadFileData();
+        this.loadParametersIntoUI();
+        console.log('[SoundFXEditor] Content refreshed successfully');
+      } catch (error) {
+        console.error('[SoundFXEditor] Error refreshing content:', error);
+      }
+    } else {
+      console.log(`[SoundFXEditor] Skipping refresh - path: ${this.path}, isNewResource: ${this.isNewResource}`);
+    }
   }
 }
 

@@ -289,42 +289,131 @@ class EditorBase extends ViewerBase {
   }
   
   async saveNewResource(content, filename = null) {
-    // For now, we'll create a blob and simulate saving
-    // In a real implementation, this would save to the project structure
-    const name = filename || this.getFileName();
-    const blob = new Blob([content], { type: 'text/plain' });
-    const file = new File([blob], name, { type: 'text/plain' });
+    let finalFilename = filename;
+    let project, extension, targetPath, uiFolderPath, fullUiPath, storagePath;
     
-    // Determine the appropriate directory based on file extension
-    const extension = this.getFileExtension(name);
-  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-  let targetPath = `${sourcesRoot}/Binary`; // Default fallback
-    
-    if (extension === '.lua') {
-  targetPath = `${sourcesRoot}/Lua`;
-    } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
-  targetPath = `${sourcesRoot}/Music`;
-    } else if (extension === '.wav' || extension === '.sfx') {
-  targetPath = `${sourcesRoot}/SFX`;
-    } else if (['.pal', '.act', '.aco'].includes(extension)) {
-  targetPath = `${sourcesRoot}/Palettes`;
+    // Loop until user provides a valid filename or cancels
+    while (true) {
+      // If no filename provided, show standardized save dialog
+      if (!finalFilename) {
+        let defaultName = this.getFileName() || 'untitled';
+        extension = this.constructor.getFileExtension ? this.constructor.getFileExtension() : this.getFileExtension();
+        
+        // Remove existing extension from default name for cleaner prompt
+        let baseName = defaultName;
+        if (baseName.includes('.')) {
+          baseName = baseName.substring(0, baseName.lastIndexOf('.'));
+        }
+        
+        // For new resources with "untitled" default, make it unique to avoid conflicts
+        if (this.isNewResource && baseName === 'untitled') {
+          baseName = await this._generateUniqueFilename('untitled', extension);
+        }
+        
+        const result = await window.ModalUtils.showForm(`Save ${this.constructor.getDisplayName()}`, [
+          {
+            name: 'filename',
+            type: 'text',
+            label: `Filename${extension}`,
+            defaultValue: baseName,
+            placeholder: 'Enter filename without extension',
+            required: true,
+            hint: `File will be saved with ${extension} extension`
+          }
+        ], { okText: 'Save', cancelText: 'Cancel' });
+        
+        if (!result || !result.filename) {
+          console.log(`[EditorBase] Save cancelled by user`);
+          return;
+        }
+        
+        finalFilename = result.filename + extension;
+      }
+      
+      // Calculate paths for the current filename
+      project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      extension = this.getFileExtension(finalFilename);
+      const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+      targetPath = `${sourcesRoot}/Binary`; // Default fallback
+      
+      if (extension === '.lua') {
+        targetPath = `${sourcesRoot}/Lua`;
+      } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
+        targetPath = `${sourcesRoot}/Music`;
+      } else if (extension === '.wav' || extension === '.sfx') {
+        targetPath = `${sourcesRoot}/SFX`;
+      } else if (['.pal', '.act', '.aco'].includes(extension)) {
+        targetPath = `${sourcesRoot}/Palettes`;
+      }
+      
+      uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
+      fullUiPath = `${uiFolderPath}/${finalFilename}`;
+      storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
+      
+      // Check if file exists within the current project scope
+      let fileExistsInProject = false;
+      if (window.gameEditor?.projectExplorer?.fileExists) {
+        // Use project-scoped file existence check
+        fileExistsInProject = window.gameEditor.projectExplorer.fileExists(fullUiPath);
+      } else {
+        // Fallback: check via project structure (project-scoped)
+        const projectStructure = window.gameEditor?.projectExplorer?.projectData?.structure;
+        if (projectStructure) {
+          const pathParts = fullUiPath.split('/');
+          let current = projectStructure;
+          
+          for (const part of pathParts) {
+            if (current[part]) {
+              current = current[part].type === 'folder' ? current[part].children : current[part];
+            } else {
+              current = null;
+              break;
+            }
+          }
+          fileExistsInProject = !!current;
+        }
+      }
+      
+      if (fileExistsInProject) {
+        const shouldOverwrite = await window.ModalUtils.showConfirm(
+          'File Exists', 
+          `File "${finalFilename}" already exists in this project. Overwrite?`,
+          { okText: 'Overwrite', cancelText: 'Cancel', danger: true }
+        );
+        if (!shouldOverwrite) {
+          console.log(`[EditorBase] Overwrite cancelled by user - prompting for new filename`);
+          finalFilename = null; // Reset filename to prompt again
+          continue; // Go back to filename prompt
+        }
+      }
+      
+      // If we get here, either file doesn't exist or user chose to overwrite
+      break;
     }
     
-  // Build UI path (project-prefixed) and storage path (normalized)
-  const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-  const uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
-  const fullUiPath = `${uiFolderPath}/${name}`;
-  const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
+    // For now, we'll create a blob and simulate saving
+    // In a real implementation, this would save to the project structure
+    const blob = new Blob([content], { type: 'text/plain' });
+    const file = new File([blob], finalFilename, { type: 'text/plain' });
     
     try {
       // Save to persistent storage using the file I/O service
       if (window.fileIOService) {
         const builderId = extension === '.sfx' ? 'sfx' : undefined;
-        await window.fileIOService.saveFile(storagePath, content, {
+        const metadata = {
           type: extension,
           editor: this.constructor.name,
           ...(builderId ? { builderId } : {})
-        });
+        };
+        
+        console.log(`[EditorBase] About to save to file I/O service:`);
+        console.log(`[EditorBase] - Path: ${storagePath}`);
+        console.log(`[EditorBase] - Content type: ${typeof content}`);
+        console.log(`[EditorBase] - Content length: ${content.length}`);
+        console.log(`[EditorBase] - Content preview: ${content.substring(0, 100)}...`);
+        console.log(`[EditorBase] - Metadata:`, metadata);
+        
+        await window.fileIOService.saveFile(storagePath, content, metadata);
         console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       }
     } catch (error) {
@@ -338,19 +427,94 @@ class EditorBase extends ViewerBase {
       window.gameEditor.projectExplorer.addFileToProject(file, uiFolderPath, true); // Skip auto-open during save
     }
     
+    // Update tab manager
+    if (window.gameEditor && window.gameEditor.tabManager) {
+      const currentPath = this.path || 'untitled';
+      console.log(`[EditorBase] Updating tab manager: currentPath="${currentPath}", storagePath="${storagePath}", filename="${finalFilename}"`);
+      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename);
+    }
+    
     this.path = fullUiPath;
     this.isNewResource = false;
+    if (typeof this.markClean === 'function') {
+      this.markClean();
+    }
     
-    console.log(`[EditorBase] Created new resource: ${name} in ${targetPath}`);
+    console.log(`[EditorBase] Created new resource: ${finalFilename} in ${targetPath}`);
     
     // Resource is now saved and has proper path - no need to update tabs
     // The TabManager will open this with the correct path from the start
+      // Emit global refresh event so all tabs update
+      if (window.eventBus && typeof window.eventBus.emit === 'function') {
+        window.eventBus.emit('content.refresh.required');
+      }
+  }
+
+  // Helper method to generate unique filename by checking existence in current project
+  async _generateUniqueFilename(baseName, extension) {
+    const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    let targetPath = `${sourcesRoot}/Binary`; // Default fallback
+    
+    if (extension === '.lua') {
+      targetPath = `${sourcesRoot}/Lua`;
+    } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
+      targetPath = `${sourcesRoot}/Music`;
+    } else if (extension === '.wav' || extension === '.sfx') {
+      targetPath = `${sourcesRoot}/SFX`;
+    } else if (['.pal', '.act', '.aco'].includes(extension)) {
+      targetPath = `${sourcesRoot}/Palettes`;
+    }
+    
+    const uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
+    
+    // Helper function to check if file exists in project
+    const fileExistsInProject = (filename) => {
+      const fullPath = `${uiFolderPath}/${filename}`;
+      
+      if (window.gameEditor?.projectExplorer?.fileExists) {
+        return window.gameEditor.projectExplorer.fileExists(fullPath);
+      }
+      
+      // Fallback: check via project structure
+      const projectStructure = window.gameEditor?.projectExplorer?.projectData?.structure;
+      if (projectStructure) {
+        const pathParts = fullPath.split('/');
+        let current = projectStructure;
+        
+        for (const part of pathParts) {
+          if (current[part]) {
+            current = current[part].type === 'folder' ? current[part].children : current[part];
+          } else {
+            return false;
+          }
+        }
+        return !!current;
+      }
+      
+      return false;
+    };
+    
+    // Check if base name is unique within the project
+    let testName = baseName;
+    let counter = 1;
+    
+    while (true) {
+      const testFilename = testName + extension;
+      
+      if (!fileExistsInProject(testFilename)) {
+        return testName; // Found unique name within project
+      }
+      
+      counter++;
+      testName = `${baseName}_${counter}`;
+    }
   }
   
   async saveExistingResource(content) {
     try {
       // Use FileManager to save content
-      const fileManager = window.serviceContainer?.get('fileManager');
+      const fileManager = window.serviceContainer.get('fileManager');
       const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
       if (fileManager && this.path) {
         await fileManager.saveFile(storagePath, content, {
@@ -401,26 +565,160 @@ class EditorBase extends ViewerBase {
     // File updated - UI will sync via events
   }
   
-  // Check if editor can be closed (prompt if unsaved changes)
-  canClose() {
+  // Close the editor - handles save prompting and returns true/false for whether close should proceed
+  async close() {
     if (this.hasUnsavedChanges) {
       if (this._discardConfirmed) {
+        this._performClose();
         return true;
       }
-      if (window.ModalUtils && typeof window.ModalUtils.showConfirm === 'function') {
-  // Return a promise so TabManager can await; track discard confirmation
-  return window.ModalUtils.showConfirm(
-          'Unsaved changes',
-          `${this.getFileName()} has unsaved changes. Close without saving?`,
-          { okText: 'Discard', cancelText: 'Cancel', danger: true }
-  ).then((ok) => { this._discardConfirmed = !!ok; return ok; });
+      
+      if (window.ModalUtils && typeof window.ModalUtils.showForm === 'function') {
+        // Use a custom 3-button dialog for better UX
+        const choice = await this._showSaveDialog();
+        
+        switch (choice) {
+          case 'save':
+            try {
+              await this.save();
+              this._performClose();
+              return true;
+            } catch (error) {
+              console.error('[EditorBase] Failed to save before closing:', error);
+              alert(`Failed to save ${this.getFileName()}: ${error.message}`);
+              return false; // Cancel close on save failure
+            }
+          
+          case 'discard':
+            this._performClose();
+            return true;
+          
+          case 'cancel':
+          default:
+            return false; // Cancel close
+        }
       } else {
+        // Fallback to basic confirm
         const result = confirm(`${this.getFileName()} has unsaved changes. Close without saving?`);
-  this._discardConfirmed = !!result;
-  return result;
+        if (result) {
+          this._performClose();
+          return true;
+        }
+        return false;
       }
+    } else {
+      // No unsaved changes, safe to close
+      this._performClose();
+      return true;
     }
-    return true;
+  }
+
+  // Show a custom save dialog with Save/Discard/Cancel options
+  async _showSaveDialog() {
+    return new Promise((resolve) => {
+      // Create modal overlay
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      
+      // Create modal dialog
+      const dialog = document.createElement('div');
+      dialog.className = 'modal-dialog';
+      
+      // Create modal content
+      dialog.innerHTML = `
+        <div class="modal-header">
+          <h3 class="modal-title">Save Changes?</h3>
+        </div>
+        <div class="modal-body">
+          <p style="color: #cccccc; margin: 0; line-height: 1.5;">
+            <strong>${this.getFileName()}</strong> has unsaved changes.<br>
+            What would you like to do?
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button class="modal-btn modal-btn-secondary" id="modal-cancel">Cancel</button>
+          <button class="modal-btn modal-btn-danger" id="modal-discard">Don't Save</button>
+          <button class="modal-btn modal-btn-primary" id="modal-save">Save</button>
+        </div>
+      `;
+      
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      
+      // Get elements
+      const saveBtn = dialog.querySelector('#modal-save');
+      const discardBtn = dialog.querySelector('#modal-discard');
+      const cancelBtn = dialog.querySelector('#modal-cancel');
+      
+      // Focus Save button by default
+      setTimeout(() => {
+        saveBtn.focus();
+      }, 100);
+      
+      // Cleanup function
+      function cleanup() {
+        document.body.removeChild(overlay);
+      }
+      
+      // Event handlers
+      saveBtn.addEventListener('click', () => {
+        cleanup();
+        resolve('save');
+      });
+      
+      discardBtn.addEventListener('click', () => {
+        cleanup();
+        resolve('discard');
+      });
+      
+      cancelBtn.addEventListener('click', () => {
+        cleanup();
+        resolve('cancel');
+      });
+      
+      // Handle keyboard
+      dialog.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveBtn.click();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelBtn.click();
+        }
+      });
+      
+      // Handle overlay click (close on outside click)
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          cancelBtn.click();
+        }
+      });
+    });
+  }
+  
+  // Perform the actual close operations
+  _performClose() {
+    // Subclasses can override this to add custom cleanup
+    
+    // Mark as closed
+    this._isClosed = true;
+    
+    // Clear any timers or intervals
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+    }
+    
+    // Cleanup event listeners if any
+    if (this.cleanup && typeof this.cleanup === 'function') {
+      this.cleanup();
+    }
+  }
+  
+  // Legacy method for backwards compatibility - now just calls close()
+  canClose() {
+    console.warn('[EditorBase] canClose() is deprecated, use close() instead');
+    return this.close();
   }
   
   // Lifecycle methods

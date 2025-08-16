@@ -59,12 +59,41 @@
 
   console.log('✅ [Core] Core systems ready');
 
-  // Initialize FileManager when core is ready
+  // Initialize FileManager when DOM is ready, with retry logic for fileIOService
   document.addEventListener('DOMContentLoaded', () => {
-    if (window.FileManager && window.fileIOService) {
-      window.FileManager.initialize(window.fileIOService);
-      window.serviceContainer.registerSingleton('fileManager', window.FileManager);
-      console.log('[Core] FileManager initialized and registered');
+    const initializeFileManager = () => {
+      if (window.FileManager && window.fileIOService) {
+        try {
+          window.FileManager.initialize(window.fileIOService);
+          console.log('[Core] FileManager initialized with storage service');
+          return true;
+        } catch (error) {
+          console.error('[Core] Failed to initialize FileManager:', error);
+          return false;
+        }
+      }
+      return false;
+    };
+
+    // Try immediate initialization
+    if (!initializeFileManager()) {
+      console.log('[Core] FileManager or fileIOService not ready, setting up periodic check...');
+      
+      // Set up periodic check for fileIOService availability
+      const checkInterval = setInterval(() => {
+        if (initializeFileManager()) {
+          clearInterval(checkInterval);
+          console.log('[Core] FileManager successfully initialized on retry');
+        }
+      }, 100);
+      
+      // Give up after 10 seconds
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        if (!window.FileManager.storageService) {
+          console.error('[Core] Failed to initialize FileManager after timeout');
+        }
+      }, 10000);
     }
 
     // Register BuilderRegistry if available

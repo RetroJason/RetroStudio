@@ -179,3 +179,7 @@ class TypedEventBus extends EventBus {
 window.eventBus = new TypedEventBus();
 window.EventBus = EventBus;
 window.TypedEventBus = TypedEventBus;
+
+// Emit ready event after eventBus is available
+document.dispatchEvent(new CustomEvent('eventBusReady'));
+console.log('[EventBus] Global eventBus ready event emitted');
