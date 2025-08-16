@@ -1,10 +1,12 @@
 // palette-editor.js
 // Advanced palette editor for .pal files
 
+console.log('[PaletteEditor] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
+
 class PaletteEditor extends EditorBase {
-  constructor(file, path, isNewResource = false, options = {}) {
-    super(file, path, isNewResource);
-    this.options = options;
+  constructor(fileObject, readOnly = false) {
+    console.log('[PaletteEditor] Constructor called with NEW SIGNATURE:', fileObject, readOnly);
+    super(fileObject, readOnly);
     
     // Palette data
     this.colors = [];
@@ -1356,6 +1358,71 @@ class PaletteEditor extends EditorBase {
     
     return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
+
+  // Override save method to handle palette saving
+  async save() {
+    console.log('[PaletteEditor] save() method called!');
+    console.log(`[PaletteEditor] save() called - isNewResource: ${this.isNewResource}, file: ${this.file}, path: ${this.path}`);
+    
+    if (this.isNewResource) {
+      console.log('[PaletteEditor] New file detected, prompting for filename');
+      // For new files, prompt for filename and save as new
+      await this.saveAsNewFile();
+    } else {
+      console.log('[PaletteEditor] Existing file, saving directly');
+      // For existing files, save normally
+      await this.saveExistingFile();
+    }
+  }
+  
+  async saveAsNewFile() {
+    console.log(`[PaletteEditor] saveAsNewFile() called`);
+    
+    // Get palette data
+    const paletteData = this.getPaletteData();
+    
+    try {
+      // Use the standardized save dialog from EditorBase
+      await this.saveNewResource(paletteData);
+      
+      console.log(`[PaletteEditor] Successfully saved new palette`);
+      
+    } catch (error) {
+      console.error(`[PaletteEditor] Error saving palette:`, error);
+      throw error;
+    }
+  }
+
+  async saveExistingFile() {
+    try {
+      const paletteData = this.getPaletteData();
+      
+      // Use the base class method
+      await this.saveExistingResource(paletteData);
+      
+      console.log(`[PaletteEditor] Successfully saved existing palette: ${this.path}`);
+    } catch (error) {
+      console.error('[PaletteEditor] Error saving existing palette:', error);
+      throw error;
+    }
+  }
+
+  getPaletteData() {
+    // Convert current palette to string format
+    const lines = [];
+    lines.push('JASC-PAL');
+    lines.push('0100');
+    lines.push(this.colors.length.toString());
+    
+    this.colors.forEach(color => {
+      const r = parseInt(color.substr(1, 2), 16);
+      const g = parseInt(color.substr(3, 2), 16);
+      const b = parseInt(color.substr(5, 2), 16);
+      lines.push(`${r} ${g} ${b}`);
+    });
+    
+    return lines.join('\n');
+  }
 }
 
 // Export for use
@@ -1363,6 +1430,7 @@ window.PaletteEditor = PaletteEditor;
 
 // Static metadata for auto-registration
 PaletteEditor.getFileExtensions = () => ['.pal', '.act', '.aco'];
+PaletteEditor.getFileExtension = () => '.pal';
 PaletteEditor.getDisplayName = () => 'Palette Editor';
 PaletteEditor.getIcon = () => '🎨';
 PaletteEditor.getPriority = () => 10;

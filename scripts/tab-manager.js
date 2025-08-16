@@ -90,7 +90,7 @@ class TabManager {
   this.setupFileDeletionListener();
     
     // Tab clicking
-    this.tabBar.addEventListener('click', (e) => {
+    this.tabBar.addEventListener('click', async (e) => {
       const tab = e.target.closest('.tab');
       if (!tab) return;
       
@@ -99,7 +99,20 @@ class TabManager {
       
       if (action === 'close' && tabId !== 'preview') {
         e.stopPropagation();
-        this.closeTab(tabId);
+        
+        // Check if tab still exists before attempting to close
+        if (tabId !== 'preview' && !this.dedicatedTabs.has(tabId)) {
+          console.warn(`[TabManager] Ignoring close click for non-existent tab: ${tabId}`);
+          return;
+        }
+        
+        try {
+          console.log(`[TabManager] Close button clicked for tab: ${tabId}`);
+          await this.closeTab(tabId);
+          console.log(`[TabManager] Tab close process completed for: ${tabId}`);
+        } catch (error) {
+          console.error(`[TabManager] Error during tab close for ${tabId}:`, error);
+        }
       } else {
         this.switchToTab(tabId);
       }
@@ -130,8 +143,8 @@ class TabManager {
       // Try global event bus first
       if (window.eventBus && window.eventBus.on) {
         window.eventBus.on('content.refresh.required', () => {
-          console.log('[TabManager] Received content.refresh.required event, refreshing build artifact tabs');
-          this.refreshBuildArtifactTabs();
+          console.log('[TabManager] Received content.refresh.required event, refreshing all tabs');
+          this.refreshAllTabs();
         });
         console.log('[TabManager] Successfully subscribed to content.refresh.required via global eventBus');
         return true;
@@ -140,8 +153,8 @@ class TabManager {
       // Try GameEditor's event system as fallback
       if (window.gameEditor && window.gameEditor.events && window.gameEditor.events.subscribe) {
         window.gameEditor.events.subscribe('content.refresh.required', () => {
-          console.log('[TabManager] Received content.refresh.required event, refreshing build artifact tabs');
-          this.refreshBuildArtifactTabs();
+          console.log('[TabManager] Received content.refresh.required event, refreshing all tabs');
+          this.refreshAllTabs();
         });
         console.log('[TabManager] Successfully subscribed to content.refresh.required via GameEditor.events');
         return true;
@@ -152,19 +165,34 @@ class TabManager {
 
     // Try immediate subscription
     if (!trySubscribe()) {
-      console.log('[TabManager] Event systems not ready, retrying subscription...');
-      // Retry with multiple attempts
-      let attempts = 0;
-      const maxAttempts = 10;
-      const retryInterval = setInterval(() => {
-        attempts++;
+      console.log('[TabManager] Event systems not ready, setting up event-driven retry...');
+      
+      // Listen for global eventBus ready event
+      const eventBusHandler = () => {
         if (trySubscribe()) {
-          clearInterval(retryInterval);
-        } else if (attempts >= maxAttempts) {
-          clearInterval(retryInterval);
-          console.warn(`[TabManager] Failed to subscribe to events after ${maxAttempts} attempts`);
+          console.log('[TabManager] Successfully subscribed after eventBus became ready');
+          document.removeEventListener('eventBusReady', eventBusHandler);
         }
-      }, 200);
+      };
+      document.addEventListener('eventBusReady', eventBusHandler);
+      
+      // Also listen for gameEditor ready event
+      const gameEditorHandler = () => {
+        if (trySubscribe()) {
+          console.log('[TabManager] Successfully subscribed after gameEditor became ready');
+          document.removeEventListener('gameEditorReady', gameEditorHandler);
+        }
+      };
+      document.addEventListener('gameEditorReady', gameEditorHandler);
+      
+      // Fallback timeout in case events don't fire
+      setTimeout(() => {
+        if (!trySubscribe()) {
+          console.warn('[TabManager] Failed to subscribe to events after timeout');
+        }
+        document.removeEventListener('eventBusReady', eventBusHandler);
+        document.removeEventListener('gameEditorReady', gameEditorHandler);
+      }, 2000);
     }
   }
 
@@ -215,7 +243,24 @@ class TabManager {
     };
 
     if (!subscribe()) {
-      let tries = 0; const h = setInterval(() => { tries++; if (subscribe() || tries > 20) clearInterval(h); }, 200);
+      console.log('[TabManager] Event systems not ready for file deletion events, setting up event-driven retry...');
+      
+      // Listen for eventBus ready event
+      const eventBusHandler = () => {
+        if (subscribe()) {
+          console.log('[TabManager] Successfully subscribed to file.deleted after eventBus became ready');
+          document.removeEventListener('eventBusReady', eventBusHandler);
+        }
+      };
+      document.addEventListener('eventBusReady', eventBusHandler);
+      
+      // Fallback timeout
+      setTimeout(() => {
+        if (!subscribe()) {
+          console.warn('[TabManager] Failed to subscribe to file.deleted events after timeout');
+        }
+        document.removeEventListener('eventBusReady', eventBusHandler);
+      }, 2000);
     }
   }
   
@@ -342,6 +387,50 @@ class TabManager {
     }
   }
 
+  async refreshAllTabs() {
+    console.log('[TabManager] Refreshing all open tabs...');
+    
+    let refreshedCount = 0;
+    
+    // Refresh all dedicated tabs
+    const refreshPromises = [];
+    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
+      console.log(`[TabManager] Refreshing tab ${tabId}: ${tabInfo.fullPath}`);
+      refreshPromises.push(
+        (async () => {
+          try {
+            await this.refreshTabViewer(tabInfo);
+            refreshedCount++;
+            return true;
+          } catch (error) {
+            console.error(`[TabManager] Error refreshing tab ${tabId}:`, error);
+            return false;
+          }
+        })()
+      );
+    }
+    
+    // Refresh preview tab if it exists
+    if (this.previewPath && this.previewViewer) {
+      console.log(`[TabManager] Refreshing preview tab: ${this.previewPath}`);
+      refreshPromises.push(
+        (async () => {
+          try {
+            await this.refreshPreviewViewer();
+            refreshedCount++;
+            return true;
+          } catch (error) {
+            console.error(`[TabManager] Error refreshing preview tab:`, error);
+            return false;
+          }
+        })()
+      );
+    }
+    
+    await Promise.allSettled(refreshPromises);
+    console.log(`[TabManager] Refresh complete. Refreshed ${refreshedCount} tabs.`);
+  }
+
   async _fileExists(fullPath) {
     if (!fullPath) return false;
     try {
@@ -349,11 +438,6 @@ class TabManager {
       let fm = null;
       try { fm = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
       fm = fm || window.FileManager || window.fileManager;
-      // If available but uninitialized, wire it to the storage and register for future calls
-      if (fm && !fm.storageService && window.fileIOService && typeof fm.initialize === 'function') {
-        try { fm.initialize(window.fileIOService); } catch (_) {}
-        try { window.serviceContainer?.registerSingleton?.('fileManager', fm); } catch (_) {}
-      }
       if (!fm || typeof fm.loadFile !== 'function') return true; // assume exists if we can't check
       // Normalize build path
       const path = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
@@ -788,10 +872,6 @@ class TabManager {
     let fileManager = null;
     try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
     fileManager = fileManager || window.FileManager || window.fileManager;
-    if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
-      try { fileManager.initialize(window.fileIOService); } catch (_) {}
-      try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
-    }
     if (!fileManager || typeof fileManager.loadFile !== 'function') {
       console.error('[TabManager] FileManager not available');
       return null;
@@ -886,12 +966,18 @@ class TabManager {
             console.log(`[TabManager] Creating editor with path: ${fullPath}, isNewResource: ${isNewResource}`);
             const EditorCtor = editorInfo.editorClass;
             let editor;
-            // Prefer (path, isNewResource) for EditorBase-based editors
+            // Use the NEW SIGNATURE: (fileObject, readOnly)
             try {
-              editor = new EditorCtor(fullPath, isNewResource);
+              editor = new EditorCtor(fileObj, false); // Pass file object and readOnly=false
             } catch (e1) {
-              console.warn('[TabManager] (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
-              editor = new EditorCtor(fileObj, fullPath, isNewResource);
+              console.warn('[TabManager] (fileObj,readOnly) ctor failed; trying fallback:', e1?.message || e1);
+              // Fallback to old signature if needed
+              try {
+                editor = new EditorCtor(fileObj, fullPath, isNewResource);
+              } catch (e2) {
+                console.warn('[TabManager] Fallback ctor failed; trying path-based:', e2?.message || e2);
+                editor = new EditorCtor(fullPath, isNewResource);
+              }
             }
             return {
               type: 'editor',
@@ -1067,10 +1153,6 @@ class TabManager {
         let fileManager = null;
         try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
         fileManager = fileManager || window.FileManager || window.fileManager;
-        if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
-          try { fileManager.initialize(window.fileIOService); } catch (_) {}
-          try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
-        }
         if (!fileManager || typeof fileManager.loadFile !== 'function') {
           console.error('[TabManager] FileManager not available');
           return null;
@@ -1108,10 +1190,6 @@ class TabManager {
         let fileManager = null;
         try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
         fileManager = fileManager || window.FileManager || window.fileManager;
-        if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
-          try { fileManager.initialize(window.fileIOService); } catch (_) {}
-          try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
-        }
         if (!fileManager || typeof fileManager.loadFile !== 'function') {
           console.error('[TabManager] FileManager not available');
           return null;
@@ -1298,6 +1376,13 @@ class TabManager {
       return;
     }
     
+    // Validate that the tab exists before switching
+    if (tabId !== 'preview' && !this.dedicatedTabs.has(tabId)) {
+      console.warn(`[TabManager] Cannot switch to ${tabId} - tab does not exist`);
+      console.trace(`[TabManager] Call stack for invalid tab switch:`);
+      return;
+    }
+    
     console.log(`[TabManager] Switching from ${this.activeTabId} to ${tabId}`);
     
     // Store previous tab for proper cleanup
@@ -1350,73 +1435,146 @@ class TabManager {
     this._fireEvent('tabSwitched', { tabId, tabInfo: this.getActiveTab() });
   }
   
-  closeTab(tabId) {
-    if (tabId === 'preview') {
-      // Allow closing preview tab explicitly
-      this._closePreviewTab();
+  async closeTab(tabId) {
+    try {
+      console.log(`[TabManager] closeTab called for: ${tabId}`);
       
-      // If no dedicated tabs exist, set activeTabId to null
-      if (this.dedicatedTabs.size === 0) {
-        this.activeTabId = null;
-      } else {
-        // Switch to the first available dedicated tab
-        const firstTabId = this.dedicatedTabs.keys().next().value;
-        this.switchToTab(firstTabId);
-      }
-      return;
-    }
-    
-    const tabInfo = this.dedicatedTabs.get(tabId);
-    if (!tabInfo) return;
-    
-    // Check if can close (supports sync boolean or Promise<boolean>)
-    if (tabInfo.viewer && typeof tabInfo.viewer.canClose === 'function') {
-      try {
-        const res = tabInfo.viewer.canClose();
-        if (res && typeof res.then === 'function') {
-          // Defer actual close until resolved
-          res.then((ok) => { if (ok) this.closeTab(tabId); }).catch(() => {});
-          return;
+      if (tabId === 'preview') {
+        // Allow closing preview tab explicitly
+        this._closePreviewTab();
+        
+        // If no dedicated tabs exist, set activeTabId to null
+        if (this.dedicatedTabs.size === 0) {
+          this.activeTabId = null;
+        } else {
+          // Switch to the first available dedicated tab
+          const firstTabId = this.dedicatedTabs.keys().next().value;
+          this.switchToTab(firstTabId);
         }
-        if (!res) {
-          return; // User cancelled
-        }
-      } catch (_) {
-        // If canClose throws, default to cancel
         return;
       }
+
+      const tabInfo = this.dedicatedTabs.get(tabId);
+      if (!tabInfo) {
+        console.warn(`[TabManager] No tab info found for ${tabId}`);
+        return;
+      }
+
+      console.log(`[TabManager] Found tab info for ${tabId}, checking editor close`);
+
+      // Call close on the editor/viewer - it handles save prompting and returns true/false
+      if (tabInfo.viewer && typeof tabInfo.viewer.close === 'function') {
+        try {
+          console.log(`[TabManager] Calling editor.close() for ${tabId}`);
+          const shouldClose = await tabInfo.viewer.close();
+          console.log(`[TabManager] Editor.close() returned: ${shouldClose} for ${tabId}`);
+          if (!shouldClose) {
+            console.log(`[TabManager] Editor cancelled the close for ${tabId}`);
+            return; // Editor cancelled the close
+          }
+        } catch (error) {
+          console.error('[TabManager] Error in editor close:', error);
+          return; // Default to cancel on error
+        }
+      } else if (tabInfo.viewer && typeof tabInfo.viewer.canClose === 'function') {
+        // Fallback to legacy canClose method
+        try {
+          console.log(`[TabManager] Using legacy canClose() for ${tabId}`);
+          const res = tabInfo.viewer.canClose();
+          if (res && typeof res.then === 'function') {
+            try {
+              const canClose = await res;
+              if (!canClose) {
+                console.log(`[TabManager] Legacy canClose cancelled for ${tabId}`);
+                return; // User cancelled
+              }
+            } catch (error) {
+              console.error('[TabManager] Error in canClose promise:', error);
+              return; // Default to cancel on error
+            }
+          } else if (!res) {
+            console.log(`[TabManager] Legacy canClose returned false for ${tabId}`);
+            return; // User cancelled
+          }
+        } catch (error) {
+          console.error('[TabManager] Error in canClose:', error);
+          return; // Default to cancel on error
+        }
+      } else {
+        console.log(`[TabManager] No close method found on editor for ${tabId}, proceeding with close`);
+      }
+
+      console.log(`[TabManager] Proceeding with tab close for ${tabId}`);
+      // Perform the actual close operations
+      this._performTabClose(tabId, tabInfo);
+      console.log(`[TabManager] _performTabClose completed for ${tabId}`);
+      
+    } catch (error) {
+      console.error(`[TabManager] Unexpected error in closeTab for ${tabId}:`, error);
     }
-    
-    // Cleanup
-    if (tabInfo.viewer && typeof tabInfo.viewer.cleanup === 'function') {
-      tabInfo.viewer.cleanup();
-    }
+  }
+
+  _performTabClose(tabId, tabInfo) {
+    // Editor cleanup is already handled by editor.close()
+    // Just handle DOM and tab management cleanup here
     
     // Remove DOM
-    if (tabInfo.element) tabInfo.element.remove();
-    if (tabInfo.pane) tabInfo.pane.remove();
-    
+    console.log(`[TabManager] Removing DOM elements for ${tabId}`);
+    if (tabInfo.element) {
+      console.log(`[TabManager] Removing tab element for ${tabId}`);
+      tabInfo.element.remove();
+    } else {
+      console.warn(`[TabManager] No tab element found for ${tabId}`);
+    }
+    if (tabInfo.pane) {
+      console.log(`[TabManager] Removing pane element for ${tabId}`);
+      tabInfo.pane.remove();
+    } else {
+      console.warn(`[TabManager] No pane element found for ${tabId}`);
+    }
+
     // Remove from map
     this.dedicatedTabs.delete(tabId);
-    
+    console.log(`[TabManager] Removed ${tabId} from dedicatedTabs map`);
+
     // Switch to preview if this was active, but only if preview has content
     if (this.activeTabId === tabId) {
+      console.log(`[TabManager] Closed tab was active (${tabId}), finding new tab to switch to`);
+      console.log(`[TabManager] Preview path: ${this.previewPath}, Preview filename: ${this.previewFileName}`);
+      console.log(`[TabManager] Remaining dedicated tabs: ${this.dedicatedTabs.size}`);
+      
       if (this.previewPath && this.previewFileName) {
+        console.log(`[TabManager] Switching to preview tab`);
         this.switchToTab('preview');
       } else {
-        // No preview content, hide preview tab
-        this._hidePreviewWithAnimation();
-        this.activeTabId = null;
+        // Switch to first available tab or hide preview
+        if (this.dedicatedTabs.size > 0) {
+          const firstTabId = this.dedicatedTabs.keys().next().value;
+          console.log(`[TabManager] Switching to first available tab: ${firstTabId}`);
+          this.switchToTab(firstTabId);
+        } else {
+          console.log(`[TabManager] No tabs remaining, hiding preview and setting activeTabId to null`);
+          // No preview content, hide preview tab
+          this._hidePreviewWithAnimation();
+          this.activeTabId = null;
+        }
       }
-      this._resetPreviewTab();
     }
-    
+
     // Fire event
-    this._fireEvent('tabClosed', { tabId, tabInfo });
-    
+    try {
+      this._fireEvent('tabClosed', { tabId, tabInfo });
+      console.log(`[TabManager] tabClosed event fired successfully for ${tabId}`);
+    } catch (error) {
+      console.error(`[TabManager] Error firing tabClosed event for ${tabId}:`, error);
+    }
+
     console.log(`[TabManager] Closed tab ${tabId}`);
+      // Emit global refresh event so all tabs update
+      if (window.eventBus && typeof window.eventBus.emit === 'function') {
+        window.eventBus.emit('content.refresh.required');
+      }
   }
-  
   _resetPreviewTab() {
     const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
     if (previewTab) {
@@ -1592,14 +1750,25 @@ class TabManager {
   
   // Update file references when a file is renamed in the project explorer
   updateFileReference(oldPath, newPath, newFileName) {
-    console.log(`[TabManager] Updating file references: ${oldPath} → ${newPath}`);
+    console.log(`[TabManager] Updating file references: ${oldPath} → ${newPath}, newFileName: ${newFileName}`);
     
     // Update dedicated tabs
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-      // Handle new files that were saved (oldPath might be 'untitled' or null)
-      const isNewFileSave = (oldPath === 'untitled' || oldPath === null) && tabInfo.fullPath === null && tabInfo.fileName === 'Untitled';
+      console.log(`[TabManager] Checking tab ${tabId}: fullPath="${tabInfo.fullPath}", fileName="${tabInfo.fileName}"`);
       
-      if (tabInfo.fullPath === oldPath || isNewFileSave) {
+      // Handle new files that were saved (oldPath might be 'untitled' or null)
+      const isNewFileSave = (oldPath === 'untitled' || oldPath === null || oldPath === undefined) && 
+                           (tabInfo.fullPath === null || tabInfo.fullPath === 'untitled' || tabInfo.fullPath === undefined) && 
+                           tabInfo.fileName === 'Untitled';
+      
+      // Also check if this tab matches by old path
+      const isPathMatch = tabInfo.fullPath === oldPath;
+      
+      console.log(`[TabManager] Tab ${tabId} - isNewFileSave: ${isNewFileSave}, isPathMatch: ${isPathMatch}`);
+      
+      if (isPathMatch || isNewFileSave) {
+        console.log(`[TabManager] Updating tab ${tabId} with new file info`);
+        
         // Update the tab info
         tabInfo.fullPath = newPath;
         
@@ -1615,6 +1784,7 @@ class TabManager {
           if (titleElement && newFileName) {
             const readOnlyIndicator = tabInfo.isReadOnly ? ' 🔒' : '';
             titleElement.textContent = newFileName + readOnlyIndicator;
+            console.log(`[TabManager] Updated tab title to: ${newFileName + readOnlyIndicator}`);
           }
         } else {
           // For openNewEditor tabs, find the tab element by tabId
@@ -1624,7 +1794,10 @@ class TabManager {
             if (titleElement && newFileName) {
               const readOnlyIndicator = tabInfo.isReadOnly ? ' 🔒' : '';
               titleElement.textContent = newFileName + readOnlyIndicator;
+              console.log(`[TabManager] Updated tab title via DOM query to: ${newFileName + readOnlyIndicator}`);
             }
+          } else {
+            console.warn(`[TabManager] Could not find tab element for ${tabId}`);
           }
         }
         
@@ -2068,7 +2241,9 @@ class TabManager {
       fileName: 'Untitled',
       fullPath: null,
       isReadOnly: false,
-      componentInfo: editorInfo
+      componentInfo: editorInfo,
+      element: tabElement,
+      pane: tabPane
     });
     
     // Mark new file as dirty immediately since it has unsaved content

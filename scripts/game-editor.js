@@ -74,7 +74,7 @@ class GameEditor {
     }
     if (!this.tabManager) {
       this.tabManager = new TabManager();
-      services?.register?.('tabManager', this.tabManager);
+      services?.registerSingleton?.('tabManager', this.tabManager);
     }
     window.tabManager = this.tabManager; // Make available globally
     
@@ -715,6 +715,10 @@ class GameEditor {
 window.addEventListener('DOMContentLoaded', async () => {
   if (!window.gameEditor) {
     window.gameEditor = new GameEditor();
+    
+    // Emit ready event after gameEditor is fully initialized
+    document.dispatchEvent(new CustomEvent('gameEditorReady'));
+    console.log('[GameEditor] Ready event emitted');
   } else {
     console.log('[GameEditor] Instance already exists, skipping initialization');
   }

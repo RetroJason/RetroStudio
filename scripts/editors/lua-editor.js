@@ -78,7 +78,7 @@ class LuaEditor extends EditorBase {
       if (this.isNewResource) {
         content = '';
       } else if (this.path) {
-        const fm = window.serviceContainer?.get?.('fileManager');
+        const fm = window.serviceContainer.get('fileManager');
         const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
         if (fm) {
           const rec = await fm.loadFile(storagePath);
@@ -96,7 +96,10 @@ class LuaEditor extends EditorBase {
       if (ta) {
         ta.value = content;
         this.textArea = ta;
-        this.markClean();
+        // Only mark clean for existing files, not new ones
+        if (!this.isNewResource) {
+          this.markClean();
+        }
       }
     } catch (e) {
       console.error('[LuaEditor] loadFileContent() failed:', e);
@@ -115,24 +118,31 @@ class LuaEditor extends EditorBase {
   setContent(content) {
     if (!this.textArea) return;
     this.textArea.value = content;
-    this.markClean();
+    // Only mark clean if this is not a new resource
+    if (!this.isNewResource) {
+      this.markClean();
+    }
   }
 
   async save() {
     console.log(`[LuaEditor] save() method called!`);
     console.log(`[LuaEditor] save() called - isNewResource: ${this.isNewResource}, file: ${this.file}, path: ${this.path}`);
     
-    // If this is a new file without a path, prompt for filename
+    // If this is a new file without a path, use standardized save dialog
     if (this.isNewResource && !this.file) {
-      console.log(`[LuaEditor] New file detected, prompting for filename`);
-      const filename = await this.promptForFilename();
-      if (!filename) {
-        console.log(`[LuaEditor] User cancelled filename prompt`);
-        return; // User cancelled
-      }
+      console.log(`[LuaEditor] New file detected, using standardized save dialog`);
       
-      // Create file object and save
-      await this.saveAsNewFile(filename);
+      // Get the Lua script content
+      const luaContent = this.getContent();
+      
+      try {
+        // Use the standardized save dialog from EditorBase
+        await this.saveNewResource(luaContent);
+        console.log(`[LuaEditor] Successfully saved new Lua script`);
+      } catch (error) {
+        console.error(`[LuaEditor] Error saving Lua script:`, error);
+        throw error;
+      }
     } else {
       console.log(`[LuaEditor] Using parent save logic`);
       // Use parent save logic
@@ -140,128 +150,20 @@ class LuaEditor extends EditorBase {
     }
   }
 
-  async promptForFilename() {
-    return new Promise((resolve) => {
-      const modal = document.createElement('div');
-      modal.className = 'filename-modal';
-      modal.innerHTML = `
-        <div class="modal-content">
-          <h3>Save Lua Script</h3>
-          <div class="filename-input-group">
-            <label>Filename:</label>
-            <input type="text" class="filename-input" value="script" />
-            <span class="extension">.lua</span>
-          </div>
-          <div class="modal-buttons">
-            <button class="btn cancel-btn">Cancel</button>
-            <button class="btn save-btn">Save</button>
-          </div>
-        </div>
-      `;
-      
-      const style = document.createElement('style');
-      style.textContent = `
-        .filename-modal {
-          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;
-        }
-        .modal-content { background: #2d2d30; padding: 20px; border-radius: 8px; color: white; min-width: 300px; }
-        .filename-input-group { margin: 15px 0; display: flex; align-items: center; gap: 8px; }
-        .filename-input { flex: 1; padding: 8px; background: #1e1e1e; border: 1px solid #555; color: white; }
-        .modal-buttons { text-align: right; gap: 10px; display: flex; justify-content: flex-end; }
-        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
-        .cancel-btn { background: #666; color: white; }
-        .save-btn { background: #007acc; color: white; }
-      `;
-      
-      document.head.appendChild(style);
-      document.body.appendChild(modal);
-      
-      const input = modal.querySelector('.filename-input');
-      const cancelBtn = modal.querySelector('.cancel-btn');
-      const saveBtn = modal.querySelector('.save-btn');
-      
-      const cleanup = () => {
-        document.body.removeChild(modal);
-        document.head.removeChild(style);
-      };
-      
-      cancelBtn.addEventListener('click', () => {
-        cleanup();
-        resolve(null);
-      });
-      
-      saveBtn.addEventListener('click', () => {
-        const filename = input.value.trim();
-        cleanup();
-        resolve(filename || null);
-      });
-      
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const filename = input.value.trim();
-          cleanup();
-          resolve(filename || null);
-        } else if (e.key === 'Escape') {
-          cleanup();
-          resolve(null);
-        }
-      });
-      
-      input.focus();
-      input.select();
-    });
-  }
-
-  async saveAsNewFile(filename) {
-    const focusedProject = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-    if (!focusedProject) {
-      throw new Error('No active project');
-    }
-    
-    // Generate paths
-    const fullFileName = `${filename}.lua`;
-    const targetFolder = 'Sources/Lua';
-    const fullUiPath = `${focusedProject}/${targetFolder}/${fullFileName}`;
-    const storagePath = `${targetFolder}/${fullFileName}`;
-    
-    // Get file manager
-    const fileManager = window.serviceContainer?.get('fileManager');
-    if (!fileManager) {
-      throw new Error('FileManager not available');
-    }
-    
-    // Save the file
+  async saveAsNewFile() {
+    // Get the Lua script content to save
     const content = this.getContent();
-    const fileObj = await fileManager.createAndSaveFile(storagePath, content, {
-      type: 'lua',
-      isNew: true,
-      builderId: 'copy'
-    });
     
-    // Update this editor instance
-    this.file = fileObj;
-    this.path = fileObj.path;
-    this.isNewResource = false;
-    
-    // Add to project explorer
-    if (window.gameEditor?.projectExplorer) {
-      window.gameEditor.projectExplorer.addFileToProject({
-        name: fullFileName,
-        path: fullUiPath,
-        isNewFile: true
-      }, `${focusedProject}/${targetFolder}`, true);
+    try {
+      // Use the standardized save dialog from EditorBase
+      await this.saveNewResource(content);
+      
+      console.log(`[LuaEditor] Successfully saved new Lua script`);
+      
+    } catch (error) {
+      console.error(`[LuaEditor] Error saving Lua script:`, error);
+      throw error;
     }
-    
-    // Update tab with new filename and path via TabManager's rename mechanism
-    if (window.gameEditor?.tabManager) {
-      // Use 'untitled' as the old path since this was a new file
-      window.gameEditor.tabManager.updateFileReference('untitled', storagePath, fullFileName);
-    }
-    
-    this.markClean();
-    
-    console.log(`[LuaEditor] Saved new file: ${storagePath}`);
   }
 
   onFocus() {

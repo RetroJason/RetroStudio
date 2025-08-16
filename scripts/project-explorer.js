@@ -151,8 +151,8 @@ class ProjectExplorer {
   }
   
   setupTabManagerEventListener() {
-    // Try to set up the event listener, with retry if TabManager isn't ready
-    const trySetup = () => {
+    // Use event-driven approach instead of polling for TabManager readiness
+    const setupListener = () => {
       if (window.gameEditor && window.gameEditor.tabManager) {
         console.log('[ProjectExplorer] Setting up TabManager event listener');
         window.gameEditor.tabManager.addEventListener('tabSwitched', (data) => {
@@ -163,14 +163,32 @@ class ProjectExplorer {
             this.highlightActiveFile(tabInfo.fullPath);
           }
         });
-      } else {
-        // TabManager not ready yet, try again in 100ms
-        console.log('[ProjectExplorer] TabManager not ready, retrying in 100ms');
-        setTimeout(trySetup, 100);
+        return true;
       }
+      return false;
     };
     
-    trySetup();
+    // Try immediate setup
+    if (!setupListener()) {
+      console.log('[ProjectExplorer] TabManager not ready, waiting for gameEditor ready event...');
+      
+      // Listen for gameEditor ready event
+      const gameEditorHandler = () => {
+        if (setupListener()) {
+          console.log('[ProjectExplorer] Successfully set up TabManager listener after gameEditor became ready');
+          document.removeEventListener('gameEditorReady', gameEditorHandler);
+        }
+      };
+      document.addEventListener('gameEditorReady', gameEditorHandler);
+      
+      // Fallback timeout
+      setTimeout(() => {
+        if (!setupListener()) {
+          console.warn('[ProjectExplorer] Failed to set up TabManager listener after timeout');
+        }
+        document.removeEventListener('gameEditorReady', gameEditorHandler);
+      }, 2000);
+    }
   }
   
   renderTree() {
@@ -925,7 +943,8 @@ class ProjectExplorer {
   filterFile(file, targetPath) {
   const ext = this.getFileExtension(file.name).toLowerCase();
   const musicExts = ['.mod', '.xm', '.s3m', '.it', '.mptm'];
-  const sfxExts = ['.wav'];
+  const sfxExts = ['.wav', '.sfx'];
+  const luaExts = ['.lua', '.txt'];
     
     // Get the target folder data
     const folderData = this.getNodeByPath(targetPath);
@@ -944,6 +963,8 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/Music` };
     } else if (sfxExts.includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/SFX` };
+    } else if (luaExts.includes(ext)) {
+      return { allowed: true, path: `${project}/${sourcesRoot}/Lua` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Palettes` };
     }
@@ -951,6 +972,42 @@ class ProjectExplorer {
     return { allowed: true, path: `${project}/${sourcesRoot}/Binary` };
   }
   
+  /**
+   * Add a file to the project using automatic path filtering based on extension
+   * @param {string} fileName - Just the filename with extension
+   * @param {boolean} skipAutoOpen - Skip auto-opening the file
+   * @param {boolean} skipRender - Skip re-rendering the project tree
+   * @returns {Promise} Promise that resolves when file is added
+   */
+  addFileToProjectByName(fileName, skipAutoOpen = false, skipRender = false) {
+    // Create a file-like object with just the name for filtering
+    const fileObj = { name: fileName };
+    
+    // Use the filtering system to determine the correct path
+    const focusedProject = this.getFocusedProjectName();
+    if (!focusedProject) {
+      throw new Error('No active project');
+    }
+    
+    // Use an arbitrary target path - the filtering system will auto-redirect
+    const tempPath = `${focusedProject}/Sources`;
+    const filtered = this.filterFile(fileObj, tempPath);
+    
+    if (!filtered.allowed) {
+      throw new Error(`File type not supported: ${fileName}`);
+    }
+    
+    // Create a file metadata object
+    const fileMetadata = {
+      name: fileName,
+      path: `${filtered.path}/${fileName}`,
+      isNewFile: true
+    };
+    
+    // Use the existing addFileToProject method with the determined path
+    return this.addFileToProject(fileMetadata, filtered.path, skipAutoOpen, skipRender);
+  }
+
   addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
     // Return a promise that resolves after persistence (if any)
     let persistResolve;
@@ -999,7 +1056,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco'];
+        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco', '.sfx'];
         const isBinary = !textExts.includes(ext);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {

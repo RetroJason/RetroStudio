@@ -332,8 +332,17 @@ class FileManager {
 
 // Create and export singleton instance
 window.FileManager = new FileManager();
+window.fileManager = window.FileManager; // Also make available as lowercase for consistency
 
 console.log('[FileManager] Service loaded');
+
+// Register with ServiceContainer immediately (ServiceContainer should be available by now)
+if (window.serviceContainer) {
+  window.serviceContainer.registerSingleton('fileManager', window.FileManager);
+  console.log('[FileManager] Registered in ServiceContainer');
+} else {
+  console.error('[FileManager] ServiceContainer not available for registration');
+}
 
 // Lightweight File wrapper for convenience (available globally)
 class RSFile {

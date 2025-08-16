@@ -87,10 +87,33 @@ class FileIOService {
   
   // Save file content to persistent storage
   async saveFile(path, content, metadata = {}) {
+    console.log(`[FileIOService] saveFile called:`);
+    console.log(`[FileIOService] - Path: ${path}`);
+    console.log(`[FileIOService] - Content type: ${typeof content}`);
+    console.log(`[FileIOService] - Content length: ${content.length}`);
+    
+    // Safe preview generation for different content types
+    let preview = '';
+    if (typeof content === 'string') {
+      preview = content.substring(0, 100) + '...';
+    } else if (content instanceof ArrayBuffer) {
+      const view = new Uint8Array(content);
+      preview = `ArrayBuffer[${content.byteLength}] first bytes: ${Array.from(view.slice(0, 10)).join(' ')}...`;
+    } else if (content instanceof Uint8Array) {
+      preview = `Uint8Array[${content.length}] first bytes: ${Array.from(content.slice(0, 10)).join(' ')}...`;
+    } else {
+      preview = `${typeof content} content`;
+    }
+    console.log(`[FileIOService] - Content preview: ${preview}`);
+    console.log(`[FileIOService] - Metadata:`, metadata);
+    
     // Handle binary data conversion for storage
     let processedContent = content;
     let isBinaryData = false;
 
+    // Only encode as base64 if content is actually binary types (ArrayBuffer/Uint8Array)
+    // Editors are responsible for providing content in the correct format
+    
     // Helper to safely convert binary to base64 without blowing the call stack
     const toBase64 = (bufOrBytes) => {
       const bytes = bufOrBytes instanceof Uint8Array ? bufOrBytes : new Uint8Array(bufOrBytes);
@@ -109,6 +132,7 @@ class FileIOService {
     };
 
     try {
+      // Only encode truly binary content types - NEVER encode string content as base64
       if (content instanceof ArrayBuffer) {
         processedContent = toBase64(content);
         isBinaryData = true;
@@ -116,6 +140,8 @@ class FileIOService {
         processedContent = toBase64(content);
         isBinaryData = true;
       }
+      // Note: Removed metadata.binaryData check - editors control their own format
+      // If content is a string, it stays a string regardless of metadata
     } catch (e) {
       console.error('[FileIOService] Failed to encode binary content, aborting save for path:', path, e);
       throw e;
@@ -127,10 +153,19 @@ class FileIOService {
       directory: path.substring(0, path.lastIndexOf('/')),
       fileContent: processedContent,  // Use fileContent instead of content
       lastModified: Date.now(),
-      size: content instanceof ArrayBuffer ? content.byteLength : new Blob([content]).size,
+      size: content instanceof ArrayBuffer ? content.byteLength : 
+            typeof content === 'string' ? content.length :
+            new Blob([content]).size,
       binaryData: isBinaryData,
       ...metadata
     };
+    
+    console.log(`[FileIOService] Final fileData being stored:`);
+    console.log(`[FileIOService] - processedContent type: ${typeof processedContent}`);
+    console.log(`[FileIOService] - processedContent length: ${processedContent.length}`);
+    console.log(`[FileIOService] - processedContent preview: ${processedContent.substring(0, 100)}...`);
+    console.log(`[FileIOService] - isBinaryData: ${isBinaryData}`);
+    console.log(`[FileIOService] - fileData.binaryData: ${fileData.binaryData}`);
     
     try {
       // Ensure the service is ready
@@ -216,6 +251,12 @@ class FileIOService {
         request.onsuccess = () => {
           const result = request.result;
           if (result) {
+            console.log(`[FileIOService] Raw data loaded from IndexedDB for ${path}:`);
+            console.log(`[FileIOService] - result.binaryData: ${result.binaryData}`);
+            console.log(`[FileIOService] - result.fileContent type: ${typeof result.fileContent}`);
+            console.log(`[FileIOService] - result.fileContent length: ${result.fileContent.length}`);
+            console.log(`[FileIOService] - result.fileContent preview: ${result.fileContent.substring(0, 100)}...`);
+            
             // Decode base64 to ArrayBuffer if binary
             if (result.binaryData && result.fileContent) {
               try {
