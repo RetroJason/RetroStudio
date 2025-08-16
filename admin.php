@@ -30,6 +30,7 @@ if (isset($_POST['password'])) {
 // Handle update request
 if (isset($_POST['update']) && isset($_SESSION['admin_logged_in'])) {
     $output = [];
+    $output_submodules = [];
     $return_code = 0;
     
     // Change to repository directory
@@ -45,7 +46,7 @@ if (isset($_POST['update']) && isset($_SESSION['admin_logged_in'])) {
     
     $update_result = [
         'success' => $return_code === 0,
-        'output' => implode("\n", $output) + implode("\n", $output_submodules),
+        'output' => implode("\n", array_merge($output, $output_submodules ?? [])),
         'return_code' => $return_code
     ];
 }
@@ -252,12 +253,10 @@ $is_logged_in = isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_i
                     <div class="alert alert-success">
                         <strong>Repository Updated Successfully!</strong> 
                         The latest changes have been pulled from the repository.
-                            case 'pull':
                     </div>
                 <?php else: ?>
                     <div class="alert alert-error">
                         <strong>Update Failed!</strong>
-                            }
                         There was an error during the update operation.
                         <br>Exit code: <?php echo $update_result['return_code']; ?>
                     </div>
