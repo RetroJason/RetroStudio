@@ -440,13 +440,50 @@ class ProjectExplorerAdapter {
   setupEventConnections() {
     this.events.on('file.open.requested', async (data) => {
       const tabManager = this.services.get('tabManager');
-      // If a preferred component was specified, still use tabManager API; registry inside will choose best option
+      const componentRegistry = this.services.get('componentRegistry');
+      
+      // If a preferred component was specified, get the componentInfo
       if (data && data.path) {
-        try {
-          await tabManager.openInTab(data.path);
-        } catch (e) {
-          console.warn('[ProjectExplorerAdapter] openInTab failed, trying preview:', e?.message || e);
-          await tabManager.openInPreview(data.path);
+        let componentInfo = null;
+        
+        if (data.preferredComponent && componentRegistry) {
+          console.log(`[ServiceAdapter] Looking for preferred component: ${data.preferredComponent}`);
+          
+          // Try to find the component in registry
+          const allComponents = [
+            ...componentRegistry.editors.values(),
+            ...componentRegistry.viewers.values()
+          ];
+          
+          const foundComponent = allComponents.find(comp => 
+            comp && (comp.name === data.preferredComponent || comp.displayName === data.preferredComponent)
+          );
+          
+          if (foundComponent) {
+            componentInfo = foundComponent;
+            console.log(`[ServiceAdapter] Found component:`, componentInfo);
+          } else {
+            console.warn(`[ServiceAdapter] Component ${data.preferredComponent} not found in registry`);
+          }
+        }
+        
+        // If no specific component, let tab manager auto-detect (use legacy method for now)
+        if (!componentInfo) {
+          console.log(`[ServiceAdapter] No component specified, using legacy auto-detection`);
+          try {
+            await tabManager.openInTab(data.path);
+          } catch (e) {
+            console.warn('[ProjectExplorerAdapter] openInTab failed, trying preview:', e?.message || e);
+            await tabManager.openInPreview(data.path);
+          }
+        } else {
+          // Use new componentInfo approach
+          try {
+            await tabManager.openInTab(data.path, componentInfo);
+          } catch (e) {
+            console.warn('[ProjectExplorerAdapter] openInTab with component failed, trying preview:', e?.message || e);
+            await tabManager.openInPreview(data.path, componentInfo);
+          }
         }
       }
     });

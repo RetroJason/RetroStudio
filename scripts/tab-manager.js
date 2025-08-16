@@ -379,67 +379,73 @@ class TabManager {
   
   /**
    * Open a file in preview tab - single entry point
-   * @param {string} fullPath - Full path to the resource (e.g. "Resources/Lua/script.lua")
-   * @param {File} file - File object
+   * @param {string} fullPath - Full path to the resource
+   * @param {Object} componentInfo - { type: 'editor'|'viewer', class: ComponentClass, name: string, displayName: string }
    * @param {Object} options - { isReadOnly: boolean }
    */
-  async openInPreview(fullPath, file = null, options = {}) {
-    console.log(`[TabManager] openInPreview: ${fullPath}`);
+  async openInPreview(fullPath, componentInfo, options = {}) {
+    console.log(`[TabManager] openInPreview: ${fullPath} with ${componentInfo?.displayName || 'auto-detect'}`);
     
-    // Check if already open in any tab
-    const existingTabId = this.findTabByPath(fullPath);
-    console.log(`[TabManager] findTabByPath("${fullPath}") returned: ${existingTabId}`);
+    // Check if already open in any tab with the same component
+    const existingTabId = this.findTabByPathAndComponent(fullPath, componentInfo);
+    console.log(`[TabManager] findTabByPathAndComponent("${fullPath}") returned: ${existingTabId}`);
     
     if (existingTabId) {
-      console.log(`[TabManager] File already open in tab ${existingTabId}, switching`);
+      console.log(`[TabManager] File already open with same component in tab ${existingTabId}, switching`);
       this.switchToTab(existingTabId);
       return existingTabId;
     }
     
-    console.log(`[TabManager] File not found in existing tabs, opening in preview`);
-    // Open in preview tab (file parameter is now ignored, we load from storage)
-    return await this._openInPreviewTab(fullPath, null, options);
+    console.log(`[TabManager] File not found with same component, opening in preview`);
+    return await this._openInPreviewTab(fullPath, componentInfo, options);
   }
   
   /**
    * Open a file in dedicated tab - single entry point  
    * @param {string} fullPath - Full path to the resource
-   * @param {File} file - File object
+   * @param {Object} componentInfo - { type: 'editor'|'viewer', class: ComponentClass, name: string, displayName: string }
    * @param {Object} options - { isReadOnly: boolean, forceNew: boolean }
    */
-  async openInTab(fullPath, file = null, options = {}) {
-    console.log(`[TabManager] openInTab: ${fullPath}`);
+  async openInTab(fullPath, componentInfo, options = {}) {
+    console.log(`[TabManager] openInTab: ${fullPath} with ${componentInfo?.displayName || 'auto-detect'}`);
     
-    // Check if already open in any tab (unless forcing new)
+    // Check if already open in any tab with the same component (unless forcing new)
     if (!options.forceNew) {
-      const existingTabId = this.findTabByPath(fullPath);
+      const existingTabId = this.findTabByPathAndComponent(fullPath, componentInfo);
       if (existingTabId) {
         if (existingTabId === 'preview') {
-          console.log(`[TabManager] File open in preview, promoting to dedicated tab`);
+          console.log(`[TabManager] File open in preview with same component, promoting to dedicated tab`);
           // Promote preview to dedicated tab
           return await this._promotePreviewToTab();
         } else {
-          console.log(`[TabManager] File already open in tab ${existingTabId}, switching`);
+          console.log(`[TabManager] File already open with same component in tab ${existingTabId}, switching`);
           this.switchToTab(existingTabId);
           return existingTabId;
         }
       }
     }
     
-  // Create new dedicated tab (file parameter is now ignored, we load from storage)
-  return await this._createDedicatedTab(fullPath, null, options);
+    return await this._createDedicatedTab(fullPath, componentInfo, options);
   }
   
   // INTERNAL IMPLEMENTATION
   
-  findTabByPath(fullPath) {
-    console.log(`[TabManager] findTabByPath searching for: "${fullPath}"`);
+  findTabByPathAndComponent(fullPath, componentInfo) {
+    console.log(`[TabManager] findTabByPathAndComponent searching for: "${fullPath}" with component: ${componentInfo?.displayName || 'any'}`);
     
     // Check preview tab
     console.log(`[TabManager] Preview tab path: "${this.previewPath}"`);
     if (this.previewPath === fullPath) {
-      console.log(`[TabManager] Found in preview tab`);
-      return 'preview';
+      // If no specific component requested, any match is fine
+      if (!componentInfo) {
+        console.log(`[TabManager] Found in preview tab (no component specified)`);
+        return 'preview';
+      }
+      // Check if preview tab uses the same component
+      if (this.previewViewer && this.previewViewer.constructor === componentInfo.class) {
+        console.log(`[TabManager] Found in preview tab with matching component`);
+        return 'preview';
+      }
     }
     
     // Check dedicated tabs
@@ -447,16 +453,29 @@ class TabManager {
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
       console.log(`[TabManager] Tab ${tabId} path: "${tabInfo.fullPath}"`);
       if (tabInfo.fullPath === fullPath) {
-        console.log(`[TabManager] Found in dedicated tab ${tabId}`);
-        return tabId;
+        // If no specific component requested, any match is fine
+        if (!componentInfo) {
+          console.log(`[TabManager] Found in dedicated tab ${tabId} (no component specified)`);
+          return tabId;
+        }
+        // Check if tab uses the same component
+        if (tabInfo.viewer && tabInfo.viewer.constructor === componentInfo.class) {
+          console.log(`[TabManager] Found in dedicated tab ${tabId} with matching component`);
+          return tabId;
+        }
       }
     }
     
-    console.log(`[TabManager] File not found in any tab`);
+    console.log(`[TabManager] File not found with matching component`);
     return null;
   }
   
-  async _openInPreviewTab(fullPath, file = null, options = {}) {
+  findTabByPath(fullPath) {
+    // Legacy method - just calls the new one without component filtering
+    return this.findTabByPathAndComponent(fullPath, null);
+  }
+  
+  async _openInPreviewTab(fullPath, componentInfo, options = {}) {
     const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
     if (!previewPane) return null;
     
@@ -466,8 +485,8 @@ class TabManager {
     // Cleanup previous preview FIRST - before any rendering starts
     this._cleanupPreview();
     
-    // Create viewer/editor (now loads from storage)
-    const viewerInfo = await this._createViewer(fullPath, fileName);
+    // Create viewer/editor using provided componentInfo
+    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo);
     if (!viewerInfo) {
       this._hidePreviewWithAnimation();
       return null;
@@ -506,14 +525,14 @@ class TabManager {
     return 'preview';
   }
   
-  async _createDedicatedTab(fullPath, file = null, options = {}) {
+  async _createDedicatedTab(fullPath, componentInfo, options = {}) {
     const tabId = `tab-${this.nextTabId++}`;
     
     // Extract filename from path
     const fileName = fullPath.split('/').pop() || fullPath.split('\\').pop();
     
-    // Create viewer/editor (now loads from storage)
-    const viewerInfo = await this._createViewer(fullPath, fileName);
+    // Create viewer/editor using provided componentInfo
+    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo);
     if (!viewerInfo) return null;
 
     // Enforce single-instance editors: if the created viewer is an editor whose
@@ -720,7 +739,9 @@ class TabManager {
     return tabId;
   }
   
-  async _createViewer(fullPath, fileName = null) {
+  // Legacy method for backward compatibility - should eventually be removed
+  // Only used by promotePreviewToDedicated() - that method needs refactoring
+  async _createViewer(fullPath, fileName = null, preferredComponent = null) {
     // Ensure we have editors registered
     this.ensureEditorsRegistered();
     
@@ -730,7 +751,7 @@ class TabManager {
     }
     
     const ext = this._getFileExtension(fileName);
-    console.log(`[TabManager] Creating viewer for file: ${fileName}, extension: ${ext}, path: ${fullPath}`);
+    console.log(`[TabManager] Creating viewer for file: ${fileName}, extension: ${ext}, path: ${fullPath}`, preferredComponent ? `with preferred component: ${preferredComponent.displayName}` : '');
     
     // Handle temporary paths (for editors that don't need initial files)
     if (fullPath.startsWith('temp://')) {
@@ -743,7 +764,7 @@ class TabManager {
         return null;
       }
       
-      const editorInfo = this._getEditorForExtension(ext);
+      const editorInfo = preferredComponent || this._getEditorForExtension(ext);
       if (editorInfo && editorInfo.editorClass) {
         try {
           const editor = new editorInfo.editorClass(fullPath, true); // isNewResource = true
@@ -808,7 +829,54 @@ class TabManager {
     if (window.serviceContainer) {
       const componentRegistry = window.serviceContainer.get('componentRegistry');
       if (componentRegistry) {
-        console.log(`[TabManager] Using component registry to find editor for ${fullPath}`);
+        console.log(`[TabManager] Using component registry to find component for ${fullPath}`);
+        
+        // If we have a preferred component, use it directly
+        if (preferredComponent) {
+          console.log(`[TabManager] Using preferred component: ${preferredComponent.displayName}`);
+          
+          // Check if it's an editor or viewer
+          if (preferredComponent.editorClass) {
+            // It's an editor
+            try {
+              console.log(`[TabManager] Creating preferred editor: ${preferredComponent.name}`);
+              const isNewResource = fileObj.isNew || false;
+              const EditorCtor = preferredComponent.editorClass;
+              let editor;
+              try {
+                editor = new EditorCtor(fullPath, isNewResource);
+              } catch (e1) {
+                console.warn('[TabManager] (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
+                editor = new EditorCtor(fileObj, fullPath, isNewResource);
+              }
+              return {
+                type: 'editor',
+                subtype: preferredComponent.name,
+                viewer: editor,
+                element: editor.getElement()
+              };
+            } catch (error) {
+              console.error(`[TabManager] Failed to create preferred editor:`, error);
+            }
+          } else if (preferredComponent.viewerClass) {
+            // It's a viewer
+            try {
+              console.log(`[TabManager] Creating preferred viewer: ${preferredComponent.name}`);
+              const ViewerCtor = preferredComponent.viewerClass;
+              const viewer = new ViewerCtor(fileObj, fullPath);
+              return {
+                type: 'viewer',
+                subtype: preferredComponent.name,
+                viewer: viewer,
+                element: viewer.getElement()
+              };
+            } catch (error) {
+              console.error(`[TabManager] Failed to create preferred viewer:`, error);
+            }
+          }
+        }
+        
+        // Fall back to default component selection
         const editorInfo = componentRegistry.getEditorForFile(fullPath);
         if (editorInfo) {
           try {
@@ -827,6 +895,7 @@ class TabManager {
             }
             return {
               type: 'editor',
+              subtype: editorInfo.name,
               viewer: editor,
               element: editor.getElement()
             };
@@ -870,15 +939,36 @@ class TabManager {
     
   // Fall back to viewers
   let viewerType = this._getViewerType(ext);
-  const ViewerClass = window.ViewerPlugins?.[viewerType];
+  let ViewerClass = window.ViewerPlugins?.[viewerType];
+  
+  // Use preferred component if specified and it's a viewer
+  if (preferredComponent && preferredComponent.viewerClass) {
+    console.log(`[TabManager] Using preferred viewer: ${preferredComponent.displayName}`);
+    ViewerClass = preferredComponent.viewerClass;
+    viewerType = preferredComponent.name;
+  } else {
+    // Try component registry for viewers if no preferred component
+    if (window.serviceContainer) {
+      const componentRegistry = window.serviceContainer.get('componentRegistry');
+      if (componentRegistry) {
+        const viewerInfo = componentRegistry.getViewerForFile(fullPath);
+        if (viewerInfo) {
+          console.log(`[TabManager] Found viewer in component registry: ${viewerInfo.displayName}`);
+          ViewerClass = viewerInfo.viewerClass;
+          viewerType = viewerInfo.name;
+        }
+      }
+    }
+  }
     
     if (!ViewerClass) {
       console.error(`[TabManager] No viewer found for ${ext}, using hex viewer`);
       viewerType = 'hex';
+      ViewerClass = window.ViewerPlugins['hex'];
     }
     
     try {
-      const viewer = new (window.ViewerPlugins[viewerType])(fullPath);
+      const viewer = new ViewerClass(fileObj, fullPath);
       // Check if this viewer is single-instance via component registry
       try {
         const compReg = window.serviceContainer?.get('componentRegistry');
@@ -924,7 +1014,141 @@ class TabManager {
     }
   }
 
-  // Viewers can be notified when an underlying resource updates (e.g., duration ready)
+  async _createViewerFromComponent(fullPath, fileName, componentInfo) {
+    try {
+      console.log(`TabManager: Creating viewer from component:`, {
+        fullPath,
+        fileName,
+        componentInfo
+      });
+
+      // Use the provided componentInfo directly instead of auto-detecting
+      // Handle both editor (editorClass) and viewer (viewerClass) components
+      const Component = componentInfo.class || componentInfo.editorClass || componentInfo.viewerClass;
+      if (!Component) {
+        console.error('TabManager: No component class provided in componentInfo (expected class, editorClass, or viewerClass)');
+        return null;
+      }
+
+      console.log(`TabManager: Creating instance of ${componentInfo.name} for ${fileName}`);
+      
+      // Handle temporary paths (for editors that don't need initial files)
+      if (fullPath.startsWith('temp://')) {
+        console.log(`[TabManager] Creating temporary editor for: ${fileName}`);
+        
+        if (componentInfo.editorClass || componentInfo.type === 'editor') {
+          try {
+            const editor = new Component(fullPath, true); // isNewResource = true
+            return {
+              viewer: editor,
+              element: editor.getElement(),
+              componentInfo: {
+                type: 'editor',
+                name: componentInfo.name,
+                displayName: componentInfo.displayName
+              }
+            };
+          } catch (error) {
+            console.error('[TabManager] Failed to create temporary editor:', error);
+            return null;
+          }
+        } else {
+          console.error(`[TabManager] Temporary paths only supported for editors`);
+          return null;
+        }
+      }
+      
+      // Determine if this is an editor or viewer based on the component type
+      const isEditor = componentInfo.editorClass || componentInfo.type === 'editor';
+      
+      if (isEditor) {
+        // For editors, use the same pattern as the legacy _createViewer method
+        // Load file using FileManager for proper initialization
+        let fileManager = null;
+        try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
+        fileManager = fileManager || window.FileManager || window.fileManager;
+        if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
+          try { fileManager.initialize(window.fileIOService); } catch (_) {}
+          try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
+        }
+        if (!fileManager || typeof fileManager.loadFile !== 'function') {
+          console.error('[TabManager] FileManager not available');
+          return null;
+        }
+
+        // Normalize to storage path for loading
+        const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullPath) : fullPath;
+        let fileObj = await fileManager.loadFile(storagePath);
+        if (!fileObj) {
+          console.error(`[TabManager] File not found: ${fullPath}`);
+          return null;
+        }
+
+        console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
+
+        // Create editor instance
+        const isNewResource = fileObj.isNew || false;
+        console.log(`[TabManager] Creating editor with path: ${fullPath}, isNewResource: ${isNewResource}`);
+        let editor;
+        try {
+          editor = new Component(fullPath, isNewResource);
+        } catch (e1) {
+          console.warn('[TabManager] (path,isNew) ctor failed; trying (file,path,isNew):', e1?.message || e1);
+          editor = new Component(fileObj, fullPath, isNewResource);
+        }
+
+        return {
+          viewer: editor,
+          element: editor.getElement(),
+          componentInfo: {
+            type: 'editor',
+            name: componentInfo.name,
+            displayName: componentInfo.displayName
+          }
+        };
+      } else {
+        // For viewers, follow the same pattern as the old system
+        // Load file using FileManager to get the file object
+        let fileManager = null;
+        try { fileManager = window.serviceContainer?.get('fileManager'); } catch (_) { /* not registered yet */ }
+        fileManager = fileManager || window.FileManager || window.fileManager;
+        if (fileManager && !fileManager.storageService && window.fileIOService && typeof fileManager.initialize === 'function') {
+          try { fileManager.initialize(window.fileIOService); } catch (_) {}
+          try { window.serviceContainer?.registerSingleton?.('fileManager', fileManager); } catch (_) {}
+        }
+        if (!fileManager || typeof fileManager.loadFile !== 'function') {
+          console.error('[TabManager] FileManager not available');
+          return null;
+        }
+
+        // Normalize to storage path for loading
+        const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(fullPath) : fullPath;
+        let fileObj = await fileManager.loadFile(storagePath);
+        if (!fileObj) {
+          console.error(`[TabManager] File not found: ${fullPath}`);
+          return null;
+        }
+
+        console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
+
+        // Create viewer instance with just the fullPath (viewers expect constructor(path))
+        const viewer = new Component(fullPath);
+
+        return {
+          viewer,
+          element: viewer.getElement(),
+          componentInfo: {
+            type: 'viewer',
+            name: componentInfo.name,
+            displayName: componentInfo.displayName
+          }
+        };
+      }
+    } catch (error) {
+      console.error('TabManager: Error creating viewer from component:', error);
+      return null;
+    }
+  }
   notifyResourceUpdated(resourceId, property, value, filename) {
     // Update preview viewer if it matches the filename
     if (this.previewViewer && typeof this.previewViewer.onResourceUpdated === 'function') {

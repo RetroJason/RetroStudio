@@ -163,7 +163,7 @@ class RibbonToolbar {
         if (window.gameEditor && window.gameEditor.tabManager) {
           // Use the tab manager's normal opening flow but with a temporary path
           try {
-            await window.gameEditor.tabManager.openInTab(tempPath, null, { forceNew: true, isTemporary: true });
+            await window.gameEditor.tabManager.openInTab(tempPath, editorInfo, { forceNew: true, isTemporary: true });
             console.log(`[RibbonToolbar] Opened temporary ${editorInfo.displayName}: ${tempName}`);
           } catch (error) {
             console.error(`[RibbonToolbar] Failed to open temporary editor:`, error);
@@ -248,7 +248,7 @@ class RibbonToolbar {
         // Now open from storage
         if (window.gameEditor && window.gameEditor.tabManager) {
           console.log(`[RibbonToolbar] Opening file from storage...`);
-          await window.gameEditor.tabManager.openInTab(fullUiPath);
+          await window.gameEditor.tabManager.openInTab(fullUiPath, editorInfo);
         }
         
       } catch (error) {

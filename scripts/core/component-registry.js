@@ -327,6 +327,44 @@ class ComponentRegistry {
       .filter(tool => tool.category === category);
   }
 
+  // Get all compatible components (editors and viewers) for a file extension
+  getComponentsForExtension(extension) {
+    const components = [];
+    
+    // Get all editors for this extension
+    for (const editor of this.editors.values()) {
+      if (editor.extensions.includes(extension) || editor.extensions.includes('*')) {
+        components.push({
+          type: 'editor',
+          name: editor.name,
+          displayName: editor.displayName,
+          class: editor.editorClass,
+          icon: editor.icon,
+          priority: editor.priority
+        });
+      }
+    }
+    
+    // Get all viewers for this extension  
+    for (const viewer of this.viewers.values()) {
+      if (viewer.extensions.includes(extension) || viewer.extensions.includes('*')) {
+        components.push({
+          type: 'viewer',
+          name: viewer.name,
+          displayName: viewer.displayName,
+          class: viewer.viewerClass,
+          icon: viewer.icon,
+          priority: viewer.priority
+        });
+      }
+    }
+    
+    // Sort by priority (lower numbers = higher priority)
+    components.sort((a, b) => a.priority - b.priority);
+    
+    return components;
+  }
+
   // Utility methods
   getFileExtension(filePath) {
     // Accept strings, file records, or File objects; return safe extension or empty string
