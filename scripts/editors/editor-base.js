@@ -1,18 +1,33 @@
 // editor-base.js
 // Base class for all resource editors (extends ViewerBase)
 
+console.log('[EditorBase] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
+
 class EditorBase extends ViewerBase {
-  constructor(path, isNewResource = false, templateOptions = null) {
-    console.log(`[EditorBase] Constructor called with isNewResource: ${isNewResource}`);
+  constructor(fileObject = null, readOnly = false) {
+    // Extract path from file object or use null for new files
+    const path = fileObject?.path || null;
+    console.log(`[EditorBase] Constructor called with NEW SIGNATURE - fileObject:`, fileObject, `readOnly:`, readOnly);
+    console.log(`[EditorBase] fileObject is null:`, fileObject === null, `fileObject is undefined:`, fileObject === undefined);
     super(path);
-    this.isNewResource = isNewResource;
+    
+    this.file = fileObject;
+    this.isNewResource = !fileObject; // New file if no file object provided
+    this.readOnly = readOnly;
+
     console.log(`[EditorBase] Set this.isNewResource to: ${this.isNewResource}`);
     this.isDirty = false;
     this.hasUnsavedChanges = false;
-    this.templateOptions = templateOptions;
-  this.readOnly = false;
-  this._readonlyGuardsInstalled = false;
-  this._boundGuards = null;
+    
+    // New files should start as dirty since they need to be saved
+    if (this.isNewResource) {
+      this.isDirty = true;
+      this.hasUnsavedChanges = true;
+      console.log(`[EditorBase] New file created - marked as dirty`);
+    }
+    
+    this._readonlyGuardsInstalled = false;
+    this._boundGuards = null;
     
     // Add editor-specific classes
     this.element.classList.add('editor-content');
@@ -168,10 +183,18 @@ class EditorBase extends ViewerBase {
     if (!this.isDirty) {
       this.isDirty = true;
       this.hasUnsavedChanges = true;
+      console.log(`[EditorBase] Editor marked as dirty`);
       
-      // Notify TabManager to update tab appearance
+      // Emit event for TabManager to listen to
+      if (window.eventBus) {
+        window.eventBus.emit('editor.content.changed', { editor: this });
+      }
+      
+      // Fallback: directly notify TabManager if eventBus not available
       if (window.tabManager) {
         window.tabManager.notifyContentChanged(this);
+      } else if (window.gameEditor?.tabManager) {
+        window.gameEditor.tabManager.notifyContentChanged(this);
       }
       
       this.updateTabTitle();
@@ -182,10 +205,18 @@ class EditorBase extends ViewerBase {
   markClean() {
     this.isDirty = false;
     this.hasUnsavedChanges = false;
+    console.log(`[EditorBase] Editor marked as clean`);
     
-    // Notify TabManager to update tab appearance
+    // Emit event for TabManager to listen to
+    if (window.eventBus) {
+      window.eventBus.emit('editor.content.saved', { editor: this });
+    }
+    
+    // Fallback: directly notify TabManager if eventBus not available
     if (window.tabManager) {
       window.tabManager.notifyContentSaved(this);
+    } else if (window.gameEditor?.tabManager) {
+      window.gameEditor.tabManager.notifyContentSaved(this);
     }
     
     this.updateTabTitle();
@@ -432,6 +463,10 @@ class EditorBase extends ViewerBase {
   
   // Instance method to get file extension from filename
   getFileExtension(filename) {
+    if (!filename || typeof filename !== 'string') {
+      console.warn('[EditorBase] getFileExtension called with invalid filename:', typeof filename, filename);
+      return '';
+    }
     const lastDot = filename.lastIndexOf('.');
     return lastDot !== -1 ? filename.substring(lastDot) : '';
   }
