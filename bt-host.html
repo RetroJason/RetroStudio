@@ -28,35 +28,49 @@
     
     // CRITICAL: Prevent BassoonTracker from hijacking browser navigation
     // Override window.location methods to block navigation attempts
-    const originalLocation = window.location;
-    Object.defineProperty(window, 'location', {
-      get: function() { return originalLocation; },
-      set: function(value) { 
-        console.warn('[bt-host] Blocked navigation attempt to:', value);
-        return false;
-      }
-    });
+    try {
+      const originalLocation = window.location;
+      Object.defineProperty(window, 'location', {
+        get: function() { return originalLocation; },
+        set: function(value) { 
+          console.warn('[bt-host] Blocked navigation attempt to:', value);
+          return false;
+        },
+        configurable: true
+      });
+    } catch (e) {
+      console.warn('[bt-host] Could not override location (already defined):', e.message);
+    }
     
     // Block direct location methods
-    if (window.location.replace) {
-      window.location.replace = function(url) {
-        console.warn('[bt-host] Blocked location.replace to:', url);
-      };
-    }
-    if (window.location.assign) {
-      window.location.assign = function(url) {
-        console.warn('[bt-host] Blocked location.assign to:', url);
-      };
+    try {
+      if (window.location.replace) {
+        window.location.replace = function(url) {
+          console.warn('[bt-host] Blocked location.replace to:', url);
+        };
+      }
+      if (window.location.assign) {
+        window.location.assign = function(url) {
+          console.warn('[bt-host] Blocked location.assign to:', url);
+        };
+      }
+    } catch (e) {
+      console.warn('[bt-host] Could not override location methods:', e.message);
     }
     
     // Block document.location navigation
-    Object.defineProperty(document, 'location', {
-      get: function() { return originalLocation; },
-      set: function(value) { 
-        console.warn('[bt-host] Blocked document.location navigation to:', value);
-        return false;
-      }
-    });
+    try {
+      Object.defineProperty(document, 'location', {
+        get: function() { return window.location; },
+        set: function(value) { 
+          console.warn('[bt-host] Blocked document.location navigation to:', value);
+          return false;
+        },
+        configurable: true
+      });
+    } catch (e) {
+      console.warn('[bt-host] Could not override document.location:', e.message);
+    }
     
     // Minimal host: notifications + project file load; saving handled via buildBinary in parent editor.
     window.HostBridge = { init(){}, signalReady(){}, useInitialLoad:false, useUrlParams:false, useWebWorkers:true, showInternalMenu:true, getBaseUrl(){return ''}, getRemoteUrl(){return ''} };
@@ -72,7 +86,7 @@
     (function(){ const q=[]; async function fetchRecord(path){ try{ const pw=parent; const fm=pw?.serviceContainer?.get?pw.serviceContainer.get('fileManager'):null; if(!fm) return null; let p=path; try{ const proj=pw.gameEditor?.projectExplorer?.getFocusedProjectName?.(); if(proj&&p.startsWith(proj+'/')) p=p.substring(proj.length+1);}catch(_){ } return await fm.loadFile(p);}catch(e){ return null;} } async function recToUrl(rec){ if(!rec) return null; let c=rec.content||rec.fileContent; if(typeof c==='string'){ try{ const bin=atob(c); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); c=arr.buffer;}catch(_){ return null;} } if(c instanceof ArrayBuffer){ const blob=new Blob([c],{type:'application/octet-stream'}); return URL.createObjectURL(blob)+'#'+encodeURIComponent(rec.filename||'module.mod'); } return null;} async function process(){ if(!window.BassoonTracker||typeof window.BassoonTracker.load!=='function') return; while(q.length){ const job=q.shift(); try{ const rec=job.rec||await fetchRecord(job.path); let usedRaw=false; try{ const content=rec?.content||rec?.fileContent; if(content&&window.BassoonTracker.loadModuleBuffer){ let buf=content; if(typeof buf==='string'){ const bin=atob(buf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); buf=arr.buffer;}             if(buf instanceof ArrayBuffer&&buf.byteLength>0){ if(window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo(); setStatus('loading module (raw)'); showCanvas(); await window.BassoonTracker.loadModuleBuffer(buf,rec?.filename||'module.mod'); usedRaw=true; } } }catch(_){ } if(!usedRaw){ const url=await recToUrl(rec);           if(url){ if(window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo(); setStatus('loading project file'); showCanvas(); window.BassoonTracker.load(url); } } }catch(_){ } } } window.loadProjectFile=function(path){ q.push({path}); process(); }; window.loadProjectFileRecord=function(rec){ if(rec&&rec.filename) q.push({path:rec.path||rec.filename,rec}); process(); }; setInterval(process,250); })();
     window.addEventListener('message', e=>{ const msg=e.data||{}; if(!msg.type) return; if(msg.type==='ping'){ try{ parent.postMessage({type:'bt-ready'},'*'); }catch(_){ } return; } if(msg.type==='load-file-from-service'&&msg.filePath){ window.HostBridge.useInitialLoad=false; const run=async()=>{ const BT=window.BassoonTracker; if(!BT||typeof BT.loadFromFileService!=='function'){ return; } try{ setStatus('loading from file service'); const result=await BT.loadFromFileService(msg.filePath,msg.filename); if(result) try{ parent.postMessage({type:'module-loaded',source:msg.filePath||msg.filename||'service-file',via:'file-service-promise'},'*'); }catch(_){ } setStatus(''); try{ parent.postMessage({type:'file-load-result',success:result,filePath:msg.filePath},'*'); }catch(_){ } }catch(err){ setStatus(''); try{ parent.postMessage({type:'file-load-result',success:false,error:err.message,filePath:msg.filePath},'*'); }catch(_){ } } }; run(); return; } const run=()=>{ const BT=window.BassoonTracker; if(!BT||typeof BT.load!=='function') return; if(msg.type==='load-bytes'&&msg.bytes){ try{ const blob=new Blob([new Uint8Array(msg.bytes)],{type:'application/octet-stream'}); const url=URL.createObjectURL(blob)+(msg.name?('#'+encodeURIComponent(msg.name)):'' ); setStatus('loading file'); BT.load(url); }catch(_){ } }         else if(msg.type==='load-demo'){ setStatus('loading demo'); showCanvas(); BT.load(BT_BASE+'demomods/Tinytune.mod'); setTimeout(()=>setStatus(''),2000);} }; run(); });
   </script>
-  <script type="module" src="scripts/audio/external/BassoonTracker/build/main-CAwiN5r8.js"></script>
+  <script type="module" src="scripts/audio/external/BassoonTracker/build/main-Bv1ehicc.js"></script>
 </head>
 <body>
   <div id="status">loading…</div>
