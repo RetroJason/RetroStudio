@@ -153,9 +153,9 @@ class ProjectExplorer {
   setupTabManagerEventListener() {
     // Use event-driven approach instead of polling for TabManager readiness
     const setupListener = () => {
-      if (window.gameEditor && window.gameEditor.tabManager) {
+      if (window.gameEmulator && window.gameEmulator.tabManager) {
         console.log('[ProjectExplorer] Setting up TabManager event listener');
-        window.gameEditor.tabManager.addEventListener('tabSwitched', (data) => {
+        window.gameEmulator.tabManager.addEventListener('tabSwitched', (data) => {
           console.log('[ProjectExplorer] TabManager tabSwitched event received:', data);
           const tabInfo = data.tabInfo;
           if (tabInfo && tabInfo.fullPath) {
@@ -170,23 +170,23 @@ class ProjectExplorer {
     
     // Try immediate setup
     if (!setupListener()) {
-      console.log('[ProjectExplorer] TabManager not ready, waiting for gameEditor ready event...');
+      console.log('[ProjectExplorer] TabManager not ready, waiting for gameEmulator ready event...');
       
-      // Listen for gameEditor ready event
-      const gameEditorHandler = () => {
+      // Listen for gameEmulator ready event
+      const gameEmulatorHandler = () => {
         if (setupListener()) {
-          console.log('[ProjectExplorer] Successfully set up TabManager listener after gameEditor became ready');
-          document.removeEventListener('gameEditorReady', gameEditorHandler);
+          console.log('[ProjectExplorer] Successfully set up TabManager listener after gameEmulator became ready');
+          document.removeEventListener('gameEmulatorReady', gameEmulatorHandler);
         }
       };
-      document.addEventListener('gameEditorReady', gameEditorHandler);
+      document.addEventListener('gameEmulatorReady', gameEmulatorHandler);
       
       // Fallback timeout
       setTimeout(() => {
         if (!setupListener()) {
           console.warn('[ProjectExplorer] Failed to set up TabManager listener after timeout');
         }
-        document.removeEventListener('gameEditorReady', gameEditorHandler);
+        document.removeEventListener('gameEmulatorReady', gameEmulatorHandler);
       }, 2000);
     }
   }
@@ -771,18 +771,18 @@ class ProjectExplorer {
 
     // Fallback: directly close any open tabs that match deleted files (normalized compare)
     try {
-      if (window.gameEditor?.tabManager) {
+      if (window.gameEmulator?.tabManager) {
         const normalize = (p) => (window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : (typeof p === 'string' ? p.replace(/^Build\//, 'build/') : p));
         const deletedSet = new Set(toDelete.map(normalize));
-        const tabs = window.gameEditor.tabManager.getAllTabs();
+        const tabs = window.gameEmulator.tabManager.getAllTabs();
         for (const t of tabs) {
           const tp = t.fullPath;
           const tpNorm = normalize(tp);
           if (tpNorm && deletedSet.has(tpNorm)) {
             if (t.tabId && t.tabId !== 'preview') {
-              window.gameEditor.tabManager.closeTab(t.tabId);
+              window.gameEmulator.tabManager.closeTab(t.tabId);
             } else if (t.tabId === 'preview') {
-              window.gameEditor.tabManager._closePreviewTab();
+              window.gameEmulator.tabManager._closePreviewTab();
             }
           }
         }
@@ -929,9 +929,9 @@ class ProjectExplorer {
       setTimeout(async () => {
         this.expandToPath(lastAddedPath);
         console.log(`[ProjectExplorer] Expanded to show last added file: ${lastAddedFile.name}`);
-        if (multiDrop && window.gameEditor && typeof window.gameEditor.onFileAdded === 'function') {
+        if (multiDrop && window.gameEmulator && typeof window.gameEmulator.onFileAdded === 'function') {
           try {
-            await window.gameEditor.onFileAdded(lastAddedFile, lastAddedPath, true);
+            await window.gameEmulator.onFileAdded(lastAddedFile, lastAddedPath, true);
           } catch (e) {
             console.warn('[ProjectExplorer] Auto-open of last file failed:', e);
           }
@@ -1085,12 +1085,12 @@ class ProjectExplorer {
       this.renderTree();
     }
     
-    // Notify game editor if available (unless skipping auto-open),
+    // Notify game emulator if available (unless skipping auto-open),
     // but only after persistence completes to avoid race where storage isn't ready yet
-    if (window.gameEditor && !skipAutoOpen) {
+    if (window.gameEmulator && !skipAutoOpen) {
       persistDone.then(() => {
         try {
-          window.gameEditor.onFileAdded(file, path, false);
+          window.gameEmulator.onFileAdded(file, path, false);
         } catch (e) {
           console.warn('[ProjectExplorer] Auto-open failed after persist:', e);
         }

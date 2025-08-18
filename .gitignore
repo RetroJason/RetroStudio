@@ -46,3 +46,6 @@ temp/
 
 # Cache
 .cache/
+
+# External Lua engine
+lua.vm.js/

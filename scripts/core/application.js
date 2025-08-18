@@ -188,7 +188,7 @@ class RetroStudioApplication {
 
     // Setup event connections
     this.events.on('tab.switched', (data) => {
-      this.services.get('gameEditor')?.updateSaveButtonState();
+      this.services.get('gameEmulator')?.updateSaveButtonState();
     });
 
     this.events.on('file.opened', (data) => {
@@ -202,12 +202,12 @@ class RetroStudioApplication {
   async startSystems() {
     console.log('[Application] Starting main systems...');
 
-    // Create and start main game editor
-    const gameEditor = new GameEditor();
-    this.services.registerSingleton('gameEditor', gameEditor);
+    // Create and start main game emulator
+    const gameEmulator = new GameEmulator();
+    this.services.registerSingleton('gameEmulator', gameEmulator);
     
     // Make legacy globals available for backward compatibility
-    window.gameEditor = gameEditor;
+    window.gameEmulator = gameEmulator;
     window.tabManager = this.services.get('tabManager');
     window.buildSystem = this.services.get('buildSystem');
 

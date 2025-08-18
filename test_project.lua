@@ -14,27 +14,41 @@ function Setup()
     print("Game Title: " .. gameTitle)
     print("Version: " .. version)
     print("Player Name: " .. playerName)
-    print("Initializing game systems...")
+    
+    -- Log to console using the new System class
+    System.LogLua("Initializing game systems...")
     
     -- Initialize some example systems
     InitializeGraphics()
     InitializeAudio()
     InitializeInput()
     
-    print("Setup complete! Game is ready to run.")
+    System.LogLua("Setup complete! Game is ready to run.")
+end
+
+-- Update function - this will be called every frame
+function Update(deltaTime)
+    -- This is called every frame at 60fps
+    -- deltaTime is the time since last frame in milliseconds
+    
+    -- Just print occasionally to show it's working
+    if math.floor(os.clock()) % 5 == 0 then
+        -- Only print every 5 seconds to avoid spam
+        System.LogLua("Update running... deltaTime: " .. tostring(deltaTime) .. "ms")
+    end
 end
 
 -- Example system initialization functions
 function InitializeGraphics()
-    print("Graphics system initialized")
+    System.LogLua("Graphics system initialized")
 end
 
 function InitializeAudio()
-    print("Audio system initialized")
+    System.LogLua("Audio system initialized")
 end
 
 function InitializeInput()
-    print("Input system initialized")
+    System.LogLua("Input system initialized")
 end
 
 print("Test project loaded successfully!")
