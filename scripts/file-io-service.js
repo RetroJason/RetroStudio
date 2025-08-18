@@ -132,16 +132,20 @@ class FileIOService {
     };
 
     try {
-      // Only encode truly binary content types - NEVER encode string content as base64
+      // Only encode truly binary content types
       if (content instanceof ArrayBuffer) {
         processedContent = toBase64(content);
         isBinaryData = true;
       } else if (content instanceof Uint8Array) {
         processedContent = toBase64(content);
         isBinaryData = true;
+      } else if (metadata.binaryData === true) {
+        // Editor explicitly requested binary encoding
+        if (typeof content === 'string') {
+          processedContent = btoa(content);
+          isBinaryData = true;
+        }
       }
-      // Note: Removed metadata.binaryData check - editors control their own format
-      // If content is a string, it stays a string regardless of metadata
     } catch (e) {
       console.error('[FileIOService] Failed to encode binary content, aborting save for path:', path, e);
       throw e;

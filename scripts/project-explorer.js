@@ -1056,7 +1056,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco', '.sfx'];
+        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco'];
         const isBinary = !textExts.includes(ext);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {

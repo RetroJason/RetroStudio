@@ -1,57 +1,220 @@
 // lua-editor.js
-// Editor for Lua script files
+// Monaco Editor-based Lua script editor
 
-console.log('[LuaEditor] Class definition loading - NEW VERSION WITH SAVE OVERRIDE');
+console.log('[LuaEditor] Class definition loading - Monaco Editor version');
 
 class LuaEditor extends EditorBase {
   constructor(fileObject = null, readOnly = false) {
-    console.log('[LuaEditor] Constructor called with NEW SIGNATURE:', fileObject, readOnly);
+    console.log('[LuaEditor] Constructor called with Monaco Editor:', fileObject, readOnly);
     super(fileObject, readOnly);
-    this.textArea = null;
+    this.monacoEditor = null;
+    this.editorContainer = null;
   }
 
   createElement() { return super.createElement(); }
 
   createBody(bodyContainer) {
-    const editorContainer = document.createElement('div');
-    editorContainer.className = 'lua-editor-container';
+    this.editorContainer = document.createElement('div');
+    this.editorContainer.className = 'lua-editor-container';
+    this.editorContainer.style.width = '100%';
+    this.editorContainer.style.height = '100%';
+    this.editorContainer.style.position = 'relative';
 
+    bodyContainer.appendChild(this.editorContainer);
+
+    // Initialize Monaco Editor
+    this.initializeMonacoEditor();
+
+    this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
+  }
+
+  async initializeMonacoEditor() {
+    try {
+      // Wait for Monaco to be available
+      if (typeof monaco === 'undefined') {
+        console.log('[LuaEditor] Waiting for Monaco Editor to load...');
+        await new Promise(resolve => {
+          const checkMonaco = () => {
+            if (typeof monaco !== 'undefined') {
+              resolve();
+            } else {
+              setTimeout(checkMonaco, 100);
+            }
+          };
+          checkMonaco();
+        });
+      }
+
+      // Configure Lua language support
+      if (!monaco.languages.getLanguages().find(lang => lang.id === 'lua')) {
+        monaco.languages.register({ id: 'lua' });
+        
+        // Basic Lua syntax highlighting
+        monaco.languages.setMonarchTokensProvider('lua', {
+          tokenizer: {
+            root: [
+              [/--.*$/, 'comment'],
+              [/".*?"/, 'string'],
+              [/'.*?'/, 'string'],
+              [/\b(and|break|do|else|elseif|end|false|for|function|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b/, 'keyword'],
+              [/\b(print|require|type|tostring|tonumber|pairs|ipairs|next|getmetatable|setmetatable|rawget|rawset)\b/, 'keyword.control'],
+              [/[{}()\[\]]/, '@brackets'],
+              [/[a-zA-Z_]\w*/, 'identifier'],
+              [/\d+\.?\d*/, 'number']
+            ]
+          }
+        });
+      }
+
+      // Create the Monaco Editor instance
+      this.monacoEditor = monaco.editor.create(this.editorContainer, {
+        value: '', // Will be set when content loads
+        language: 'lua',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        minimap: { enabled: true },
+        scrollBeyondLastLine: false,
+        fontSize: 14,
+        lineNumbers: 'on',
+        renderWhitespace: 'selection',
+        tabSize: 2,
+        insertSpaces: true,
+        wordWrap: 'on',
+        readOnly: this.readOnly
+      });
+
+      console.log(`[LuaEditor] Monaco editor created - instance: ${!!this.monacoEditor}, model: ${!!this.monacoEditor.getModel()}`);
+      
+      // Store a backup reference to debug if the main reference gets lost
+      this._monacoBackup = this.monacoEditor;
+
+      // Set up change detection
+      this.monacoEditor.onDidChangeModelContent(() => {
+        if (!this.readOnly) {
+          this.markDirty();
+        }
+      });
+  // Give container a tabIndex to allow focusing chain if needed
+      if (this.editorContainer && this.editorContainer.tabIndex < 0) {
+        this.editorContainer.tabIndex = 0;
+      }
+
+      console.log('[LuaEditor] Monaco Editor initialized successfully');
+
+    } catch (error) {
+      console.error('[LuaEditor] Failed to initialize Monaco Editor:', error);
+      // Fallback to textarea if Monaco fails
+      this.createFallbackEditor();
+    }
+  }
+
+  createFallbackEditor() {
+    console.log('[LuaEditor] Creating fallback textarea editor');
+    this.editorContainer.innerHTML = '';
+    
     this.textArea = document.createElement('textarea');
     this.textArea.className = 'lua-editor-textarea';
-    this.textArea.placeholder = '';
-
-    this._textAreaElement = this.textArea;
+    this.textArea.style.width = '100%';
+    this.textArea.style.height = '100%';
+    this.textArea.style.resize = 'none';
+    this.textArea.style.border = 'none';
+    this.textArea.style.outline = 'none';
+    this.textArea.style.fontFamily = 'Monaco, Menlo, "Ubuntu Mono", monospace';
+    this.textArea.style.fontSize = '14px';
 
     this.textArea.addEventListener('input', () => {
       if (!this.readOnly) this.markDirty();
-      else this._revertInputIfReadOnly();
     });
 
-    editorContainer.appendChild(this.textArea);
-    bodyContainer.appendChild(editorContainer);
-
-    this.loadFileContent().catch(err => console.error('[LuaEditor] Failed to load content:', err));
-
-    setTimeout(() => {
-      if (this.textArea && this.textArea.parentNode && !this.readOnly) {
-        try { this.textArea.focus(); } catch (_) {}
-      }
-      if (this.readOnly) this._applyReadOnly();
-    }, 50);
+    this.editorContainer.appendChild(this.textArea);
   }
 
   _applyReadOnly() {
-    if (!this.textArea) return;
-    this.textArea.readOnly = true;
-    this.textArea.disabled = true;
-    this.textArea.classList.add('is-readonly');
+    if (this.monacoEditor) {
+      this.monacoEditor.updateOptions({ readOnly: true });
+    } else if (this.textArea) {
+      this.textArea.readOnly = true;
+      this.textArea.disabled = true;
+      this.textArea.classList.add('is-readonly');
+    }
   }
 
   _clearReadOnly() {
-    if (!this.textArea) return;
-    this.textArea.readOnly = false;
-    this.textArea.disabled = false;
-    this.textArea.classList.remove('is-readonly');
+    if (this.monacoEditor) {
+      this.monacoEditor.updateOptions({ readOnly: false });
+    } else if (this.textArea) {
+      this.textArea.readOnly = false;
+      this.textArea.disabled = false;
+      this.textArea.classList.remove('is-readonly');
+    }
+  }
+
+  async loadFileContent() {
+    console.log(`[LuaEditor] loadFileContent() called - isNewResource: ${this.isNewResource}, path: ${this.path}`);
+    
+    try {
+      let content = null;
+      if (this.isNewResource) {
+        console.log(`[LuaEditor] New resource, using empty content`);
+        content = '';
+      } else if (this.path) {
+        console.log(`[LuaEditor] Loading content for path: ${this.path}`);
+        const fm = window.serviceContainer.get('fileManager');
+        const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
+        console.log(`[LuaEditor] Normalized storage path: ${storagePath}`);
+        
+        if (fm) {
+          console.log(`[LuaEditor] Using FileManager to load file`);
+          const rec = await fm.loadFile(storagePath);
+          console.log(`[LuaEditor] FileManager returned:`, rec);
+          if (rec) content = rec.content ?? rec.fileContent ?? '';
+        } else if (window.fileIOService) {
+          console.log(`[LuaEditor] Using FileIOService to load file`);
+          const rec = await window.fileIOService.loadFile(storagePath);
+          console.log(`[LuaEditor] FileIOService returned:`, rec);
+          if (rec) content = rec.content ?? '';
+        }
+      }
+
+      if (content === null || content === undefined) content = '';
+      if (typeof content !== 'string') content = String(content);
+
+      console.log(`[LuaEditor] Final content to set: length=${content.length}, preview="${content.substring(0, 50)}..."`);
+
+      // Set content in Monaco editor or fallback textarea
+      if (this.monacoEditor || this._monacoBackup) {
+        // Ensure Monaco reference is restored
+        if (!this.monacoEditor && this._monacoBackup) {
+          this.monacoEditor = this._monacoBackup;
+        }
+        
+        this.monacoEditor.setValue(content);
+        console.log(`[LuaEditor] Content set in Monaco editor`);
+        // Only mark clean for existing files, not new ones
+        if (!this.isNewResource) {
+          this.markClean();
+        }
+      } else if (this.textArea) {
+        this.textArea.value = content;
+        console.log(`[LuaEditor] Content set in textarea`);
+        // Only mark clean for existing files, not new ones
+        if (!this.isNewResource) {
+          this.markClean();
+        }
+      }
+    } catch (e) {
+      console.error('[LuaEditor] loadFileContent() failed:', e);
+      if (this.monacoEditor || this._monacoBackup) {
+        if (!this.monacoEditor && this._monacoBackup) {
+          this.monacoEditor = this._monacoBackup;
+        }
+        this.monacoEditor.setValue('');
+        this.markClean();
+      } else if (this.textArea) {
+        this.textArea.value = '';
+        this.markClean();
+      }
+    }
   }
 
   _revertInputIfReadOnly() {
@@ -62,65 +225,57 @@ class LuaEditor extends EditorBase {
 
   setReadOnly(isReadOnly) {
     super.setReadOnly(isReadOnly);
-    if (!this.textArea) return;
-    if (this.readOnly) this._applyReadOnly();
-    else this._clearReadOnly();
+    if (this.monacoEditor) {
+      this.monacoEditor.updateOptions({ readOnly: isReadOnly });
+    } else if (this.textArea) {
+      if (this.readOnly) this._applyReadOnly();
+      else this._clearReadOnly();
+    }
   }
 
-  async loadFileContent() {
-    try {
-      let content = null;
-      if (this.isNewResource) {
-        content = '';
-      } else if (this.path) {
-        const fm = window.serviceContainer.get('fileManager');
-        const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
-        if (fm) {
-          const rec = await fm.loadFile(storagePath);
-          if (rec) content = rec.content ?? rec.fileContent ?? '';
-        } else if (window.fileIOService) {
-          const rec = await window.fileIOService.loadFile(storagePath);
-          if (rec) content = rec.content ?? '';
-        }
+  getContent() {
+    // Ensure Monaco editor reference is maintained
+    if (!this.monacoEditor && this._monacoBackup) {
+      console.log(`[LuaEditor] Restoring Monaco reference from backup`);
+      this.monacoEditor = this._monacoBackup;
+    }
+    
+    if (this.monacoEditor) {
+      try {
+        return this.monacoEditor.getValue() || '';
+      } catch (error) {
+        console.error(`[LuaEditor] Error getting Monaco content:`, error);
+        return '';
       }
+    } else if (this.textArea) {
+      return this.textArea.value || '';
+    }
+    return '';
+  }
 
-      if (content === null || content === undefined) content = '';
-      if (typeof content !== 'string') content = String(content);
-
-      const ta = this.textArea || this._textAreaElement || (this.element && this.element.querySelector('.lua-editor-textarea'));
-      if (ta) {
-        ta.value = content;
-        this.textArea = ta;
-        // Only mark clean for existing files, not new ones
-        if (!this.isNewResource) {
-          this.markClean();
-        }
+  setContent(content) {
+    // Ensure Monaco editor reference is maintained
+    if (!this.monacoEditor && this._monacoBackup) {
+      console.log(`[LuaEditor] Restoring Monaco reference for setContent`);
+      this.monacoEditor = this._monacoBackup;
+    }
+    
+    if (this.monacoEditor) {
+      this.monacoEditor.setValue(content || '');
+      // Only mark clean if this is not a new resource
+      if (!this.isNewResource) {
+        this.markClean();
       }
-    } catch (e) {
-      console.error('[LuaEditor] loadFileContent() failed:', e);
-      if (this.textArea) {
-        this.textArea.value = '';
+    } else if (this.textArea) {
+      this.textArea.value = content || '';
+      // Only mark clean if this is not a new resource
+      if (!this.isNewResource) {
         this.markClean();
       }
     }
   }
 
-  getContent() {
-    const ta = this.textArea || this._textAreaElement || (this.element && this.element.querySelector('.lua-editor-textarea'));
-    return ta ? ta.value : '';
-  }
-
-  setContent(content) {
-    if (!this.textArea) return;
-    this.textArea.value = content;
-    // Only mark clean if this is not a new resource
-    if (!this.isNewResource) {
-      this.markClean();
-    }
-  }
-
   async save() {
-    console.log(`[LuaEditor] save() method called!`);
     console.log(`[LuaEditor] save() called - isNewResource: ${this.isNewResource}, file: ${this.file}, path: ${this.path}`);
     
     // If this is a new file without a path, use standardized save dialog
@@ -163,7 +318,9 @@ class LuaEditor extends EditorBase {
 
   onFocus() {
     super.onFocus();
-    if (this.textArea && this.textArea.parentNode) {
+    if (this.monacoEditor) {
+      try { this.monacoEditor.focus(); } catch (_) {}
+    } else if (this.textArea && this.textArea.parentNode) {
       try { this.textArea.focus(); } catch (_) {}
     }
   }

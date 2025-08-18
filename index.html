@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="style/viewers.css">
   <link rel="stylesheet" href="style/palette-editor.css">
   <link rel="stylesheet" href="styles/mod-player.css">
+  
+  <!-- Monaco Editor -->
+  <link rel="stylesheet" href="scripts/vendor/monaco-editor/vs/editor/editor.main.css">
 </head>
 <body>
   <div class="editor-layout">
@@ -135,6 +138,10 @@
   <script src="scripts/core/service-adapters.js"></script>
   <script src="scripts/core/core-init.js"></script>
   
+  <!-- External Dependencies (must load before services that use them) -->
+  <!-- JSZip (vendored) for RWP import/export (ZIP with DEFLATE) -->
+  <script src="scripts/vendor/jszip.min.js"></script>
+  
   <!-- Utilities and Services -->
   <script src="scripts/resizer.js"></script>
   <script src="scripts/file-io-service.js?v=11"></script>
@@ -142,8 +149,6 @@
   <script src="scripts/services/template-service.js"></script>
   <script src="scripts/services/template-catalog.js"></script>
   <script src="scripts/services/resource-pipeline.js"></script>
-  <!-- JSZip (vendored) for RWP import/export (ZIP with DEFLATE) -->
-  <script src="scripts/vendor/jszip.min.js"></script>
   <script src="scripts/services/rwp-service.js"></script>
   <script src="scripts/utils/modal-utils.js?v=2"></script>
   <script src="scripts/audio/audio-api.js"></script>
@@ -190,5 +195,14 @@
   
   <!-- Application Bootstrap (must load last) -->
   <script src="scripts/core/application.js"></script>
+  
+  <!-- Monaco Editor (load after everything else) -->
+  <script src="scripts/vendor/monaco-editor/vs/loader.js"></script>
+  <script>
+    require.config({ paths: { vs: 'scripts/vendor/monaco-editor/vs' } });
+    require(['vs/editor/editor.main'], function() {
+      console.log('[Monaco] Monaco Editor loaded successfully');
+    });
+  </script>
 </body>
 </html>

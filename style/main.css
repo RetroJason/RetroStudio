@@ -1262,3 +1262,40 @@ body.no-select {
 .checkbox-container input[type="checkbox"] {
   margin: 0;
 }
+
+/* Monaco Editor Lua Editor Styles */
+.lua-editor-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background-color: #1e1e1e;
+  overflow: hidden;
+}
+
+.lua-editor-textarea {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 14px;
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  padding: 10px;
+  line-height: 1.4;
+}
+
+.lua-editor-textarea.is-readonly {
+  background-color: #2d2d30;
+  color: #888;
+}
+
+/* Monaco Editor theme adjustments */
+.monaco-editor {
+  background-color: #1e1e1e !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar > .scra {
+  background: rgba(121, 121, 121, 0.4) !important;
+}
