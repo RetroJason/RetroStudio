@@ -1,0 +1,56 @@
+{
+  "name": "RetroStudio Lua Extensions",
+  "version": "1.0.0",
+  "description": "Lua extension library for RetroStudio game development",
+  "target_platforms": ["javascript", "cpp"],
+  "categories": [
+    {
+      "name": "UI",
+      "description": "User interface and dialog functions",
+      "functions": []
+    },
+    {
+      "name": "Graphics",
+      "description": "Graphics and rendering functions",
+      "functions": []
+    },
+    {
+      "name": "Audio",
+      "description": "Audio playback and sound functions", 
+      "functions": []
+    },
+    {
+      "name": "Input",
+      "description": "Keyboard and mouse input functions",
+      "functions": []
+    },
+    {
+      "name": "Math",
+      "description": "Mathematical utility functions",
+      "functions": []
+    },
+    {
+      "name": "System",
+      "description": "System and debug functions",
+      "functions": [
+        {
+          "name": "LogLua",
+          "description": "Log a message to the console from Lua",
+          "parameters": [
+            {
+              "name": "message",
+              "type": "string",
+              "description": "The message to log"
+            }
+          ],
+          "returns": {
+            "type": "void",
+            "description": "No return value"
+          },
+          "example": "System.LogLua(\"Debug message\")",
+          "js_implementation": "system.LogLua"
+        }
+      ]
+    }
+  ]
+}

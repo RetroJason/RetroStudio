@@ -291,14 +291,14 @@ class RibbonToolbar {
     
     // Project operations
     this.setupButton('buildBtn', () => {
-      if (window.gameEditor) {
-        window.gameEditor.buildProject();
+      if (window.gameEmulator) {
+        window.gameEmulator.buildProject();
       }
     });
     
     this.setupButton('playProjectBtn', () => {
-      if (window.gameEditor) {
-        window.gameEditor.playProject();
+      if (window.gameEmulator) {
+        window.gameEmulator.playProject();
       }
     });
     

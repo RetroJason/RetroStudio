@@ -1,19 +1,19 @@
 // service-adapters.js
 // Adapters to integrate existing services with new core systems
 
-class GameEditorAdapter {
-  constructor(gameEditor, services, events) {
-    this.gameEditor = gameEditor;
+class GameEmulatorAdapter {
+  constructor(gameEmulator, services, events) {
+    this.gameEmulator = gameEmulator;
     this.services = services;
     this.events = events;
     this.setupIntegration();
   }
 
   setupIntegration() {
-    // Make services available to game editor
-    this.gameEditor.tabManager = this.services.get('tabManager');
-    this.gameEditor.buildSystem = this.services.get('buildSystem');
-    this.gameEditor.projectExplorer = this.services.get('projectExplorer');
+    // Make services available to game emulator
+    this.gameEmulator.tabManager = this.services.get('tabManager');
+    this.gameEmulator.buildSystem = this.services.get('buildSystem');
+    this.gameEmulator.projectExplorer = this.services.get('projectExplorer');
 
     // Connect events
     this.setupEventConnections();
@@ -22,17 +22,17 @@ class GameEditorAdapter {
   setupEventConnections() {
     // File operations
     this.events.on('file.save.requested', (data) => {
-      this.gameEditor.saveCurrentFile();
+      this.gameEmulator.saveCurrentFile();
     });
 
     // Build operations
     this.events.on('build.start.requested', (data) => {
-      this.gameEditor.buildProject();
+      this.gameEmulator.buildProject();
     });
 
     // Tab operations
     this.events.on('tab.close.requested', (data) => {
-      this.gameEditor.tabManager.closeTab(data.tabId);
+      this.gameEmulator.tabManager.closeTab(data.tabId);
     });
   }
 }
@@ -530,7 +530,7 @@ class ServiceAdapterRegistry {
   }
 
   initializeAllAdapters() {
-    this.registerAdapter('gameEditor', GameEditorAdapter);
+    this.registerAdapter('gameEmulator', GameEmulatorAdapter);
     this.registerAdapter('tabManager', TabManagerAdapter);
     this.registerAdapter('buildSystem', BuildSystemAdapter);
     this.registerAdapter('projectExplorer', ProjectExplorerAdapter);
