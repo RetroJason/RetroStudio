@@ -2090,6 +2090,34 @@ class TabManager {
     return savedCount;
   }
 
+  async saveActiveTab() {
+    try {
+      const active = this.getActiveTab();
+      if (!active || !active.viewer) {
+        console.log('[TabManager] saveActiveTab: no active viewer');
+        return 0;
+      }
+      const v = active.viewer;
+      if (typeof v.save !== 'function') {
+        console.log('[TabManager] saveActiveTab: active viewer has no save method');
+        return 0;
+      }
+      const modified = typeof v.isModified === 'function' ? v.isModified() : true; // assume needs save if unknown
+      if (!modified) {
+        console.log('[TabManager] saveActiveTab: active viewer not modified');
+        return 0;
+      }
+      console.log('[TabManager] saveActiveTab: saving active viewer');
+      await v.save();
+      // Mark tab clean
+      if (this.activeTabId === 'preview') this.markTabClean('preview'); else this.markTabClean(this.activeTabId);
+      return 1;
+    } catch (e) {
+      console.error('[TabManager] saveActiveTab failed', e);
+      throw e;
+    }
+  }
+
   // BUILD FILES MANAGEMENT
   
   async refreshBuildTabs(buildFiles) {

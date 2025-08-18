@@ -391,10 +391,25 @@ class EditorBase extends ViewerBase {
       break;
     }
     
-    // For now, we'll create a blob and simulate saving
-    // In a real implementation, this would save to the project structure
-    const blob = new Blob([content], { type: 'text/plain' });
-    const file = new File([blob], finalFilename, { type: 'text/plain' });
+    // Prepare a File object (best-effort; handle binary and text)
+    let file;
+    try {
+      const isBinary = content instanceof Uint8Array || content instanceof ArrayBuffer;
+      const blobParts = [];
+      if (isBinary) {
+        blobParts.push(content);
+      } else if (typeof content === 'string') {
+        blobParts.push(content);
+      } else {
+        // Fallback: JSON stringify unknown objects
+        blobParts.push(JSON.stringify(content));
+      }
+      const mime = isBinary ? 'application/octet-stream' : 'text/plain';
+      const blob = new Blob(blobParts, { type: mime });
+      file = new File([blob], finalFilename, { type: mime });
+    } catch (e) {
+      console.warn('[EditorBase] Failed to construct File object:', e);
+    }
     
     try {
       // Save to persistent storage using the file I/O service
@@ -408,9 +423,22 @@ class EditorBase extends ViewerBase {
         
         console.log(`[EditorBase] About to save to file I/O service:`);
         console.log(`[EditorBase] - Path: ${storagePath}`);
+        const isBinary = content instanceof Uint8Array || content instanceof ArrayBuffer;
+        const length = (content && typeof content === 'string') ? content.length : (content instanceof Uint8Array ? content.length : (content instanceof ArrayBuffer ? content.byteLength : 0));
+        let preview = '';
+        if (typeof content === 'string') {
+          preview = content.substring(0, 100) + '...';
+        } else if (content instanceof Uint8Array) {
+          preview = 'Uint8Array[' + content.length + '] ' + Array.from(content.slice(0, 16)).map(b=>b.toString(16).padStart(2,'0')).join(' ') + (content.length>16?'...':'');
+        } else if (content instanceof ArrayBuffer) {
+          const view = new Uint8Array(content.slice(0, 16));
+            preview = 'ArrayBuffer[' + content.byteLength + '] ' + Array.from(view).map(b=>b.toString(16).padStart(2,'0')).join(' ') + (content.byteLength>16?'...':'');
+        } else {
+          preview = (content && content.toString) ? content.toString().substring(0,50)+'...' : String(content);
+        }
         console.log(`[EditorBase] - Content type: ${typeof content}`);
-        console.log(`[EditorBase] - Content length: ${content.length}`);
-        console.log(`[EditorBase] - Content preview: ${content.substring(0, 100)}...`);
+        console.log(`[EditorBase] - Content length: ${length}`);
+        console.log(`[EditorBase] - Content preview: ${preview}`);
         console.log(`[EditorBase] - Metadata:`, metadata);
         
         await window.fileIOService.saveFile(storagePath, content, metadata);
