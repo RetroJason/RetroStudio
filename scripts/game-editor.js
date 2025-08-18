@@ -218,24 +218,44 @@ class GameEditor {
     console.log(`[GameEditor] Status: ${message}`);
   }
   
-  playProject() {
+  async playProject() {
     console.log('[GameEditor] Play project');
+    this.updateStatus('Preparing to run project...', 'info');
     
-    // Check if there's an active Lua script editor
-    const activeTab = this.tabManager.tabs.get(this.tabManager.activeTabId);
-    
-    if (activeTab && activeTab.isEditor && activeTab.subtype === '.lua') {
-      // Run the active Lua script
-      this.runLuaScript(activeTab.viewer);
-    } else {
-      // Look for main.lua in the project
-      const mainLua = this.findMainLuaScript();
-      if (mainLua) {
-        this.runLuaScript(mainLua);
-      } else {
-        this.updateStatus('No Lua script to run. Create or open a Lua script first.', 'warning');
-        alert('No Lua script to run. Create or open a Lua script first.');
+    try {
+      // First, build the project to get all scripts
+      console.log('[GameEditor] Building project...');
+      await this.buildProject();
+      
+      // Concatenate all Lua scripts into one file
+      console.log('[GameEditor] Concatenating Lua scripts...');
+      const concatenatedScript = await this.concatenateLuaScripts();
+      
+      if (!concatenatedScript) {
+        this.updateStatus('No Lua scripts found in project', 'warning');
+        await this.showErrorPopup(
+          'No Lua Scripts Found',
+          'Your project must contain at least one Lua script to run.',
+          'Please create a Lua script file in your project and add a Setup() function to get started.'
+        );
+        return;
       }
+      
+      console.log(`[GameEditor] Concatenated ${concatenatedScript.fileCount} Lua files`);
+      
+      // Load and execute the concatenated script with Setup() function
+      await this.runConcatenatedScript(concatenatedScript);
+      
+    } catch (error) {
+      console.error('[GameEditor] Error running project:', error);
+      console.error('[GameEditor] Error stack:', error.stack);
+      this.updateStatus(`Error running project: ${error.message}`, 'error');
+      
+      await this.showErrorPopup(
+        'Project Run Error',
+        'An error occurred while trying to run your project.',
+        `Error Details:\n${error.message}\n\nStack Trace:\n${error.stack || 'No stack trace available'}\n\nPlease check your project files and try again.`
+      );
     }
   }
   
@@ -378,7 +398,11 @@ class GameEditor {
   executeScript(content, scriptName) {
     if (!content.trim()) {
       this.updateStatus('Script is empty!', 'warning');
-      alert('Script is empty!');
+      this.showErrorPopup(
+        'Empty Script',
+        'The script you are trying to execute is empty.',
+        `Script: ${scriptName}\n\nPlease add some content to your script and try again.`
+      );
       return;
     }
     
@@ -708,6 +732,1205 @@ class GameEditor {
     // Legacy method - now just delegates to the event system
     console.log(`[GameEditor] Legacy notification: ${resourceId} ${property} = ${value}`);
     this.onResourceUpdated({ detail: { resourceId, property, value } });
+  }
+  
+  async concatenateLuaScripts() {
+    console.log('[GameEditor] Concatenating Lua scripts...');
+    
+    if (!this.projectExplorer) {
+      throw new Error('Project explorer not available');
+    }
+    
+    // Get all Lua files from the project
+    const luaFiles = await this.getAllLuaFiles();
+    
+    if (luaFiles.length === 0) {
+      return null;
+    }
+    
+    console.log(`[GameEditor] Found ${luaFiles.length} Lua files to concatenate`);
+    
+    let concatenatedContent = '';
+    let hasSetupFunction = false;
+    
+    // Add header comment
+    concatenatedContent += '-- Auto-generated concatenated Lua script\n';
+    concatenatedContent += `-- Generated at: ${new Date().toISOString()}\n`;
+    concatenatedContent += `-- Files included: ${luaFiles.map(f => f.name).join(', ')}\n\n`;
+    
+    // Concatenate all Lua files
+    for (const file of luaFiles) {
+      concatenatedContent += `-- === File: ${file.name} ===\n`;
+      
+      let content = file.content;
+      
+      // Ensure content is a string
+      if (typeof content !== 'string') {
+        console.warn(`[GameEditor] Content for ${file.name} is not a string:`, typeof content, content);
+        content = content ? String(content) : '';
+      }
+      
+      // Check if this file contains a Setup function
+      if (content.includes('function Setup()') || content.includes('function Setup (')) {
+        hasSetupFunction = true;
+        console.log(`[GameEditor] Found Setup() function in ${file.name}`);
+      }
+      
+      concatenatedContent += content;
+      concatenatedContent += '\n\n';
+    }
+    
+    // If no Setup function was found, add a default one
+    if (!hasSetupFunction) {
+      console.log('[GameEditor] No Setup() function found, adding default one');
+      concatenatedContent += `-- Default Setup function\nfunction Setup()\n  print("No Setup() function found in project")\nend\n`;
+    }
+    
+    return {
+      content: concatenatedContent,
+      fileCount: luaFiles.length,
+      hasSetup: hasSetupFunction,
+      files: luaFiles.map(f => f.path || f.name) // Include file paths for error reporting
+    };
+  }
+  
+  async getAllLuaFiles() {
+    const luaFiles = [];
+    
+    // Get the FileIOService from ServiceContainer
+    const fileIOService = window.serviceContainer?.get?.('fileIOService');
+    if (!fileIOService) {
+      throw new Error('FileIOService is not available. Critical service missing from ServiceContainer.');
+    }
+    
+    // Wait for FileIOService to be fully initialized
+    await fileIOService.ensureReady();
+    
+    if (typeof fileIOService.getSourceScripts !== 'function') {
+      throw new Error('FileIOService.getSourceScripts() method is not available. Service may be outdated.');
+    }
+    
+    console.log('[GameEditor] Using FileIOService.getSourceScripts()');
+    const sourceScripts = await fileIOService.getSourceScripts();
+    console.log(`[GameEditor] Found ${sourceScripts.length} source Lua scripts:`, sourceScripts.map(f => f.path || f));
+    
+    // Load content for each source script
+    for (const scriptFile of sourceScripts) {
+      const scriptPath = scriptFile.path || scriptFile;
+      const content = await this.loadFileContent(scriptPath);
+      if (content !== null) {
+        luaFiles.push({
+          path: scriptPath,
+          name: scriptPath.split(/[/\\]/).pop(), // Get filename from path
+          content: content
+        });
+      }
+    }
+    
+    return luaFiles;
+  }
+  
+  async findLuaFilesRecursive(structure, currentPath, luaFiles, processedPaths) {
+    for (const [name, item] of Object.entries(structure)) {
+      const fullPath = currentPath ? `${currentPath}/${name}` : name;
+      
+      // Skip build directories and compiled files
+      const lowerPath = fullPath.toLowerCase();
+      if (lowerPath.includes('build/') || 
+          lowerPath.includes('gameobjects/') || 
+          lowerPath.includes('.sfx/') ||
+          lowerPath.startsWith('build/') ||
+          lowerPath.startsWith('gameobjects/')) {
+        console.log(`[GameEditor] Skipping build/compiled directory: ${fullPath}`);
+        continue;
+      }
+      
+      if (item.type === 'file' && name.toLowerCase().endsWith('.lua')) {
+        // Check for duplicates
+        if (processedPaths.has(fullPath)) {
+          console.log(`[GameEditor] Skipping duplicate Lua file: ${fullPath}`);
+          continue;
+        }
+        processedPaths.add(fullPath);
+        
+        try {
+          // Load file content from storage
+          const content = await this.loadFileContent(fullPath);
+          if (content !== null && content !== undefined) {
+            // Ensure content is a string
+            const stringContent = typeof content === 'string' ? content : String(content || '');
+            luaFiles.push({
+              name: name,
+              path: fullPath,
+              content: stringContent
+            });
+            console.log(`[GameEditor] Added source Lua file: ${fullPath} (${stringContent.length} chars)`);
+            console.log(`[GameEditor] Content preview:`, stringContent.substring(0, 100) + '...');
+          } else {
+            console.warn(`[GameEditor] Skipping Lua file ${fullPath}: content is null/undefined`);
+          }
+        } catch (error) {
+          console.warn(`[GameEditor] Failed to load Lua file ${fullPath}:`, error);
+        }
+      } else if (item.type === 'folder' && item.children) {
+        await this.findLuaFilesRecursive(item.children, fullPath, luaFiles, processedPaths);
+      }
+    }
+  }
+  
+  async loadFileContent(filePath) {
+    try {
+      // Use the same loading mechanism as the file manager
+      const fileManager = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      if (!fileManager) {
+        console.error('[GameEditor] File manager not available');
+        return null;
+      }
+      
+      const normalizedPath = window.ProjectPaths?.normalizeStoragePath?.(filePath) || filePath;
+      console.log(`[GameEditor] Loading file content: ${normalizedPath}`);
+      
+      const result = await fileManager.loadFile(normalizedPath);
+      console.log(`[GameEditor] File manager returned:`, typeof result, result);
+      
+      // Handle the file manager's response format (same as LuaEditor)
+      let content = null;
+      
+      if (result) {
+        // File manager returns an object with content property
+        content = result.content ?? result.fileContent ?? '';
+      }
+      
+      // Ensure we return a string or null
+      if (content === null || content === undefined) {
+        console.warn(`[GameEditor] File content is null/undefined for: ${normalizedPath}`);
+        return null;
+      }
+      
+      // Convert to string if it's not already
+      if (typeof content !== 'string') {
+        console.log(`[GameEditor] Converting content to string (was ${typeof content})`);
+        content = String(content);
+      }
+      
+      console.log(`[GameEditor] Final content length: ${content.length} chars`);
+      console.log(`[GameEditor] Content preview:`, content.substring(0, 100) + '...');
+      return content;
+    } catch (error) {
+      console.error(`[GameEditor] Error loading file ${filePath}:`, error);
+      return null;
+    }
+  }
+  
+  async runConcatenatedScript(scriptData) {
+    console.log('[GameEditor] Running concatenated Lua script...');
+    this.updateStatus('Executing Lua script...', 'info');
+    
+    try {
+      // Check if Setup() function exists
+      if (!scriptData.hasSetup) {
+        console.error('[GameEditor] Setup() function not found');
+        this.updateStatus('Error: Missing Setup() function', 'error');
+        
+        // Show custom error popup instead of throwing
+        const fileList = scriptData.files && scriptData.files.length > 0 
+          ? scriptData.files.map(f => `• ${f}`).join('\n')
+          : 'No Lua files found';
+          
+        await this.showErrorPopup(
+          'Missing Setup() Function',
+          'Your Lua scripts must contain a Setup() function to run the project.',
+          `Searched through ${scriptData.fileCount} Lua file${scriptData.fileCount !== 1 ? 's' : ''}:\n${fileList}\n\nPlease add a Setup() function to one of your Lua scripts and try again.`
+        );
+        return;
+      }
+      
+      console.log('[GameEditor] Concatenated Lua script:');
+      console.log(scriptData.content);
+      
+      // Load and execute the Lua script with real Lua engine
+      const output = await this.executeLuaScript(scriptData.content);
+      
+      console.log('[GameEditor] Lua script executed successfully');
+      this.updateStatus('Script executed successfully', 'success');
+      
+      // Show game engine with real output
+      this.showGameEngine(scriptData, output);
+      
+    } catch (error) {
+      console.error('[GameEditor] Script execution error:', error);
+      this.updateStatus(`Script execution error: ${error.message}`, 'error');
+      
+      // Show custom error popup for any other errors
+      await this.showErrorPopup(
+        'Script Execution Error',
+        'An error occurred while executing the Lua script.',
+        `Error: ${error.message}\n\nStack trace:\n${error.stack || 'No stack trace available'}`
+      );
+    }
+  }
+  
+  async executeLuaScript(scriptContent) {
+    try {
+      // Load Lua engine if not already loaded
+      if (!window.Lua) {
+        await this.loadLuaEngine();
+      }
+      
+      // Create a new Lua state
+      const L = new window.Lua.State();
+      let output = '';
+      
+      // Capture print output and execute everything in one go
+      const luaCode = `
+        -- Capture print output
+        local original_print = print
+        local captured_output = {}
+        
+        function print(...)
+          local args = {...}
+          local str = ""
+          for i, v in ipairs(args) do
+            if i > 1 then str = str .. "\\t" end
+            str = str .. tostring(v)
+          end
+          table.insert(captured_output, str)
+          original_print(...)
+        end
+        
+        -- User's script
+        ${scriptContent}
+        
+        -- Call Setup function
+        Setup()
+        
+        -- Return captured output
+        return table.concat(captured_output, "\\n")
+      `;
+      
+      // Execute everything and get the result
+      const result = L.execute(luaCode);
+      output = result && result[0] || 'Setup() function executed successfully';
+      
+      console.log('[GameEditor] Lua output:', output);
+      return output;
+      
+    } catch (error) {
+      console.error('[GameEditor] Lua execution error:', error);
+      throw new Error(`Lua execution failed: ${error.message}`);
+    }
+  }
+  
+  async loadLuaEngine() {
+    return new Promise((resolve, reject) => {
+      if (window.Lua) {
+        resolve();
+        return;
+      }
+      
+      console.log('[GameEditor] Loading Lua engine...');
+      const script = document.createElement('script');
+      script.src = 'scripts/external/lua/dist/lua.vm.js';
+      script.onload = () => {
+        console.log('[GameEditor] Lua engine loaded successfully');
+        resolve();
+      };
+      script.onerror = (error) => {
+        console.error('[GameEditor] Failed to load Lua engine:', error);
+        reject(new Error('Failed to load Lua engine'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  
+  showGameEngine(scriptData, output) {
+    // Create sliding game engine panel
+    this.createGameEnginePanel(scriptData, output);
+  }
+  
+  showErrorPopup(title, message, details = null) {
+    // Remove existing error popup if it exists
+    const existingPopup = document.querySelector('.error-popup-overlay');
+    if (existingPopup) {
+      existingPopup.remove();
+    }
+    
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'error-popup-overlay';
+    
+    // Create popup container
+    const popup = document.createElement('div');
+    popup.className = 'error-popup';
+    popup.innerHTML = `
+      <div class="error-popup-header">
+        <div class="error-icon">⚠️</div>
+        <h3>${this.escapeHtml(title)}</h3>
+        <button class="error-popup-close">×</button>
+      </div>
+      <div class="error-popup-content">
+        <div class="error-message">${this.escapeHtml(message)}</div>
+        ${details ? `
+          <div class="error-details-section">
+            <button class="error-details-toggle">Show Details</button>
+            <div class="error-details" style="display: none;">
+              <pre>${this.escapeHtml(details)}</pre>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+      <div class="error-popup-actions">
+        <button class="error-popup-btn primary">OK</button>
+      </div>
+    `;
+    
+    overlay.appendChild(popup);
+    
+    // Add styles if not already added
+    this.addErrorPopupStyles();
+    
+    // Add to body
+    document.body.appendChild(overlay);
+    
+    // Animate in
+    setTimeout(() => {
+      overlay.classList.add('visible');
+    }, 10);
+    
+    // Setup event listeners
+    this.setupErrorPopupEvents(overlay, popup);
+    
+    return new Promise((resolve) => {
+      overlay.addEventListener('close', () => resolve());
+    });
+  }
+  
+  addErrorPopupStyles() {
+    // Only add styles if they don't exist
+    if (document.querySelector('#error-popup-styles')) return;
+    
+    const style = document.createElement('style');
+    style.id = 'error-popup-styles';
+    style.textContent = `
+      .error-popup-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 20000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      }
+      
+      .error-popup-overlay.visible {
+        opacity: 1;
+      }
+      
+      .error-popup {
+        background: #2d2d30;
+        border: 2px solid #dc3545;
+        border-radius: 8px;
+        min-width: 400px;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow: hidden;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        transform: scale(0.9);
+        transition: transform 0.2s ease;
+      }
+      
+      .error-popup-overlay.visible .error-popup {
+        transform: scale(1);
+      }
+      
+      .error-popup-header {
+        background: #dc3545;
+        color: white;
+        padding: 15px 20px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      
+      .error-icon {
+        font-size: 24px;
+      }
+      
+      .error-popup-header h3 {
+        margin: 0;
+        flex: 1;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      
+      .error-popup-close {
+        background: rgba(255, 255, 255, 0.2);
+        border: none;
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.2s;
+      }
+      
+      .error-popup-close:hover {
+        background: rgba(255, 255, 255, 0.3);
+      }
+      
+      .error-popup-content {
+        padding: 20px;
+        color: #cccccc;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+      
+      .error-message {
+        font-size: 16px;
+        line-height: 1.5;
+        margin-bottom: 15px;
+      }
+      
+      .error-details-section {
+        border-top: 1px solid #3c3c3c;
+        padding-top: 15px;
+      }
+      
+      .error-details-toggle {
+        background: #6c757d;
+        border: none;
+        color: white;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+        margin-bottom: 10px;
+      }
+      
+      .error-details-toggle:hover {
+        background: #5a6268;
+      }
+      
+      .error-details {
+        background: #1e1e1e;
+        border: 1px solid #3c3c3c;
+        border-radius: 4px;
+        padding: 15px;
+        margin-top: 10px;
+      }
+      
+      .error-details pre {
+        margin: 0;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 14px;
+        color: #f8f9fa;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      
+      .error-popup-actions {
+        background: #252526;
+        padding: 15px 20px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        border-top: 1px solid #3c3c3c;
+      }
+      
+      .error-popup-btn {
+        padding: 8px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      
+      .error-popup-btn.primary {
+        background: #0078d4;
+        color: white;
+      }
+      
+      .error-popup-btn.primary:hover {
+        background: #106ebe;
+      }
+      
+      .error-popup-btn.secondary {
+        background: #6c757d;
+        color: white;
+      }
+      
+      .error-popup-btn.secondary:hover {
+        background: #5a6268;
+      }
+    `;
+    
+    document.head.appendChild(style);
+  }
+  
+  setupErrorPopupEvents(overlay, popup) {
+    // Close button
+    const closeBtn = popup.querySelector('.error-popup-close');
+    const okBtn = popup.querySelector('.error-popup-btn.primary');
+    
+    const closePopup = () => {
+      overlay.classList.remove('visible');
+      setTimeout(() => {
+        overlay.remove();
+        overlay.dispatchEvent(new Event('close'));
+      }, 200);
+    };
+    
+    closeBtn.addEventListener('click', closePopup);
+    okBtn.addEventListener('click', closePopup);
+    
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        closePopup();
+      }
+    });
+    
+    // Details toggle
+    const detailsToggle = popup.querySelector('.error-details-toggle');
+    const detailsSection = popup.querySelector('.error-details');
+    
+    if (detailsToggle && detailsSection) {
+      detailsToggle.addEventListener('click', () => {
+        const isVisible = detailsSection.style.display !== 'none';
+        detailsSection.style.display = isVisible ? 'none' : 'block';
+        detailsToggle.textContent = isVisible ? 'Show Details' : 'Hide Details';
+      });
+    }
+    
+    // ESC key to close
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        closePopup();
+        document.removeEventListener('keydown', handleKeyDown);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+  }
+  
+  createGameEnginePanel(scriptData, output) {
+    // Remove any existing game engine elements
+    const existingPanel = document.querySelector('.game-engine-panel');
+    const existingResizer = document.querySelector('.game-engine-resizer');
+    if (existingPanel) existingPanel.remove();
+    if (existingResizer) existingResizer.remove();
+    
+    // Get the content wrapper where we'll add the game engine
+    const contentWrapper = document.querySelector('.content-wrapper');
+    if (!contentWrapper) {
+      console.error('[GameEditor] Content wrapper not found');
+      return;
+    }
+    
+    // Create a new resizer for the game engine
+    const gameEngineResizer = document.createElement('div');
+    gameEngineResizer.className = 'game-engine-resizer';
+    gameEngineResizer.innerHTML = `
+      <div class="resizer-handle">
+        <div class="resizer-line"></div>
+        <div class="resizer-line"></div>
+        <div class="resizer-line"></div>
+      </div>
+    `;
+    
+    // Create the game engine panel
+    const gameEnginePanel = document.createElement('div');
+    gameEnginePanel.className = 'game-engine-panel';
+    gameEnginePanel.innerHTML = `
+      <div class="game-engine-header">
+        <h3>🎮 Game Engine</h3>
+        <button class="close-engine-btn">×</button>
+      </div>
+      <div class="game-engine-tabs">
+        <button class="tab-btn active" data-tab="game">Game</button>
+        <button class="tab-btn" data-tab="output">Output</button>
+        <button class="tab-btn" data-tab="script">Script</button>
+      </div>
+      <div class="game-engine-content">
+        <div class="tab-content active" id="game-tab">
+          <div class="game-canvas-container">
+            <canvas id="game-canvas" width="800" height="600"></canvas>
+            <div class="game-info">Game running... (simulated)</div>
+          </div>
+        </div>
+        <div class="tab-content" id="output-tab">
+          <div class="output-console">
+            <div class="console-header">📝 Print Output</div>
+            <div class="console-content">${this.escapeHtml(output)}</div>
+          </div>
+        </div>
+        <div class="tab-content" id="script-tab">
+          <div class="script-viewer">
+            <div class="script-header">📜 Concatenated Script (${scriptData.fileCount} files)</div>
+            <div class="script-content">${this.escapeHtml(scriptData.content)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Append the resizer and panel to the content wrapper
+    contentWrapper.appendChild(gameEngineResizer);
+    contentWrapper.appendChild(gameEnginePanel);
+    
+    // Add styles
+    this.addGameEngineStyles();
+    
+    // Modify the content wrapper layout to accommodate the game engine
+    this.adjustLayoutForGameEngine(contentWrapper, gameEngineResizer, gameEnginePanel);
+    
+    // Setup resizer functionality  
+    this.setupGameEngineResizer(gameEngineResizer, gameEnginePanel);
+    
+    // Slide in animation
+    setTimeout(() => {
+      gameEnginePanel.classList.add('visible');
+      gameEngineResizer.classList.add('visible');
+    }, 10);
+    
+    // Add event listeners
+    this.setupGameEngineEvents(gameEnginePanel);
+  }
+  
+  adjustLayoutForGameEngine(contentWrapper, resizer, panel) {
+    // Add class to body for global layout adjustments
+    document.body.classList.add('game-engine-active');
+    
+    // Adjust the content wrapper to use CSS Grid for proper layout
+    contentWrapper.style.display = 'grid';
+    contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 0fr';
+    contentWrapper.style.transition = 'grid-template-columns 0.3s ease-in-out';
+    
+    // Animate to show the game engine
+    requestAnimationFrame(() => {
+      contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 400px';
+    });
+  }
+  
+  setupGameEngineResizer(resizer, panel) {
+    const contentWrapper = resizer.parentElement;
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    
+    resizer.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = panel.offsetWidth;
+      
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      
+      const deltaX = startX - e.clientX; // Inverted because we're resizing from the right
+      let newWidth = startWidth + deltaX;
+      
+      // Enforce constraints
+      newWidth = Math.max(300, Math.min(800, newWidth));
+      
+      // Update grid template
+      const existingColumns = contentWrapper.style.gridTemplateColumns.split(' ');
+      existingColumns[4] = `${newWidth}px`;
+      contentWrapper.style.gridTemplateColumns = existingColumns.join(' ');
+      
+      e.preventDefault();
+    });
+    
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+    
+    // Double-click to reset
+    resizer.addEventListener('dblclick', () => {
+      const existingColumns = contentWrapper.style.gridTemplateColumns.split(' ');
+      existingColumns[4] = '400px';
+      contentWrapper.style.gridTemplateColumns = existingColumns.join(' ');
+    });
+  }
+  
+  hideGameEngine() {
+    const contentWrapper = document.querySelector('.content-wrapper');
+    const gameEnginePanel = document.querySelector('.game-engine-panel');
+    const gameEngineResizer = document.querySelector('.game-engine-resizer');
+    
+    if (contentWrapper && gameEnginePanel && gameEngineResizer) {
+      // Animate out
+      gameEnginePanel.classList.remove('visible');
+      gameEngineResizer.classList.remove('visible');
+      
+      // Reset grid layout
+      contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 0fr';
+      
+      setTimeout(() => {
+        // Remove elements
+        gameEnginePanel.remove();
+        gameEngineResizer.remove();
+        
+        // Reset layout
+        document.body.classList.remove('game-engine-active');
+        contentWrapper.style.display = '';
+        contentWrapper.style.gridTemplateColumns = '';
+        contentWrapper.style.transition = '';
+      }, 300);
+    }
+  }
+  
+  addGameEngineStyles() {
+    // Only add styles if they don't exist
+    if (document.querySelector('#game-engine-styles')) return;
+    
+    const style = document.createElement('style');
+    style.id = 'game-engine-styles';
+    style.textContent = `
+      /* Game engine layout integration */
+      body.game-engine-active .content-wrapper {
+        display: grid !important;
+        grid-template-columns: auto 4px 1fr 4px 0fr;
+        transition: grid-template-columns 0.3s ease-in-out;
+      }
+      
+      body.game-engine-active .content-wrapper.game-engine-visible {
+        grid-template-columns: auto 4px 1fr 4px 400px;
+      }
+      
+      .game-engine-resizer {
+        background: #3c3c3c;
+        cursor: col-resize;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        user-select: none;
+        opacity: 0;
+        transition: opacity 0.3s ease-in-out;
+        grid-column: 4;
+      }
+      
+      .game-engine-resizer.visible {
+        opacity: 1;
+      }
+      
+      .game-engine-resizer:hover {
+        background: #0078d4;
+      }
+      
+      .resizer-handle {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        opacity: 0.6;
+      }
+      
+      .resizer-line {
+        width: 2px;
+        height: 8px;
+        background: currentColor;
+        border-radius: 1px;
+      }
+      
+      .game-engine-resizer:hover .resizer-handle {
+        opacity: 1;
+      }
+      
+      .game-engine-panel {
+        background: #2d2d30;
+        border-left: 2px solid #3c3c3c;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        opacity: 0;
+        transform: translateX(100%);
+        transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #cccccc;
+        grid-column: 5;
+      }
+      
+      .game-engine-panel.visible {
+        opacity: 1;
+        transform: translateX(0);
+      }
+      
+      .game-engine-header {
+        background: #1e1e1e;
+        padding: 15px 20px;
+        border-bottom: 1px solid #3c3c3c;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+      }
+      
+      .game-engine-header h3 {
+        margin: 0;
+        color: #0078d4;
+        font-size: 18px;
+      }
+      
+      .close-engine-btn {
+        background: #dc3545;
+        border: none;
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      
+      .close-engine-btn:hover {
+        background: #c82333;
+      }
+      
+      .game-engine-tabs {
+        background: #252526;
+        display: flex;
+        border-bottom: 1px solid #3c3c3c;
+        flex-shrink: 0;
+      }
+      
+      .tab-btn {
+        background: none;
+        border: none;
+        color: #cccccc;
+        padding: 12px 20px;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      
+      .tab-btn.active {
+        color: #0078d4;
+        border-bottom-color: #0078d4;
+      }
+      
+      .tab-btn:hover:not(.active) {
+        background: #3c3c3c;
+      }
+      
+      .game-engine-content {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+      }
+      
+      .tab-content {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: none;
+        overflow: auto;
+      }
+      
+      .tab-content.active {
+        display: block;
+      }
+      
+      .game-canvas-container {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        height: 100%;
+      }
+      
+      #game-canvas {
+        background: #000;
+        border: 2px solid #3c3c3c;
+        max-width: 100%;
+        max-height: calc(100% - 60px);
+      }
+      
+      .game-info {
+        margin-top: 10px;
+        color: #6c757d;
+        font-style: italic;
+      }
+      
+      .output-console, .script-viewer {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      
+      .console-header, .script-header {
+        background: #1e1e1e;
+        padding: 10px 15px;
+        border-bottom: 1px solid #3c3c3c;
+        color: #0078d4;
+        font-weight: bold;
+        flex-shrink: 0;
+      }
+      
+      .console-content, .script-content {
+        flex: 1;
+        padding: 15px;
+        overflow: auto;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        background: #1e1e1e;
+      }
+      
+      .console-content {
+        color: #d4edda;
+      }
+      
+      .script-content {
+        color: #f8f9fa;
+        background: #2d2d30;
+      }
+    `;
+    
+    document.head.appendChild(style);
+  }
+  
+  setupGameEngineEvents(panel) {
+    // Close button
+    const closeBtn = panel.querySelector('.close-engine-btn');
+    closeBtn.addEventListener('click', () => {
+      this.hideGameEngine();
+    });
+    
+    // Tab switching
+    const tabBtns = panel.querySelectorAll('.tab-btn');
+    const tabContents = panel.querySelectorAll('.tab-content');
+    
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetTab = btn.dataset.tab;
+        
+        // Update active tab button
+        tabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        // Update active tab content
+        tabContents.forEach(content => {
+          content.classList.remove('active');
+          if (content.id === `${targetTab}-tab`) {
+            content.classList.add('active');
+          }
+        });
+      });
+    });
+  }
+  
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  showScriptResults(scriptData, output) {
+    // Create a results window
+    const resultsWindow = window.open('', '_blank', 'width=1000,height=800,scrollbars=yes,resizable=yes');
+    
+    resultsWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Lua Script Execution Results</title>
+          <style>
+            body { 
+              font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+              background: #1e1e1e; 
+              color: #cccccc; 
+              padding: 20px; 
+              margin: 0;
+              line-height: 1.6;
+            }
+            .header { 
+              color: #0078d4; 
+              margin-bottom: 20px; 
+              font-size: 24px;
+              border-bottom: 2px solid #3c3c3c;
+              padding-bottom: 15px;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+            .status {
+              background: #0e5a1a;
+              color: #4caf50;
+              padding: 4px 12px;
+              border-radius: 12px;
+              font-size: 12px;
+              font-weight: bold;
+            }
+            .info-section {
+              background: #2d2d30;
+              padding: 15px;
+              border-radius: 6px;
+              margin-bottom: 20px;
+              border-left: 4px solid #0078d4;
+            }
+            .info-title {
+              color: #0078d4;
+              font-weight: bold;
+              margin-bottom: 8px;
+            }
+            .file-list {
+              color: #ddd;
+              font-family: 'Consolas', monospace;
+              font-size: 14px;
+            }
+            .section {
+              margin-bottom: 20px;
+            }
+            .section-title {
+              color: #f0f6fc;
+              font-weight: bold;
+              margin-bottom: 10px;
+              font-size: 16px;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+            }
+            .output-section {
+              background: #0d1117;
+              border: 1px solid #30363d;
+              border-radius: 6px;
+              padding: 20px;
+              min-height: 150px;
+            }
+            .script-section {
+              background: #0d1117;
+              border: 1px solid #30363d;
+              border-radius: 6px;
+              padding: 20px;
+              max-height: 400px;
+              overflow-y: auto;
+            }
+            .content {
+              font-family: 'Consolas', 'Courier New', monospace;
+              color: #e6edf3;
+              white-space: pre-wrap;
+              font-size: 14px;
+              line-height: 1.5;
+            }
+            .no-output {
+              color: #7d8590;
+              font-style: italic;
+            }
+            .actions {
+              margin-top: 20px;
+              text-align: center;
+            }
+            .btn {
+              background: #0078d4;
+              color: white;
+              padding: 8px 16px;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              margin: 0 5px;
+              font-size: 14px;
+            }
+            .btn:hover {
+              background: #106ebe;
+            }
+            .btn-secondary {
+              background: #6c757d;
+            }
+            .btn-secondary:hover {
+              background: #5a6268;
+            }
+            .toggle-script {
+              background: #6f42c1;
+              margin-top: 10px;
+            }
+            .toggle-script:hover {
+              background: #5a32a3;
+            }
+          </style>
+          <script>
+            function toggleScript() {
+              const scriptSection = document.getElementById('scriptSection');
+              const toggleBtn = document.getElementById('toggleBtn');
+              if (scriptSection.style.display === 'none') {
+                scriptSection.style.display = 'block';
+                toggleBtn.textContent = 'Hide Concatenated Script';
+              } else {
+                scriptSection.style.display = 'none';
+                toggleBtn.textContent = 'Show Concatenated Script';
+              }
+            }
+          </script>
+        </head>
+        <body>
+          <div class="header">
+            🚀 Lua Script Execution Results
+            <span class="status">SUCCESS</span>
+          </div>
+          
+          <div class="info-section">
+            <div class="info-title">Execution Summary</div>
+            <div class="file-list">
+              📄 Files processed: ${scriptData.fileCount}<br>
+              🔧 Setup() function: ${scriptData.hasSetup ? 'Found and executed' : 'Default generated'}<br>
+              ⏱️ Executed at: ${new Date().toLocaleString()}
+            </div>
+          </div>
+          
+          <div class="section">
+            <div class="section-title">💻 Script Output</div>
+            <div class="output-section">
+              <div class="content">${output || '<span class="no-output">No output generated</span>'}</div>
+            </div>
+          </div>
+          
+          <div class="section">
+            <div class="section-title">📜 Concatenated Script</div>
+            <button class="btn toggle-script" id="toggleBtn" onclick="toggleScript()">Show Concatenated Script</button>
+            <div class="script-section" id="scriptSection" style="display: none;">
+              <div class="content">${scriptData.content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+            </div>
+          </div>
+          
+          <div class="actions">
+            <button class="btn" onclick="window.close()">Close</button>
+            <button class="btn btn-secondary" onclick="toggleScript()">Toggle Script View</button>
+          </div>
+        </body>
+      </html>
+    `);
+    
+    resultsWindow.document.close();
   }
 }
 
