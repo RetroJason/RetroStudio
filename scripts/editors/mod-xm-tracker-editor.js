@@ -49,10 +49,10 @@ class ModXmTrackerEditor extends EditorBase {
     this._container = body;
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = './bt-host.html?skipDemo=1';
+    this._iframe.src = 'bt-host.html?skipDemo=1';
     this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
     body.appendChild(this._iframe);
@@ -120,36 +120,8 @@ class ModXmTrackerEditor extends EditorBase {
           if (msg.url.startsWith('buffer://')) {
             this._currentFilename = msg.filename || msg.url.substring(9);
           } else {
-            // Extract filename from URL, handling fragments and query parameters
-            let filename = '';
-            
-            // Check if there's a fragment (part after #) which often contains the real filename
-            if (msg.url.includes('#')) {
-              const fragment = msg.url.split('#')[1];
-              if (fragment && (fragment.endsWith('.mod') || fragment.endsWith('.xm') || fragment.endsWith('.s3m'))) {
-                filename = fragment;
-              }
-            }
-            
-            // If no good fragment, extract from the URL path
-            if (!filename) {
-              const parts = msg.url.split('/');
-              let urlPart = parts[parts.length - 1];
-              
-              // Remove query parameters (everything after ?)
-              if (urlPart.includes('?')) {
-                urlPart = urlPart.split('?')[0];
-              }
-              
-              // Remove fragment if still present
-              if (urlPart.includes('#')) {
-                urlPart = urlPart.split('#')[0];
-              }
-              
-              filename = urlPart;
-            }
-            
-            this._currentFilename = filename || 'song.mod';
+            const parts = msg.url.split('/');
+            this._currentFilename = parts[parts.length - 1];
           }
         }
       }
@@ -175,10 +147,10 @@ class ModXmTrackerEditor extends EditorBase {
     this._container.innerHTML = '';
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = './bt-host.html?skipDemo=1';
+    this._iframe.src = 'bt-host.html?skipDemo=1';
     this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
     this._container.appendChild(this._iframe);

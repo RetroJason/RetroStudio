@@ -226,23 +226,6 @@ class EditorBase extends ViewerBase {
   isModified() {
     return this.isDirty || this.hasUnsavedChanges;
   }
-
-  // Base implementation of refreshContent that checks for unsaved changes
-  async refreshContent() {
-    // Don't reload from filesystem if editor has unsaved changes
-    if (this.isModified()) {
-      console.log(`[${this.constructor.name}] Skipping refresh - editor has unsaved changes`);
-      return;
-    }
-    
-    try {
-      await this.loadFileContent();
-      console.log(`[${this.constructor.name}] Successfully refreshed content for: ${this.path}`);
-    } catch (error) {
-      console.error(`[${this.constructor.name}] Failed to refresh content for ${this.path}:`, error);
-      throw error;
-    }
-  }
   
   updateTabTitle() {
     // TabManager now handles tab title updates automatically
@@ -440,6 +423,19 @@ class EditorBase extends ViewerBase {
         
         console.log(`[EditorBase] About to save to file I/O service:`);
         console.log(`[EditorBase] - Path: ${storagePath}`);
+        // Debug: Log what getContent returns vs what we received
+        console.log(`[EditorBase] saveNewResource debug - incoming content length: ${content ? content.length : 'null/undefined'}`);
+        if (typeof this.getContent === 'function') {
+          const live = this.getContent();
+          console.log(`[EditorBase] getContent() returned length: ${live ? live.length : 'null/undefined'}`);
+          console.log(`[EditorBase] getContent() preview: "${live ? live.substring(0, 50) : 'null/undefined'}..."`);
+          
+          // If incoming content is empty but editor buffer has data (e.g. async timing), re-fetch now
+          if ((content === '' || content === undefined || content === null) && live && live.length) {
+            console.log('[EditorBase] Provided empty content; using live editor buffer instead (length=' + live.length + ')');
+            content = live;
+          }
+        }
         const isBinary = content instanceof Uint8Array || content instanceof ArrayBuffer;
         const length = (content && typeof content === 'string') ? content.length : (content instanceof Uint8Array ? content.length : (content instanceof ArrayBuffer ? content.byteLength : 0));
         let preview = '';
@@ -476,10 +472,12 @@ class EditorBase extends ViewerBase {
     if (window.gameEditor && window.gameEditor.tabManager) {
       const currentPath = this.path || 'untitled';
       console.log(`[EditorBase] Updating tab manager: currentPath="${currentPath}", storagePath="${storagePath}", filename="${finalFilename}"`);
-      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename, this);
+      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename);
     }
     
-    this.path = fullUiPath;
+  // Keep UI path separately for display while internal path (storage key) uses normalized storagePath
+  this.displayPath = fullUiPath;
+  this.path = storagePath; // ensure subsequent loads/saves use the exact storage key
     this.isNewResource = false;
     if (typeof this.markClean === 'function') {
       this.markClean();

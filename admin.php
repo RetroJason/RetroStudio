@@ -8,62 +8,6 @@ define('REPO_URL', 'https://github.com/RetroJason/RetroStudio.git'); // Reposito
 define('REPO_PATH', __DIR__); // Current directory (root of the project)
 define('GIT_BRANCH', 'main');// Branch to pull from
 
-// Handle API requests for git logs (for changelog service)
-if (isset($_GET['api']) && $_GET['api'] === 'changelog') {
-    header('Content-Type: application/json');
-    header('Access-Control-Allow-Origin: *'); // Allow CORS for local development
-    
-    chdir(REPO_PATH);
-    
-    // Get current commit hash
-    $current_commit = '';
-    exec('git rev-parse HEAD 2>/dev/null', $current_output);
-    if (!empty($current_output[0])) {
-        $current_commit = trim($current_output[0]);
-    }
-    
-    // Get commits since a specific commit (if provided)
-    $since_commit = $_GET['since'] ?? '';
-    $limit = min(50, max(1, intval($_GET['limit'] ?? 10))); // Max 50 commits, default 10
-    
-    $commits = [];
-    
-    if ($since_commit && $since_commit !== $current_commit) {
-        // Get commits between since_commit and current
-        $git_cmd = "git log --oneline --pretty=format:'%H|%an|%ae|%ad|%s' --date=iso {$since_commit}..HEAD 2>/dev/null";
-    } else {
-        // Get recent commits
-        $git_cmd = "git log --oneline --pretty=format:'%H|%an|%ae|%ad|%s' --date=iso -n {$limit} 2>/dev/null";
-    }
-    
-    $git_output = [];
-    exec($git_cmd, $git_output);
-    
-    foreach ($git_output as $line) {
-        $parts = explode('|', $line, 5);
-        if (count($parts) === 5) {
-            $commits[] = [
-                'hash' => $parts[0],
-                'short_hash' => substr($parts[0], 0, 7),
-                'author' => $parts[1],
-                'email' => $parts[2],
-                'date' => $parts[3],
-                'message' => $parts[4]
-            ];
-        }
-    }
-    
-    $response = [
-        'current_commit' => $current_commit,
-        'current_short' => substr($current_commit, 0, 7),
-        'commits' => $commits,
-        'timestamp' => date('c')
-    ];
-    
-    echo json_encode($response, JSON_PRETTY_PRINT);
-    exit;
-}
-
 // Start session for basic security
 session_start();
 
@@ -336,54 +280,7 @@ $is_logged_in = isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_i
                 <h3>Quick Links</h3>
                 <a href="index.html" class="btn">View Application</a>
                 <a href="." class="btn">Browse Files</a>
-                <a href="?api=changelog&limit=5" class="btn" target="_blank">Test Changelog API</a>
             </div>
-            
-            <!-- Changelog Testing -->
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
-                <h3>Changelog Testing</h3>
-                <p>Use these buttons to test the changelog functionality in the application:</p>
-                <button onclick="testChangelog()" class="btn">Test Changelog Modal</button>
-                <button onclick="resetVisitTracking()" class="btn">Reset Visit Tracking</button>
-                <button onclick="viewCurrentCommit()" class="btn">View Current Commit</button>
-            </div>
-            
-            <script>
-            function testChangelog() {
-                if (window.parent && window.parent.ChangelogService) {
-                    const service = new window.parent.ChangelogService();
-                    service.showTestChangelog();
-                } else {
-                    // Open in new window to test
-                    const newWindow = window.open('index.html', '_blank');
-                    newWindow.addEventListener('load', () => {
-                        setTimeout(() => {
-                            if (newWindow.ChangelogService) {
-                                const service = new newWindow.ChangelogService();
-                                service.showTestChangelog();
-                            }
-                        }, 2000);
-                    });
-                }
-            }
-            
-            function resetVisitTracking() {
-                document.cookie = 'retrostudio_last_visit=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                document.cookie = 'retrostudio_last_commit=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-                alert('Visit tracking reset. Next visit to the application will be treated as first visit.');
-            }
-            
-            function viewCurrentCommit() {
-                fetch('./admin.php?api=changelog&limit=1')
-                    .then(response => response.json())
-                    .then(data => {
-                        alert('Current commit: ' + data.current_short + '\nFull hash: ' + data.current_commit);
-                    })
-                    .catch(error => {
-                        alert('Error fetching commit: ' + error.message);
-                    });
-            }
-            </script>
             
         <?php endif; ?>
     </div>
