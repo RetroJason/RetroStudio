@@ -49,10 +49,10 @@ class ModXmTrackerEditor extends EditorBase {
     this._container = body;
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html?skipDemo=1';
+    this._iframe.src = 'bt-host.html';
     this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
     body.appendChild(this._iframe);
@@ -147,10 +147,10 @@ class ModXmTrackerEditor extends EditorBase {
     this._container.innerHTML = '';
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html?skipDemo=1';
+    this._iframe.src = 'bt-host.html';
     this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
     this._container.appendChild(this._iframe);
