@@ -2,12 +2,13 @@
 // Handles file persistence across different environments
 
 class FileIOService {
-  constructor() {
+  constructor(options = {}) {
     this.storageType = 'indexeddb'; // 'indexeddb', 'localstorage', 'filesystem', 'nodejs'
     this.db = null;
     this.dbName = 'RetroStudioFiles';
     this.dbVersion = 1;
     this.initPromise = null; // Track initialization
+    this.clearOnStartup = options.clearOnStartup || false; // Clear IndexedDB on startup
     
     this.initPromise = this.initialize();
   }
@@ -20,6 +21,14 @@ class FileIOService {
     } else if (this.supportsIndexedDB()) {
       this.storageType = 'indexeddb';
       await this.initIndexedDB();
+      
+      // Clear database on startup if requested
+      if (this.clearOnStartup) {
+        console.log('[FileIOService] Clearing IndexedDB on startup...');
+        const clearedCount = await this.clearAll(true); // Skip ensureReady to avoid circular dependency
+        console.log(`[FileIOService] Cleared ${clearedCount ? 'all' : 'no'} files from IndexedDB`);
+      }
+      
       console.log('[FileIOService] Using IndexedDB');
       // Note: File System Access API may also be available, but we prefer IndexedDB
     } else {
@@ -431,30 +440,253 @@ class FileIOService {
   // Removed localStorage delete for pure IndexedDB approach
 
   // Danger: Clear all persisted files in IndexedDB
-  async clearAll() {
-    await this.ensureReady();
-    if (!this.db) return 0;
+  async clearAll(skipEnsureReady = false) {
+    if (!skipEnsureReady) {
+      await this.ensureReady();
+    }
+    if (!this.db) {
+      console.warn('[FileIOService] clearAll called but no database available');
+      return 0;
+    }
+    
+    console.log('[FileIOService] Clearing all files from IndexedDB...');
     return new Promise((resolve, reject) => {
       try {
         const tx = this.db.transaction(['files'], 'readwrite');
         const store = tx.objectStore('files');
         const clearReq = store.clear();
-        clearReq.onsuccess = () => resolve(1);
-        clearReq.onerror = () => reject(clearReq.error);
+        clearReq.onsuccess = () => {
+          console.log('[FileIOService] Successfully cleared all files from IndexedDB');
+          resolve(1);
+        };
+        clearReq.onerror = () => {
+          console.error('[FileIOService] Error clearing IndexedDB:', clearReq.error);
+          reject(clearReq.error);
+        };
       } catch (e) {
+        console.error('[FileIOService] Exception during clearAll:', e);
         reject(e);
       }
     });
   }
+
+  // Helper functions to get specific file types from specific directories
+  
+  /**
+   * Get all source Lua scripts (excluding compiled game objects)
+   */
+  async getSourceScripts() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    // Filter for source Lua files - exclude Build and game object directories
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include .lua files that are NOT in build directories or game objects
+      return lowerPath.endsWith('.lua') && 
+             !lowerPath.includes('/build/') && 
+             !lowerPath.includes('\\build\\') &&
+             !lowerPath.includes('/gameobjects/') &&
+             !lowerPath.includes('\\gameobjects\\') &&
+             !lowerPath.includes('.sfx/') &&
+             !lowerPath.startsWith('build/') &&
+             !lowerPath.startsWith('build\\') &&
+             !lowerPath.startsWith('gameobjects/') &&
+             !lowerPath.startsWith('gameobjects\\');
+    });
+  }
+
+  /**
+   * Get all source palettes (excluding compiled versions)
+   */
+  async getSourcePalettes() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include .pal files that are NOT in build directories
+      return lowerPath.endsWith('.pal') && 
+             !lowerPath.includes('/build/') && 
+             !lowerPath.includes('\\build\\') &&
+             !lowerPath.includes('.sfx/') &&
+             !lowerPath.startsWith('build/') &&
+             !lowerPath.startsWith('build\\');
+    });
+  }
+
+  /**
+   * Get all source audio files (excluding compiled versions)
+   */
+  async getSourceAudio() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    const audioExtensions = ['.wav', '.mod', '.xm', '.s3m', '.it', '.mptm'];
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include audio files that are NOT in build directories
+      const hasAudioExt = audioExtensions.some(ext => lowerPath.endsWith(ext));
+      return hasAudioExt && 
+             !lowerPath.includes('/build/') && 
+             !lowerPath.includes('\\build\\') &&
+             !lowerPath.includes('.sfx/') &&
+             !lowerPath.startsWith('build/') &&
+             !lowerPath.startsWith('build\\');
+    });
+  }
+
+  /**
+   * Get all source image files (excluding compiled versions)
+   */
+  async getSourceImages() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include image files that are NOT in build directories
+      const hasImageExt = imageExtensions.some(ext => lowerPath.endsWith(ext));
+      return hasImageExt && 
+             !lowerPath.includes('/build/') && 
+             !lowerPath.includes('\\build\\') &&
+             !lowerPath.includes('.sfx/') &&
+             !lowerPath.startsWith('build/') &&
+             !lowerPath.startsWith('build\\');
+    });
+  }
+
+  /**
+   * Get compiled game object SFX files
+   */
+  async getGameObjectSfx() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include files from .sfx directories or gameobjects directories
+      return (lowerPath.includes('.sfx/') || 
+              lowerPath.includes('\\gameobjects\\') ||
+              lowerPath.includes('/gameobjects/')) &&
+             (lowerPath.endsWith('.wav') || 
+              lowerPath.endsWith('.mod') ||
+              lowerPath.endsWith('.xm') ||
+              lowerPath.endsWith('.s3m') ||
+              lowerPath.endsWith('.it'));
+    });
+  }
+
+  /**
+   * Get all build output files
+   */
+  async getBuildFiles() {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      
+      // Include files from build directories
+      return lowerPath.includes('/build/') || 
+             lowerPath.includes('\\build\\') ||
+             lowerPath.startsWith('build/') ||
+             lowerPath.startsWith('build\\');
+    });
+  }
+
+  /**
+   * Get files from a specific source directory
+   */
+  async getSourceDirectory(dirName) {
+    await this.ensureReady();
+    const allFiles = await this.listFiles();
+    
+    return allFiles.filter(file => {
+      const path = file.path || file;
+      const lowerPath = path.toLowerCase();
+      const lowerDirName = dirName.toLowerCase();
+      
+      // Include files from the specified directory that are NOT in build
+      return (lowerPath.includes(`/${lowerDirName}/`) || 
+              lowerPath.includes(`\\${lowerDirName}\\`) ||
+              lowerPath.startsWith(`${lowerDirName}/`) ||
+              lowerPath.startsWith(`${lowerDirName}\\`)) &&
+             !lowerPath.includes('/build/') && 
+             !lowerPath.includes('\\build\\') &&
+             !lowerPath.startsWith('build/') &&
+             !lowerPath.startsWith('build\\');
+    });
+  }
+
+  /**
+   * Check if a path is a source file (not compiled/build)
+   */
+  isSourceFile(path) {
+    const lowerPath = path.toLowerCase();
+    return !lowerPath.includes('/build/') && 
+           !lowerPath.includes('\\build\\') &&
+           !lowerPath.includes('.sfx/') &&
+           !lowerPath.startsWith('build/') &&
+           !lowerPath.startsWith('build\\') &&
+           !lowerPath.startsWith('gameobjects/') &&
+           !lowerPath.startsWith('gameobjects\\');
+  }
+
+  /**
+   * Check if a path is a build/compiled file
+   */
+  isBuildFile(path) {
+    const lowerPath = path.toLowerCase();
+    return lowerPath.includes('/build/') || 
+           lowerPath.includes('\\build\\') ||
+           lowerPath.includes('.sfx/') ||
+           lowerPath.startsWith('build/') ||
+           lowerPath.startsWith('build\\') ||
+           lowerPath.startsWith('gameobjects/') ||
+           lowerPath.startsWith('gameobjects\\');
+  }
 }
 
 // Create global instance and initialize it
-const fileIOService = new FileIOService();
+// Enable clearOnStartup to clean up old test files
+const fileIOService = new FileIOService({ clearOnStartup: true });
+
+// Register with ServiceContainer immediately - before initialization completes
+if (!window.serviceContainer) {
+  throw new Error('ServiceContainer is not available. Cannot register FileIOService.');
+}
+
+if (typeof window.serviceContainer.registerSingleton !== 'function') {
+  throw new Error('ServiceContainer.registerSingleton is not available. Service registration failed.');
+}
+
+// Register the service immediately so it's available for dependency injection
+window.serviceContainer.registerSingleton('fileIOService', fileIOService);
+console.log('[FileIOService] Registered with ServiceContainer immediately');
+
+// Also make it available globally
+window.fileIOService = fileIOService;
+
+// Handle initialization completion separately
 fileIOService.initPromise.then(() => {
-  window.fileIOService = fileIOService;
-  console.log('[FileIOService] Service ready and available globally');
+  console.log('[FileIOService] Initialization complete and service ready');
 }).catch(error => {
-  console.error('[FileIOService] Failed to initialize:', error);
-  // Still make it available for localStorage fallback
-  window.fileIOService = fileIOService;
+  console.error('[FileIOService] Critical initialization failure:', error);
+  // Don't provide fallbacks for critical services - let it fail
+  throw error;
 });
