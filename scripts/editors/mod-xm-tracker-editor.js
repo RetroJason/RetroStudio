@@ -120,8 +120,36 @@ class ModXmTrackerEditor extends EditorBase {
           if (msg.url.startsWith('buffer://')) {
             this._currentFilename = msg.filename || msg.url.substring(9);
           } else {
-            const parts = msg.url.split('/');
-            this._currentFilename = parts[parts.length - 1];
+            // Extract filename from URL, handling fragments and query parameters
+            let filename = '';
+            
+            // Check if there's a fragment (part after #) which often contains the real filename
+            if (msg.url.includes('#')) {
+              const fragment = msg.url.split('#')[1];
+              if (fragment && (fragment.endsWith('.mod') || fragment.endsWith('.xm') || fragment.endsWith('.s3m'))) {
+                filename = fragment;
+              }
+            }
+            
+            // If no good fragment, extract from the URL path
+            if (!filename) {
+              const parts = msg.url.split('/');
+              let urlPart = parts[parts.length - 1];
+              
+              // Remove query parameters (everything after ?)
+              if (urlPart.includes('?')) {
+                urlPart = urlPart.split('?')[0];
+              }
+              
+              // Remove fragment if still present
+              if (urlPart.includes('#')) {
+                urlPart = urlPart.split('#')[0];
+              }
+              
+              filename = urlPart;
+            }
+            
+            this._currentFilename = filename || 'song.mod';
           }
         }
       }

@@ -1749,8 +1749,8 @@ class TabManager {
   }
   
   // Update file references when a file is renamed in the project explorer
-  updateFileReference(oldPath, newPath, newFileName) {
-    console.log(`[TabManager] Updating file references: ${oldPath} → ${newPath}, newFileName: ${newFileName}`);
+  updateFileReference(oldPath, newPath, newFileName, specificViewer = null) {
+    console.log(`[TabManager] Updating file references: ${oldPath} → ${newPath}, newFileName: ${newFileName}, specificViewer: ${!!specificViewer}`);
     
     // Update dedicated tabs
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
@@ -1764,9 +1764,12 @@ class TabManager {
       // Also check if this tab matches by old path
       const isPathMatch = tabInfo.fullPath === oldPath;
       
-      console.log(`[TabManager] Tab ${tabId} - isNewFileSave: ${isNewFileSave}, isPathMatch: ${isPathMatch}`);
+      // If we have a specific viewer, only update the tab that contains that viewer
+      const isSpecificViewerMatch = specificViewer ? tabInfo.viewer === specificViewer : true;
       
-      if (isPathMatch || isNewFileSave) {
+      console.log(`[TabManager] Tab ${tabId} - isNewFileSave: ${isNewFileSave}, isPathMatch: ${isPathMatch}, isSpecificViewerMatch: ${isSpecificViewerMatch}`);
+      
+      if ((isPathMatch || isNewFileSave) && isSpecificViewerMatch) {
         console.log(`[TabManager] Updating tab ${tabId} with new file info`);
         
         // Update the tab info
