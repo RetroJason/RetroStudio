@@ -10,290 +10,106 @@
     #status { position:absolute; top:4px; left:8px; font:12px monospace; color:#9cf; background:rgba(0,0,0,.4); padding:2px 6px; border-radius:4px; pointer-events:none; }
   </style>
   <script>
-    // HostBridge: allow internal initial demo load for quick UI
-    window.HostBridge = {
-      init() {},
-      signalReady() {},
-  useInitialLoad: true, // will flip to false dynamically if external file queued before tracker ready
-      useUrlParams: false,
-      useWebWorkers: true,
-      showInternalMenu: true,
-      // Return empty so the bundle uses relative paths once; we embed under same root already
-      getBaseUrl() { return ''; },
-      getRemoteUrl() { return ''; }
+    // Debug logging to understand the context (with CORS safety)
+    let debugInfo = {
+      isTopWindow: window.top === window.self,
+      windowLocation: 'blocked'
     };
-    // Respect skipDemo query parameter ASAP (before bundle executes)
+    
     try {
-      const usp = new URLSearchParams(window.location.search);
-      if (usp.get('skipDemo') === '1') { window.HostBridge.useInitialLoad = false; }
-    } catch(_){}
-    function setStatus(t){ 
-      try { 
-        const statusEl = document.getElementById('status');
-        if (statusEl) {
-          statusEl.textContent = t;
-          // Auto-hide non-error status after file loads complete
-          if (t && !t.toLowerCase().includes('error') && !t.toLowerCase().includes('loading')) {
-            setTimeout(() => {
-              if (statusEl.textContent === t) statusEl.textContent = '';
-            }, 2000);
-          }
-        }
-      } catch(_){} 
-    }
-    document.addEventListener('DOMContentLoaded', () => setStatus('booting...'));
-    const BT_BASE = 'scripts/audio/external/BassoonTracker/';
-    const queue = [];
-    function processQueue(){
-      if (!window.BassoonTracker || typeof window.BassoonTracker.load !== 'function') return;
-      while(queue.length){ const job = queue.shift(); job(); }
-    }
-    // Wrap both BT.load and internal Tracker.load to catch all file loading
-    function wrapBtLoad(){
-      const BT = window.BassoonTracker;
-      if(!BT || typeof BT.load!=='function' || BT.__notifyWrap) return;
-      const orig = BT.load.bind(BT);
-      BT.load = function(url, skipHistory, next, initial, silent){
-        try { parent.postMessage({type:'bt-load-invoked', url, skipHistory, initial, silent}, '*'); } catch(_){}
-        return orig(url, skipHistory, next, initial, silent);
-      };
-      
-      // Also wrap loadModuleBuffer if available
-      if (typeof BT.loadModuleBuffer === 'function' && !BT.__loadModuleBufferWrap) {
-        const origBuffer = BT.loadModuleBuffer.bind(BT);
-        BT.loadModuleBuffer = function(arrayBuffer, filename) {
-          try { parent.postMessage({type:'bt-load-invoked', url: `buffer://${filename}`, filename}, '*'); } catch(_){}
-          return origBuffer(arrayBuffer, filename);
-        };
-        BT.__loadModuleBufferWrap = true;
-      }
-      
-      BT.__notifyWrap = true;
-      try { console.log('[bt-host] BT.load wrapped for notifications'); } catch(_){}
+      debugInfo.windowLocation = window.location.href;
+    } catch(e) {
+      debugInfo.windowLocation = 'access blocked by CORS';
     }
     
-    // Separate function to wrap Tracker.load when it becomes available
-    function wrapTrackerLoad(){
-      // Try to access Tracker via multiple possible paths
-      const TrackerRef = window.Tracker || 
-                        (window.BassoonTracker && window.BassoonTracker.Tracker) ||
-                        (typeof Tracker !== 'undefined' ? Tracker : null);
-      
-      if (TrackerRef && typeof TrackerRef.load === 'function' && !TrackerRef.__loadWrap) {
-        const origTrackerLoad = TrackerRef.load;
-        TrackerRef.load = function(url, skipHistory, next, initial, silent) {
-          try { 
-            console.log('[bt-host] Tracker.load called:', url);
-            parent.postMessage({type:'bt-load-invoked', url, skipHistory, initial, silent, source: 'tracker'}, '*'); 
-          } catch(_){}
-          return origTrackerLoad.call(this, url, skipHistory, next, initial, silent);
-        };
-        TrackerRef.__loadWrap = true;
-        try { console.log('[bt-host] Tracker.load wrapped for playlist notifications'); } catch(_){}
-      }
-      
-      // Alternative approach: Hook into XMLHttpRequest to catch module loads
-      if (!window.__xmlHttpHooked) {
-        const origOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url, ...args) {
-          if (url && (url.includes('.mod') || url.includes('.xm') || url.includes('.s3m'))) {
-            try {
-              console.log('[bt-host] XMLHttpRequest intercepted:', url);
-              parent.postMessage({type:'bt-load-invoked', url, source: 'xhr'}, '*');
-            } catch(_){}
-          }
-          return origOpen.call(this, method, url, ...args);
-        };
-        window.__xmlHttpHooked = true;
-        try { console.log('[bt-host] XMLHttpRequest hooked for module loading'); } catch(_){}
-      }
-    }
-    function scheduleWrap(){ 
-      wrapBtLoad(); 
-      wrapTrackerLoad(); 
-      requestAnimationFrame(scheduleWrap); 
-    }
-    scheduleWrap();
-
-    // Direct project file loader (pulls bytes from parent environment)
-    (function(){
-      const projectLoadQueue = [];
-      async function fetchRecord(path){
-        try {
-          const parentWin = parent;
-          const fm = parentWin?.serviceContainer?.get ? parentWin.serviceContainer.get('fileManager') : null;
-          if(!fm){ console.warn('[bt-host] fileManager not available in parent'); return null; }
-          // Normalize path: strip project prefix if present
-          let p = path;
-          try {
-            const proj = parentWin.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-            if (proj && p.startsWith(proj + '/')) p = p.substring(proj.length + 1);
-          } catch(_){ }
-          const rec = await fm.loadFile(p);
-          return rec;
-        } catch(e){ console.warn('[bt-host] fetchRecord failed', e); return null; }
-      }
-      async function recordToObjectUrl(rec){
-        if(!rec) return null;
-        let content = rec.content || rec.fileContent;
-        if (typeof content === 'string') {
-          // assume base64
-            try { const bin = atob(content); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); content = arr.buffer; } catch(e){ console.warn('[bt-host] base64 decode failed', e); return null; }
-        }
-        if (content instanceof ArrayBuffer) {
-          const blob = new Blob([content], {type:'application/octet-stream'});
-          return URL.createObjectURL(blob) + '#' + encodeURIComponent(rec.filename || 'module.mod');
-        }
-        console.warn('[bt-host] record has no usable content');
-        return null;
-      }
-      async function processProjectQueue(){
-        if(!window.BassoonTracker || typeof window.BassoonTracker.load !== 'function') return;
-        while(projectLoadQueue.length){
-          const job = projectLoadQueue.shift();
-          try {
-            const rec = job.rec || await fetchRecord(job.path);
-            // If raw buffer API is available, prefer it to avoid object URL races
-            let usedRaw = false;
-            try {
-              const content = rec?.content || rec?.fileContent;
-              if (content && window.BassoonTracker.loadModuleBuffer) {
-                let buf = content;
-                if (typeof buf === 'string') { const bin = atob(buf); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); buf = arr.buffer; }
-                if (buf instanceof ArrayBuffer && buf.byteLength>0) {
-                  if (window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo();
-                  setStatus('loading module (raw)');
-                  console.log('[bt-host] loading raw buffer', {path:job.path, size: buf.byteLength});
-                  await window.BassoonTracker.loadModuleBuffer(buf, rec?.filename || 'module.mod');
-                  usedRaw = true;
-                }
-              }
-            } catch(e){ console.warn('[bt-host] raw load failed, falling back', e); }
-            if(!usedRaw){
-              const url = await recordToObjectUrl(rec);
-              if(url){
-                if (window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo();
-                setStatus('loading project file');
-                console.log('[bt-host] loading project file', {path:job.path, url});
-                window.BassoonTracker.load(url);
-              } else {
-                console.warn('[bt-host] failed to create URL for', job.path);
-              }
-            } else {
-              // no record, nothing to do
-            }
-          } catch(e){ console.error('[bt-host] project load failed', e); }
-        }
-      }
-      window.loadProjectFile = function(path){
-        projectLoadQueue.push({path});
-        processProjectQueue();
-      };
-      window.loadProjectFileRecord = function(rec){
-        if(rec && rec.filename) projectLoadQueue.push({path:rec.path || rec.filename, rec});
-        processProjectQueue();
-      };
-      setInterval(processProjectQueue, 250);
-    })();
-    window.addEventListener('message', (e)=>{
-      const msg = e.data || {}; if(!msg || !msg.type) return;
-      try { console.log('[bt-host] message received', msg.type, msg); } catch(_) {}
-      if (msg.type === 'ping') { try { parent.postMessage({type:'bt-ready'}, '*'); console.log('[bt-host] sent bt-ready (ping)'); } catch(_){} return; }
-      
-      // Handle new FileIOService-based file loading
-      if (msg.type === 'load-file-from-service' && msg.filePath) {
-        // Disable initial demo loading since we're loading a specific file
-        window.HostBridge.useInitialLoad = false;
-        
-        const run = async () => {
-          const BT = window.BassoonTracker; 
-          if (!BT || typeof BT.loadFromFileService !== 'function') { 
-            queue.push(run); 
-            return; 
-          }
-          try {
-            setStatus('loading from file service');
-            console.log('[bt-host] loading from FileIOService', {filePath: msg.filePath, filename: msg.filename});
-            const result = await BT.loadFromFileService(msg.filePath, msg.filename);
-            setStatus(''); // Clear status after successful load
-            try { parent.postMessage({type:'file-load-result', success: result, filePath: msg.filePath}, '*'); } catch(_){}
-          } catch(err) { 
-            console.error('[bt-host] loadFromFileService failed', err); 
-            setStatus(''); // Clear status after error
-            try { parent.postMessage({type:'file-load-result', success: false, error: err.message, filePath: msg.filePath}, '*'); } catch(_){}
-          }
-        };
-        run();
-        return;
-      }
-      
-      const run = ()=>{
-        const BT = window.BassoonTracker; if(!BT || typeof BT.load!=='function'){ queue.push(run); return; }
-        if(msg.type==='load-bytes' && msg.bytes){
-          try {
-            const blob = new Blob([new Uint8Array(msg.bytes)], {type:'application/octet-stream'});
-            const url = URL.createObjectURL(blob)+(msg.name?('#'+encodeURIComponent(msg.name)):'');
-            setStatus('loading file');
-            console.log('[bt-host] loading bytes via URL', {name:msg.name, size: msg.bytes.byteLength});
-            BT.load(url);
-          } catch(err){ console.error('[bt-host] load-bytes failed', err); }
-        } else if (msg.type==='load-demo') {
-          setStatus('loading demo');
-          console.log('[bt-host] loading demo Tinytune');
-          BT.load(BT_BASE + 'demomods/Tinytune.mod');
-          // Clear status after demo loads
-          setTimeout(() => setStatus(''), 2000);
-        }
-      };
-      run();
-    });
-
-    // Set up BassoonHost override for save functionality
-    function setupHostIntegration() {
-      if (window.BassoonHost) {
-        window.BassoonHost.set({
-          saveFile: function(blob, filename, target) {
-            try {
-              if (target === "project") {
-                // Save to project instead of downloading
-                console.log('[bt-host] saving to project:', filename);
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                  const arrayBuffer = e.target.result;
-                  try {
-                    parent.postMessage({
-                      type: 'save-to-project',
-                      filename: filename,
-                      data: Array.from(new Uint8Array(arrayBuffer)),
-                      mimeType: blob.type
-                    }, '*');
-                  } catch (err) {
-                    console.error('[bt-host] failed to send save message:', err);
-                  }
-                };
-                reader.readAsArrayBuffer(blob);
-                return true; // Indicate we handled the save
-              }
-              // For non-project saves, return false to use default download behavior
-              return false;
-            } catch (err) {
-              console.error('[bt-host] save override error:', err);
-              return false;
-            }
-          }
-        });
-        console.log('[bt-host] BassoonHost save override configured');
-      } else {
-        // Retry if BassoonHost isn't available yet
-        setTimeout(setupHostIntegration, 100);
-      }
+    try {
+      debugInfo.parentLocation = window.parent !== window ? window.parent.location.href : 'same as window';
+    } catch(e) {
+      debugInfo.parentLocation = 'access blocked by CORS';
     }
     
-    // Start trying to set up host integration
-    setupHostIntegration();
+    try {
+      debugInfo.topLocation = window.top !== window ? window.top.location.href : 'same as window';
+    } catch(e) {
+      debugInfo.topLocation = 'access blocked by CORS';
+    }
+    
+    console.log('[bt-host] Loading bt-host.html in context:', debugInfo);
+    
+    // Prevent navigation hijacking - ensure we're in an iframe context
+    if (window.top === window.self) {
+      // We're NOT in an iframe - this shouldn't happen
+      console.error('[bt-host] Loaded in top window instead of iframe - blocking execution');
+      document.body.innerHTML = '<div style="color:red;padding:20px;">BassoonTracker host should only run in iframe context</div>';
+      throw new Error('bt-host must run in iframe');
+    }
+    
+    // CRITICAL: Prevent BassoonTracker from hijacking browser navigation
+    // Override navigation methods more safely without redefining location
+    const originalReload = window.location.reload;
+    const originalReplace = window.location.replace;
+    const originalAssign = window.location.assign;
+    
+    // Override specific navigation methods
+    if (window.location.reload) {
+      window.location.reload = function() {
+        console.warn('[bt-host] Blocked reload attempt');
+        return false;
+      };
+    }
+    
+    if (window.location.replace) {
+      window.location.replace = function(url) {
+        console.warn('[bt-host] Blocked replace attempt to:', url);
+        return false;
+      };
+    }
+    
+    if (window.location.assign) {
+      window.location.assign = function(url) {
+        console.warn('[bt-host] Blocked assign attempt to:', url);
+        return false;
+      };
+    }
+    
+    // Override document.location as well
+    if (document.location && document.location.replace) {
+      document.location.replace = function(url) {
+        console.warn('[bt-host] Blocked document.location.replace to:', url);
+        return false;
+      };
+    }
+    
+    // Block direct location methods
+    if (window.location.replace) {
+      window.location.replace = function(url) {
+        console.warn('[bt-host] Blocked location.replace to:', url);
+      };
+    }
+    if (window.location.assign) {
+      window.location.assign = function(url) {
+        console.warn('[bt-host] Blocked location.assign to:', url);
+      };
+    }
+    
+    // Navigation protection completed - tracker should be contained by iframe sandbox
+    console.log('[bt-host] Navigation protection initialized');
+    
+    // Minimal host: notifications + project file load; saving handled via buildBinary in parent editor.
+    window.HostBridge = { init(){}, signalReady(){}, useInitialLoad:false, useUrlParams:false, useWebWorkers:true, showInternalMenu:true, getBaseUrl(){return ''}, getRemoteUrl(){return ''} };
+    try { if (new URLSearchParams(window.location.search).get('skipDemo') === '1') window.HostBridge.useInitialLoad = false; } catch(_){ }
+    function setStatus(t){ try{ const el=document.getElementById('status'); if(!el) return; el.textContent=t; if(t && !/error|loading/i.test(t)){ setTimeout(()=>{ if(el.textContent===t) el.textContent=''; },2000);} }catch(_){}}
+    function showCanvas(){ try{ const canvas=document.getElementById('canvas'); if(canvas) canvas.style.display='block'; }catch(_){} }
+    function hideCanvas(){ try{ const canvas=document.getElementById('canvas'); if(canvas) canvas.style.display='none'; }catch(_){} }
+    document.addEventListener('DOMContentLoaded', ()=>setStatus('booting...'));
+    const BT_BASE='scripts/audio/external/BassoonTracker/';
+    function wrapBtLoad(){ const BT=window.BassoonTracker; if(!BT||typeof BT.load!=='function'||BT.__notifyWrap) return; const orig=BT.load.bind(BT); BT.load=function(url,skipHistory,next,initial,silent){ try{ if(!window.__recentLoads) window.__recentLoads=new Map(); const now=performance.now(); for(const[k,v]of window.__recentLoads){ if(now-v>1000) window.__recentLoads.delete(k);} if(!window.__recentLoads.has(url)){ window.__recentLoads.set(url,now); parent.postMessage({type:'bt-load-invoked',url,skipHistory,initial,silent},'*'); } }catch(_){ } const userNext=next; const wrappedNext=()=>{ try{ parent.postMessage({type:'module-loaded',source:url||'unknown',via:'bt.load-callback'},'*'); }catch(_){ } if(typeof userNext==='function') try{ userNext(); }catch(e){ console.warn('[bt-host] user next callback error',e);} }; return orig(url,skipHistory,wrappedNext,initial,silent); }; if(typeof BT.loadModuleBuffer==='function'&&!BT.__loadModuleBufferWrap){ const ob=BT.loadModuleBuffer.bind(BT); BT.loadModuleBuffer=function(arrayBuffer,filename){ try{ parent.postMessage({type:'bt-load-invoked',url:`buffer://${filename}`,filename},'*'); }catch(_){ } const p=ob(arrayBuffer,filename); if(p&&typeof p.then==='function'){ p.then(s=>{ if(s) try{ parent.postMessage({type:'module-loaded',source:`buffer://${filename}`,via:'loadModuleBuffer'},'*'); }catch(_){ } }); } return p; }; BT.__loadModuleBufferWrap=true; } BT.__notifyWrap=true; }
+    function wrapTrackerLoad(){ const TrackerRef=window.Tracker||(window.BassoonTracker&&window.BassoonTracker.Tracker)||(typeof Tracker!=='undefined'?Tracker:null); if(TrackerRef&&typeof TrackerRef.load==='function'&&!TrackerRef.__loadWrap){ const orig=TrackerRef.load; TrackerRef.load=function(url,skipHistory,next,initial,silent){ try{ if(!window.__recentLoads) window.__recentLoads=new Map(); const now=performance.now(); for(const[k,v]of window.__recentLoads){ if(now-v>1000) window.__recentLoads.delete(k);} if(!window.__recentLoads.has(url)){ window.__recentLoads.set(url,now); parent.postMessage({type:'bt-load-invoked',url,skipHistory,initial,silent,source:'tracker'},'*'); } }catch(_){ } const userNext=next; const wrappedNext=()=>{ try{ parent.postMessage({type:'module-loaded',source:url||'unknown',via:'tracker.load-callback'},'*'); }catch(_){ } if(typeof userNext==='function') try{ userNext(); }catch(e){ console.warn('[bt-host] tracker user next error',e);} }; return orig.call(this,url,skipHistory,wrappedNext,initial,silent); }; TrackerRef.__loadWrap=true; } if(!window.__xmlHttpHooked){ const o=XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open=function(m,u,...a){ if(u&&(u.includes('.mod')||u.includes('.xm')||u.includes('.s3m'))){ try{ parent.postMessage({type:'bt-load-invoked',url:u,source:'xhr'},'*'); }catch(_){ } } return o.call(this,m,u,...a); }; window.__xmlHttpHooked=true; } }
+    (function schedule(){ wrapBtLoad(); wrapTrackerLoad(); requestAnimationFrame(schedule); })();
+    (function(){ const q=[]; async function fetchRecord(path){ try{ const pw=parent; const fm=pw?.serviceContainer?.get?pw.serviceContainer.get('fileManager'):null; if(!fm) return null; let p=path; try{ const proj=pw.gameEditor?.projectExplorer?.getFocusedProjectName?.(); if(proj&&p.startsWith(proj+'/')) p=p.substring(proj.length+1);}catch(_){ } return await fm.loadFile(p);}catch(e){ return null;} } async function recToUrl(rec){ if(!rec) return null; let c=rec.content||rec.fileContent; if(typeof c==='string'){ try{ const bin=atob(c); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); c=arr.buffer;}catch(_){ return null;} } if(c instanceof ArrayBuffer){ const blob=new Blob([c],{type:'application/octet-stream'}); return URL.createObjectURL(blob)+'#'+encodeURIComponent(rec.filename||'module.mod'); } return null;} async function process(){ if(!window.BassoonTracker||typeof window.BassoonTracker.load!=='function') return; while(q.length){ const job=q.shift(); try{ const rec=job.rec||await fetchRecord(job.path); let usedRaw=false; try{ const content=rec?.content||rec?.fileContent; if(content&&window.BassoonTracker.loadModuleBuffer){ let buf=content; if(typeof buf==='string'){ const bin=atob(buf); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); buf=arr.buffer;}             if(buf instanceof ArrayBuffer&&buf.byteLength>0){ if(window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo(); setStatus('loading module (raw)'); showCanvas(); await window.BassoonTracker.loadModuleBuffer(buf,rec?.filename||'module.mod'); usedRaw=true; } } }catch(_){ } if(!usedRaw){ const url=await recToUrl(rec);           if(url){ if(window.BassoonTracker.disableInitialDemo) window.BassoonTracker.disableInitialDemo(); setStatus('loading project file'); showCanvas(); window.BassoonTracker.load(url); } } }catch(_){ } } } window.loadProjectFile=function(path){ q.push({path}); process(); }; window.loadProjectFileRecord=function(rec){ if(rec&&rec.filename) q.push({path:rec.path||rec.filename,rec}); process(); }; setInterval(process,250); })();
+    window.addEventListener('message', e=>{ const msg=e.data||{}; if(!msg.type) return; if(msg.type==='ping'){ try{ parent.postMessage({type:'bt-ready'},'*'); }catch(_){ } return; } if(msg.type==='load-file-from-service'&&msg.filePath){ window.HostBridge.useInitialLoad=false; const run=async()=>{ const BT=window.BassoonTracker; if(!BT||typeof BT.loadFromFileService!=='function'){ return; } try{ setStatus('loading from file service'); const result=await BT.loadFromFileService(msg.filePath,msg.filename); if(result) try{ parent.postMessage({type:'module-loaded',source:msg.filePath||msg.filename||'service-file',via:'file-service-promise'},'*'); }catch(_){ } setStatus(''); try{ parent.postMessage({type:'file-load-result',success:result,filePath:msg.filePath},'*'); }catch(_){ } }catch(err){ setStatus(''); try{ parent.postMessage({type:'file-load-result',success:false,error:err.message,filePath:msg.filePath},'*'); }catch(_){ } } }; run(); return; } const run=()=>{ const BT=window.BassoonTracker; if(!BT||typeof BT.load!=='function') return; if(msg.type==='load-bytes'&&msg.bytes){ try{ const blob=new Blob([new Uint8Array(msg.bytes)],{type:'application/octet-stream'}); const url=URL.createObjectURL(blob)+(msg.name?('#'+encodeURIComponent(msg.name)):'' ); setStatus('loading file'); BT.load(url); }catch(_){ } }         else if(msg.type==='load-demo'){ setStatus('loading demo'); showCanvas(); BT.load(BT_BASE+'demomods/Tinytune.mod'); setTimeout(()=>setStatus(''),2000);} }; run(); });
   </script>
-  <!-- Load ESM bundle directly so import.meta works -->
-    <script type="module" src="scripts/audio/external/BassoonTracker/build/main-CAwiN5r8.js"></script>
+  <script type="module" src="./scripts/audio/external/BassoonTracker/build/main-Bv1ehicc.js"></script>
 </head>
 <body>
   <div id="status">loading…</div>

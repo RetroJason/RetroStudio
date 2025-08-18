@@ -3,41 +3,31 @@
 
 class ModXmTrackerEditor extends EditorBase {
   constructor(fileObject = null, readOnly = false) {
-    // Handle both old and new constructor patterns for transition period
+    // Support legacy constructor signatures
     if (arguments.length >= 2 && typeof arguments[0] === 'string') {
-      // Old pattern: constructor(path, isNewResource, options)
       const path = arguments[0];
-      const isNewResource = arguments[1];
-      // Convert to new pattern - create a file object if we have a path
-      const convertedFileObject = path ? { path: path } : null;
+      const convertedFileObject = path ? { path } : null;
       super(convertedFileObject, readOnly);
-      // For old pattern compatibility, we may need to override some base class behavior
     } else if (arguments.length >= 2 && typeof arguments[0] === 'object' && typeof arguments[1] === 'string') {
-      // Old pattern: constructor(fileRecord, path, isNewResource)
       const fileRecord = arguments[0];
-      const path = arguments[1]; 
-      const isNewResource = arguments[2];
       super(fileRecord, readOnly);
     } else {
-      // New pattern: constructor(fileObject, readOnly)
       super(fileObject, readOnly);
     }
-    
-    // Initialize instance variables  
+
     this._container = null;
     this._iframe = null;
     this._logPrefix = '[ModXmTrackerEditor]';
     this._readyReceived = false;
-    this._initialLoadSent = false; // Track if initial file/demo load has been sent
+    this._initialLoadSent = false;
     this._initialFileRecord = fileObject;
     this._id = 'mod-xm-tracker-' + Math.random().toString(36).substring(2);
-    this._hasLoadedNewSong = false; // Track when new songs are loaded
-    this._currentFilename = null; // Current loaded song filename
-    
-    try { 
-      console.log(this._logPrefix, 'constructor completed', { 
-        path: this.path, isNewResource: this.isNewResource, hasFileRecord: !!this.file, id: this._id 
-      }); 
+    this._currentFilename = null;
+
+    try {
+      console.log(this._logPrefix, 'constructor completed', {
+        path: this.path, isNewResource: this.isNewResource, hasFileRecord: !!this.file, id: this._id
+      });
     } catch(_) {}
   }
 
@@ -52,137 +42,98 @@ class ModXmTrackerEditor extends EditorBase {
   static canCreate = true;
   static getCreateLabel() { return 'Music'; }
   static getDefaultFolder() { return 'Sources/Music'; }
-  static needsFilenamePrompt() { return false; } // Skip prompt since demo always loads
-  
-  // iframe-based embedding for clean isolation
+  static needsFilenamePrompt() { return true; }
+
   createBody(body) {
-    try { 
-      console.log(this._logPrefix, 'createBody called', { bodyExists: !!body, id: this._id }); 
-    } catch(_) {}
-    
     body.style.cssText = 'display:block;width:100%;height:100%;padding:0;margin:0;overflow:hidden;position:relative;background:#1a1a1a;';
     this._container = body;
-
-    // Create iframe element directly for better control
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    
-    // For existing files (not temp:// paths), disable demo loading by adding skipDemo parameter
-    const isExistingFile = !this.isNewResource && this.path && !this.path.startsWith('temp://');
-    const iframeSrc = isExistingFile ? 'bt-host.html?skipDemo=1' : 'bt-host.html';
-    this._iframe.src = iframeSrc;
-    this._iframe.style.cssText = 'width: 100%; height: 100%; border: none; display: block;';
-    
-    // Remove all possible restrictions for iframe communication
+    this._iframe.src = './bt-host.html?skipDemo=1';
+    this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-top-navigation allow-pointer-lock');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
-    
     body.appendChild(this._iframe);
-    
-    // Store strong reference to prevent garbage collection
     this._iframeRef = this._iframe;
-    window[`_iframe_${this._id}`] = this._iframe; // Global reference as backup
-    
-    // Set up DOM mutation observer to detect if iframe gets removed
-    if (typeof MutationObserver !== 'undefined') {
-      this._mutationObserver = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-          if (mutation.type === 'childList' && mutation.removedNodes) {
-            for (let node of mutation.removedNodes) {
-              if (node === this._iframe || node.contains?.(this._iframe)) {
-                console.error(`${this._logPrefix} iframe was removed from DOM by external code!`);
-                // Try to restore it
-                this._restoreIframe();
-                break;
-              }
-            }
-          }
-        });
-      });
-      this._mutationObserver.observe(body, { childList: true, subtree: true });
-    }
-    
-    // Set up communication
+    window[`_iframe_${this._id}`] = this._iframe;
+    this._observeIframeRemoval();
     this._setupIframeCommunication();
-    
-    // Hooks and initial sizing
     this._hookResize();
     this._sizeToTab('init');
-    
-    try { 
-      console.log(this._logPrefix, 'iframe created and communication setup', { 
-        id: this._id, 
-        src: this._iframe.src,
-        parentElement: !!this._iframe.parentElement
-      }); 
-    } catch(_) {}
+  }
+
+  _observeIframeRemoval() {
+    if (typeof MutationObserver === 'undefined' || !this._container) return;
+    this._mutationObserver = new MutationObserver(muts => {
+      for (const m of muts) {
+        if (m.type === 'childList') {
+          for (const n of m.removedNodes) {
+            if (n === this._iframe || n.contains?.(this._iframe)) {
+              console.error(this._logPrefix, 'iframe removed unexpectedly');
+              this._restoreIframe();
+              return;
+            }
+          }
+        }
+      }
+    });
+    this._mutationObserver.observe(this._container, { childList: true, subtree: true });
   }
 
   _setupIframeCommunication() {
-    // Listen for messages from iframe
     this._messageHandler = (e) => {
       const msg = e.data || {};
-      if (!msg || !msg.type) return;
-      
+      if (!msg.type) return;
       if (msg.type === 'bt-ready') {
-        console.log(`${this._logPrefix} BassoonTracker ready in iframe`);
         this._readyReceived = true;
         this._maybeSendFile();
+      } else if (msg.type === 'module-loaded') {
+        // Final confirmation of full song structure; ensure tab reflects real filename
+        if (msg.title && msg.title.length > 0 && this._currentFilename && this._currentFilename.startsWith('untitled')) {
+          // Optionally update window title; keep existing filename until user saves
+          document.title = `RetroStudio - ${msg.title}`;
+        }
+        // Clear any internal duplicate load suppression flags
+        this._pendingModuleLoad = false;
+        // Mark export ready once tracker reports a module loaded and buildBinary exists
+        try {
+          const win = this._iframe?.contentWindow;
+          const deRef = win && (win.de || win.BassoonTracker || {});
+          if (deRef && typeof deRef.buildBinary === 'function') {
+            this._exportReady = true;
+          }
+        } catch(_){}
       } else if (msg.type === 'file-load-result') {
-        console.log(`${this._logPrefix} File load result:`, msg);
-        if (msg.success) {
-          console.log(`${this._logPrefix} File loaded successfully via FileIOService`);
-        } else {
-          console.error(`${this._logPrefix} File load failed:`, msg.error);
-        }
+        if (msg.success) this._justLoadedExistingProjectFile = true; else console.error(this._logPrefix, 'File load failed', msg.error);
       } else if (msg.type === 'bt-load-invoked') {
-        console.log(`${this._logPrefix} BassoonTracker loaded new file internally:`, msg.url);
-        
-        // Only handle internal loads (not FileIOService buffer loads)
         if (!msg.url || !msg.url.startsWith('buffer://')) {
-          this._handleInternalFileLoad(msg.url);
-          // Mark that a new song has been loaded
-          this._hasLoadedNewSong = true;
-        }
-        
-        // Extract filename from URL for display (for all loads)
-        if (msg.url) {
-          if (msg.url.startsWith('buffer://')) {
-            // For buffer loads, use the filename from the message or extract from buffer URL
-            this._currentFilename = msg.filename || msg.url.substring(9); // Remove 'buffer://'
+          if (this._justLoadedExistingProjectFile) {
+            this._justLoadedExistingProjectFile = false;
+            this._handleExistingProjectFileLoad(msg.url);
           } else {
-            // For regular URLs, extract filename from path
-            const urlParts = msg.url.split('/');
-            this._currentFilename = urlParts[urlParts.length - 1];
+            this._handleInternalFileLoad(msg.url);
           }
         }
-      } else if (msg.type === 'save-to-project') {
-        console.log(`${this._logPrefix} Save to project requested:`, msg.filename);
-        this._handleSaveToProject(msg.filename, msg.data, msg.mimeType);
+        if (msg.url) {
+          if (msg.url.startsWith('buffer://')) {
+            this._currentFilename = msg.filename || msg.url.substring(9);
+          } else {
+            const parts = msg.url.split('/');
+            this._currentFilename = parts[parts.length - 1];
+          }
+        }
       }
     };
-    
     window.addEventListener('message', this._messageHandler);
-    
-    // Set up iframe load handling with multiple approaches
     if (this._iframe) {
-      // Try immediate ping in case iframe loads very quickly
       setTimeout(() => this._sendPing(), 50);
-      
-      // Set up onload handler
-      this._iframe.onload = () => {
-        console.log(`${this._logPrefix} iframe onload event fired`);
-        setTimeout(() => this._sendPing(), 100);
-      };
-      
-      // Fallback: try periodic pings for first few seconds
+      this._iframe.onload = () => setTimeout(() => this._sendPing(), 100);
       let attempts = 0;
-      const maxAttempts = 20; // 2 seconds total
       const pingInterval = setInterval(() => {
         attempts++;
-        if (this._readyReceived || attempts >= maxAttempts) {
+        if (this._readyReceived || attempts >= 20) {
           clearInterval(pingInterval);
           return;
         }
@@ -192,165 +143,74 @@ class ModXmTrackerEditor extends EditorBase {
   }
 
   _restoreIframe() {
-    if (!this._container) {
-      console.error(`${this._logPrefix} cannot restore iframe - no container`);
-      return;
-    }
-    
-    console.log(`${this._logPrefix} attempting to restore iframe`);
-    
-    // Clear container and recreate iframe
+    if (!this._container) return;
     this._container.innerHTML = '';
-    
     this._iframe = document.createElement('iframe');
     this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html';
-    this._iframe.style.cssText = 'width: 100%; height: 100%; border: none; display: block;';
-    
-    // Remove all possible restrictions for iframe communication
+    this._iframe.src = './bt-host.html?skipDemo=1';
+    this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
     this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-top-navigation allow-pointer-lock');
+    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
     this._iframe.setAttribute('referrerpolicy', 'same-origin');
     this._iframe.setAttribute('loading', 'eager');
-    
     this._container.appendChild(this._iframe);
-    
-    // Update references
     this._iframeRef = this._iframe;
     window[`_iframe_${this._id}`] = this._iframe;
-    
-    // Set up new onload handler
-    this._iframe.onload = () => {
-      console.log(`${this._logPrefix} restored iframe loaded`);
-      setTimeout(() => this._sendPing(), 100);
-    };
-    
-    console.log(`${this._logPrefix} iframe restored successfully`);
+    this._iframe.onload = () => setTimeout(() => this._sendPing(), 100);
   }
 
   _sendPing() {
     if (!this._iframe) {
-      console.error(`${this._logPrefix} iframe element is null - checking if it was removed from DOM`);
-      // Try to find it again by ID
-      this._iframe = document.getElementById(`${this._id}-iframe`);
-      if (!this._iframe) {
-        // Try backup references
-        this._iframe = this._iframeRef || window[`_iframe_${this._id}`];
-        if (!this._iframe) {
-          console.error(`${this._logPrefix} iframe completely missing from DOM - attempting restore`);
-          this._restoreIframe();
-          return;
-        } else {
-          console.log(`${this._logPrefix} iframe recovered from backup reference`);
-        }
-      } else {
-        console.log(`${this._logPrefix} iframe found again by ID - was temporarily null`);
-      }
+      this._iframe = document.getElementById(`${this._id}-iframe`) || this._iframeRef || window[`_iframe_${this._id}`];
+      if (!this._iframe) { this._restoreIframe(); return; }
     }
-    
-    // Check iframe properties for debugging
-    console.log(`${this._logPrefix} iframe debug info:`, {
-      id: this._iframe.id,
-      src: this._iframe.src,
-      readyState: this._iframe.readyState,
-      contentWindow: !!this._iframe.contentWindow,
-      contentDocument: !!this._iframe.contentDocument,
-      parentNode: !!this._iframe.parentNode,
-      offsetWidth: this._iframe.offsetWidth,
-      offsetHeight: this._iframe.offsetHeight
-    });
-    
     if (this._iframe.contentWindow) {
-      console.log(`${this._logPrefix} Sending ping to iframe`);
-      try {
-        this._iframe.contentWindow.postMessage({type: 'ping'}, '*');
-      } catch (e) {
-        console.error(`${this._logPrefix} Failed to send ping:`, e);
-      }
-    } else {
-      console.warn(`${this._logPrefix} iframe contentWindow not accessible yet`);
+      try { this._iframe.contentWindow.postMessage({ type: 'ping' }, '*'); } catch(_) {}
     }
   }
 
   _maybeSendFile() {
-    if (!this._readyReceived) {
-      console.log(`${this._logPrefix} Not ready yet, deferring file send`);
-      return;
-    }
-    
-    if (this._initialLoadSent) {
-      console.log(`${this._logPrefix} Initial load already sent, skipping`);
-      return;
-    }
-    
-    if (!this._iframe) {
-      console.error(`${this._logPrefix} iframe element is null - attempting recovery`);
-      this._iframe = document.getElementById(`${this._id}-iframe`) || this._iframeRef || window[`_iframe_${this._id}`];
-      if (!this._iframe) {
-        console.error(`${this._logPrefix} iframe completely missing - attempting restore`);
-        this._restoreIframe();
-        return;
+    if (!this._readyReceived || this._initialLoadSent || !this._iframe || !this._iframe.contentWindow) return;
+    // Ensure host pane has non-zero size (preview tab animation may still be in progress)
+    const pane = this._getActiveTabPane() || this._closestTabPane();
+    const w = pane?.clientWidth || 0;
+    const h = pane?.clientHeight || 0;
+    if (!w || !h) {
+      this._initialLoadSizeChecks = (this._initialLoadSizeChecks || 0) + 1;
+      if (this._initialLoadSizeChecks < 40) { // retry up to ~4s (40 * 100ms)
+        setTimeout(() => this._maybeSendFile(), 100);
+      } else {
+        console.warn(`${this._logPrefix} giving up waiting for non-zero size; proceeding with load`);
       }
+      if (w === 0 || h === 0) return; // don't proceed until we have a size (unless retries exhausted)
     }
-    
-    if (!this._iframe.contentWindow) {
-      console.warn(`${this._logPrefix} iframe contentWindow not accessible for file sending`);
-      console.log(`${this._logPrefix} iframe state:`, {
-        id: this._iframe.id,
-        src: this._iframe.src,
-        readyState: this._iframe.readyState,
-        parentNode: !!this._iframe.parentNode
-      });
-      return;
-    }
-
-    // Determine what to load
-    const isExistingFile = !this.isNewResource && this.path && !this.path.startsWith('temp://');
-    if (isExistingFile) {
-      // Load existing file via FileIOService
-      console.log(`${this._logPrefix} Loading existing file from path: ${this.path}`);
-      const filename = this._initialFileRecord?.filename || (this.path ? this.path.split('/').pop() : null) || 'untitled.mod';
-      try {
-        this._iframe.contentWindow.postMessage({
-          type: 'load-file-from-service',
-          filePath: this.path,
-          filename: filename
-        }, '*');
-        this._initialLoadSent = true; // Mark as sent
-      } catch (e) {
-        console.error(`${this._logPrefix} Failed to send file load message:`, e);
-      }
+    const isExisting = !this.isNewResource && this.path && !this.path.startsWith('temp://');
+    if (isExisting) {
+      const filename = this._initialFileRecord?.filename || (this.path ? this.path.split('/').pop() : 'untitled.mod');
+      this._iframe.contentWindow.postMessage({ type: 'load-file-from-service', filePath: this.path, filename }, '*');
+      this._justLoadedExistingProjectFile = true;
     } else {
-      // Load demo for new files
-      console.log(`${this._logPrefix} Loading demo for new file`);
-      try {
-        this._iframe.contentWindow.postMessage({type: 'load-demo'}, '*');
-        this._initialLoadSent = true; // Mark as sent
-      } catch (e) {
-        console.error(`${this._logPrefix} Failed to send demo load message:`, e);
-      }
+      this._iframe.contentWindow.postMessage({ type: 'load-demo' }, '*');
     }
+    this._initialLoadSent = true;
   }
 
   _hookResize() {
     this._onWinResize = () => this._sizeToTab('window');
     window.addEventListener('resize', this._onWinResize);
-
     this._onSidebarResize = () => this._sizeToTab('sidebar');
     window.addEventListener('project-explorer.resized', this._onSidebarResize);
-
     const pane = this._closestTabPane() || this._container;
     if (typeof ResizeObserver !== 'undefined' && pane) {
       this._hostRO = new ResizeObserver(() => this._sizeToTab('ro'));
       try { this._hostRO.observe(pane); } catch(_) {}
     }
-
     this._onTabSwitched = () => {
       this._sizeToTab('tab');
-      setTimeout(() => { this._sizeToTab('tab-deferred'); }, 0);
-      try { requestAnimationFrame(() => { this._sizeToTab('tab-raf'); }); } catch(_) {}
+      setTimeout(() => this._sizeToTab('tab-deferred'), 0);
+      try { requestAnimationFrame(() => this._sizeToTab('tab-raf')); } catch(_) {}
     };
-    try { window.eventBus?.on?.('tab.switched', this._onTabSwitched); } catch(_) {}
+    window.eventBus?.on?.('tab.switched', this._onTabSwitched);
   }
 
   _closestTabPane() {
@@ -484,153 +344,36 @@ class ModXmTrackerEditor extends EditorBase {
       console.warn(`${this._logPrefix} failed to extract filename from URL:`, e);
     }
 
-    console.log(`${this._logPrefix} extracted filename: ${newFilename}`);
+  console.log(`${this._logPrefix} extracted filename: ${newFilename}`);
 
-    // Update tab to reflect the new file
-    this._updateTabForNewFile(newFilename, url);
+  // Update tab to reflect the new file (internal source -> unsaved *)
+  this._updateTabForNewFile(newFilename, url, { internal: true });
+  }
+
+  _handleExistingProjectFileLoad(url) {
+    console.log(`${this._logPrefix} handling existing project file load:`, url);
+    // Extract filename similarly
+    let filename = 'song.mod';
+    try {
+      if (url) {
+        if (url.includes('#')) {
+          filename = decodeURIComponent(url.split('#')[1]);
+        } else {
+          const urlPath = url.split('/').pop().split('?')[0];
+          if (urlPath) filename = urlPath;
+        }
+      }
+    } catch(_) {}
+    this._updateTabForNewFile(filename, url, { existing: true });
   }
 
   async _handleSaveToProject(filename, dataArray, mimeType) {
-    console.log(`${this._logPrefix} handling save to project:`, { filename, dataLength: dataArray?.length, mimeType });
-    
-    try {
-      // Convert data array back to Uint8Array
-      const content = new Uint8Array(dataArray);
-      
-      // For temporary files OR when loading a new song OR for new files, always prompt for filename
-      if (!this.path || this.path.startsWith('temp://') || this._hasLoadedNewSong) {
-        // Use the current loaded filename as suggestion, or the passed filename
-        let suggestedName = this._currentFilename || filename || 'song.mod';
-        
-        // Remove path and extension for cleaner suggestion
-        if (suggestedName.includes('/')) {
-          suggestedName = suggestedName.split('/').pop();
-        }
-        // Strip URL parameters and query strings for cleaner suggestion
-        if (suggestedName.includes('?')) {
-          suggestedName = suggestedName.split('?')[0];
-        }
-        if (suggestedName.includes('#')) {
-          suggestedName = suggestedName.split('#')[0];
-        }
-        // Remove existing extension for cleaner prompt
-        if (suggestedName.includes('.')) {
-          suggestedName = suggestedName.substring(0, suggestedName.lastIndexOf('.'));
-        }
-        
-        // Use the centralized save dialog for consistency
-        const defaultFolder = this.constructor.getDefaultFolder();
-        const extension = this._getCorrectFileExtension();
-        
-        const result = await window.ModalUtils.showForm('Save MOD File', [
-          {
-            name: 'filename',
-            label: `Filename (${extension})`,
-            type: 'text',
-            value: suggestedName,
-            required: true,
-            hint: 'Enter filename without extension'
-          }
-        ]);
-        
-        if (!result) {
-          console.log(`${this._logPrefix} save cancelled by user`);
-          return;
-        }
-        
-        const finalFilename = result.filename;
-        
-        // Check if file exists and prompt for overwrite
-        const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-        const fullFilename = finalFilename + extension;
-        
-        const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
-          window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
-          (project ? `${project}/${defaultFolder}` : defaultFolder);
-        const fullUiPath = `${uiFolder}/${fullFilename}`;
-        
-        // Check if file exists
-        if (window.gameEditor?.projectExplorer?.fileExists?.(fullUiPath)) {
-          const shouldOverwrite = await window.ModalUtils.showConfirm('File Exists', `File "${fullFilename}" already exists. Overwrite?`);
-          if (!shouldOverwrite) {
-            console.log(`${this._logPrefix} overwrite cancelled by user`);
-            return;
-          }
-        }
-        
-        // Convert to non-temporary path and mark for new file creation
-        this.path = fullUiPath;
-        this.isNewResource = true;
-        this._currentFilename = fullFilename;
-        this._hasLoadedNewSong = false; // Reset flag
-        
-        // Update tab title to reflect new filename
-        const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
-        if (tabManager) {
-          const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
-          if (currentTabId && tabManager.updateTabTitle) {
-            tabManager.updateTabTitle(currentTabId, `🎵 ${fullFilename}`);
-          }
-        }
-      }
-      
-      // Save using the parent class method with the binary content
-      this._saveContentToProject(content);
-      
-    } catch (error) {
-      console.error(`${this._logPrefix} save to project failed:`, error);
-      alert(`Failed to save to project: ${error.message}`);
-    }
+  // Deprecated: internal tracker save interception removed for deterministic path
   }
 
-  async _saveContentToProject(content) {
-    try {
-      // Use the EditorBase saveNewResource method
-      const name = this.getFileName();
-      
-      // Get project and folder info
-      const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
-      const defaultFolder = this.constructor.getDefaultFolder();
-      const extension = this.getFileExtension(name);
-      
-      // Build paths
-      const uiFolder = window.ProjectPaths?.withProjectPrefix ? 
-        window.ProjectPaths.withProjectPrefix(project, defaultFolder) : 
-        (project ? `${project}/${defaultFolder}` : defaultFolder);
-      const fullUiPath = `${uiFolder}/${name}`;
-      const storagePath = window.ProjectPaths?.normalizeStoragePath ? 
-        window.ProjectPaths.normalizeStoragePath(fullUiPath) : fullUiPath;
-      
-      // Save to persistent storage using the file I/O service
-      if (window.fileIOService) {
-        await window.fileIOService.saveFile(storagePath, content, {
-          type: extension.substring(1), // Remove the dot
-          editor: this.constructor.name
-        });
-        console.log(`${this._logPrefix} saved to persistent storage: ${storagePath}`);
-      }
-      
-      // Add to project explorer
-      if (window.gameEditor && window.gameEditor.projectExplorer) {
-        const file = new File([content], name, { type: 'application/octet-stream' });
-        window.gameEditor.projectExplorer.addFileToProject(file, uiFolder, true); // Skip auto-open during save
-      }
-      
-      // Update path and mark as saved
-      this.path = fullUiPath;
-      this.isNewResource = false;
-      this.markClean();
-      
-      console.log(`${this._logPrefix} successfully saved to project: ${name}`);
-      
-    } catch (error) {
-      console.error(`${this._logPrefix} failed to save content to project:`, error);
-      throw error;
-    }
-  }
 
-  _updateTabForNewFile(filename, sourceUrl) {
-    console.log(`${this._logPrefix} updating tab for new file:`, { filename, sourceUrl });
+  _updateTabForNewFile(filename, sourceUrl, options = {}) {
+    console.log(`${this._logPrefix} updating tab for new file:`, { filename, sourceUrl, options });
     
     // Get the tab manager to update the tab
     const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
@@ -648,32 +391,53 @@ class ModXmTrackerEditor extends EditorBase {
 
     // Update the tab title and properties to reflect the new file
     try {
-      // Mark as modified/different from original
-      this.isNewResource = true;
+      const isTrackerFormat = filename.endsWith('.mod') || filename.endsWith('.xm');
+      const displayName = isTrackerFormat ? filename : `${filename}`;
+
+      let titleText = `🎵 ${displayName}`;
+      if (options.internal && !options.existing) {
+        // Internal (demo / drag-drop) load -> mark unsaved
+        this.isNewResource = true;
+        titleText += '*';
+      } else if (options.existing) {
+        // Existing project file -> clean state
+        this.isNewResource = false;
+      } else {
+        // Default to internal semantics if unspecified
+        this.isNewResource = true;
+        titleText += '*';
+      }
       this._currentFilename = filename;
       this._currentSourceUrl = sourceUrl;
-      
-      // Update the display name to show it's a new file
-      const displayName = filename.endsWith('.mod') || filename.endsWith('.xm') ? 
-        filename : `${filename} (MOD/XM)`;
-      
-      // Try to update the tab title
+
       if (tabManager.updateTabTitle) {
-        tabManager.updateTabTitle(currentTabId, `🎵 ${displayName} (loaded)`);
+        tabManager.updateTabTitle(currentTabId, titleText);
       } else {
-        // Fallback: find and update tab element directly
         const tabElement = document.querySelector(`[data-tab-id="${currentTabId}"] .tab-title`);
-        if (tabElement) {
-          tabElement.textContent = `🎵 ${displayName} (loaded)`;
-        }
+        if (tabElement) tabElement.textContent = titleText;
       }
+
+      // Also mark tab dirty for visual consistency if TabManager available
+      try {
+        if (options.internal && !options.existing) {
+          if (window.tabManager && typeof window.tabManager.markTabDirty === 'function') {
+            window.tabManager.markTabDirty(currentTabId);
+          }
+          window.eventBus?.emit?.('editor.content.changed', { editor: this });
+        } else {
+          // Ensure clean state for existing file
+            if (window.tabManager && typeof window.tabManager.markTabClean === 'function') {
+              window.tabManager.markTabClean(currentTabId);
+            }
+        }
+      } catch(_) {}
 
       // Update window title if this is the active tab
       if (currentTabId === tabManager.getActiveTabId?.()) {
         document.title = `RetroStudio - ${displayName}`;
       }
 
-      console.log(`${this._logPrefix} tab updated for new file: ${displayName}`);
+  console.log(`${this._logPrefix} tab updated for file: ${displayName} (internal=${!!options.internal} existing=${!!options.existing})`);
 
     } catch (e) {
       console.error(`${this._logPrefix} failed to update tab:`, e);
@@ -682,65 +446,23 @@ class ModXmTrackerEditor extends EditorBase {
 
   // Save functionality - required for EditorBase
   getContent() {
-    // For MOD/XM files, we need to get the current file data from BassoonTracker
-    // This will be the binary data of the current module
-    try {
-      if (this._iframe && this._iframe.contentWindow) {
-        // Try to get the current module data from BassoonTracker
-        const btWindow = this._iframe.contentWindow;
-        if (btWindow.tracker && btWindow.tracker.getModuleData) {
-          const moduleData = btWindow.tracker.getModuleData();
-          if (moduleData) {
-            return moduleData; // Should be ArrayBuffer or Uint8Array
-          }
-        }
-        
-        // Alternative: try to export current module
-        if (btWindow.exportCurrentModule) {
-          return btWindow.exportCurrentModule();
-        }
-      }
-    } catch (e) {
-      console.warn(`${this._logPrefix} failed to get content from BassoonTracker:`, e);
-    }
-    
-    // Fallback: return empty MOD file data or default content
-    return new Uint8Array(0);
+  // Returns last exported bytes; may be empty until first save/export
+  if (this._lastCapturedModuleBytes instanceof Uint8Array) return this._lastCapturedModuleBytes;
+  return new Uint8Array(0);
   }
 
-  // Determine the correct file extension based on current file
-  _getCorrectFileExtension() {
-    // If we have a current filename, use its extension
-    if (this._currentFilename) {
-      const currentExt = this._currentFilename.toLowerCase();
-      if (currentExt.endsWith('.xm')) {
-        return '.xm';
-      } else if (currentExt.endsWith('.mod')) {
-        return '.mod';
-      }
-    }
-    
-    // Default to .mod if we can't determine the format
-    return '.mod';
-  }
 
   // Override save to handle filename prompting for temporary files
   async save() {
     try {
-      // If this is a temporary file (starts with temp://) or new file (null path), use saveNewResource
-      if (!this.path || this.path.startsWith('temp://')) {
-        const content = await this._getBinaryContent();
-        if (!content) {
-          throw new Error('No content available to save');
-        }
-        
-        // Use the standardized save dialog from EditorBase
-        await this.saveNewResource(content);
-        return;
+      const freshBytes = await this._directInternalSave();
+      const isTemp = !this.path || this.path.startsWith('temp://');
+      if (isTemp || this.isNewResource) {
+        await this.saveNewResource(freshBytes);
+      } else {
+        await this.saveExistingResource(freshBytes);
       }
-      
-      // Call parent save method for existing files
-      await super.save();
+      this._clearUnsavedIndicator(); // ensure tab cleaned
       
     } catch (error) {
       console.error(`${this._logPrefix} save failed:`, error);
@@ -748,10 +470,109 @@ class ModXmTrackerEditor extends EditorBase {
     }
   }
 
+  async _invokeIframeSaveAndCapture(timeoutMs=5000) {
+    // Removed: legacy capture path no longer used
+    return this.getContent();
+  }
+
+  async _directInternalSave() {
+    if (!this._iframe?.contentWindow) throw new Error('Tracker iframe not ready');
+  const win = this._iframe.contentWindow;
+  const bytes = await new Promise((resolve, reject)=>{
+    let done=false;
+    try {
+      const invoke = ()=>{
+        const fn = win.RetroTrackerSave || (win.Editor && win.Editor.save && ((cb)=>win.Editor.save(null,cb)));
+        if (!fn) return false;
+        fn(async (blob)=>{
+          try {
+            const buf = await blob.arrayBuffer();
+            const arr = new Uint8Array(buf);
+            if (!arr.length) { reject(new Error('Empty module export')); return; }
+            this._lastCapturedModuleBytes = arr;
+            done=true; resolve(arr);
+          }catch(e){ reject(e); }
+        });
+        return true;
+      };
+      if(!invoke()) reject(new Error('RetroTrackerSave not ready'));
+      setTimeout(()=>{ if(!done) reject(new Error('RetroTrackerSave timeout')); },8000);
+    }catch(e){ reject(e); }
+  });
+  return bytes;
+  }
+
+  isExportReady() {
+  return !!(this._iframe?.contentWindow && (this._iframe.contentWindow.RetroTrackerSave || (this._iframe.contentWindow.Editor && this._iframe.contentWindow.Editor.save)));
+  }
+
+  _resolveExporter() {
+  // Deprecated (exporter abstraction removed)
+  }
+
+  // Provide a better initial filename when creating new resource
+  async saveNewResource(content, filename = null) {
+    // Always force standard prompt for new tracker resources; ignore provided filename param
+    let base = '';
+    try {
+      base = this._currentFilename || '';
+      if (!base) {
+        const tm = window.serviceContainer?.get('tabManager') || window.tabManager;
+        const tabId = tm?.getActiveTabId?.() || tm?.activeTabId;
+        const tabEl = tabId ? document.querySelector(`[data-tab-id="${tabId}"] .tab-title`) : null;
+        if (tabEl) base = tabEl.textContent || '';
+      }
+    } catch(_) {}
+    base = (base || '').replace(/[*]+$/,'').replace(/^🎵\s*/, '');
+    let ext = '.mod';
+    if (/\.xm$/i.test(base)) ext = '.xm';
+    if (/\.(mod|xm)$/i.test(base)) base = base.replace(/\.(mod|xm)$/i,'');
+    if (!base) base = 'untitled';
+    // Monkey patch instance getFileName + static extension to seed dialog
+    const originalGetFileName = this.getFileName;
+    const originalStatic = this.constructor.getFileExtension;
+    this.constructor.getFileExtension = () => ext;
+    this.getFileName = () => base + ext; // EditorBase will strip extension for form default
+    try {
+      return await super.saveNewResource(content, null); // null -> force prompt
+    } finally {
+      this.getFileName = originalGetFileName;
+      this.constructor.getFileExtension = originalStatic;
+    }
+  }
+
+  async _captureModuleBytes(timeoutMs = 5000) {
+  // Removed legacy capture pathway; deterministic buildBinary export only
+  return this.getContent();
+  }
+
   destroy() {
     console.log(`${this._logPrefix} destroy called`);
     this.cleanup();
     super.destroy?.();
+  }
+
+  _clearUnsavedIndicator() {
+    try {
+      const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
+      if (!tabManager) return;
+      const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
+      if (!currentTabId) return;
+      const filename = this._currentFilename || this.getFileName?.() || 'song.mod';
+      const cleanTitle = `🎵 ${filename}`;
+      if (tabManager.updateTabTitle) {
+        tabManager.updateTabTitle(currentTabId, cleanTitle);
+      } else {
+        const tabElement = document.querySelector(`[data-tab-id="${currentTabId}"] .tab-title`);
+        if (tabElement) tabElement.textContent = cleanTitle;
+      }
+      // Mark tab clean visually
+      if (typeof tabManager.markTabClean === 'function') {
+        tabManager.markTabClean(currentTabId);
+      }
+      // Emit saved event
+      window.eventBus?.emit?.('editor.content.saved', { editor: this });
+    } catch(_) {}
   }
 }
 

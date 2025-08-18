@@ -261,20 +261,20 @@ class RibbonToolbar {
   setupButtons() {
   // File operations
   this.setupButton('saveBtn', async () => {
-      if (window.gameEditor && window.gameEditor.tabManager) {
-        try {
-          const savedCount = await window.gameEditor.tabManager.saveAllOpenTabs();
-          if (savedCount > 0) {
-            window.gameEditor.updateStatus(`Saved ${savedCount} file(s)`, 'success');
-          } else {
-            window.gameEditor.updateStatus('No modified files to save', 'info');
-          }
-        } catch (error) {
-          console.error('[RibbonToolbar] Failed to save files:', error);
-          window.gameEditor.updateStatus(`Failed to save files: ${error.message}`, 'error');
+    if (window.gameEditor && window.gameEditor.tabManager) {
+      try {
+        const count = await window.gameEditor.tabManager.saveActiveTab();
+        if (count === 1) {
+          window.gameEditor.updateStatus('Saved active file', 'success');
+        } else {
+          window.gameEditor.updateStatus('Active file not modified', 'info');
         }
+      } catch (error) {
+        console.error('[RibbonToolbar] Failed to save active file:', error);
+        window.gameEditor.updateStatus(`Failed to save: ${error.message}`, 'error');
       }
-    });
+    }
+  });
     
     // New Project
     this.setupButton('newProjectBtn', async () => {
