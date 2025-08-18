@@ -44,27 +44,7 @@ class LuaEditor extends EditorBase {
           checkMonaco();
         });
       }
-
-      // Configure Lua language support
-      if (!monaco.languages.getLanguages().find(lang => lang.id === 'lua')) {
-        monaco.languages.register({ id: 'lua' });
-        
-        // Basic Lua syntax highlighting
-        monaco.languages.setMonarchTokensProvider('lua', {
-          tokenizer: {
-            root: [
-              [/--.*$/, 'comment'],
-              [/".*?"/, 'string'],
-              [/'.*?'/, 'string'],
-              [/\b(and|break|do|else|elseif|end|false|for|function|if|in|local|nil|not|or|repeat|return|then|true|until|while)\b/, 'keyword'],
-              [/\b(print|require|type|tostring|tonumber|pairs|ipairs|next|getmetatable|setmetatable|rawget|rawset)\b/, 'keyword.control'],
-              [/[{}()\[\]]/, '@brackets'],
-              [/[a-zA-Z_]\w*/, 'identifier'],
-              [/\d+\.?\d*/, 'number']
-            ]
-          }
-        });
-      }
+     
 
       // Create the Monaco Editor instance
       this.monacoEditor = monaco.editor.create(this.editorContainer, {
@@ -80,6 +60,10 @@ class LuaEditor extends EditorBase {
         tabSize: 2,
         insertSpaces: true,
         wordWrap: 'on',
+        autoIndent: 'full',
+        bracketMatching: 'always',
+        formatOnPaste: true,
+        formatOnType: true,
         readOnly: this.readOnly
       });
 
@@ -103,49 +87,19 @@ class LuaEditor extends EditorBase {
 
     } catch (error) {
       console.error('[LuaEditor] Failed to initialize Monaco Editor:', error);
-      // Fallback to textarea if Monaco fails
-      this.createFallbackEditor();
+      throw error;
     }
-  }
-
-  createFallbackEditor() {
-    console.log('[LuaEditor] Creating fallback textarea editor');
-    this.editorContainer.innerHTML = '';
-    
-    this.textArea = document.createElement('textarea');
-    this.textArea.className = 'lua-editor-textarea';
-    this.textArea.style.width = '100%';
-    this.textArea.style.height = '100%';
-    this.textArea.style.resize = 'none';
-    this.textArea.style.border = 'none';
-    this.textArea.style.outline = 'none';
-    this.textArea.style.fontFamily = 'Monaco, Menlo, "Ubuntu Mono", monospace';
-    this.textArea.style.fontSize = '14px';
-
-    this.textArea.addEventListener('input', () => {
-      if (!this.readOnly) this.markDirty();
-    });
-
-    this.editorContainer.appendChild(this.textArea);
   }
 
   _applyReadOnly() {
     if (this.monacoEditor) {
       this.monacoEditor.updateOptions({ readOnly: true });
-    } else if (this.textArea) {
-      this.textArea.readOnly = true;
-      this.textArea.disabled = true;
-      this.textArea.classList.add('is-readonly');
     }
   }
 
   _clearReadOnly() {
     if (this.monacoEditor) {
       this.monacoEditor.updateOptions({ readOnly: false });
-    } else if (this.textArea) {
-      this.textArea.readOnly = false;
-      this.textArea.disabled = false;
-      this.textArea.classList.remove('is-readonly');
     }
   }
 
@@ -181,7 +135,7 @@ class LuaEditor extends EditorBase {
 
       console.log(`[LuaEditor] Final content to set: length=${content.length}, preview="${content.substring(0, 50)}..."`);
 
-      // Set content in Monaco editor or fallback textarea
+      // Set content in Monaco editor
       if (this.monacoEditor || this._monacoBackup) {
         // Ensure Monaco reference is restored
         if (!this.monacoEditor && this._monacoBackup) {
@@ -190,13 +144,6 @@ class LuaEditor extends EditorBase {
         
         this.monacoEditor.setValue(content);
         console.log(`[LuaEditor] Content set in Monaco editor`);
-        // Only mark clean for existing files, not new ones
-        if (!this.isNewResource) {
-          this.markClean();
-        }
-      } else if (this.textArea) {
-        this.textArea.value = content;
-        console.log(`[LuaEditor] Content set in textarea`);
         // Only mark clean for existing files, not new ones
         if (!this.isNewResource) {
           this.markClean();
@@ -210,26 +157,14 @@ class LuaEditor extends EditorBase {
         }
         this.monacoEditor.setValue('');
         this.markClean();
-      } else if (this.textArea) {
-        this.textArea.value = '';
-        this.markClean();
       }
     }
-  }
-
-  _revertInputIfReadOnly() {
-    if (!this.textArea) return;
-    const v = this.textArea.value;
-    setTimeout(() => { if (this.readOnly) this.textArea.value = v; }, 0);
   }
 
   setReadOnly(isReadOnly) {
     super.setReadOnly(isReadOnly);
     if (this.monacoEditor) {
       this.monacoEditor.updateOptions({ readOnly: isReadOnly });
-    } else if (this.textArea) {
-      if (this.readOnly) this._applyReadOnly();
-      else this._clearReadOnly();
     }
   }
 
@@ -247,8 +182,6 @@ class LuaEditor extends EditorBase {
         console.error(`[LuaEditor] Error getting Monaco content:`, error);
         return '';
       }
-    } else if (this.textArea) {
-      return this.textArea.value || '';
     }
     return '';
   }
@@ -262,12 +195,6 @@ class LuaEditor extends EditorBase {
     
     if (this.monacoEditor) {
       this.monacoEditor.setValue(content || '');
-      // Only mark clean if this is not a new resource
-      if (!this.isNewResource) {
-        this.markClean();
-      }
-    } else if (this.textArea) {
-      this.textArea.value = content || '';
       // Only mark clean if this is not a new resource
       if (!this.isNewResource) {
         this.markClean();
@@ -320,8 +247,6 @@ class LuaEditor extends EditorBase {
     super.onFocus();
     if (this.monacoEditor) {
       try { this.monacoEditor.focus(); } catch (_) {}
-    } else if (this.textArea && this.textArea.parentNode) {
-      try { this.textArea.focus(); } catch (_) {}
     }
   }
 
