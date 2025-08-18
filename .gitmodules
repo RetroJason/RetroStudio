@@ -4,3 +4,6 @@
 [submodule "scripts/audio/external/BassoonTracker"]
 	path = scripts/audio/external/BassoonTracker
 	url = https://github.com/steffest/BassoonTracker.git
+[submodule "scripts/external/lua"]
+	path = scripts/external/lua
+	url = https://github.com/daurnimator/lua.vm.js.git
