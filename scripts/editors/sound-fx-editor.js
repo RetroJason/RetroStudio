@@ -1203,6 +1203,12 @@ class SoundFXEditor extends CompoundEditor {
 
   // Refresh content method for tab synchronization
   async refreshContent() {
+    // Don't reload from filesystem if editor has unsaved changes
+    if (this.isModified()) {
+      console.log(`[SoundFXEditor] Skipping refresh - editor has unsaved changes`);
+      return;
+    }
+    
     console.log(`[SoundFXEditor] Refreshing content... path: ${this.path}, isNewResource: ${this.isNewResource}`);
     if (this.path && !this.isNewResource) {
       try {

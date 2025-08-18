@@ -67,11 +67,6 @@ class LuaEditor extends EditorBase {
     else this._clearReadOnly();
   }
 
-  async refreshContent() {
-    try { await this.loadFileContent(); }
-    catch (e) { console.error('[LuaEditor] refreshContent() failed:', e); }
-  }
-
   async loadFileContent() {
     try {
       let content = null;

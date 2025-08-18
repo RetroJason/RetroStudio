@@ -226,6 +226,23 @@ class EditorBase extends ViewerBase {
   isModified() {
     return this.isDirty || this.hasUnsavedChanges;
   }
+
+  // Base implementation of refreshContent that checks for unsaved changes
+  async refreshContent() {
+    // Don't reload from filesystem if editor has unsaved changes
+    if (this.isModified()) {
+      console.log(`[${this.constructor.name}] Skipping refresh - editor has unsaved changes`);
+      return;
+    }
+    
+    try {
+      await this.loadFileContent();
+      console.log(`[${this.constructor.name}] Successfully refreshed content for: ${this.path}`);
+    } catch (error) {
+      console.error(`[${this.constructor.name}] Failed to refresh content for ${this.path}:`, error);
+      throw error;
+    }
+  }
   
   updateTabTitle() {
     // TabManager now handles tab title updates automatically
@@ -459,7 +476,7 @@ class EditorBase extends ViewerBase {
     if (window.gameEditor && window.gameEditor.tabManager) {
       const currentPath = this.path || 'untitled';
       console.log(`[EditorBase] Updating tab manager: currentPath="${currentPath}", storagePath="${storagePath}", filename="${finalFilename}"`);
-      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename);
+      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename, this);
     }
     
     this.path = fullUiPath;
