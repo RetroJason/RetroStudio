@@ -45,6 +45,15 @@ class LuaEditor extends EditorBase {
         });
       }
      
+      // Configure Lua-specific indentation rules
+      monaco.languages.setLanguageConfiguration('lua', {
+        indentationRules: {
+          increaseIndentPattern: /^((?!.*?--.*).*)*((.*\b(function|if|for|while|repeat|else|elseif|then|do)\b.*)|(.*\{.*))$/,
+          decreaseIndentPattern: /^\s*(end|else|elseif|until|\})\b.*$/,
+          indentNextLinePattern: /^\s*(local\s+)?function\s+.*\(\s*\)\s*$/,
+          unIndentedLinePattern: /^(\s*--.*)?$/
+        }
+      });
 
       // Create the Monaco Editor instance
       this.monacoEditor = monaco.editor.create(this.editorContainer, {
