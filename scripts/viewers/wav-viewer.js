@@ -19,6 +19,11 @@ class WavViewer extends ViewerBase {
     
     // Don't load audio resource immediately - wait for DOM to be ready
   }
+
+  // Helper to get game emulator from service container
+  get gameEmulator() {
+    return window.serviceContainer ? window.serviceContainer.get('gameEmulator') : null;
+  }
   
   // Note: Event subscription is now handled centrally by TabManager
   setupEventListeners() {
@@ -38,8 +43,8 @@ class WavViewer extends ViewerBase {
         this.stopAllPlayback();
         
         // Clear the resource from the audio engine
-        if (window.gameEditor && window.gameEditor.audioEngine) {
-          window.gameEditor.audioEngine.unloadResource(this.audioResource.id);
+        if (this.gameEmulator && this.gameEmulator.audioEngine) {
+          this.gameEmulator.audioEngine.unloadResource(this.audioResource.id);
           console.log(`[WavViewer] Unloaded resource ${this.audioResource.id} from audio engine`);
         }
         
@@ -180,7 +185,9 @@ class WavViewer extends ViewerBase {
     }
     
     // Now that DOM is ready, load the audio resource
+    console.log('[WavViewer] About to call loadAudioResource()');
     this.loadAudioResource();
+    console.log('[WavViewer] Called loadAudioResource()');
     
     // No longer need setupControls since controls handle themselves
   }
@@ -210,7 +217,13 @@ class WavViewer extends ViewerBase {
   }
   
   async loadAudioResource(forceReload = false) {
-    if (!window.gameEditor) {
+    console.log('[WavViewer] loadAudioResource() called with forceReload:', forceReload);
+    
+    // Get game emulator from service container
+    const gameEmulator = this.gameEmulator;
+    console.log('[WavViewer] gameEmulator from service container:', !!gameEmulator);
+    
+    if (!gameEmulator) {
       this.updateStatus('Audio engine not available');
       return;
     }
@@ -228,10 +241,10 @@ class WavViewer extends ViewerBase {
       // First try to get already loaded resource, unless forcing reload
       let resourceId = null;
       if (!forceReload) {
-        resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+        resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
         if (resourceId) {
           // File already loaded
-          this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+          this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
           console.log(`[WavViewer] File already loaded: ${this.getFileName()}`);
           this.updateStatus('Loaded');
           this.updateMetadata();
@@ -245,13 +258,15 @@ class WavViewer extends ViewerBase {
 
       // File not loaded yet, load it on demand
       console.log('[WavViewer] File not loaded, loading on demand...');
+      console.log('[WavViewer] getFileName() returns:', this.getFileName());
+      console.log('[WavViewer] Full path:', this.path);
       this.updateStatus('Loading...');
 
-      resourceId = await window.gameEditor.loadAudioFileOnDemand(this.getFileName(), forceReload);
+      resourceId = await gameEmulator.loadAudioFileOnDemand(this.getFileName(), forceReload);
 
       if (resourceId) {
         if (seq === this._loadSeq) {
-          this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+          this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
           console.log(`[WavViewer] Loaded resource for: ${this.getFileName()}`);
           this.updateStatus('Loaded');
           this.updateMetadata();
@@ -283,7 +298,7 @@ class WavViewer extends ViewerBase {
   // Try to resolve the audio resource synchronously from the AudioEngine if missing
   _ensureAudioResource() {
     if (this.audioResource) return true;
-    const ge = window.gameEditor;
+    const ge = this.gameEmulator;
     if (!ge || !ge.audioEngine) return false;
     const id = ge.getLoadedResourceId(this.getFileName());
     if (!id) return false;
@@ -638,20 +653,21 @@ class WavViewer extends ViewerBase {
   }
 
   async restartLoop() {
-    if (!this.isLooping || !window.gameEditor || !this.audioResource) return;
+    const gameEmulator = this.gameEmulator;
+    if (!this.isLooping || !gameEmulator || !this.audioResource) return;
     
     console.log('[WavViewer] Restarting loop');
     
     try {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+      const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
       if (resourceId) {
         const volume = this.volumeControl ? this.volumeControl.getNormalizedValue() : 0.7;
         
         // Stop current playback
-        window.gameEditor.audioEngine.stopAllSounds(resourceId);
+        gameEmulator.audioEngine.stopAllSounds(resourceId);
         
         // Start new playback
-        await window.gameEditor.audioEngine.startSound(resourceId, volume);
+        await gameEmulator.audioEngine.startSound(resourceId, volume);
         
         // Reset start time for accurate position tracking
         this.startTime = Date.now();
@@ -671,12 +687,13 @@ class WavViewer extends ViewerBase {
   async playSound() {
     console.log('[WavViewer] playSound called, playButton:', this.playButton);
     
-    if (!window.gameEditor || !this.audioResource) {
+    const gameEmulator = this.gameEmulator;
+    if (!gameEmulator || !this.audioResource) {
       alert('Audio resource not available');
       return;
     }
     
-    const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+    const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -686,10 +703,10 @@ class WavViewer extends ViewerBase {
       const volume = this.volumeControl ? this.volumeControl.getNormalizedValue() : 0.7;
       
       // Check if AudioContext is suspended and needs to be resumed
-      if (window.gameEditor.audioEngine.audioContext.state === 'suspended') {
+      if (gameEmulator.audioEngine.audioContext.state === 'suspended') {
         console.log('[WavViewer] AudioContext suspended, resuming...');
         try {
-          await window.gameEditor.audioEngine.audioContext.resume();
+          await gameEmulator.audioEngine.audioContext.resume();
           console.log('[WavViewer] AudioContext resumed');
         } catch (error) {
           console.warn('[WavViewer] Failed to resume AudioContext:', error);
@@ -697,7 +714,7 @@ class WavViewer extends ViewerBase {
         }
       }
       
-      const instanceId = await window.gameEditor.audioEngine.startSound(resourceId, volume);
+      const instanceId = await gameEmulator.audioEngine.startSound(resourceId, volume);
       
       if (instanceId) {
         // Set duration and start position tracking
@@ -811,23 +828,24 @@ class WavViewer extends ViewerBase {
     // Stop position tracking
     this.stopPositionTracking();
     
-    if (!window.gameEditor) {
-      console.log('[WavViewer] No game editor, skipping stop');
+    const gameEmulator = this.gameEmulator;
+    if (!gameEmulator) {
+      console.log('[WavViewer] No game emulator, skipping stop');
       return;
     }
     
     try {
-      const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+      const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
       if (resourceId) {
         console.log('[WavViewer] Stopping all sounds for resource:', resourceId);
         // Stop all instances of this sound
-        window.gameEditor.audioEngine.stopAllSounds(resourceId);
+        gameEmulator.audioEngine.stopAllSounds(resourceId);
       }
     } catch (error) {
       console.error('[WavViewer] Error stopping all playback:', error);
       // Try emergency stop as fallback
       try {
-        window.gameEditor.audioEngine.emergencyAudioStop();
+        gameEmulator.audioEngine.emergencyAudioStop();
       } catch (emergencyError) {
         console.error('[WavViewer] Emergency stop also failed:', emergencyError);
       }
