@@ -71,7 +71,7 @@ class RibbonToolbar {
       console.log(`[RibbonToolbar] Adding button for ${editorInfo.displayName}`);
       const btn = this.addCreateButton(createSection, editorInfo);
       // Disable if no active project
-      const hasProject = !!(window.gameEditor?.projectExplorer?.getFocusedProjectName?.());
+      const hasProject = !!(window.gameEmulator?.projectExplorer?.getFocusedProjectName?.());
       btn.disabled = !hasProject;
       btn.style.opacity = hasProject ? '1' : '0.5';
     });
@@ -116,16 +116,16 @@ class RibbonToolbar {
   async createNewResourceFromEditor(editorInfo) {
     try {
       console.log(`[RibbonToolbar] Creating new ${editorInfo.displayName}`);
-      const focusedProject = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      const focusedProject = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
       if (!focusedProject) {
         alert('No active project');
         return;
       }
       
       // Simply open a new editor with no file object - let the editor handle filename prompting
-      if (window.gameEditor && window.gameEditor.tabManager) {
+      if (window.gameEmulator && window.gameEmulator.tabManager) {
         try {
-          await window.gameEditor.tabManager.openNewEditor(editorInfo);
+          await window.gameEmulator.tabManager.openNewEditor(editorInfo);
           console.log(`[RibbonToolbar] Opened new ${editorInfo.displayName} editor`);
         } catch (error) {
           console.error(`[RibbonToolbar] Failed to open new editor:`, error);
@@ -261,17 +261,17 @@ class RibbonToolbar {
   setupButtons() {
   // File operations
   this.setupButton('saveBtn', async () => {
-    if (window.gameEditor && window.gameEditor.tabManager) {
+    if (window.gameEmulator && window.gameEmulator.tabManager) {
       try {
-        const count = await window.gameEditor.tabManager.saveActiveTab();
+        const count = await window.gameEmulator.tabManager.saveActiveTab();
         if (count === 1) {
-          window.gameEditor.updateStatus('Saved active file', 'success');
+          window.gameEmulator.updateStatus('Saved active file', 'success');
         } else {
-          window.gameEditor.updateStatus('Active file not modified', 'info');
+          window.gameEmulator.updateStatus('Active file not modified', 'info');
         }
       } catch (error) {
         console.error('[RibbonToolbar] Failed to save active file:', error);
-        window.gameEditor.updateStatus(`Failed to save: ${error.message}`, 'error');
+        window.gameEmulator.updateStatus(`Failed to save: ${error.message}`, 'error');
       }
     }
   });
@@ -308,7 +308,7 @@ class RibbonToolbar {
   // Export current focused project as .rwp
   async exportProjectRwp() {
     try {
-      const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
       if (!project) return alert('No active project');
       const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
       if (!svc) return alert('Project export service unavailable');
@@ -392,8 +392,8 @@ class RibbonToolbar {
   }
   
   async createNewResource(extension) {
-    if (!window.gameEditor || !window.gameEditor.tabManager) {
-      console.error('[RibbonToolbar] GameEditor or TabManager not available');
+    if (!window.gameEmulator || !window.gameEmulator.tabManager) {
+      console.error('[RibbonToolbar] GameEmulator or TabManager not available');
       return;
     }
     
@@ -437,8 +437,8 @@ class RibbonToolbar {
       }
       
       // Step 3: Open the saved resource in a tab
-      if (editor.path && window.gameEditor?.tabManager) {
-        await window.gameEditor.tabManager.openInTab(editor.path, editor.file);
+      if (editor.path && window.gameEmulator?.tabManager) {
+        await window.gameEmulator.tabManager.openInTab(editor.path, editor.file);
       }
       
     } catch (error) {
@@ -458,8 +458,8 @@ class RibbonToolbar {
     // Update save button based on whether there are any modified tabs
     let hasModifiedTabs = false;
     
-    if (window.gameEditor && window.gameEditor.tabManager) {
-      const tabManager = window.gameEditor.tabManager;
+    if (window.gameEmulator && window.gameEmulator.tabManager) {
+      const tabManager = window.gameEmulator.tabManager;
       
       // Check if preview tab is modified
       if (tabManager.previewViewer && 

@@ -204,8 +204,8 @@ class RwpService {
       if (!this.projectExplorer) {
         if (this.services?.has?.('projectExplorer')) {
           this.projectExplorer = this.services.get('projectExplorer');
-        } else if (window.gameEditor?.projectExplorer) {
-          this.projectExplorer = window.gameEditor.projectExplorer;
+        } else if (window.gameEmulator?.projectExplorer) {
+          this.projectExplorer = window.gameEmulator.projectExplorer;
         }
       }
     } catch (_) {}
