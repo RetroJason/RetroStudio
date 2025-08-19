@@ -15,6 +15,32 @@
       "functions": []
     },
     {
+      "name": "Music",
+      "description": "Background music playback functions", 
+      "functions": [
+        {
+          "name": "Play",
+          "description": "Play background music (MOD files)",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID (use MUSIC constants like MUSIC.SONG_1)"},
+            {"name": "volume", "type": "float", "description": "Volume level (0.0 to 1.0, optional, default: 1.0)"},
+            {"name": "loop", "type": "boolean", "description": "Whether to loop the music (optional, default: true)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if music started playing successfully"},
+          "example": "Music.Play(MUSIC.SONG_1, 0.8, true)"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop playing background music",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID to stop"}
+          ],
+          "returns": {"type": "boolean", "description": "True if music was stopped successfully"},
+          "example": "Music.Stop(MUSIC.SONG_1)"
+        }
+      ]
+    },
+    {
       "name": "Audio",
       "description": "Audio playback and sound functions", 
       "functions": []

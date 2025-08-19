@@ -24,7 +24,8 @@ class BaseLuaExtension {
     const self = this;
     
     // Use the js.global approach instead of C function registration to avoid function pointer limits
-    const globalFunctionName = `${luaFunctionName}_Impl`;
+    // Make global function name unique by including className
+    const globalFunctionName = `${className}_${luaFunctionName}_Impl`;
     
     // Create a global JavaScript function that can be called from Lua
     window[globalFunctionName] = function() {
