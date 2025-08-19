@@ -45,33 +45,33 @@ class LuaEditor extends EditorBase {
         });
       }
      
-      // Configure Lua-specific indentation rules
-      monaco.languages.setLanguageConfiguration('lua', {
-        indentationRules: {
-          increaseIndentPattern: /^((?!.*?--.*).*)*((.*\b(function|if|for|while|repeat|else|elseif|then|do)\b.*)|(.*\{.*))$/,
-          decreaseIndentPattern: /^\s*(end|else|elseif|until|\})\b.*$/,
-          indentNextLinePattern: /^\s*(local\s+)?function\s+.*\(\s*\)\s*$/,
-          unIndentedLinePattern: /^(\s*--.*)?$/
-        }
-      });
+      // Remove custom Lua indentation rules - they were causing performance issues on long lines
+      // monaco.languages.setLanguageConfiguration('lua', {
+      //   indentationRules: {
+      //     increaseIndentPattern: /^((?!.*?--.*).*)*((.*\b(function|if|for|while|repeat|else|elseif|then|do)\b.*)|(.*\{.*))$/,
+      //     decreaseIndentPattern: /^\s*(end|else|elseif|until|\})\b.*$/,
+      //     indentNextLinePattern: /^\s*(local\s+)?function\s+.*\(\s*\)\s*$/,
+      //     unIndentedLinePattern: /^(\s*--.*)?$/
+      //   }
+      // });
 
-      // Create the Monaco Editor instance
+      // Create the Monaco Editor instance with all features restored
       this.monacoEditor = monaco.editor.create(this.editorContainer, {
         value: '', // Will be set when content loads
-        language: 'lua',
+        language: 'lua', // Restored Lua language support
         theme: 'vs-dark',
         automaticLayout: true,
-        minimap: { enabled: true },
+        minimap: { enabled: true }, // Restored minimap
         scrollBeyondLastLine: false,
         fontSize: 14,
         lineNumbers: 'on',
-        renderWhitespace: 'selection',
+        renderWhitespace: 'selection', // Restored whitespace rendering
         tabSize: 2,
         insertSpaces: true,
-        wordWrap: 'on',
-        autoIndent: 'full',
-        bracketMatching: 'always',
-        formatOnPaste: true,
+        wordWrap: 'on', // Restored word wrap
+        autoIndent: 'full', // Restored auto-indent (using Monaco's default rules)
+        bracketMatching: 'always', // Restored bracket matching
+        formatOnPaste: true, // Restored formatting
         formatOnType: true,
         readOnly: this.readOnly
       });
@@ -87,7 +87,11 @@ class LuaEditor extends EditorBase {
           this.markDirty();
         }
       });
-  // Give container a tabIndex to allow focusing chain if needed
+
+      // Set up IntelliSense (now that we've fixed the performance issue)
+      await this.setupIntelliSense();
+
+      // Give container a tabIndex to allow focusing chain if needed
       if (this.editorContainer && this.editorContainer.tabIndex < 0) {
         this.editorContainer.tabIndex = 0;
       }
@@ -299,6 +303,137 @@ class LuaEditor extends EditorBase {
     if (!finalName.toLowerCase().endsWith('.lua')) finalName += '.lua';
     finalName = await EditorRegistry.getUniqueFileName(finalName);
     return { name: finalName, uniqueNameChecked: true };
+  }
+
+  async setupIntelliSense() {
+    try {
+      // Prevent multiple registrations
+      if (this.intelliSenseSetup) {
+        console.log('[LuaEditor] IntelliSense already setup, skipping...');
+        return;
+      }
+      
+      console.log('[LuaEditor] Setting up IntelliSense...');
+      
+      // Get the Monaco IntelliSense service
+      const intelliSenseService = window.serviceContainer?.get?.('monacoIntelliSenseService') || window.monacoIntelliSenseService;
+      
+      if (!intelliSenseService) {
+        console.warn('[LuaEditor] Monaco IntelliSense service not available');
+        return;
+      }
+
+      // Wait for the service to be ready
+      await intelliSenseService.ensureReady();
+      
+      // Register completion provider with timeout protection
+      monaco.languages.registerCompletionItemProvider('lua', {
+        provideCompletionItems: (model, position) => {
+          return new Promise((resolve) => {
+            // Set a timeout to prevent hanging
+            const timeout = setTimeout(() => {
+              console.warn('[LuaEditor] Completion provider timeout');
+              resolve({ suggestions: [] });
+            }, 500);
+
+            try {
+              const word = model.getWordUntilPosition(position);
+              const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn
+              };
+
+              // Get all completion items and filter client-side for performance
+              const allItems = intelliSenseService.getCompletionItems();
+              
+              if (!Array.isArray(allItems)) {
+                clearTimeout(timeout);
+                resolve({ suggestions: [] });
+                return;
+              }
+              
+              // Apply range to all items
+              const suggestions = allItems.map(item => ({
+                ...item,
+                range: range
+              }));
+              
+              clearTimeout(timeout);
+              resolve({ suggestions });
+            } catch (error) {
+              console.error('[LuaEditor] Error in completion provider:', error);
+              clearTimeout(timeout);
+              resolve({ suggestions: [] });
+            }
+          });
+        }
+      });
+
+      // Register hover provider with timeout protection
+      monaco.languages.registerHoverProvider('lua', {
+        provideHover: (model, position) => {
+          return new Promise((resolve) => {
+            // Set a timeout to prevent hanging
+            const timeout = setTimeout(() => {
+              console.warn('[LuaEditor] Hover provider timeout');
+              resolve(null);
+            }, 200);
+
+            try {
+              const word = model.getWordAtPosition(position);
+              if (!word) {
+                clearTimeout(timeout);
+                resolve(null);
+                return;
+              }
+
+              const hoverData = intelliSenseService.getHoverData(word.word);
+              if (!hoverData || !hoverData.markdown) {
+                clearTimeout(timeout);
+                resolve(null);
+                return;
+              }
+
+              const result = {
+                range: new monaco.Range(
+                  position.lineNumber,
+                  word.startColumn,
+                  position.lineNumber,
+                  word.endColumn
+                ),
+                contents: [{ value: hoverData.markdown }]
+              };
+
+              clearTimeout(timeout);
+              resolve(result);
+            } catch (error) {
+              console.error('[LuaEditor] Error in hover provider:', error);
+              clearTimeout(timeout);
+              resolve(null);
+            }
+          });
+        }
+      });
+
+      // Temporarily disable signature help provider to isolate the issue
+      /*
+      monaco.languages.registerSignatureHelpProvider('lua', {
+        signatureHelpTriggerCharacters: ['(', ','],
+        provideSignatureHelp: (model, position) => {
+          // Implementation temporarily disabled
+          return null;
+        }
+      });
+      */
+
+      this.intelliSenseSetup = true;
+      console.log('[LuaEditor] IntelliSense providers registered successfully');
+      
+    } catch (error) {
+      console.error('[LuaEditor] Failed to setup IntelliSense:', error);
+    }
   }
 
   static getDefaultFolder() {

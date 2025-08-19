@@ -120,7 +120,7 @@ class MonacoIntelliSenseService {
             snippetParams = paramSnippets.join(', ');
         }
 
-        const insertText = `${func.name}(${snippetParams})`;
+        const insertText = `${fullName}(${snippetParams})`; // Use fullName instead of func.name
         
         // Generate documentation
         let documentation = func.description;
@@ -320,6 +320,25 @@ class MonacoIntelliSenseService {
             categoryCount: this.extensionData.categories.length,
             functionCount: this.completionItems.length
         };
+    }
+
+    /**
+     * Ensure the service is ready by loading extensions if not already loaded
+     * @returns {Promise<void>}
+     */
+    async ensureReady() {
+        if (!this.extensionData) {
+            console.log('[MonacoIntelliSenseService] Loading extensions data...');
+            try {
+                await this.loadExtensions();
+                console.log('[MonacoIntelliSenseService] Extensions loaded successfully');
+            } catch (error) {
+                console.error('[MonacoIntelliSenseService] Failed to load extensions:', error);
+                // Continue without extensions - better than failing completely
+            }
+        } else {
+            console.log('[MonacoIntelliSenseService] Extensions already loaded');
+        }
     }
 }
 

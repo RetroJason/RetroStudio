@@ -123,6 +123,18 @@ class RetroStudioApplication {
     this.services.registerService('buildSystem', BuildSystem);
     this.services.registerService('projectExplorer', ProjectExplorer);
     this.services.registerService('tabManager', TabManager);
+    
+    // Register Monaco IntelliSense service
+    try {
+      if (window.MonacoIntelliSenseService && !this.services.has('monacoIntelliSenseService')) {
+        const intelliSenseService = new window.MonacoIntelliSenseService();
+        this.services.registerSingleton('monacoIntelliSenseService', intelliSenseService);
+        console.log('[Application] Monaco IntelliSense service registered');
+      }
+    } catch (e) {
+      console.warn('[Application] Unable to register monacoIntelliSenseService:', e?.message || e);
+    }
+    
     // Register RWP import/export as a singleton if script loaded
     try {
       if (window.RwpService && !this.services.has('rwpService')) {
