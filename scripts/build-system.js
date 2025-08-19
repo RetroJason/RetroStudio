@@ -97,8 +97,12 @@ class BuildSystem {
             console.log(`[BuildSystem] ✓ Built: ${filePath} → ${result.outputPath}`);
             
             // Add the built file to project explorer
-            if (window.gameEditor && window.gameEditor.projectExplorer && result.outputPath) {
+            const projectExplorer = window.serviceContainer?.get('projectExplorer');
+            if (projectExplorer && result.outputPath) {
+              console.log(`[BuildSystem] Adding built file to explorer: ${result.outputPath}`);
               await this.addBuiltFileToExplorer(result.outputPath, filePath);
+            } else {
+              console.log(`[BuildSystem] Skipping addBuiltFileToExplorer - projectExplorer: ${!!projectExplorer}, outputPath: ${!!result.outputPath}`);
             }
           } else {
             errorCount++;
@@ -145,6 +149,7 @@ class BuildSystem {
   
   async addBuiltFileToExplorer(outputPath, originalFilePath) {
     try {
+      console.log(`[BuildSystem] addBuiltFileToExplorer called: ${outputPath} (from ${originalFilePath})`);
       console.log(`[BuildSystem] Adding built file to explorer: ${outputPath}`);
       
       // Load the built file from storage using FileManager
@@ -172,16 +177,20 @@ class BuildSystem {
   const rel = relativePath.startsWith(sourcesUi + '/') ? relativePath.substring(sourcesUi.length + 1) : relativePath;
       
       // Add to project explorer's build folder
-  const uiContent = (builtFileObj.content !== undefined)
+      const projectExplorer = window.serviceContainer?.get('projectExplorer');
+      if (!projectExplorer) {
+        console.error(`[BuildSystem] ProjectExplorer not available`);
+        return;
+      }
+      
+      const uiContent = (builtFileObj.content !== undefined)
         ? builtFileObj.content
         : (builtFileObj.fileContent !== undefined ? builtFileObj.fileContent : builtFileObj.data);
-      window.gameEditor.projectExplorer.addBuildFileToStructure(rel, {
+      projectExplorer.addBuildFileToStructure(rel, {
         content: uiContent,
         name: builtFileObj.filename || builtFileObj.name || (rel.split('/').pop()),
         path: outputPath
-      });
-      
-  console.log(`[BuildSystem] Successfully added built file to explorer: ${rel}`);
+      });  console.log(`[BuildSystem] Successfully added built file to explorer: ${rel}`);
     } catch (error) {
       console.error(`[BuildSystem] Failed to add built file to explorer:`, error);
     }
@@ -211,23 +220,53 @@ class BuildSystem {
   }
   
   getAllResourceFilePaths() {
+    console.log('[BuildSystem] === NEW VERSION - getAllResourceFilePaths() called ===');
     const filePaths = [];
     
-    // Get file paths from project explorer structure
-    if (window.gameEditor && window.gameEditor.projectExplorer) {
-      const explorer = window.gameEditor.projectExplorer;
-      console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
-      const project = explorer.getFocusedProjectName?.();
-      const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
-        ? window.ProjectPaths.getSourcesRootUi()
-        : 'Resources';
-      const srcNode = project ? explorer.projectData.structure[project]?.children?.[sourcesRoot]
-                              : explorer.projectData.structure[sourcesRoot];
-      if (srcNode) {
-        console.log('[BuildSystem] Sources node:', srcNode);
-        const base = `${project ? project + '/' : ''}${sourcesRoot}/`;
-        filePaths.push(...this.extractFilePathsFromNode(srcNode, base));
+    // Get project explorer from service container instead of window.gameEditor
+    const projectExplorer = window.serviceContainer?.get('projectExplorer');
+    console.log('[BuildSystem] ProjectExplorer from service container:', !!projectExplorer);
+    
+    if (projectExplorer) {
+      console.log('[BuildSystem] Explorer structure:', projectExplorer.projectData?.structure);
+      const project = projectExplorer.getFocusedProjectName?.();
+      console.log('[BuildSystem] Focused project:', project);
+      
+      // Check what ProjectPaths.getSourcesRootUi() actually returns - but don't fail if missing
+      let sourcesRoot = 'Sources'; // default to Sources since that's what the project uses
+      console.log('[BuildSystem] ProjectPaths available:', !!window.ProjectPaths);
+      console.log('[BuildSystem] getSourcesRootUi function:', typeof window.ProjectPaths?.getSourcesRootUi);
+      
+      if (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function') {
+        try {
+          sourcesRoot = window.ProjectPaths.getSourcesRootUi();
+          console.log('[BuildSystem] ProjectPaths.getSourcesRootUi() returned:', sourcesRoot);
+        } catch (error) {
+          console.error('[BuildSystem] Error calling ProjectPaths.getSourcesRootUi():', error);
+        }
+      } else {
+        console.log('[BuildSystem] ProjectPaths.getSourcesRootUi() not available, using default:', sourcesRoot);
       }
+      
+      const srcNode = project ? projectExplorer.projectData.structure[project]?.children?.[sourcesRoot]
+                              : projectExplorer.projectData.structure[sourcesRoot];
+      console.log('[BuildSystem] Looking for node at:', project ? `${project}.children.${sourcesRoot}` : sourcesRoot);
+      console.log('[BuildSystem] Found source node:', srcNode);
+      
+      if (srcNode) {
+        const base = `${project ? project + '/' : ''}${sourcesRoot}/`;
+        console.log('[BuildSystem] Base path for extraction:', base);
+        filePaths.push(...this.extractFilePathsFromNode(srcNode, base));
+      } else {
+        console.error('[BuildSystem] Source node not found in project structure');
+        console.error('[BuildSystem] Available structure keys:', Object.keys(projectExplorer.projectData?.structure || {}));
+        if (project && projectExplorer.projectData.structure[project]) {
+          console.error('[BuildSystem] Available project children:', Object.keys(projectExplorer.projectData.structure[project].children || {}));
+        }
+      }
+    } else {
+      console.error('[BuildSystem] ProjectExplorer not available from service container');
+      console.error('[BuildSystem] Available services:', Object.keys(window.serviceContainer?.services || {}));
     }
     
     console.log(`[BuildSystem] Extracted ${filePaths.length} file paths:`, filePaths);
@@ -300,29 +339,6 @@ class BuildSystem {
     return await builder.build(legacyFile);
   }
   
-  getAllResourceFiles() {
-    // Legacy method - deprecated in favor of getAllResourceFilePaths()
-    console.warn('[BuildSystem] getAllResourceFiles() is deprecated, use getAllResourceFilePaths() instead');
-    const files = [];
-    
-    // Get files from project explorer
-    if (window.gameEditor && window.gameEditor.projectExplorer) {
-      const explorer = window.gameEditor.projectExplorer;
-      console.log('[BuildSystem] Explorer structure:', explorer.projectData?.structure);
-      
-      const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
-        ? window.ProjectPaths.getSourcesRootUi()
-        : 'Resources';
-      if (explorer.projectData && explorer.projectData.structure && explorer.projectData.structure[sourcesRoot]) {
-        console.log('[BuildSystem] Sources node:', explorer.projectData.structure[sourcesRoot]);
-        files.push(...this.extractFilesFromNode(explorer.projectData.structure[sourcesRoot], sourcesRoot + '/'));
-      }
-    }
-    
-    console.log(`[BuildSystem] Extracted ${files.length} files:`, files);
-    return files;
-  }
-
   extractFilesFromProjectExplorer(projectFiles) {
     // Legacy method - deprecated
     console.warn('[BuildSystem] extractFilesFromProjectExplorer() is deprecated');

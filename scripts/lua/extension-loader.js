@@ -143,6 +143,12 @@ class LuaExtensionLoader {
         // Create instance
         const extensionInstance = new window[className](this.gameEmulator);
         extensionInstance.setLuaState(luaState);
+        
+        // Initialize the extension (important for service container access)
+        if (typeof extensionInstance.initialize === 'function') {
+          await extensionInstance.initialize(luaState);
+        }
+        
         this.extensions.set(categoryName, extensionInstance);
         
         // Register each function defined in the JSON configuration

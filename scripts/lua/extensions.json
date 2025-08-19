@@ -20,6 +20,57 @@
       "functions": []
     },
     {
+      "name": "SFX",
+      "description": "Sound effects playback functions",
+      "functions": [
+        {
+          "name": "Play",
+          "description": "Play a sound effect resource",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID (use SFX constants like SFX.COOL)"},
+            {"name": "shouldRepeat", "type": "boolean", "description": "Whether to loop the sound (optional)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound started playing successfully"},
+          "example": "SFX.Play(SFX.COOL, false)"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop a playing sound effect",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID to stop"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound was stopped successfully"},
+          "example": "SFX.Stop(SFX.COOL)"
+        },
+        {
+          "name": "IsPlaying",
+          "description": "Check if a sound effect is currently playing",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID to check"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound is currently playing"},
+          "example": "SFX.IsPlaying(SFX.COOL)"
+        },
+        {
+          "name": "SetVolume",
+          "description": "Set volume for a sound effect resource",
+          "parameters": [
+            {"name": "resourceId", "type": "string", "description": "Resource ID"},
+            {"name": "volume", "type": "float", "description": "Volume level (0.0 to 1.0)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if volume was set successfully"},
+          "example": "SFX.SetVolume(SFX.COOL, 0.8)"
+        },
+        {
+          "name": "List",
+          "description": "List all available SFX resources (for debugging)",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Number of available resources"},
+          "example": "SFX.List()"
+        }
+      ]
+    },
+    {
       "name": "Input",
       "description": "Keyboard and mouse input functions",
       "functions": []

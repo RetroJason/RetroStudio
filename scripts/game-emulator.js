@@ -9,6 +9,10 @@ class GameEmulator {
     this.buildSystem = null;
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
     this._inflightLoads = new Map(); // filename -> Promise
+    
+    // Set up project paths configuration
+    this.setupProjectPaths();
+    this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
     this.printOutput = []; // Store Lua print output
     this.luaState = null; // Lua execution state
     this.isRunning = false; // Game loop state
@@ -18,7 +22,20 @@ class GameEmulator {
 
     this.initialize();
   }
-  
+
+  // Set up project paths configuration to use correct folder names
+  setupProjectPaths() {
+    if (!window.ProjectPaths) {
+      window.ProjectPaths = {
+        getSourcesRootUi: () => 'Sources',
+        getBuildRootUi: () => 'Game Objects',
+        normalizeStoragePath: (path) => path,
+        isBuildArtifact: (path) => path && path.includes('Game Objects/')
+      };
+      console.log('[GameEmulator] ProjectPaths configured: Sources -> "Sources", Build -> "Game Objects"');
+    }
+  }
+
   async initialize() {
     console.log('=== Game Engine Emulator ===');
     
@@ -346,6 +363,235 @@ class GameEmulator {
     console.log(`[GameEditor] Found ${buildFiles.length} build files:`, buildFiles);
     return buildFiles;
   }
+
+  /**
+   * Initialize all resource mappings from build files
+   * This creates a centralized resource mapping system for all components to use
+   */
+  async initializeResourceMappings() {
+    console.log('[GameEmulator] Initializing centralized resource mappings...');
+    
+    try {
+      this.resourceMap.clear();
+      
+      // Get all build files
+      console.log('[GameEmulator] DEBUG: Getting all build files...');
+      const buildFiles = this.getAllBuildFiles();
+      console.log(`[GameEmulator] DEBUG: Found ${buildFiles.length} total build files:`, buildFiles);
+      
+      // Process SFX resources (WAV files in SFX folder)
+      console.log(`[GameEmulator] DEBUG: Filtering build files for SFX resources...`);
+      console.log(`[GameEmulator] DEBUG: Looking for files with path containing 'Game Objects/SFX/' and ending with '.wav'`);
+      
+      const sfxFiles = buildFiles.filter(file => {
+        const hasGameObjectsPath = file.path && file.path.includes('Game Objects/SFX/');
+        const hasBuildPath = file.path && file.path.includes('build/SFX/'); // Legacy fallback
+        const isWav = file.path && file.path.endsWith('.wav');
+        
+        console.log(`[GameEmulator] DEBUG: Checking file: ${file.path || file.name}`);
+        console.log(`[GameEmulator] DEBUG:   - has Game Objects/SFX/: ${hasGameObjectsPath}`);
+        console.log(`[GameEmulator] DEBUG:   - has build/SFX/: ${hasBuildPath}`);
+        console.log(`[GameEmulator] DEBUG:   - ends with .wav: ${isWav}`);
+        
+        return (hasGameObjectsPath || hasBuildPath) && isWav;
+      });
+      
+      console.log(`[GameEmulator] DEBUG: Filtered to ${sfxFiles.length} SFX files:`, sfxFiles);
+      
+      // Create SFX resource mappings
+      for (const file of sfxFiles) {
+        const fileName = file.name.replace('.wav', '');
+        const resourceId = `SFX.${fileName.toUpperCase()}`;
+        
+        const resourceObject = {
+          type: 'SFX',
+          id: resourceId,
+          fileName: fileName,
+          filePath: file.path,
+          category: 'SFX',
+          name: file.name,
+          loaded: false,
+          audioResource: null
+        };
+        
+        this.resourceMap.set(resourceId, resourceObject);
+        console.log(`[GameEmulator] DEBUG: Mapped resource: ${resourceId} -> ${file.path}`);
+      }
+      
+      // TODO: Add other resource types here (Graphics, Music, etc.)
+      
+      console.log(`[GameEmulator] DEBUG: Final resource map size: ${this.resourceMap.size}`);
+      console.log(`[GameEmulator] DEBUG: All resource IDs:`, Array.from(this.resourceMap.keys()));
+      
+      // Preload all resources into memory
+      await this.preloadResources();
+      
+      // Create Lua constants for all resource types
+      await this.createAllLuaConstants();
+      
+    } catch (error) {
+      console.error('[GameEmulator] Failed to initialize resource mappings:', error);
+    }
+  }
+
+  /**
+   * Preload all resources into memory so Play() doesn't need to load them
+   */
+  async preloadResources() {
+    console.log('[GameEmulator] Preloading all resources into memory...');
+    
+    if (!this.resourceManager) {
+      console.warn('[GameEmulator] ResourceManager not available - skipping preload');
+      return;
+    }
+    
+    const preloadPromises = [];
+    
+    for (const [resourceId, resource] of this.resourceMap) {
+      if (resource.type === 'SFX' && !resource.loaded) {
+        console.log(`[GameEmulator] Preloading SFX resource: ${resourceId}`);
+        
+        const loadPromise = this.loadAudioFileOnDemand(resource.name)
+          .then((audioResourceId) => {
+            resource.loaded = true;
+            resource.audioResource = audioResourceId;
+            console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
+          })
+          .catch((error) => {
+            console.warn(`[GameEmulator] Failed to preload ${resourceId}:`, error);
+            resource.loaded = false;
+            resource.audioResource = null;
+          });
+        
+        preloadPromises.push(loadPromise);
+      }
+    }
+    
+    // Wait for all resources to load
+    await Promise.all(preloadPromises);
+    
+    const loadedCount = Array.from(this.resourceMap.values()).filter(r => r.loaded).length;
+    console.log(`[GameEmulator] Preloaded ${loadedCount}/${this.resourceMap.size} resources into memory`);
+  }
+
+  /**
+   * Create Lua constants for all resource types
+   */
+  async createAllLuaConstants() {
+    console.log('[GameEmulator] DEBUG: Creating Lua constants for all resource types...');
+    
+    if (!this.luaState) {
+      console.error('[GameEmulator] DEBUG: Lua state not available - skipping constant creation');
+      return;
+    }
+    
+    console.log('[GameEmulator] DEBUG: Lua state is available, proceeding with constant creation');
+    
+    try {
+      // Create SFX constants
+      console.log('[GameEmulator] DEBUG: Getting SFX resource constants...');
+      const sfxConstants = this.GetResourceConstants('SFX');
+      console.log(`[GameEmulator] DEBUG: Got ${Object.keys(sfxConstants).length} SFX constants:`, sfxConstants);
+      
+      if (Object.keys(sfxConstants).length > 0) {
+        let luaCode = 'SFX = SFX or {}\n';
+        
+        for (const [constantName, resourceId] of Object.entries(sfxConstants)) {
+          luaCode += `SFX.${constantName} = "${resourceId}"\n`;
+          console.log(`[GameEmulator] DEBUG: Adding constant: SFX.${constantName} = "${resourceId}"`);
+        }
+        
+        console.log(`[GameEmulator] DEBUG: About to execute Lua code:\n${luaCode}`);
+        this.luaState.execute(luaCode);
+        console.log(`[GameEmulator] DEBUG: Successfully executed Lua constants creation`);
+        
+        // Verify the constants were created
+        try {
+          const verifyCode = 'return type(SFX), SFX';
+          const result = this.luaState.execute(verifyCode);
+          console.log(`[GameEmulator] DEBUG: Verification - SFX type and value:`, result);
+        } catch (verifyError) {
+          console.error('[GameEmulator] DEBUG: Failed to verify SFX constants:', verifyError);
+        }
+        
+        console.log(`[GameEmulator] Created ${Object.keys(sfxConstants).length} SFX constants in Lua`);
+        console.log('[GameEmulator] SFX constants:', Object.keys(sfxConstants));
+      } else {
+        console.warn('[GameEmulator] DEBUG: No SFX constants to create');
+      }
+      
+      // TODO: Add other resource type constants here (Graphics, Music, etc.)
+      
+    } catch (error) {
+      console.error('[GameEmulator] DEBUG: Failed to create Lua constants:', error);
+    }
+  }
+
+  /**
+   * Get a resource by its ID
+   * @param {string} resourceId - The resource ID (e.g., "SFX.COOL")
+   * @returns {Object|null} Resource object or null if not found
+   */
+  GetResource(resourceId) {
+    const resource = this.resourceMap.get(resourceId);
+    if (!resource) {
+      console.warn(`[GameEmulator] Resource not found: ${resourceId}`);
+      console.log('[GameEmulator] Available resources:', Array.from(this.resourceMap.keys()));
+      return null;
+    }
+    
+    // Return resource with preloaded status
+    return {
+      ...resource,
+      isPreloaded: resource.loaded,
+      audioResource: resource.audioResource
+    };
+  }
+
+  /**
+   * Get all resources of a specific type
+   * @param {string} type - Resource type (e.g., "SFX", "Graphics")
+   * @returns {Array} Array of resource objects
+   */
+  GetResourcesByType(type) {
+    const resources = [];
+    for (const resource of this.resourceMap.values()) {
+      if (resource.type === type) {
+        resources.push(resource);
+      }
+    }
+    return resources;
+  }
+
+  /**
+   * Get all resource IDs for Lua constant generation
+   * @param {string} type - Resource type filter (optional)
+   * @returns {Object} Map of constant names to resource IDs
+   */
+  GetResourceConstants(type = null) {
+    console.log(`[GameEmulator] DEBUG: GetResourceConstants called with type: ${type}`);
+    console.log(`[GameEmulator] DEBUG: Current resourceMap size: ${this.resourceMap.size}`);
+    console.log(`[GameEmulator] DEBUG: All resources in map:`, Array.from(this.resourceMap.entries()));
+    
+    const constants = {};
+    for (const [resourceId, resource] of this.resourceMap) {
+      console.log(`[GameEmulator] DEBUG: Processing resource: ${resourceId}, type: ${resource.type}`);
+      if (!type || resource.type === type) {
+        // Extract constant name from resource ID (e.g., "SFX.COOL" -> "COOL")
+        const parts = resourceId.split('.');
+        if (parts.length === 2) {
+          const constantName = parts[1];
+          constants[constantName] = resourceId;
+          console.log(`[GameEmulator] DEBUG: Added constant: ${constantName} = ${resourceId}`);
+        } else {
+          console.warn(`[GameEmulator] DEBUG: Invalid resource ID format: ${resourceId}`);
+        }
+      }
+    }
+    
+    console.log(`[GameEmulator] DEBUG: Final constants object:`, constants);
+    return constants;
+  }
   
   findMainLuaScript() {
     // Look for main.lua in the Lua directory
@@ -586,14 +832,19 @@ class GameEmulator {
       // Prefer storage backend to enumerate possible build files
       const candidates = [];
       if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+        console.log(`[GameEditor] Listing build files for ${filename}...`);
         const buildRecords = await window.fileIOService.listFiles('build');
+        console.log(`[GameEditor] Found ${buildRecords.length} build records:`, buildRecords);
         for (const rec of buildRecords) {
           const recPath = rec.path || rec;
           if ((recPath || '').endsWith(filename)) {
             candidates.push(recPath);
+            console.log(`[GameEditor] Found candidate: ${recPath}`);
           }
         }
       }
+      
+      console.log(`[GameEditor] Total candidates for ${filename}:`, candidates);
 
       // Sort to prioritize clean paths
       candidates.sort((a, b) => {
@@ -606,11 +857,25 @@ class GameEmulator {
 
         for (const path of candidates) {
         try {
+            console.log(`[GameEditor] Attempting to load candidate: ${path}`);
             const rec = window.fileIOService ? await window.fileIOService.loadFile(path) : null;
-          if (!rec) continue;
+          if (!rec) {
+            console.log(`[GameEditor] No record found for: ${path}`);
+            continue;
+          }
+          console.log(`[GameEditor] Loaded record:`, { 
+            path: path, 
+            binaryData: rec.binaryData, 
+            contentType: typeof rec.content, 
+            fileContentType: typeof rec.fileContent,
+            fileContentLength: rec.fileContent ? rec.fileContent.length : 'N/A'
+          });
           const buf = rec.content instanceof ArrayBuffer ? rec.content : (rec.binaryData && rec.fileContent ? (() => { const bin = atob(rec.fileContent); const bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer; })() : new TextEncoder().encode(String(rec.fileContent || rec.content || '')).buffer);
+          console.log(`[GameEditor] Converted to ArrayBuffer, length: ${buf.byteLength}`);
           const file = new File([buf], filename, { type: 'audio/wav' });
+          console.log(`[GameEditor] Created File object:`, { name: file.name, size: file.size, type: file.type });
           const resourceId = await this.resourceManager.loadFromFile(file, 'wav');
+          console.log(`[GameEditor] Successfully loaded audio resource: ${resourceId}`);
           this.loadedAudioResources.set(path, resourceId);
           this.updateStatus(`Loaded ${filename}`, 'success');
           return resourceId;
@@ -961,6 +1226,11 @@ class GameEmulator {
           original_print(...)
         end
       `);
+      
+      // Initialize centralized resource mappings
+      console.log('[GameEmulator] DEBUG: About to initialize resource mappings...');
+      await this.initializeResourceMappings();
+      console.log('[GameEmulator] DEBUG: Resource mappings initialization completed');
       
       // Load and initialize Lua extensions
       console.log('[GameEmulator] Loading Lua extensions...');
