@@ -45,15 +45,20 @@ class LuaEditor extends EditorBase {
         });
       }
      
-      // Remove custom Lua indentation rules - they were causing performance issues on long lines
-      // monaco.languages.setLanguageConfiguration('lua', {
-      //   indentationRules: {
-      //     increaseIndentPattern: /^((?!.*?--.*).*)*((.*\b(function|if|for|while|repeat|else|elseif|then|do)\b.*)|(.*\{.*))$/,
-      //     decreaseIndentPattern: /^\s*(end|else|elseif|until|\})\b.*$/,
-      //     indentNextLinePattern: /^\s*(local\s+)?function\s+.*\(\s*\)\s*$/,
-      //     unIndentedLinePattern: /^(\s*--.*)?$/
-      //   }
-      // });
+      // Configure efficient Lua-specific indentation rules
+      // Using simpler regex patterns to avoid performance issues on long lines
+      monaco.languages.setLanguageConfiguration('lua', {
+        indentationRules: {
+          // Increase indent after these keywords at end of line
+          increaseIndentPattern: /^\s*(function|if|for|while|repeat|else|elseif|then|do)\s*.*$/,
+          // Decrease indent for these keywords at start of line  
+          decreaseIndentPattern: /^\s*(end|else|elseif|until)\b/,
+          // Auto-indent after function declarations
+          indentNextLinePattern: /^\s*function\s+.*\(\s*\)\s*$/,
+          // Don't auto-indent comment-only lines
+          unIndentedLinePattern: /^\s*--.*$/
+        }
+      });
 
       // Create the Monaco Editor instance with all features restored
       this.monacoEditor = monaco.editor.create(this.editorContainer, {
