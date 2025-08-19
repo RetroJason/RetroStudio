@@ -366,7 +366,10 @@ onmessage = async function(e) {
         
         postMessage({ type: 'pcm', left, right, frames: result.frames });
       } else {
+        // No more data available - song has ended
+        log('MOD playback ended - no more PCM data available');
         postMessage({ type: 'pcm', left: new Float32Array(0), right: new Float32Array(0), frames: 0 });
+        postMessage({ type: 'song-ended' }); // Signal that the song has ended
       }
     }
   } catch (error) {
