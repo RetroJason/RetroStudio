@@ -1032,21 +1032,37 @@ class GameEmulator {
         }
       }
       
-      // Test Update() function (required) - let Lua engine detect if missing
+      // Test Update() function (required) - check if it exists first
       console.log('[GameEmulator] Testing Update() function...');
       try {
+        // First check if Update function exists
+        const updateExists = L.execute('return type(Update) == "function"');
+        
+        if (!updateExists) {
+          console.error('[GameEmulator] Update() function is not defined');
+          this.updateStatus('Error: Missing Update() function', 'error');
+          
+          await this.showErrorPopup(
+            'Missing Update() Function', 
+            'Your Lua scripts must contain an Update(deltaTime) function.',
+            `The Update function is required and will be called continuously. Please add:\n\nfunction Update(deltaTime)\n  -- Your game logic here\nend`
+          );
+          return;
+        }
+        
+        // Function exists, now test calling it
         L.execute('Update(16.67)');
         console.log('[GameEmulator] Update() function test successful');
         // Capture any print output from test Update()
         this.captureLuaPrintOutput();
       } catch (error) {
-        console.error('[GameEmulator] Update() function missing or failed:', error);
-        this.updateStatus('Error: Missing Update() function', 'error');
+        console.error('[GameEmulator] Update() function runtime error:', error);
+        this.updateStatus(`Update() runtime error: ${error.message}`, 'error');
         
         await this.showErrorPopup(
-          'Missing Update() Function', 
-          'Your Lua scripts must contain an Update(deltaTime) function.',
-          `Lua Error: ${error.message}\n\nThe Update function is required and will be called continuously. Please add:\n\nfunction Update(deltaTime)\n  -- Your game logic here\nend`
+          'Update() Function Runtime Error', 
+          'Your Update() function exists but has a runtime error.',
+          `Lua Error: ${error.message}\n\nPlease fix the error in your Update() function.`
         );
         return;
       }
@@ -1106,6 +1122,7 @@ class GameEmulator {
         console.error('[GameEmulator] Error in Update() function:', error);
         this.stopGameLoop();
         this.updateStatus(`Update() error: ${error.message}`, 'error');
+        
         return;
       }
       

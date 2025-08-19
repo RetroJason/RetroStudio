@@ -27,7 +27,272 @@
     {
       "name": "Math",
       "description": "Mathematical utility functions",
-      "functions": []
+      "functions": [
+        {
+          "name": "Sin",
+          "description": "Sine function",
+          "parameters": [{"name": "x", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Sine of x"},
+          "example": "Math.Sin(1.57)"
+        },
+        {
+          "name": "Cos",
+          "description": "Cosine function",
+          "parameters": [{"name": "x", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Cosine of x"},
+          "example": "Math.Cos(0)"
+        },
+        {
+          "name": "Sqrt",
+          "description": "Square root function",
+          "parameters": [{"name": "x", "type": "float", "description": "Number to take square root of"}],
+          "returns": {"type": "float", "description": "Square root of x"},
+          "example": "Math.Sqrt(16)"
+        },
+        {
+          "name": "Pow",
+          "description": "Power function - raise x to the power of y",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "Base number"},
+            {"name": "y", "type": "float", "description": "Exponent"}
+          ],
+          "returns": {"type": "float", "description": "x raised to the power of y"},
+          "example": "Math.Pow(2, 3)"
+        },
+        {
+          "name": "Atan2",
+          "description": "Two-argument arctangent function",
+          "parameters": [
+            {"name": "y", "type": "float", "description": "Y coordinate"},
+            {"name": "x", "type": "float", "description": "X coordinate"}
+          ],
+          "returns": {"type": "float", "description": "Angle in radians"},
+          "example": "Math.Atan2(1, 1)"
+        },
+        {
+          "name": "Min",
+          "description": "Returns the minimum of two values",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "First value"},
+            {"name": "y", "type": "float", "description": "Second value"}
+          ],
+          "returns": {"type": "float", "description": "Minimum value"},
+          "example": "Math.Min(5, 10)"
+        },
+        {
+          "name": "Max",
+          "description": "Returns the maximum of two values",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "First value"},
+            {"name": "y", "type": "float", "description": "Second value"}
+          ],
+          "returns": {"type": "float", "description": "Maximum value"},
+          "example": "Math.Max(5, 10)"
+        },
+        {
+          "name": "Clamp",
+          "description": "Clamps x to min and max inclusive",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "Value to clamp"},
+            {"name": "min", "type": "float", "description": "Minimum value"},
+            {"name": "max", "type": "float", "description": "Maximum value"}
+          ],
+          "returns": {"type": "float", "description": "Clamped value"},
+          "example": "Math.Clamp(15, 0, 10)"
+        },
+        {
+          "name": "Ceil",
+          "description": "Rounds up to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round up"}],
+          "returns": {"type": "float", "description": "Rounded up value"},
+          "example": "Math.Ceil(3.2)"
+        },
+        {
+          "name": "Floor",
+          "description": "Rounds down to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round down"}],
+          "returns": {"type": "float", "description": "Rounded down value"},
+          "example": "Math.Floor(3.8)"
+        },
+        {
+          "name": "Round",
+          "description": "Rounds to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round"}],
+          "returns": {"type": "float", "description": "Rounded value"},
+          "example": "Math.Round(3.5)"
+        },
+        {
+          "name": "Abs",
+          "description": "Absolute value",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to get absolute value of"}],
+          "returns": {"type": "float", "description": "Absolute value"},
+          "example": "Math.Abs(-5)"
+        },
+        {
+          "name": "And",
+          "description": "Binary AND operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise AND result"},
+          "example": "Math.And(5, 3)"
+        },
+        {
+          "name": "Not",
+          "description": "Binary NOT operation",
+          "parameters": [{"name": "x", "type": "int32", "description": "Integer to invert"}],
+          "returns": {"type": "int32", "description": "Bitwise NOT result"},
+          "example": "Math.Not(5)"
+        },
+        {
+          "name": "Or",
+          "description": "Binary OR operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise OR result"},
+          "example": "Math.Or(5, 3)"
+        },
+        {
+          "name": "Xor",
+          "description": "Binary XOR operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise XOR result"},
+          "example": "Math.Xor(5, 3)"
+        },
+        {
+          "name": "LShift",
+          "description": "Left shift operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Value to shift"},
+            {"name": "y", "type": "int32", "description": "Number of bits to shift"}
+          ],
+          "returns": {"type": "int32", "description": "Left shifted result"},
+          "example": "Math.LShift(5, 2)"
+        },
+        {
+          "name": "RShift",
+          "description": "Right shift operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Value to shift"},
+            {"name": "y", "type": "int32", "description": "Number of bits to shift"}
+          ],
+          "returns": {"type": "int32", "description": "Right shifted result"},
+          "example": "Math.RShift(20, 2)"
+        },
+        {
+          "name": "Random",
+          "description": "Random integer between x (inclusive) and y (exclusive)",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Minimum value (inclusive)"},
+            {"name": "y", "type": "int32", "description": "Maximum value (exclusive)"}
+          ],
+          "returns": {"type": "int32", "description": "Random integer"},
+          "example": "Math.Random(1, 10)"
+        },
+        {
+          "name": "RadiansToDegrees",
+          "description": "Convert radians to degrees",
+          "parameters": [{"name": "radians", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Angle in degrees"},
+          "example": "Math.RadiansToDegrees(3.14159)"
+        },
+        {
+          "name": "DegreesToRadians",
+          "description": "Convert degrees to radians",
+          "parameters": [{"name": "degrees", "type": "float", "description": "Angle in degrees"}],
+          "returns": {"type": "float", "description": "Angle in radians"},
+          "example": "Math.DegreesToRadians(180)"
+        }
+      ]
+    },
+    {
+      "name": "Time",
+      "description": "Time and date functions",
+      "functions": [
+        {
+          "name": "HoursToDegrees",
+          "description": "Returns the angle corresponding to the current time for positioning a watch hand",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Angle in degrees for hour hand"},
+          "example": "Time.HoursToDegrees()"
+        },
+        {
+          "name": "MinutesToDegrees",
+          "description": "Returns the angle corresponding to the current minutes for positioning a watch hand",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Angle in degrees for minute hand"},
+          "example": "Time.MinutesToDegrees()"
+        },
+        {
+          "name": "SecondsToDegrees",
+          "description": "Returns the angle corresponding to the current seconds for positioning a watch hand",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Angle in degrees for second hand"},
+          "example": "Time.SecondsToDegrees()"
+        },
+        {
+          "name": "Hours",
+          "description": "Returns the current hour (24-hour format)",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current hour (0-23)"},
+          "example": "Time.Hours()"
+        },
+        {
+          "name": "Minutes",
+          "description": "Returns the current minutes",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current minutes (0-59)"},
+          "example": "Time.Minutes()"
+        },
+        {
+          "name": "Seconds",
+          "description": "Returns the current seconds",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current seconds (0-59)"},
+          "example": "Time.Seconds()"
+        },
+        {
+          "name": "Day",
+          "description": "Returns the day of the month",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Day of month (1-31)"},
+          "example": "Time.Day()"
+        },
+        {
+          "name": "Month",
+          "description": "Returns the month",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Month (1-12)"},
+          "example": "Time.Month()"
+        },
+        {
+          "name": "Year",
+          "description": "Returns the 4-digit year",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current year"},
+          "example": "Time.Year()"
+        },
+        {
+          "name": "DayOfWeek",
+          "description": "Gets the string representation of the day of the week",
+          "parameters": [],
+          "returns": {"type": "string", "description": "Day of week name"},
+          "example": "Time.DayOfWeek()"
+        },
+        {
+          "name": "ToString",
+          "description": "Format time using standard C time library format string",
+          "parameters": [{"name": "format", "type": "string", "description": "Format string (see strftime)"}],
+          "returns": {"type": "string", "description": "Formatted time string"},
+          "example": "Time.ToString('%Y-%m-%d %H:%M:%S')"
+        }
+      ]
     },
     {
       "name": "System",

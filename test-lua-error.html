@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Lua Error Messages</title>
+    <script src="scripts/external/lua/src/lua.js"></script>
+</head>
+<body>
+    <h1>Lua Error Test</h1>
+    <button onclick="testLuaError()">Test Lua Error</button>
+    <pre id="output"></pre>
+
+    <script>
+        function log(message) {
+            document.getElementById('output').textContent += message + '\n';
+        }
+
+        function testLuaError() {
+            try {
+                // Create a new Lua state
+                const L = new Lua.State();
+                
+                log('Testing various Lua errors...\n');
+                
+                // Test 1: Syntax error
+                try {
+                    L.execute(`
+                        function Setup()
+                            print("Hello"
+                        end
+                    `);
+                } catch (error) {
+                    log('Syntax Error:');
+                    log('  Message: ' + error.message);
+                    log('  Name: ' + error.name);
+                    log('  Lua Stack: ' + (error.lua_stack || 'N/A'));
+                    log('');
+                }
+                
+                // Test 2: Runtime error
+                try {
+                    L.execute(`
+                        function Setup()
+                            nonexistent_function()
+                        end
+                        
+                        Setup()
+                    `);
+                } catch (error) {
+                    log('Runtime Error:');
+                    log('  Message: ' + error.message);
+                    log('  Name: ' + error.name);
+                    log('  Lua Stack: ' + (error.lua_stack || 'N/A'));
+                    log('');
+                }
+                
+                // Test 3: Variable not defined
+                try {
+                    L.execute(`
+                        function Update(deltaTime)
+                            print(undefined_variable)
+                        end
+                        
+                        Update(16.67)
+                    `);
+                } catch (error) {
+                    log('Variable Error:');
+                    log('  Message: ' + error.message);
+                    log('  Name: ' + error.name);
+                    log('  Lua Stack: ' + (error.lua_stack || 'N/A'));
+                    log('');
+                }
+                
+                // Test 4: Invalid function call - let's try something simple
+                try {
+                    L.execute(`
+                        local x = 5
+                        x()  -- try to call number as function
+                    `);
+                } catch (error) {
+                    log('Function Call Error:');
+                    log('  Message: ' + error.message);
+                    log('  Name: ' + error.name);
+                    log('  Lua Stack: ' + (error.lua_stack || 'N/A'));
+                    log('');
+                }
+
+                // Test 5: Syntax error with line info
+                try {
+                    L.execute(`-- Line 1
+-- Line 2  
+function test()
+    local a = 1 +  -- Line 4: Missing operand
+end`);
+                } catch (error) {
+                    log('Line-Specific Syntax Error:');
+                    log('  Message: ' + error.message);
+                    log('  Name: ' + error.name);
+                    log('  Lua Stack: ' + (error.lua_stack || 'N/A'));
+                    log('');
+                }
+                
+            } catch (error) {
+                log('General Error: ' + error.message);
+            }
+        }
+        
+        // Check if Lua is available
+        if (typeof Lua === 'undefined') {
+            log('Lua.js not loaded');
+        } else {
+            log('Lua.js loaded successfully - ready to test!');
+        }
+    </script>
+</body>
+</html>
