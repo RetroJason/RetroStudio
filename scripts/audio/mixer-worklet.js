@@ -15,7 +15,7 @@ class MixerWorklet extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       if (e.data.type === 'play') {
         if (e.data.streamId) {
-          // Continuous stream (MOD) - improved buffering
+          // Continuous stream (MOD) - improved buffering with proper cleanup
           const newData = {
             channels: e.data.channels.map(arr => new Float32Array(arr)),
             pos: 0,
@@ -24,20 +24,37 @@ class MixerWorklet extends AudioWorkletProcessor {
           
           if (this.continuousStreams.has(e.data.streamId)) {
             const existing = this.continuousStreams.get(e.data.streamId);
-            // Always append new data, but be smarter about it
-            const remainingData = existing.channels.map(channel => 
-              channel.subarray(existing.pos)
-            );
             
-            const newChannels = newData.channels.map((newChannel, i) => {
-              const combined = new Float32Array(remainingData[i].length + newChannel.length);
-              combined.set(remainingData[i]);
-              combined.set(newChannel, remainingData[i].length);
-              return combined;
-            });
+            // Only keep unplayed data to prevent buffer accumulation
+            const remainingFrames = Math.max(0, existing.channels[0].length - existing.pos);
             
-            existing.channels = newChannels;
-            existing.pos = 0; // Reset position
+            // Limit buffer size to prevent memory issues (max 4 seconds at 48kHz)
+            const maxBufferFrames = 48000 * 4;
+            
+            if (remainingFrames > 0 && remainingFrames < maxBufferFrames) {
+              // Keep only the unplayed portion
+              const remainingData = existing.channels.map(channel => 
+                channel.subarray(existing.pos)
+              );
+              
+              // Combine remaining + new data
+              const newChannels = newData.channels.map((newChannel, i) => {
+                const combined = new Float32Array(remainingData[i].length + newChannel.length);
+                combined.set(remainingData[i]);
+                combined.set(newChannel, remainingData[i].length);
+                return combined;
+              });
+              
+              existing.channels = newChannels;
+              existing.pos = 0; // Reset position since we rebuilt the buffer
+            } else {
+              // Buffer too large or no remaining data, just use the new data
+              if (remainingFrames >= maxBufferFrames) {
+                console.warn(`[MixerWorklet] Buffer size limit reached, dropping old data`);
+              }
+              existing.channels = newData.channels;
+              existing.pos = 0;
+            }
           } else {
             this.continuousStreams.set(e.data.streamId, newData);
             console.log(`[MixerWorklet] Started stream: ${e.data.streamId}`);
@@ -88,18 +105,24 @@ class MixerWorklet extends AudioWorkletProcessor {
     // Mix one-shot buffers (WAV files)
     for (let i = this.buffers.length - 1; i >= 0; i--) {
       const buf = this.buffers[i];
+      const bufferLength = buf.channels[0].length;
+      
       for (let c = 0; c < numChannels; c++) {
         const src = buf.channels[c % buf.channels.length];
         for (let s = 0; s < blockSize; s++) {
           const srcIdx = buf.pos + s;
-          if (srcIdx < src.length) {
-            output[c][s] += src[srcIdx] * this.volume; // Apply volume to WAV files too
+          if (srcIdx < bufferLength) {
+            output[c][s] += src[srcIdx] * this.volume;
           }
         }
       }
+      
       buf.pos += blockSize;
-      // Remove finished buffers
-      if (buf.pos >= buf.channels[0].length) {
+      
+      // Remove finished buffers and clear any remaining references
+      if (buf.pos >= bufferLength) {
+        // Zero out the buffer before removing
+        buf.channels.forEach(channel => channel.fill(0));
         this.buffers.splice(i, 1);
       }
     }
@@ -140,10 +163,24 @@ class MixerWorklet extends AudioWorkletProcessor {
         
         // Handle end of buffer more gracefully
         if (stream.pos >= stream.channels[0].length) {
-          if (remainingFrames <= 0) {
-            console.log(`[MixerWorklet] Error: Stream ${streamId} buffer exhausted`);
+          if (streamId === 'mod-stream') {
+            // For MOD streams, check if this is truly the end or just waiting for more data
+            if (this.isPlaying && !this.requestInFlight) {
+              // Song might be ending, but request one more buffer to be sure
+              this.requestInFlight = true;
+              this.port.postMessage({
+                type: 'request-pcm',
+                streamId: streamId,
+                frames: 1024
+              });
+            }
+            // Stay at the end but don't go past it
+            stream.pos = stream.channels[0].length;
+          } else {
+            // For other streams, remove when finished
+            this.continuousStreams.delete(streamId);
+            console.log(`[MixerWorklet] Stream ${streamId} finished and removed`);
           }
-          stream.pos = Math.max(0, stream.channels[0].length - 1); // Stay near end but not past it
         }
       }
     }

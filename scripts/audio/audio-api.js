@@ -419,9 +419,15 @@ class AudioEngine extends EventTarget {
           channels: [e.data.left, e.data.right],
           sampleRate: this.audioContext.sampleRate
         });
-        
-        // Don't automatically request next block - let the mixer worklet request when needed
       }
+      // Don't automatically request next block - let the mixer worklet request when needed
+    } else if (e.data.type === 'song-ended') {
+      // MOD playback has ended - clean up the stream
+      console.log('[AudioEngine] MOD song ended, cleaning up stream');
+      this.workletNode.port.postMessage({
+        type: 'stop-stream',
+        streamId: 'mod-stream'
+      });
     } else if (e.data.type === 'mod-loaded') {
       console.log('[AudioEngine] MOD loaded successfully, title:', e.data.title, 'duration:', e.data.duration);
       
