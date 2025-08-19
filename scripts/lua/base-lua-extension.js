@@ -29,8 +29,8 @@ class BaseLuaExtension {
     // Create a global JavaScript function that can be called from Lua
     window[globalFunctionName] = function() {
       try {
-        // Call the JavaScript method with the actual arguments passed from Lua
-        const result = jsMethod.apply(self);
+        // Get the arguments passed from Lua and call the JavaScript method
+        const result = jsMethod.apply(self, arguments);
         
         // Return result if any
         return result;
@@ -50,7 +50,9 @@ class BaseLuaExtension {
     
     -- Register function that reads parameters from stack and calls JS implementation
     function ${className}.${luaFunctionName}(...)
-        local args = {...}        
+        local args = {...}
+        -- Debug: print the arguments being passed
+        --print("Lua calling ${className}.${luaFunctionName} with args:", unpack(args))
         return js.global.${globalFunctionName}(unpack(args))          
     end
     `);

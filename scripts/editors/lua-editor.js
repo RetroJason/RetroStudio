@@ -162,6 +162,10 @@ class LuaEditor extends EditorBase {
         
         this.monacoEditor.setValue(content);
         console.log(`[LuaEditor] Content set in Monaco editor`);
+        
+        // Set up auto-testing for Lua errors (after content is loaded and editor is ready)
+        this.setupAutoTesting();
+        
         // Only mark clean for existing files, not new ones
         if (!this.isNewResource) {
           this.markClean();
@@ -204,6 +208,310 @@ class LuaEditor extends EditorBase {
     return '';
   }
 
+  /**
+   * Set error markers in the Monaco editor
+   * @param {Array} errors - Array of error objects with {line, column, message, severity}
+   */
+  // Parse Lua error messages and extract line/column information
+        parseLuaError(error) {
+            const markers = [];
+            
+            if (!error || !error.message) {
+                return markers;
+            }
+            
+            const message = error.message;
+            
+            // Lua error format: [string "..."]:line: error message
+            // Example: [string "..."]:4: <near 'end'>
+            // Example: [string "..."]:2: attempt to call a nil value (global 'nonexistent_function')
+            const luaErrorPattern = /\[string "[^"]*"\]:(\d+):\s*(.*)/;
+            const match = message.match(luaErrorPattern);
+            
+            if (match) {
+                const lineNumber = parseInt(match[1], 10);
+                const errorMessage = match[2];
+                
+                // Create marker for the error line
+                markers.push({
+                    startLineNumber: lineNumber,
+                    endLineNumber: lineNumber,
+                    startColumn: 1,
+                    endColumn: 1000, // Highlight entire line
+                    message: errorMessage,
+                    severity: monaco.MarkerSeverity.Error
+                });
+            }
+            
+            // Also check lua_stack for additional context
+            if (error.lua_stack) {
+                // Lua stack might have additional line references
+                // Format: stack traceback:
+                //         [string "..."]:line: in function 'functionName'
+                const stackPattern = /\[string "[^"]*"\]:(\d+):/g;
+                let stackMatch;
+                
+                while ((stackMatch = stackPattern.exec(error.lua_stack)) !== null) {
+                    const lineNumber = parseInt(stackMatch[1], 10);
+                    
+                    // Avoid duplicate markers for the same line
+                    if (!markers.some(m => m.startLineNumber === lineNumber)) {
+                        markers.push({
+                            startLineNumber: lineNumber,
+                            endLineNumber: lineNumber,
+                            startColumn: 1,
+                            endColumn: 1000,
+                            message: 'Referenced in stack trace',
+                            severity: monaco.MarkerSeverity.Info
+                        });
+                    }
+                }
+            }
+            
+            return markers;
+        }
+        
+        // Test Lua code and update error markers (simple syntax check only)
+        async testLuaCode() {
+            try {
+                // Clear previous errors
+                this.clearErrorMarkers();
+                
+                const code = this.getContent();
+                if (!code.trim()) {
+                    return; // No code to test
+                }
+                
+                // Ensure Lua engine is loaded
+                await this.ensureLuaEngine();
+                
+                // Check if Lua is available
+                if (!window.Lua || typeof window.Lua.State === 'undefined') {
+                    console.warn('[LuaEditor] Lua engine not available for error checking');
+                    return;
+                }
+                
+                // Create Lua state and test the code (syntax check only)
+                const L = new window.Lua.State();
+                
+                try {
+                    // Simple syntax check - just try to load the script
+                    L.execute(code);
+                    console.log('[LuaEditor] Code syntax check passed');
+                } catch (error) {
+                    console.log('[LuaEditor] Lua syntax error:', error);
+                    
+                    // Parse syntax error and create markers
+                    const markers = this.parseLuaError(error);
+                    
+                    if (markers.length > 0) {
+                        this.setErrorMarkers(markers);
+                        console.log('[LuaEditor] Added', markers.length, 'error markers');
+                    }
+                }
+                
+            } catch (error) {
+                console.error('[LuaEditor] Error testing Lua code:', error);
+            }
+        }
+        
+        // Ensure Lua engine is loaded (same method as game emulator)
+        async ensureLuaEngine() {
+            return new Promise((resolve, reject) => {
+                if (window.Lua) {
+                    resolve();
+                    return;
+                }
+                
+                console.log('[LuaEditor] Loading Lua engine...');
+                const script = document.createElement('script');
+                script.src = 'scripts/external/lua/dist/lua.vm.js';
+                script.onload = () => {
+                    console.log('[LuaEditor] Lua engine loaded successfully');
+                    resolve();
+                };
+                script.onerror = (error) => {
+                    console.error('[LuaEditor] Failed to load Lua engine:', error);
+                    reject(new Error('Failed to load Lua engine'));
+                };
+                document.head.appendChild(script);
+            });
+        }
+        
+        // Auto-test Lua code on content change (with debouncing)
+        setupAutoTesting() {
+            if (!this.monacoEditor) {
+                console.warn('[LuaEditor] Monaco editor not available for auto-testing setup');
+                return;
+            }
+            
+            // Prevent duplicate setup
+            if (this._autoTestingSetup) {
+                console.log('[LuaEditor] Auto-testing already set up, skipping...');
+                return;
+            }
+            
+            console.log('[LuaEditor] Setting up auto-testing for Lua errors');
+            this._autoTestingSetup = true;
+            
+            let testTimeout = null;
+            
+            this.monacoEditor.onDidChangeModelContent(() => {
+                // Clear previous timeout
+                if (testTimeout) {
+                    clearTimeout(testTimeout);
+                }
+                
+                // Debounce: wait 500ms after user stops typing
+                testTimeout = setTimeout(async () => {
+                    await this.testLuaCode();
+                }, 500);
+            });
+        }
+        
+        setErrorMarkers(markers) {
+    if (!this.monacoEditor) {
+      console.warn('[LuaEditor] Cannot set error markers - Monaco editor not available');
+      return;
+    }
+
+    try {
+      const model = this.monacoEditor.getModel();
+      if (!model) {
+        console.warn('[LuaEditor] Cannot set error markers - no model available');
+        return;
+      }
+
+      // Convert errors to Monaco marker format
+      const monacoMarkers = markers.map(marker => ({
+        startLineNumber: marker.startLineNumber || 1,
+        startColumn: marker.startColumn || 1,
+        endLineNumber: marker.endLineNumber || 1,
+        endColumn: marker.endColumn || Number.MAX_VALUE,
+        message: marker.message || 'Unknown error',
+        severity: marker.severity || monaco.MarkerSeverity.Error,
+        source: 'lua-errors'
+      }));
+
+      // Set markers on the model
+      monaco.editor.setModelMarkers(model, 'lua-errors', monacoMarkers);
+      
+      console.log(`[LuaEditor] Set ${markers.length} error markers`);
+    } catch (error) {
+      console.error('[LuaEditor] Error setting markers:', error);
+    }
+  }
+
+  /**
+   * Clear all error markers
+   */
+  clearErrorMarkers() {
+    if (!this.monacoEditor) return;
+
+    try {
+      const model = this.monacoEditor.getModel();
+      if (model) {
+        monaco.editor.setModelMarkers(model, 'lua-errors', []);
+        console.log('[LuaEditor] Cleared error markers');
+      }
+    } catch (error) {
+      console.error('[LuaEditor] Error clearing markers:', error);
+    }
+  }
+
+  /**
+   * Accept runtime errors from external source (like game emulator)
+   * @param {Array} errors - Array of error objects or strings
+   */
+  setRuntimeErrors(errors) {
+    try {
+      // Clear any existing auto-test errors first
+      this.clearErrorMarkers();
+      
+      if (!errors || errors.length === 0) {
+        console.log('[LuaEditor] No runtime errors to display');
+        return;
+      }
+      
+      const markers = [];
+      
+      // Process each error
+      for (const error of errors) {
+        if (typeof error === 'string') {
+          // Parse string error message
+          const errorMarkers = this.parseLuaError(new Error(error));
+          markers.push(...errorMarkers);
+        } else if (error.message) {
+          // Parse error object
+          const errorMarkers = this.parseLuaError(error);
+          markers.push(...errorMarkers);
+        } else if (error.line && error.message) {
+          // Direct marker format
+          markers.push({
+            startLineNumber: error.line,
+            endLineNumber: error.line,
+            startColumn: error.column || 1,
+            endColumn: error.endColumn || 1000,
+            message: error.message,
+            severity: monaco.MarkerSeverity.Error
+          });
+        }
+      }
+      
+      if (markers.length > 0) {
+        this.setErrorMarkers(markers);
+        console.log('[LuaEditor] Set', markers.length, 'runtime error markers');
+      }
+      
+    } catch (error) {
+      console.error('[LuaEditor] Error setting runtime errors:', error);
+    }
+  }
+
+  /**
+   * Convert severity string to Monaco severity constant
+   * @param {string} severity - 'error', 'warning', 'info', or 'hint'
+   * @returns {number} Monaco severity constant
+   */
+  getMonacoSeverity(severity) {
+    switch (severity.toLowerCase()) {
+      case 'error': return monaco.MarkerSeverity.Error;
+      case 'warning': return monaco.MarkerSeverity.Warning;
+      case 'info': return monaco.MarkerSeverity.Info;
+      case 'hint': return monaco.MarkerSeverity.Hint;
+      default: return monaco.MarkerSeverity.Error;
+    }
+  }
+
+  /**
+   * Navigate to a specific line and column in the editor
+   * @param {number} line - Line number (1-based)
+   * @param {number} column - Column number (1-based, optional)
+   */
+  navigateToError(line, column = 1) {
+    if (!this.monacoEditor) {
+      console.warn('[LuaEditor] Cannot navigate - Monaco editor not available');
+      return;
+    }
+
+    try {
+      const position = { lineNumber: line, column: column };
+      
+      // Set cursor position
+      this.monacoEditor.setPosition(position);
+      
+      // Scroll to the position and center it
+      this.monacoEditor.revealPositionInCenter(position);
+      
+      // Focus the editor
+      this.monacoEditor.focus();
+      
+      console.log(`[LuaEditor] Navigated to line ${line}, column ${column}`);
+    } catch (error) {
+      console.error('[LuaEditor] Error navigating to position:', error);
+    }
+  }
+
   setContent(content) {
     // Ensure Monaco editor reference is maintained
     if (!this.monacoEditor && this._monacoBackup) {
@@ -213,6 +521,10 @@ class LuaEditor extends EditorBase {
     
     if (this.monacoEditor) {
       this.monacoEditor.setValue(content || '');
+      
+      // Set up auto-testing for Lua errors (ensure it's set up when content is loaded)
+      this.setupAutoTesting();
+      
       // Only mark clean if this is not a new resource
       if (!this.isNewResource) {
         this.markClean();
