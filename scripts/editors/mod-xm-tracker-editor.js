@@ -190,7 +190,9 @@ class ModXmTrackerEditor extends EditorBase {
       this._iframe.contentWindow.postMessage({ type: 'load-file-from-service', filePath: this.path, filename }, '*');
       this._justLoadedExistingProjectFile = true;
     } else {
-      this._iframe.contentWindow.postMessage({ type: 'load-demo' }, '*');
+      // For new resources, try to load a minimal demo or create empty song
+      console.log(`${this._logPrefix} Creating new resource - loading demo template`);
+      this._iframe.contentWindow.postMessage({ type: 'load-demo', forceLoad: true }, '*');
     }
     this._initialLoadSent = true;
   }
@@ -451,10 +453,55 @@ class ModXmTrackerEditor extends EditorBase {
   return new Uint8Array(0);
   }
 
+  // Create a default empty module if none exists
+  async _createDefaultModule() {
+    if (!this._iframe?.contentWindow) {
+      throw new Error('Tracker iframe not ready');
+    }
+    
+    return new Promise((resolve, reject) => {
+      const win = this._iframe.contentWindow;
+      const timeout = setTimeout(() => {
+        reject(new Error('Default module creation timeout'));
+      }, 5000);
+      
+      try {
+        // Try to create a new empty song/pattern
+        if (win.BassoonTracker && typeof win.BassoonTracker.newSong === 'function') {
+          win.BassoonTracker.newSong();
+          clearTimeout(timeout);
+          resolve();
+        } else if (win.Editor && typeof win.Editor.newSong === 'function') {
+          win.Editor.newSong();
+          clearTimeout(timeout);
+          resolve();
+        } else {
+          // Fallback: send a message to create new song
+          this._iframe.contentWindow.postMessage({ type: 'create-new-song' }, '*');
+          // Give it some time to process
+          setTimeout(() => {
+            clearTimeout(timeout);
+            resolve();
+          }, 1000);
+        }
+      } catch (error) {
+        clearTimeout(timeout);
+        reject(error);
+      }
+    });
+  }
+
 
   // Override save to handle filename prompting for temporary files
   async save() {
     try {
+      // Check if we have any content to save
+      if (!this.isExportReady() || (this._lastCapturedModuleBytes && this._lastCapturedModuleBytes.length === 0)) {
+        // Try to create a minimal default module if none exists
+        console.log(`${this._logPrefix} No module loaded, creating default empty module`);
+        await this._createDefaultModule();
+      }
+      
       const freshBytes = await this._directInternalSave();
       const isTemp = !this.path || this.path.startsWith('temp://');
       if (isTemp || this.isNewResource) {
@@ -466,7 +513,7 @@ class ModXmTrackerEditor extends EditorBase {
       
     } catch (error) {
       console.error(`${this._logPrefix} save failed:`, error);
-      alert(`Failed to save: ${error.message}`);
+      alert(`Failed to save: ${error.message || 'Unknown error occurred'}`);
     }
   }
 
@@ -486,18 +533,32 @@ class ModXmTrackerEditor extends EditorBase {
         if (!fn) return false;
         fn(async (blob)=>{
           try {
+            if (!blob) {
+              reject(new Error('No data returned from tracker')); 
+              return;
+            }
             const buf = await blob.arrayBuffer();
             const arr = new Uint8Array(buf);
-            if (!arr.length) { reject(new Error('Empty module export')); return; }
+            if (!arr.length) { 
+              reject(new Error('Empty module export - no content to save')); 
+              return; 
+            }
+            console.log(`${this._logPrefix} Successfully captured ${arr.length} bytes`);
             this._lastCapturedModuleBytes = arr;
             done=true; resolve(arr);
-          }catch(e){ reject(e); }
+          }catch(e){ 
+            console.error(`${this._logPrefix} Error processing saved data:`, e);
+            reject(e); 
+          }
         });
         return true;
       };
-      if(!invoke()) reject(new Error('RetroTrackerSave not ready'));
-      setTimeout(()=>{ if(!done) reject(new Error('RetroTrackerSave timeout')); },8000);
-    }catch(e){ reject(e); }
+      if(!invoke()) reject(new Error('RetroTrackerSave function not available - tracker may not be ready'));
+      setTimeout(()=>{ if(!done) reject(new Error('RetroTrackerSave timeout - operation took too long')); },8000);
+    }catch(e){ 
+      console.error(`${this._logPrefix} Error in _directInternalSave:`, e);
+      reject(e); 
+    }
   });
   return bytes;
   }

@@ -1015,10 +1015,21 @@ class ProjectExplorer {
   const parts = path.split('/');
     let current = this.projectData.structure;
     
-    // Navigate to the target folder
+    // Navigate to the target folder, creating missing folders as needed
   for (const part of parts) {
+      if (!current[part]) {
+        // Create missing folder
+        current[part] = {
+          type: 'folder',
+          children: {}
+        };
+        console.log(`[ProjectExplorer] Created missing folder: ${part}`);
+      }
       if (current[part] && current[part].type === 'folder') {
     current = current[part].children;
+      } else {
+        console.error(`[ProjectExplorer] Path navigation failed at: ${part}, current[part]:`, current[part]);
+        break;
       }
     }
     
@@ -1056,7 +1067,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco'];
+        const textExts = ['.lua', '.txt', '.pal', '.act', '.aco', '.sfx'];
         const isBinary = !textExts.includes(ext);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {

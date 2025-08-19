@@ -331,7 +331,8 @@ class EditorBase extends ViewerBase {
       }
       
       // Calculate paths for the current filename
-      project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+      const gameEngine = window.gameEmulator || window.gameEditor;
+      project = gameEngine?.projectExplorer?.getFocusedProjectName?.();
       extension = this.getFileExtension(finalFilename);
       const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
       targetPath = `${sourcesRoot}/Binary`; // Default fallback
@@ -352,12 +353,12 @@ class EditorBase extends ViewerBase {
       
       // Check if file exists within the current project scope
       let fileExistsInProject = false;
-      if (window.gameEditor?.projectExplorer?.fileExists) {
+      if (gameEngine?.projectExplorer?.fileExists) {
         // Use project-scoped file existence check
-        fileExistsInProject = window.gameEditor.projectExplorer.fileExists(fullUiPath);
+        fileExistsInProject = gameEngine.projectExplorer.fileExists(fullUiPath);
       } else {
         // Fallback: check via project structure (project-scoped)
-        const projectStructure = window.gameEditor?.projectExplorer?.projectData?.structure;
+        const projectStructure = gameEngine?.projectExplorer?.projectData?.structure;
         if (projectStructure) {
           const pathParts = fullUiPath.split('/');
           let current = projectStructure;
@@ -428,7 +429,11 @@ class EditorBase extends ViewerBase {
         if (typeof this.getContent === 'function') {
           const live = this.getContent();
           console.log(`[EditorBase] getContent() returned length: ${live ? live.length : 'null/undefined'}`);
-          console.log(`[EditorBase] getContent() preview: "${live ? live.substring(0, 50) : 'null/undefined'}..."`);
+          // Handle binary data preview safely
+          const preview = live instanceof Uint8Array || live instanceof ArrayBuffer 
+            ? `[Binary data: ${live.length || live.byteLength} bytes]`
+            : (live && typeof live === 'string') ? live.substring(0, 50) + '...' : 'null/undefined';
+          console.log(`[EditorBase] getContent() preview: ${preview}`);
           
           // If incoming content is empty but editor buffer has data (e.g. async timing), re-fetch now
           if ((content === '' || content === undefined || content === null) && live && live.length) {
@@ -447,7 +452,9 @@ class EditorBase extends ViewerBase {
           const view = new Uint8Array(content.slice(0, 16));
             preview = 'ArrayBuffer[' + content.byteLength + '] ' + Array.from(view).map(b=>b.toString(16).padStart(2,'0')).join(' ') + (content.byteLength>16?'...':'');
         } else {
-          preview = (content && content.toString) ? content.toString().substring(0,50)+'...' : String(content);
+          preview = (content && content.toString && typeof content.toString === 'function') ? 
+            content.toString().substring(0,50)+'...' : 
+            String(content).substring(0,50)+'...';
         }
         console.log(`[EditorBase] - Content type: ${typeof content}`);
         console.log(`[EditorBase] - Content length: ${length}`);
@@ -462,17 +469,31 @@ class EditorBase extends ViewerBase {
       // Continue with in-memory storage as fallback
     }
     
+    console.log(`[EditorBase] About to add file to project explorer - checking conditions...`);
+    console.log(`[EditorBase] - window.gameEditor exists: ${!!window.gameEditor}`);
+    console.log(`[EditorBase] - window.gameEmulator exists: ${!!window.gameEmulator}`);
+    console.log(`[EditorBase] - window.gameEditor.projectExplorer exists: ${!!(window.gameEditor && window.gameEditor.projectExplorer)}`);
+    console.log(`[EditorBase] - window.gameEmulator.projectExplorer exists: ${!!(window.gameEmulator && window.gameEmulator.projectExplorer)}`);
+    
     // Add to project explorer and update the file in the project structure
-    if (window.gameEditor && window.gameEditor.projectExplorer) {
+    // Try gameEmulator first (correct), then fallback to gameEditor for compatibility
+    const gameEngine = window.gameEmulator || window.gameEditor;
+    if (gameEngine && gameEngine.projectExplorer) {
       // Ensure UI path is project-prefixed for the explorer structure
-      window.gameEditor.projectExplorer.addFileToProject(file, uiFolderPath, true); // Skip auto-open during save
+      console.log(`[EditorBase] Adding file to project explorer:`);
+      console.log(`[EditorBase] - file:`, file);
+      console.log(`[EditorBase] - uiFolderPath: ${uiFolderPath}`);
+      console.log(`[EditorBase] - finalFilename: ${finalFilename}`);
+      gameEngine.projectExplorer.addFileToProject(file, uiFolderPath, true); // Skip auto-open during save
+    } else {
+      console.log(`[EditorBase] Skipping project explorer update - gameEmulator/gameEditor or projectExplorer not available`);
     }
     
     // Update tab manager
-    if (window.gameEditor && window.gameEditor.tabManager) {
+    if (gameEngine && gameEngine.tabManager) {
       const currentPath = this.path || 'untitled';
       console.log(`[EditorBase] Updating tab manager: currentPath="${currentPath}", storagePath="${storagePath}", filename="${finalFilename}"`);
-      window.gameEditor.tabManager.updateFileReference(currentPath, storagePath, finalFilename);
+      gameEngine.tabManager.updateFileReference(currentPath, storagePath, finalFilename);
     }
     
   // Keep UI path separately for display while internal path (storage key) uses normalized storagePath
@@ -495,7 +516,8 @@ class EditorBase extends ViewerBase {
 
   // Helper method to generate unique filename by checking existence in current project
   async _generateUniqueFilename(baseName, extension) {
-    const project = window.gameEditor?.projectExplorer?.getFocusedProjectName?.();
+    const gameEngine = window.gameEmulator || window.gameEditor;
+    const project = gameEngine?.projectExplorer?.getFocusedProjectName?.();
     const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
     let targetPath = `${sourcesRoot}/Binary`; // Default fallback
     
@@ -520,7 +542,7 @@ class EditorBase extends ViewerBase {
       }
       
       // Fallback: check via project structure
-      const projectStructure = window.gameEditor?.projectExplorer?.projectData?.structure;
+      const projectStructure = gameEngine?.projectExplorer?.projectData?.structure;
       if (projectStructure) {
         const pathParts = fullPath.split('/');
         let current = projectStructure;

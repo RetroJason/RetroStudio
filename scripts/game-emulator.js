@@ -368,6 +368,10 @@ class GameEmulator {
    * Initialize all resource mappings from build files
    * This creates a centralized resource mapping system for all components to use
    */
+  /**
+   * Initialize centralized resource mappings by scanning all build files
+   * Uses folder structure to determine resource type (e.g., SFX/, Music/, Graphics/)
+   */
   async initializeResourceMappings() {
     console.log('[GameEmulator] Initializing centralized resource mappings...');
     
@@ -379,46 +383,14 @@ class GameEmulator {
       const buildFiles = this.getAllBuildFiles();
       console.log(`[GameEmulator] DEBUG: Found ${buildFiles.length} total build files:`, buildFiles);
       
-      // Process SFX resources (WAV files in SFX folder)
-      console.log(`[GameEmulator] DEBUG: Filtering build files for SFX resources...`);
-      console.log(`[GameEmulator] DEBUG: Looking for files with path containing 'Game Objects/SFX/' and ending with '.wav'`);
-      
-      const sfxFiles = buildFiles.filter(file => {
-        const hasGameObjectsPath = file.path && file.path.includes('Game Objects/SFX/');
-        const hasBuildPath = file.path && file.path.includes('build/SFX/'); // Legacy fallback
-        const isWav = file.path && file.path.endsWith('.wav');
-        
-        console.log(`[GameEmulator] DEBUG: Checking file: ${file.path || file.name}`);
-        console.log(`[GameEmulator] DEBUG:   - has Game Objects/SFX/: ${hasGameObjectsPath}`);
-        console.log(`[GameEmulator] DEBUG:   - has build/SFX/: ${hasBuildPath}`);
-        console.log(`[GameEmulator] DEBUG:   - ends with .wav: ${isWav}`);
-        
-        return (hasGameObjectsPath || hasBuildPath) && isWav;
-      });
-      
-      console.log(`[GameEmulator] DEBUG: Filtered to ${sfxFiles.length} SFX files:`, sfxFiles);
-      
-      // Create SFX resource mappings
-      for (const file of sfxFiles) {
-        const fileName = file.name.replace('.wav', '');
-        const resourceId = `SFX.${fileName.toUpperCase()}`;
-        
-        const resourceObject = {
-          type: 'SFX',
-          id: resourceId,
-          fileName: fileName,
-          filePath: file.path,
-          category: 'SFX',
-          name: file.name,
-          loaded: false,
-          audioResource: null
-        };
-        
-        this.resourceMap.set(resourceId, resourceObject);
-        console.log(`[GameEmulator] DEBUG: Mapped resource: ${resourceId} -> ${file.path}`);
+      // Process all build files and create resource mappings based on folder structure
+      for (const file of buildFiles) {
+        const resourceMapping = this.createResourceMapping(file);
+        if (resourceMapping) {
+          this.resourceMap.set(resourceMapping.id, resourceMapping);
+          console.log(`[GameEmulator] DEBUG: Mapped resource: ${resourceMapping.id} -> ${file.path}`);
+        }
       }
-      
-      // TODO: Add other resource types here (Graphics, Music, etc.)
       
       console.log(`[GameEmulator] DEBUG: Final resource map size: ${this.resourceMap.size}`);
       console.log(`[GameEmulator] DEBUG: All resource IDs:`, Array.from(this.resourceMap.keys()));
@@ -435,7 +407,78 @@ class GameEmulator {
   }
 
   /**
+   * Create a resource mapping object from a build file based on its folder structure
+   * @param {Object} file - Build file object with path and name
+   * @returns {Object|null} Resource mapping object or null if not a mappable resource
+   */
+  createResourceMapping(file) {
+    if (!file.path || !file.name) {
+      return null;
+    }
+
+    // Extract folder structure from path
+    // Expected formats: "test/Game Objects/SFX/sound.wav" or "build/SFX/sound.wav"
+    let folderMatch = null;
+    
+    // Try "Game Objects/FolderName/" pattern first
+    const gameObjectsMatch = file.path.match(/Game Objects\/([^\/]+)\//);
+    if (gameObjectsMatch) {
+      folderMatch = gameObjectsMatch[1].toUpperCase();
+    } else {
+      // Fallback to "build/FolderName/" pattern
+      const buildMatch = file.path.match(/build\/([^\/]+)\//);
+      if (buildMatch) {
+        folderMatch = buildMatch[1].toUpperCase();
+      }
+    }
+
+    if (!folderMatch) {
+      console.log(`[GameEmulator] DEBUG: Skipping file with no recognized folder structure: ${file.path}`);
+      return null;
+    }
+
+    // Get file extension and base name
+    const fileExtension = file.name.split('.').pop().toLowerCase();
+    const fileName = file.name.replace(new RegExp(`\\.${fileExtension}$`), '');
+    
+    // Create resource ID: FOLDERNAME.FILENAME
+    const resourceId = `${folderMatch}.${fileName.toUpperCase()}`;
+    
+    // Determine resource type and supported extensions
+    const resourceTypeMap = {
+      'SFX': ['wav'],
+      'MUSIC': ['mod', 'xm', 's3m', 'it'],
+      'GRAPHICS': ['png', 'jpg', 'jpeg', 'gif', 'bmp'],
+      'DATA': ['json', 'txt', 'xml'],
+      'SHADERS': ['glsl', 'frag', 'vert'],
+      'PALETTES': ['pal', 'act', 'aco']
+    };
+
+    // Check if this file type is supported for this folder
+    const supportedExtensions = resourceTypeMap[folderMatch] || [];
+    if (supportedExtensions.length > 0 && !supportedExtensions.includes(fileExtension)) {
+      console.log(`[GameEmulator] DEBUG: Skipping unsupported file type .${fileExtension} in ${folderMatch} folder: ${file.path}`);
+      return null;
+    }
+
+    console.log(`[GameEmulator] DEBUG: Creating ${folderMatch} resource: ${resourceId} (.${fileExtension})`);
+
+    return {
+      type: folderMatch,
+      id: resourceId,
+      fileName: fileName,
+      filePath: file.path,
+      category: folderMatch,
+      name: file.name,
+      extension: fileExtension,
+      loaded: false,
+      audioResource: null
+    };
+  }
+
+  /**
    * Preload all resources into memory so Play() doesn't need to load them
+   * Handles both audio (SFX, MUSIC) and non-audio resources
    */
   async preloadResources() {
     console.log('[GameEmulator] Preloading all resources into memory...');
@@ -448,26 +491,34 @@ class GameEmulator {
     const preloadPromises = [];
     
     for (const [resourceId, resource] of this.resourceMap) {
-      if (resource.type === 'SFX' && !resource.loaded) {
-        console.log(`[GameEmulator] Preloading SFX resource: ${resourceId}`);
+      if (!resource.loaded) {
+        console.log(`[GameEmulator] Preloading ${resource.type} resource: ${resourceId}`);
         
-        const loadPromise = this.loadAudioFileOnDemand(resource.name)
-          .then((audioResourceId) => {
-            resource.loaded = true;
-            resource.audioResource = audioResourceId;
-            console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
-          })
-          .catch((error) => {
-            console.warn(`[GameEmulator] Failed to preload ${resourceId}:`, error);
-            resource.loaded = false;
-            resource.audioResource = null;
-          });
-        
-        preloadPromises.push(loadPromise);
+        // Handle audio resources (SFX and MUSIC)
+        if (resource.type === 'SFX' || resource.type === 'MUSIC') {
+          const loadPromise = this.loadAudioFileOnDemand(resource.name)
+            .then((audioResourceId) => {
+              resource.loaded = true;
+              resource.audioResource = audioResourceId;
+              console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
+            })
+            .catch((error) => {
+              console.warn(`[GameEmulator] Failed to preload ${resourceId}:`, error);
+              resource.loaded = false;
+              resource.audioResource = null;
+            });
+          
+          preloadPromises.push(loadPromise);
+        } else {
+          // For non-audio resources, just mark as loaded (no preloading needed)
+          // They will be loaded on-demand when accessed
+          resource.loaded = true;
+          console.log(`[GameEmulator] Marked ${resource.type} resource as available: ${resourceId}`);
+        }
       }
     }
     
-    // Wait for all resources to load
+    // Wait for all audio resources to load
     await Promise.all(preloadPromises);
     
     const loadedCount = Array.from(this.resourceMap.values()).filter(r => r.loaded).length;
