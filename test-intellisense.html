@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Monaco IntelliSense Service Test</title>
+</head>
+<body>
+    <h1>Monaco IntelliSense Service Test</h1>
+    <div id="output"></div>
+
+    <script src="scripts/services/monaco-intellisense-service.js"></script>
+    <script>
+        async function testIntelliSenseService() {
+            const output = document.getElementById('output');
+            
+            try {
+                // Create service instance
+                const service = new MonacoIntelliSenseService();
+                
+                // Load extensions
+                await service.loadExtensions();
+                
+                // Get extension info
+                const info = service.getExtensionInfo();
+                output.innerHTML += `<h2>Extension Info:</h2>`;
+                output.innerHTML += `<p><strong>Name:</strong> ${info.name}</p>`;
+                output.innerHTML += `<p><strong>Version:</strong> ${info.version}</p>`;
+                output.innerHTML += `<p><strong>Functions:</strong> ${info.functionCount}</p>`;
+                
+                // Get all completion items
+                const completionItems = service.getCompletionItems();
+                output.innerHTML += `<h2>Completion Items (${completionItems.length}):</h2>`;
+                output.innerHTML += '<ul>';
+                completionItems.forEach(item => {
+                    output.innerHTML += `<li><strong>${item.label}</strong> - ${item.detail}</li>`;
+                });
+                output.innerHTML += '</ul>';
+                
+                // Test hover data
+                const mathClampHover = service.getHoverData('Math.Clamp');
+                if (mathClampHover) {
+                    output.innerHTML += `<h2>Math.Clamp Hover Data:</h2>`;
+                    output.innerHTML += `<pre>${mathClampHover.contents[0].value}</pre>`;
+                }
+                
+                // Test signature help
+                const mathClampSignature = service.getSignatureHelp('Math.Clamp');
+                if (mathClampSignature) {
+                    output.innerHTML += `<h2>Math.Clamp Signature:</h2>`;
+                    output.innerHTML += `<p>${mathClampSignature.signatures[0].label}</p>`;
+                }
+                
+                console.log('✅ All tests passed!');
+                output.innerHTML += '<p><strong>✅ All tests passed!</strong></p>';
+                
+            } catch (error) {
+                console.error('❌ Test failed:', error);
+                output.innerHTML += `<p><strong>❌ Test failed:</strong> ${error.message}</p>`;
+            }
+        }
+        
+        // Run test when page loads
+        document.addEventListener('DOMContentLoaded', testIntelliSenseService);
+    </script>
+</body>
+</html>

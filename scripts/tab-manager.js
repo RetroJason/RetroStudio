@@ -150,13 +150,13 @@ class TabManager {
         return true;
       }
       
-      // Try GameEditor's event system as fallback
-      if (window.gameEditor && window.gameEditor.events && window.gameEditor.events.subscribe) {
-        window.gameEditor.events.subscribe('content.refresh.required', () => {
+      // Try GameEmulator's event system as fallback
+      if (window.gameEmulator && window.gameEmulator.events && window.gameEmulator.events.subscribe) {
+        window.gameEmulator.events.subscribe('content.refresh.required', () => {
           console.log('[TabManager] Received content.refresh.required event, refreshing all tabs');
           this.refreshAllTabs();
         });
-        console.log('[TabManager] Successfully subscribed to content.refresh.required via GameEditor.events');
+        console.log('[TabManager] Successfully subscribed to content.refresh.required via GameEmulator.events');
         return true;
       }
       
@@ -176,14 +176,14 @@ class TabManager {
       };
       document.addEventListener('eventBusReady', eventBusHandler);
       
-      // Also listen for gameEditor ready event
-      const gameEditorHandler = () => {
+      // Also listen for gameEmulator ready event
+      const gameEmulatorHandler = () => {
         if (trySubscribe()) {
-          console.log('[TabManager] Successfully subscribed after gameEditor became ready');
-          document.removeEventListener('gameEditorReady', gameEditorHandler);
+          console.log('[TabManager] Successfully subscribed after gameEmulator became ready');
+          document.removeEventListener('gameEmulatorReady', gameEmulatorHandler);
         }
       };
-      document.addEventListener('gameEditorReady', gameEditorHandler);
+      document.addEventListener('gameEmulatorReady', gameEmulatorHandler);
       
       // Fallback timeout in case events don't fire
       setTimeout(() => {
@@ -191,7 +191,7 @@ class TabManager {
           console.warn('[TabManager] Failed to subscribe to events after timeout');
         }
         document.removeEventListener('eventBusReady', eventBusHandler);
-        document.removeEventListener('gameEditorReady', gameEditorHandler);
+        document.removeEventListener('gameEmulatorReady', gameEmulatorHandler);
       }, 2000);
     }
   }
@@ -1861,8 +1861,8 @@ class TabManager {
       tabElement.classList.add('dirty');
       
       // Update save button state
-      if (window.gameEditor) {
-        window.gameEditor.updateSaveButtonState();
+      if (window.gameEmulator) {
+        window.gameEmulator.updateSaveButtonState();
       }
     }
   }
@@ -1874,8 +1874,8 @@ class TabManager {
       tabElement.classList.remove('dirty');
       
       // Update save button state
-      if (window.gameEditor) {
-        window.gameEditor.updateSaveButtonState();
+      if (window.gameEmulator) {
+        window.gameEmulator.updateSaveButtonState();
       }
     }
   }
