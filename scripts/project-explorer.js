@@ -38,6 +38,7 @@ class ProjectExplorer {
             children: {
               Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
               SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
+              Images: { type: 'folder', filter: ['.png', '.gif'], children: {} },
               Palettes: { type: 'folder', filter: ['.pal', '.act', '.aco'], children: {} },
               Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
               Binary: { type: 'folder', filter: ['*'], children: {} }
@@ -963,6 +964,8 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/Music` };
     } else if (sfxExts.includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/SFX` };
+    } else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
+      return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
     } else if (luaExts.includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Lua` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
