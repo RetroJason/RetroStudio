@@ -587,6 +587,7 @@ class PaletteEditor extends EditorBase {
       if (this.file) {
         // Parse different palette formats
         const extension = this.getFileExtension().toLowerCase();
+        console.log(`[PaletteEditor] Parsing file with extension: ${extension}`);
         
         switch (extension) {
           case '.pal':
@@ -601,6 +602,8 @@ class PaletteEditor extends EditorBase {
           default:
             this.parseGenericPalette();
         }
+        
+        console.log(`[PaletteEditor] After parsing - colors: ${this.colors.length}, paletteSize: ${this.paletteSize}`);
       }
     } catch (error) {
       console.error('Failed to parse palette:', error);
@@ -649,29 +652,60 @@ class PaletteEditor extends EditorBase {
         if (storedFile) {
           // Prefer decoded content if present; else fallback to raw fileContent
           let raw = storedFile.content !== undefined ? storedFile.content : storedFile.fileContent;
-          // If binaryData flagged but content is a string (base64), decode to text
-          if (storedFile.binaryData && typeof raw === 'string') {
-            try {
-              const bin = atob(raw);
-              const bytes = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-              raw = new TextDecoder().decode(bytes);
-              console.log(`[PaletteEditor] Decoded base64 to text for ${storagePath}`);
-            } catch (e) {
-              console.warn('[PaletteEditor] Failed to base64-decode stored content; leaving as string');
+          
+          // For .act files, preserve binary data (ArrayBuffer or base64)
+          const isACTFile = this.path && this.path.toLowerCase().endsWith('.act');
+          
+          if (!isACTFile) {
+            // For non-.act files, convert binary to text as before
+            if (storedFile.binaryData && typeof raw === 'string') {
+              try {
+                const bin = atob(raw);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                raw = new TextDecoder().decode(bytes);
+                console.log(`[PaletteEditor] Decoded base64 to text for ${storagePath}`);
+              } catch (e) {
+                console.warn('[PaletteEditor] Failed to base64-decode stored content; leaving as string');
+              }
+            } else if (raw instanceof ArrayBuffer) {
+              try {
+                raw = new TextDecoder().decode(new Uint8Array(raw));
+                console.log(`[PaletteEditor] Converted ArrayBuffer to text for ${storagePath}`);
+              } catch (e) {
+                console.warn('[PaletteEditor] Failed to decode ArrayBuffer to text');
+              }
             }
-          } else if (raw instanceof ArrayBuffer) {
-            try {
-              raw = new TextDecoder().decode(new Uint8Array(raw));
-              console.log(`[PaletteEditor] Converted ArrayBuffer to text for ${storagePath}`);
-            } catch (e) {
-              console.warn('[PaletteEditor] Failed to decode ArrayBuffer to text');
+          } else {
+            // For .act files, keep binary data as-is (ArrayBuffer) or convert base64 string to ArrayBuffer
+            if (storedFile.binaryData && typeof raw === 'string') {
+              try {
+                const binaryString = atob(raw);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                raw = bytes.buffer; // Store as ArrayBuffer
+                console.log(`[PaletteEditor] Converted base64 to ArrayBuffer for .act file: ${bytes.length} bytes`);
+              } catch (e) {
+                console.warn('[PaletteEditor] Failed to decode base64 for .act file:', e);
+              }
             }
+            // If raw is already ArrayBuffer, leave it as-is
+            console.log(`[PaletteEditor] Preserved binary data for .act file: ${raw instanceof ArrayBuffer ? 'ArrayBuffer' : typeof raw}`);
           }
+          
           if (typeof raw === 'string') {
             console.log(`[PaletteEditor] Loaded content from persistent storage: ${storagePath} (${raw.length} chars)`);
           }
           content = raw;
+          
+          // Preserve binary flag for .act files
+          if (isACTFile && storedFile.binaryData) {
+            this.file = { ...this.file, content, binaryData: true };
+            console.log(`[PaletteEditor] Preserved binary flag for .act file`);
+            return;
+          }
         } else {
           console.log(`[PaletteEditor] No content found in persistent storage for: ${storagePath}`);
         }
@@ -753,8 +787,105 @@ class PaletteEditor extends EditorBase {
 
   parseACTPalette() {
     // Parse Adobe Color Table format (binary)
-    // For now, create a placeholder implementation
-    this.createDefaultPalette();
+    console.log('[PaletteEditor] Parsing .act palette file');
+    
+    try {
+      if (!this.file.content) {
+        throw new Error('No file content available');
+      }
+
+      let binaryData;
+      
+      // Handle different content formats
+      if (this.file.content instanceof ArrayBuffer) {
+        binaryData = new Uint8Array(this.file.content);
+        console.log(`[PaletteEditor] Using ArrayBuffer content (${binaryData.length} bytes)`);
+      } else if (this.file.content instanceof Uint8Array) {
+        binaryData = this.file.content;
+        console.log(`[PaletteEditor] Using Uint8Array content (${binaryData.length} bytes)`);
+      } else if (typeof this.file.content === 'string') {
+        // Try to decode as base64
+        if (this.file.content.match(/^[A-Za-z0-9+/=\s]+$/)) {
+          const base64 = this.file.content.replace(/\s+/g, ''); // Remove whitespace
+          console.log(`[PaletteEditor] Decoding base64 content (${base64.length} chars)`);
+          const binaryString = atob(base64);
+          binaryData = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            binaryData[i] = binaryString.charCodeAt(i);
+          }
+        } else {
+          throw new Error('String content does not appear to be valid base64');
+        }
+      } else {
+        throw new Error('ACT files must be binary data - unsupported content type: ' + typeof this.file.content);
+      }
+
+      console.log(`[PaletteEditor] ACT file size: ${binaryData.length} bytes`);
+
+      // Determine number of colors based on file size
+      let maxColors;
+      if (binaryData.length === 768) {
+        // Standard 768-byte file = 256 colors, no metadata
+        maxColors = 256;
+      } else if (binaryData.length === 772) {
+        // 772-byte file = 256 colors + 4 bytes metadata
+        maxColors = 256;
+      } else if (binaryData.length >= 3) {
+        // For other sizes, calculate colors but limit to RGB data only
+        const rgbDataSize = binaryData.length >= 772 ? 768 : binaryData.length;
+        maxColors = Math.floor(rgbDataSize / 3);
+      } else {
+        throw new Error(`Invalid .act file size: ${binaryData.length} bytes (too small)`);
+      }
+
+      console.log(`[PaletteEditor] Reading up to ${maxColors} colors from RGB data`);
+
+      this.colors = [];
+      
+      // Read RGB triplets based on calculated number of colors
+      for (let i = 0; i < maxColors; i++) {
+        const offset = i * 3;
+        
+        // Make sure we don't read beyond the RGB data (bytes 0-767)
+        if (offset + 2 >= 768) {
+          break;
+        }
+        
+        const r = binaryData[offset];
+        const g = binaryData[offset + 1];
+        const b = binaryData[offset + 2];
+        
+        // Convert to hex format (consistent with other palette formats)
+        const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        this.colors.push(hex.toUpperCase());
+      }
+
+      // Check metadata if present, but use it for information only
+      let actualColorCount = this.colors.length;
+      if (binaryData.length >= 772) {
+        // Bytes 768-769: Number of colors (big-endian 16-bit)
+        const metadataColors = (binaryData[768] << 8) | binaryData[769];
+        // Bytes 770-771: Transparency index (big-endian 16-bit)  
+        const transparencyIndex = (binaryData[770] << 8) | binaryData[771];
+        
+        console.log(`[PaletteEditor] ACT metadata - colors: ${metadataColors}, transparency: ${transparencyIndex}`);
+        
+        // Option: respect metadata if it indicates fewer colors than we read
+        // This helps with palettes that only use a subset of the 256 slots
+        if (metadataColors > 0 && metadataColors < this.colors.length) {
+          console.log(`[PaletteEditor] Metadata indicates ${metadataColors} colors, but showing all ${this.colors.length} for editing`);
+          // We could optionally limit here: this.colors = this.colors.slice(0, metadataColors);
+        }
+      }
+
+      console.log(`[PaletteEditor] parseACTPalette - parsed ${this.colors.length} colors`);
+      this.paletteSize = this.colors.length;
+
+    } catch (error) {
+      console.error('[PaletteEditor] Error parsing .act file:', error);
+      // Fall back to default palette
+      this.createDefaultPalette();
+    }
   }
 
   parseACOPalette() {
@@ -778,6 +909,8 @@ class PaletteEditor extends EditorBase {
   }
 
   renderPaletteGrid() {
+    console.log(`[PaletteEditor] renderPaletteGrid - colors: ${this.colors.length}, paletteSize: ${this.paletteSize}`);
+    
     this.paletteGrid.innerHTML = '';
     
     const gridSize = this.calculateGridSize();
@@ -1233,7 +1366,21 @@ class PaletteEditor extends EditorBase {
     return this.path ? this.path.split('/').pop() : 'New Palette';
   }
 
-  getFileExtension() {
+  getFileExtension(filePath = null) {
+    // Determine extension from the actual file path/name
+    const pathToCheck = filePath || this.path || this.file?.name || this.file?.filename || 'untitled.pal';
+    
+    if (pathToCheck.includes('.')) {
+      const extension = '.' + pathToCheck.split('.').pop().toLowerCase();
+      
+      // Validate that it's a supported extension
+      const supportedExts = ['.pal', '.act', '.aco'];
+      if (supportedExts.includes(extension)) {
+        return extension;
+      }
+    }
+    
+    // Default fallback
     return '.pal';
   }
 
@@ -1408,7 +1555,20 @@ class PaletteEditor extends EditorBase {
   }
 
   getPaletteData() {
-    // Convert current palette to string format
+    // Determine format based on file extension
+    const extension = this.getFileExtension(this.path || this.file?.name || 'untitled.pal');
+    
+    switch (extension.toLowerCase()) {
+      case '.act':
+        return this.exportToACT();
+      case '.pal':
+      default:
+        return this.exportToPAL();
+    }
+  }
+
+  exportToPAL() {
+    // Convert current palette to JASC-PAL format
     const lines = [];
     lines.push('JASC-PAL');
     lines.push('0100');
@@ -1422,6 +1582,46 @@ class PaletteEditor extends EditorBase {
     });
     
     return lines.join('\n');
+  }
+
+  exportToACT() {
+    // Convert current palette to Adobe Color Table (.act) format
+    // ACT files are binary with 768 bytes (256 RGB triplets) + optional 4-byte metadata
+    const bytes = new Uint8Array(772); // 768 + 4 metadata bytes
+    
+    // Fill with RGB triplets (256 colors)
+    for (let i = 0; i < 256; i++) {
+      let r = 0, g = 0, b = 0;
+      
+      if (i < this.colors.length && this.colors[i]) {
+        const color = this.colors[i];
+        r = parseInt(color.substr(1, 2), 16);
+        g = parseInt(color.substr(3, 2), 16);
+        b = parseInt(color.substr(5, 2), 16);
+      }
+      
+      const offset = i * 3;
+      bytes[offset] = r;
+      bytes[offset + 1] = g;
+      bytes[offset + 2] = b;
+    }
+    
+    // Add metadata (optional 4 bytes at the end)
+    // Bytes 768-769: Number of colors (big-endian)
+    const numColors = Math.min(this.colors.length, 256);
+    bytes[768] = (numColors >> 8) & 0xFF; // High byte
+    bytes[769] = numColors & 0xFF;        // Low byte
+    
+    // Bytes 770-771: Transparency index (big-endian, -1 = no transparency)
+    bytes[770] = 0xFF; // High byte (-1)
+    bytes[771] = 0xFF; // Low byte (-1)
+    
+    // Convert to base64 for storage
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
   }
 }
 

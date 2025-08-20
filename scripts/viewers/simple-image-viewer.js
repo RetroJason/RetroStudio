@@ -519,6 +519,9 @@ class SimpleImageViewer extends ViewerBase {
   }
 }
 
+// Static method to define supported file extensions
+SimpleImageViewer.getFileExtensions = () => ['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.webp'];
+
 // Auto-register the viewer
 if (typeof ComponentRegistry !== 'undefined') {
   ComponentRegistry.register('SimpleImageViewer', SimpleImageViewer);
