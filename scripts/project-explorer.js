@@ -925,18 +925,33 @@ class ProjectExplorer {
     // Render once after batch
     this.renderTree();
 
-    // Highlight and optionally auto-open the last file only (prevents duplicate opens)
-    if (lastAddedFile && lastAddedPath) {
-      setTimeout(async () => {
-        this.expandToPath(lastAddedPath);
-        console.log(`[ProjectExplorer] Expanded to show last added file: ${lastAddedFile.name}`);
-        if (multiDrop && window.gameEmulator && typeof window.gameEmulator.onFileAdded === 'function') {
-          try {
-            await window.gameEmulator.onFileAdded(lastAddedFile, lastAddedPath, true);
-          } catch (e) {
-            console.warn('[ProjectExplorer] Auto-open of last file failed:', e);
+    // For multi-drop, open all files in tabs after persistence is complete
+    if (multiDrop && persistPromises.length > 0) {
+      try {
+        await Promise.allSettled(persistPromises);
+        
+        // Open each file in a tab
+        for (const file of fileList) {
+          const filtered = this.filterFile(file, targetPath);
+          const destPath = filtered.allowed ? filtered.path : (filtered.path || null);
+          if (destPath) {
+            try {
+              await this.openFileInTab(file, destPath);
+            } catch (e) {
+              console.warn(`[ProjectExplorer] Failed to open ${file.name} in tab:`, e);
+            }
           }
         }
+      } catch (e) {
+        console.warn('[ProjectExplorer] Error opening multiple files in tabs:', e);
+      }
+    }
+
+    // Highlight the last file for single drops or if multi-drop tab opening failed
+    if (lastAddedFile && lastAddedPath) {
+      setTimeout(() => {
+        this.expandToPath(lastAddedPath);
+        console.log(`[ProjectExplorer] Expanded to show last added file: ${lastAddedFile.name}`);
       }, 50);
     }
   }
@@ -1099,12 +1114,14 @@ class ProjectExplorer {
       this.renderTree();
     }
     
-    // Notify game emulator if available (unless skipping auto-open),
-    // but only after persistence completes to avoid race where storage isn't ready yet
-    if (window.gameEmulator && !skipAutoOpen) {
-      persistDone.then(() => {
+    // Emit file addition event for other components to listen to
+    this.emitFileAddedEvent(file, path);
+    
+    // Auto-open file in tab if not skipping
+    if (!skipAutoOpen) {
+      persistDone.then(async () => {
         try {
-          window.gameEmulator.onFileAdded(file, path, false);
+          await this.openFileInTab(file, path);
         } catch (e) {
           console.warn('[ProjectExplorer] Auto-open failed after persist:', e);
         }
@@ -2118,6 +2135,65 @@ class ProjectExplorer {
     }
 
     return component;
+  }
+
+  // FILE OPERATIONS AND EVENTS
+
+  /**
+   * Open a file in a tab through TabManager
+   */
+  async openFileInTab(file, path) {
+    console.log(`[ProjectExplorer] Opening file in tab: ${file.name} at ${path}`);
+    
+    // Get TabManager through the service container or gameEmulator
+    const tabManager = window.serviceContainer?.get?.('tabManager') || window.gameEmulator?.tabManager;
+    
+    if (!tabManager) {
+      console.warn('[ProjectExplorer] TabManager not available for opening file');
+      return;
+    }
+
+    try {
+      // Ensure we pass full path including filename
+      const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
+      
+      // Get the appropriate component for this file type
+      const componentInfo = this._getComponentForFile(file.name, false); // preferEditor = false for auto-open
+      console.log('[ProjectExplorer] Using component for auto-open:', componentInfo?.name);
+      
+      await tabManager.openInTab(fullPath, componentInfo);
+
+      // Small delay to ensure DOM is updated before tree operations
+      setTimeout(() => {
+        // Expand tree view and select the file
+        this.expandToPath(path);
+        this.selectFile(path, file.name);
+      }, 100);
+      
+    } catch (error) {
+      console.error(`[ProjectExplorer] Failed to open file ${file.name} in tab:`, error);
+    }
+  }
+
+  /**
+   * Emit a file added event for other components to listen to
+   */
+  emitFileAddedEvent(file, path) {
+    console.log(`[ProjectExplorer] Emitting file added event: ${file.name} at ${path}`);
+    
+    // Create custom event with file details
+    const event = new CustomEvent('projectFileAdded', {
+      detail: {
+        file: file,
+        path: path,
+        fullPath: path.endsWith(file.name) ? path : `${path}/${file.name}`,
+        extension: this.getFileExtension(file.name),
+        timestamp: Date.now()
+      }
+    });
+
+    // Emit to document for global listening
+    document.dispatchEvent(event);
   }
 }
 

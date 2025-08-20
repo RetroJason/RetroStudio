@@ -118,6 +118,9 @@ class GameEmulator {
       services?.register?.('projectExplorer', this.projectExplorer);
     }
     
+    // Listen for file added events from ProjectExplorer
+    document.addEventListener('projectFileAdded', this.handleFileAddedEvent.bind(this));
+    
     // Set up UI event handlers
     this.setupUI();
     
@@ -178,54 +181,28 @@ class GameEmulator {
     document.addEventListener('keydown', resumeHandler);
   }
   
-  // Called by ProjectExplorer when files are added
-  async onFileAdded(file, path, doTreeOperations = true) {
-    console.log(`[GameEditor] File added: ${file.name} at ${path}`);
+  // Handle file added events from ProjectExplorer
+  handleFileAddedEvent(event) {
+    const { file, path, fullPath, extension } = event.detail;
+    console.log(`[GameEditor] Received file added event: ${file.name} at ${path}`);
     
-    // Determine file type
-    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    // Determine if this is an audio file that we need to register
     let audioType = null;
     
-    if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) {
+    if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
       audioType = 'mod';
-    } else if (['.wav'].includes(ext)) {
+    } else if (['.wav'].includes(extension)) {
       audioType = 'wav';
     }
     
     if (audioType) {
-      // Just register the file for later loading, don't load it immediately
-      const fileKey = path + '/' + file.name;
+      // Register the file for later loading
+      const fileKey = fullPath;
       this.pendingAudioFiles = this.pendingAudioFiles || new Map();
       this.pendingAudioFiles.set(fileKey, { file, audioType, path });
       
       console.log(`[GameEditor] Registered audio file for lazy loading: ${file.name} (${audioType})`);
       this.updateStatus(`Registered ${file.name}`, 'info');
-
-  // Persistence is handled by ProjectExplorer.addFileToProject; avoid duplicate saves here
-    }
-    
-    // Auto-open the file in a tab using unified logic
-    if (this.tabManager) {
-      try {
-        console.log(`[GameEditor] Auto-opening file: ${file.name}`);
-        // Ensure we pass full path including filename
-        const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
-        await this.tabManager.openInTab(fullPath, null); // Let tab manager auto-detect component
-
-        // Only do tree operations if requested (i.e., not called from bulk file addition)
-        if (doTreeOperations) {
-          // Small delay to ensure DOM is updated before tree operations
-          setTimeout(() => {
-            // Expand tree view and select the file
-            if (this.projectExplorer) {
-              this.projectExplorer.expandToPath(path);
-              this.projectExplorer.selectFile(path, file.name);
-            }
-          }, 100);
-        }
-      } catch (error) {
-        console.error(`[GameEditor] Failed to auto-open file ${file.name}:`, error);
-      }
     }
   }
   
