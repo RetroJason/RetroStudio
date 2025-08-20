@@ -1515,6 +1515,9 @@ class TabManager {
   }
 
   _performTabClose(tabId, tabInfo) {
+    // Notify viewer that tab is losing focus/being closed
+    this._notifyTabBlur(tabId);
+    
     // Editor cleanup is already handled by editor.close()
     // Just handle DOM and tab management cleanup here
     

@@ -158,8 +158,8 @@ class RetroStudioApplication {
 
     // Auto-register built-in editors and viewers using self-describing metadata
     const registry = this.components;
-  const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor, ModXmTrackerEditor];
-    const autoViewers = [ModViewer, WavViewer, HexViewer];
+    const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor, ModXmTrackerEditor];
+    const autoViewers = [ModViewer, WavViewer, HexViewer, SimpleImageViewer];
 
     autoEditors.forEach((cls) => {
       try { registry.autoRegisterEditor(cls); } catch (e) { console.error('[Application] Failed to auto-register editor', cls?.name, e); }
