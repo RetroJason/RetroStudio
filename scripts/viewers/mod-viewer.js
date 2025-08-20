@@ -1017,3 +1017,8 @@ ModViewer.getDisplayName = () => 'MOD Viewer';
 ModViewer.getIcon = () => '🎵';
 ModViewer.getPriority = () => 10;
 ModViewer.getCapabilities = () => ['audio-playback', 'visualization'];
+
+// Auto-register the viewer
+if (typeof ComponentRegistry !== 'undefined') {
+  ComponentRegistry.register('ModViewer', ModViewer);
+}

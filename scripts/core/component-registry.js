@@ -149,7 +149,10 @@ class ComponentRegistry {
   // Public helpers to auto-register by class
   autoRegisterEditor(editorClass) {
     const name = this._deriveName(editorClass, 'editor');
-    const extensions = this._deriveExtensions(editorClass, []);
+    const extensions = this._deriveExtensions(editorClass, null); // No fallback for editors
+    if (!extensions || !Array.isArray(extensions) || extensions.length === 0) {
+      throw new Error(`Editor '${name}' must implement getFileExtensions() method that returns a non-empty array of supported file extensions`);
+    }
     const displayName = this._deriveDisplayName(editorClass, name);
     const icon = this._deriveIcon(editorClass, '✏️');
     const priority = this._derivePriority(editorClass, 10);
@@ -174,7 +177,10 @@ class ComponentRegistry {
 
   autoRegisterViewer(viewerClass) {
     const name = this._deriveName(viewerClass, 'viewer');
-    const extensions = this._deriveExtensions(viewerClass, ['*']);
+    const extensions = this._deriveExtensions(viewerClass, null); // No fallback for viewers
+    if (!extensions || !Array.isArray(extensions) || extensions.length === 0) {
+      throw new Error(`Viewer '${name}' must implement getFileExtensions() method that returns a non-empty array of supported file extensions`);
+    }
     const displayName = this._deriveDisplayName(viewerClass, name);
     const icon = this._deriveIcon(viewerClass, '👁️');
     const priority = this._derivePriority(viewerClass, 10);

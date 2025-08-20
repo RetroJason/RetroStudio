@@ -212,3 +212,8 @@ HexViewer.getDisplayName = () => 'Hex Viewer';
 HexViewer.getIcon = () => '🔍';
 HexViewer.getPriority = () => 1000; // very low priority fallback
 HexViewer.getCapabilities = () => ['binary-display'];
+
+// Auto-register the viewer
+if (typeof ComponentRegistry !== 'undefined') {
+  ComponentRegistry.register('HexViewer', HexViewer);
+}
