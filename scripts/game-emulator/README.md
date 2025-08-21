@@ -5,6 +5,7 @@ This folder contains the game emulator component that provides Lua script execut
 ## Files
 
 - `game-emulator.js` - Main GameEmulator class with console management, Lua integration, and UI components
+- `console.js` - **NEW** Modular console component with filtering, downloading, and monitoring
 - `game-engine.css` - Styling for the game emulator panel, console, and utility controls
 - `README.md` - This documentation file
 
@@ -20,13 +21,34 @@ This folder contains the game emulator component that provides Lua script execut
 
 The GameEmulator is designed to be modular and accepts a content container on construction rather than hardcoding DOM dependencies. This allows for flexible integration into different UI layouts.
 
-### Console System
+### Console System (NEW)
 
-The console uses a centralized `writeToConsole()` method that:
-- Maintains a complete message buffer for filtering and downloading
-- Applies real-time filtering with advanced syntax (+required -excluded "exact")
-- Prevents observer recursion through internal write flags
-- Supports bulk updates and individual message appending
+The new `GameConsole` class (`console.js`) provides a standalone, reusable console component:
+
+**Key Features:**
+- **Centralized Output**: All console writes go through `writeToConsole()` method
+- **Advanced Filtering**: Supports complex filter syntax (+required -excluded "exact" optional)
+- **Message Buffer**: Maintains complete message history for filtering and downloading
+- **DOM Monitoring**: Uses MutationObserver to detect external modifications
+- **Export Functionality**: Download logs as timestamped text files
+- **Configurable Options**: Timestamps, line numbers, auto-scroll, message limits
+
+**API Overview:**
+```javascript
+const console = new GameConsole({
+  showTimestamps: true,
+  maxMessages: 5000,
+  autoScroll: true
+});
+
+console.initialize(containerElement);
+console.writeToConsole('Hello World\n');
+console.applyFilter('+error -debug');
+console.downloadLogs();
+```
+
+**CSS Organization:**
+All console styling is contained in `game-engine.css` under the "MODULAR CONSOLE COMPONENT STYLES" section, keeping JavaScript files clean of styling concerns.
 
 ### Integration
 
@@ -35,3 +57,10 @@ The GameEmulator integrates with:
 - Lua.vm.js for script execution
 - Project file system for resource loading
 - Audio services for sound playback
+
+## Migration Path
+
+The modular console (`console.js`) is ready for integration but not yet connected to the main GameEmulator. This allows for:
+1. **Testing**: Independent testing of console functionality
+2. **Gradual Migration**: Replace existing console code piece by piece
+3. **Reusability**: Use the console in other parts of the application
