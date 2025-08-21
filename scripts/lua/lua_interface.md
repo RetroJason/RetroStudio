@@ -45,6 +45,22 @@ Int32 Input.GetKeysDownRepeat()
 
 Returns a bit array of keys held for longer than the key repeat interval
 
+enum class Buttons : uint16_t {
+    None   = 0x0000, // No buttons pressed
+    B      = 0x0001, // Bit 0
+    Y      = 0x0002, // Bit 1
+    Select = 0x0004, // Bit 2
+    Start  = 0x0008, // Bit 3
+    Up     = 0x0010, // Bit 4
+    Down   = 0x0020, // Bit 5
+    Left   = 0x0040, // Bit 6
+    Right  = 0x0080, // Bit 7
+    A      = 0x0100, // Bit 8
+    X      = 0x0200, // Bit 9
+    L      = 0x0400, // Bit 10
+    R      = 0x0800  // Bit 11
+};
+
 Mask
 Void Mask.New(String name, Int16 positionX, Int16 positionY, float positionZ, Int16 width, Int16 height)
 

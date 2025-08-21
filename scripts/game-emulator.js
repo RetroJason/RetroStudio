@@ -14,6 +14,9 @@ class GameEmulator {
     this.currentVolume = 75;
     this.isMuted = false;
     
+    // Input management
+    this.inputManager = null; // Game input manager for keyboard capture
+    
     // Set up project paths configuration
     this.setupProjectPaths();
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
@@ -1441,7 +1444,7 @@ class GameEmulator {
           -- Add to buffer
           table.insert(_print_buffer, output)
           
-          -- Also call original print for console output
+          -- Also call original print for console output (this ensures it shows in VS Code console)
           original_print(...)
         end
       `);
@@ -1456,6 +1459,20 @@ class GameEmulator {
       try {
         await this.loadLuaExtensions(L);
         console.log('[GameEmulator] Lua extensions loaded successfully');
+        
+        // Test Input API availability
+        try {
+          const testInput = L.execute('return type(Input)');
+          console.log('[GameEmulator] Input type check:', testInput);
+          
+          if (testInput && testInput[0] === 'table') {
+            const testGetKeysHeld = L.execute('return type(Input.GetKeysHeld)');
+            console.log('[GameEmulator] Input.GetKeysHeld type:', testGetKeysHeld);
+          }
+        } catch (testError) {
+          console.error('[GameEmulator] Input API test failed:', testError);
+        }
+        
       } catch (error) {
         console.warn('[GameEmulator] Failed to load Lua extensions:', error);
         // Continue anyway - extensions are optional
@@ -1593,19 +1610,28 @@ class GameEmulator {
       this.frameCount++;
       
       try {
+        // Update input manager first (processes input for this frame)
+        if (this.inputManager) {
+          this.inputManager.updateFrame();
+        }
+        
         // Only update if not paused
         if (!this.isPaused) {
           // Call Update(deltaTime) in Lua
           this.luaState.execute(`Update(${deltaTime})`);
-          
-          // Check for new print output from Lua
-          this.captureLuaPrintOutput();
         }
         
-        // Log every 60 frames (once per second at 60fps)
+        // Always check for new print output from Lua (even when paused, to capture any buffered output)
+        this.captureLuaPrintOutput();
+        
+        // Debug input state every second (only when there's actual input)
         if (this.frameCount % 60 === 0) {
-          const status = this.isPaused ? '(Paused)' : '';
-          console.log(`[GameEmulator] Game loop running - Frame ${this.frameCount}, Delta: ${deltaTime.toFixed(2)}ms ${status}`);
+          if (this.inputManager && this.inputManager.isActive) {
+            const debugInfo = this.inputManager.getDebugInfo();
+            if (debugInfo.buttonsHeld !== 'none') {
+              console.log('[GameEmulator] Input debug:', debugInfo);
+            }
+          }
         }
       } catch (error) {
         console.error('[GameEmulator] Error in Update() function:', error);
@@ -1639,6 +1665,11 @@ class GameEmulator {
   stopProject() {
     console.log('[GameEmulator] Stopping project...');
     this.stopGameLoop();
+    
+    // Reset all extensions (clear old state)
+    if (this.extensionLoader) {
+      this.extensionLoader.resetExtensions();
+    }
     
     // Stop all audio
     if (this.audioEngine) {
@@ -1877,6 +1908,9 @@ class GameEmulator {
   showGameEngine(scriptData) {
     // Create sliding game engine panel
     this.createGameEnginePanel(scriptData);
+    
+    // Initialize input manager after panel is created
+    this.initializeInputManager();
   }
   
   showErrorPopup(title, message, details = null) {
@@ -2217,6 +2251,59 @@ class GameEmulator {
           <div class="game-canvas-container">
             <canvas id="game-canvas" width="800" height="600"></canvas>
             <div class="game-info">Game running... (simulated)</div>
+            <div class="key-mapping-display">
+              <h4>🎮 Keyboard Mapping</h4>
+              <div class="key-mapping-grid">
+                <div class="key-mapping-section">
+                  <h5>D-Pad</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">↑</span><span class="button">Up</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">↓</span><span class="button">Down</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">←</span><span class="button">Left</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">→</span><span class="button">Right</span>
+                  </div>
+                </div>
+                <div class="key-mapping-section">
+                  <h5>Action Buttons</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">Z</span><span class="button">B Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">X</span><span class="button">A Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">A</span><span class="button">Y Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">S</span><span class="button">X Button</span>
+                  </div>
+                </div>
+                <div class="key-mapping-section">
+                  <h5>System</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">Space</span><span class="button">Select</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">Enter</span><span class="button">Start</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">L-Shift</span><span class="button">L Shoulder</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">R-Shift</span><span class="button">R Shoulder</span>
+                  </div>
+                </div>
+              </div>
+              <div class="input-status">
+                <strong>Click the canvas above to activate input capture</strong>
+              </div>
+            </div>
           </div>
         </div>
         <div class="tab-content" id="console-tab">
@@ -2314,11 +2401,77 @@ class GameEmulator {
     });
   }
   
+  /**
+   * Initialize the game input manager
+   */
+  async initializeInputManager() {
+    try {
+      // Load the input manager script if not already loaded
+      if (!window.GameInputManager) {
+        await this.loadInputManagerScript();
+      }
+      
+      // Get the game canvas
+      const gameCanvas = document.getElementById('game-canvas');
+      if (!gameCanvas) {
+        console.error('[GameEmulator] Game canvas not found - cannot initialize input manager');
+        return;
+      }
+      
+      // Create and initialize input manager
+      this.inputManager = new window.GameInputManager();
+      const success = this.inputManager.initialize(gameCanvas);
+      
+      if (success) {
+        console.log('[GameEmulator] Input manager initialized successfully');
+        
+        // Focus the canvas to activate input capture
+        setTimeout(() => {
+          gameCanvas.focus();
+        }, 100);
+      } else {
+        console.error('[GameEmulator] Failed to initialize input manager');
+        this.inputManager = null;
+      }
+      
+    } catch (error) {
+      console.error('[GameEmulator] Error initializing input manager:', error);
+      this.inputManager = null;
+    }
+  }
+  
+  /**
+   * Load the input manager script
+   */
+  async loadInputManagerScript() {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'scripts/input/game-input-manager.js';
+      script.type = 'module';
+      script.onload = () => {
+        console.log('[GameEmulator] Input manager script loaded successfully');
+        resolve();
+      };
+      script.onerror = (error) => {
+        console.error('[GameEmulator] Failed to load input manager script:', error);
+        reject(new Error('Failed to load input manager script'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+
   hideGameEngine() {
     // Stop the game when closing the emulator
     if (this.isRunning) {
       console.log('[GameEmulator] Stopping game due to emulator panel close');
       this.stopProject();
+    }
+    
+    // Cleanup input manager
+    if (this.inputManager) {
+      this.inputManager.destroy();
+      this.inputManager = null;
+      console.log('[GameEmulator] Input manager cleaned up');
     }
     
     const contentWrapper = document.querySelector('.content-wrapper');
@@ -2614,6 +2767,82 @@ class GameEmulator {
       .script-content {
         color: #f8f9fa;
         background: #2d2d30;
+      }
+      
+      .key-mapping-display {
+        margin-top: 20px;
+        padding: 15px;
+        background: #2d2d30;
+        border-radius: 6px;
+        border: 1px solid #3c3c3c;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      }
+      
+      .key-mapping-display h4 {
+        margin: 0 0 15px 0;
+        color: #0078d4;
+        font-size: 16px;
+        text-align: center;
+      }
+      
+      .key-mapping-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        margin-bottom: 15px;
+      }
+      
+      .key-mapping-section h5 {
+        margin: 0 0 8px 0;
+        color: #f0f6fc;
+        font-size: 14px;
+        text-align: center;
+        border-bottom: 1px solid #3c3c3c;
+        padding-bottom: 4px;
+      }
+      
+      .key-mapping-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 8px;
+        background: #1e1e1e;
+        border-radius: 3px;
+        margin-bottom: 3px;
+      }
+      
+      .key-mapping-item .key {
+        background: #0078d4;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: 'Consolas', monospace;
+        font-size: 11px;
+        font-weight: bold;
+        min-width: 50px;
+        text-align: center;
+      }
+      
+      .key-mapping-item .button {
+        color: #cccccc;
+        font-size: 11px;
+        margin-left: 8px;
+      }
+      
+      .input-status {
+        text-align: center;
+        padding: 8px;
+        background: #1e1e1e;
+        border-radius: 3px;
+        color: #ffb74d;
+        font-size: 12px;
+        border: 1px dashed #3c3c3c;
+      }
+      
+      .input-status.active {
+        background: #0e5a1a;
+        color: #4caf50;
+        border-color: #4caf50;
       }
     `;
     

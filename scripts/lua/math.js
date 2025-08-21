@@ -14,7 +14,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Sin() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.sin(x);
-    console.log(`[Lua Math] Sin(${x}) = ${result}`);
     return result;
   }
 
@@ -25,7 +24,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Cos() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.cos(x);
-    console.log(`[Lua Math] Cos(${x}) = ${result}`);
     return result;
   }
 
@@ -36,7 +34,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Sqrt() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.sqrt(x);
-    console.log(`[Lua Math] Sqrt(${x}) = ${result}`);
     return result;
   }
 
@@ -48,7 +45,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const y = parseFloat(this.luaState.raw_tostring(3) || 0);
     const result = Math.pow(x, y);
-    console.log(`[Lua Math] Pow(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -60,7 +56,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const y = parseFloat(this.luaState.raw_tostring(2) || 0);
     const x = parseFloat(this.luaState.raw_tostring(3) || 0);
     const result = Math.atan2(y, x);
-    console.log(`[Lua Math] Atan2(${y}, ${x}) = ${result}`);
     return result;
   }
 
@@ -72,7 +67,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const y = parseFloat(this.luaState.raw_tostring(3) || 0);
     const result = Math.min(x, y);
-    console.log(`[Lua Math] Min(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -84,7 +78,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const y = parseFloat(this.luaState.raw_tostring(3) || 0);
     const result = Math.max(x, y);
-    console.log(`[Lua Math] Max(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -98,7 +91,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const max = parseFloat(this.luaState.raw_tostring(4) || 100);
     
     const result = Math.min(Math.max(value, min), max);
-    console.log(`[Lua Math] Clamp(${value}, ${min}, ${max}) = ${result}`);
     
     return result;
   }
@@ -110,7 +102,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Ceil() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.ceil(x);
-    console.log(`[Lua Math] Ceil(${x}) = ${result}`);
     return result;
   }
 
@@ -121,7 +112,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Floor() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.floor(x);
-    console.log(`[Lua Math] Floor(${x}) = ${result}`);
     return result;
   }
 
@@ -132,7 +122,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Round() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.round(x);
-    console.log(`[Lua Math] Round(${x}) = ${result}`);
     return result;
   }
 
@@ -143,7 +132,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Abs() {
     const x = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = Math.abs(x);
-    console.log(`[Lua Math] Abs(${x}) = ${result}`);
     return result;
   }
 
@@ -155,7 +143,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const y = parseInt(this.luaState.raw_tostring(3) || 0);
     const result = x & y;
-    console.log(`[Lua Math] And(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -166,7 +153,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   Not() {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const result = ~x;
-    console.log(`[Lua Math] Not(${x}) = ${result}`);
     return result;
   }
 
@@ -178,7 +164,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const y = parseInt(this.luaState.raw_tostring(3) || 0);
     const result = x | y;
-    console.log(`[Lua Math] Or(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -190,7 +175,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const y = parseInt(this.luaState.raw_tostring(3) || 0);
     const result = x ^ y;
-    console.log(`[Lua Math] Xor(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -202,7 +186,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const y = parseInt(this.luaState.raw_tostring(3) || 0);
     const result = x << y;
-    console.log(`[Lua Math] LShift(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -214,7 +197,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const x = parseInt(this.luaState.raw_tostring(2) || 0);
     const y = parseInt(this.luaState.raw_tostring(3) || 0);
     const result = x >> y;
-    console.log(`[Lua Math] RShift(${x}, ${y}) = ${result}`);
     return result;
   }
 
@@ -226,7 +208,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const min = parseInt(this.luaState.raw_tostring(2) || 0);
     const max = parseInt(this.luaState.raw_tostring(3) || 100);
     const result = Math.floor(Math.random() * (max - min)) + min;
-    console.log(`[Lua Math] Random(${min}, ${max}) = ${result}`);
     return result;
   }
 
@@ -237,7 +218,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   RadiansToDegrees() {
     const radians = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = radians * (180 / Math.PI);
-    console.log(`[Lua Math] RadiansToDegrees(${radians}) = ${result}`);
     return result;
   }
 
@@ -248,7 +228,6 @@ class LuaMathExtensions extends BaseLuaExtension {
   DegreesToRadians() {
     const degrees = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = degrees * (Math.PI / 180);
-    console.log(`[Lua Math] DegreesToRadians(${degrees}) = ${result}`);
     return result;
   }
 }
