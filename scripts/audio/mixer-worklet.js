@@ -86,6 +86,12 @@ class MixerWorklet extends AudioWorkletProcessor {
       } else if (e.data.type === 'start-playing') {
         this.isPlaying = true;
         console.log('[MixerWorklet] Started playing');
+      } else if (e.data.type === 'pause-audio') {
+        this.isPlaying = false;
+        console.log('[MixerWorklet] Paused audio (preserving state)');
+      } else if (e.data.type === 'resume-audio') {
+        this.isPlaying = true;
+        console.log('[MixerWorklet] Resumed audio');
       } else if (e.data.type === 'set-volume') {
         this.volume = Math.max(0, e.data.volume); // Allow volume > 1.0 for boost
       }
@@ -100,6 +106,11 @@ class MixerWorklet extends AudioWorkletProcessor {
     // Clear output
     for (let c = 0; c < numChannels; c++) {
       output[c].fill(0);
+    }
+    
+    // Only process and output audio if playing
+    if (!this.isPlaying) {
+      return true; // Return early but keep the processor alive
     }
     
     // Mix one-shot buffers (WAV files)
