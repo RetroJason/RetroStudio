@@ -298,7 +298,11 @@ class RibbonToolbar {
     
     this.setupButton('playProjectBtn', () => {
       if (window.gameEmulator) {
-        window.gameEmulator.playProject();
+        if (window.gameEmulator.isRunning) {
+          window.gameEmulator.stopProject();
+        } else {
+          window.gameEmulator.playProject();
+        }
       }
     });
     

@@ -1633,8 +1633,16 @@ class ProjectExplorer {
       this.expandToPath(newPath);
       
       // Update any open tabs with the renamed file
-      if (type === 'file' && window.gameEditor && window.gameEditor.tabManager) {
-        window.gameEditor.tabManager.updateFileReference(path, newPath, newName);
+      if (type === 'file') {
+        // Try multiple ways to get TabManager, similar to other parts of this file
+        const tabManager = window.tabManager || 
+                          window.serviceContainer?.get?.('tabManager') || 
+                          window.gameEmulator?.tabManager ||
+                          window.gameEditor?.tabManager;
+        
+        if (tabManager && typeof tabManager.updateFileReference === 'function') {
+          tabManager.updateFileReference(path, newPath, newName);
+        }
       }
       
       console.log(`[ProjectExplorer] Renamed: ${path} → ${newPath}`);
@@ -2064,7 +2072,10 @@ class ProjectExplorer {
 
     // Close open tabs for this project's files
     try {
-      const tm = window.gameEditor?.tabManager;
+      const tm = window.tabManager || 
+                 window.serviceContainer?.get?.('tabManager') || 
+                 window.gameEmulator?.tabManager ||
+                 window.gameEditor?.tabManager;
       if (tm && typeof tm.getAllTabs === 'function') {
         const tabs = tm.getAllTabs();
         for (const t of tabs) {

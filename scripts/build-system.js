@@ -119,8 +119,17 @@ class BuildSystem {
         }
       }
       
-  const totalTime = Date.now() - startTime;
+      const totalTime = Date.now() - startTime;
       console.log(`[BuildSystem] Build completed: ${successCount} success, ${errorCount} errors`);
+      
+      // Invalidate ALL cached resources after any build operation
+      const gameEmulator = window.serviceContainer?.get('gameEmulator') || window.gameEmulator;
+      if (gameEmulator && typeof gameEmulator.invalidateAllResourceCache === 'function') {
+        console.log(`[BuildSystem] Invalidating all resource cache after build completion`);
+        gameEmulator.invalidateAllResourceCache();
+      } else {
+        console.warn('[BuildSystem] GameEmulator not available for cache invalidation');
+      }
       
       // Note: Build files are added to the project explorer as they are built
       // No need to refresh from localStorage here
