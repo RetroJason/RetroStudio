@@ -1,81 +1,114 @@
 // resizer.js
-// Handles resizable panels in the editor layout
+// Handles resizable panels in the editor layout - supports both left and right panels
 
 class PanelResizer {
   constructor() {
-    this.isResizing = false;
-    this.startX = 0;
-    this.startWidth = 0;
-    this.minWidth = 32; // Width when collapsed (enough for toggle button + padding)
-    this.minExpandedWidth = 150; // Minimum when expanded (reduced from 200)
-    this.maxWidth = 600; // Increased max width
-    this.defaultWidth = 300;
-    this.isCollapsed = false;
-    this.lastExpandedWidth = this.defaultWidth;
-    
+    this.panels = new Map(); // Store multiple panel configurations
     this.initialize();
   }
   
   initialize() {
-    const resizer = document.getElementById('resizer');
-    const projectExplorer = document.getElementById('projectExplorer');
+    // Initialize left panel (project explorer)
+    this.initializePanel({
+      id: 'projectExplorer',
+      panelId: 'projectExplorer',
+      resizerId: 'resizer',
+      side: 'left',
+      minWidth: 32,
+      minExpandedWidth: 150,
+      maxWidth: 600,
+      defaultWidth: 300,
+      headerSelector: '.explorer-header'
+    });
     
-    if (!resizer || !projectExplorer) {
-      console.error('[PanelResizer] Required elements not found');
+    console.log('[PanelResizer] Initialized with support for left and right panels');
+  }
+  
+  // Initialize a panel with resizing and collapse functionality
+  initializePanel(config) {
+    const panel = document.getElementById(config.panelId);
+    const resizer = document.getElementById(config.resizerId);
+    
+    if (!panel || !resizer) {
+      console.error(`[PanelResizer] Panel elements not found for ${config.id}:`, {
+        panel: !!panel,
+        resizer: !!resizer
+      });
+      return false;
+    }
+    
+    const panelState = {
+      ...config,
+      panel: panel,
+      resizer: resizer,
+      isResizing: false,
+      startX: 0,
+      startWidth: 0,
+      isCollapsed: false,
+      lastExpandedWidth: config.defaultWidth,
+      toggleButton: null
+    };
+    
+    this.panels.set(config.id, panelState);
+    
+    // Ensure panel starts in expanded state
+    panel.classList.remove('collapsed');
+    resizer.classList.remove('collapsed-mode');
+    
+    this.setupEventListeners(panelState);
+    this.addCollapseButton(panelState);
+    this.addStyles();
+    
+    console.log(`[PanelResizer] Initialized ${config.side} panel: ${config.id}`);
+    return true;
+  }
+  
+  // Add collapse/expand toggle button to panel header
+  addCollapseButton(panelState) {
+    const header = panelState.panel.querySelector(panelState.headerSelector);
+    if (!header) {
+      console.warn(`[PanelResizer] Header not found for ${panelState.id} with selector: ${panelState.headerSelector}`);
       return;
     }
     
-    this.resizer = resizer;
-    this.projectExplorer = projectExplorer;
-    
-    // Ensure we start in expanded state
-    this.isCollapsed = false;
-    this.projectExplorer.classList.remove('collapsed');
-    this.resizer.classList.remove('collapsed-mode');
-    
-    this.setupEventListeners();
-    this.addCollapseButton();
-    this.addStyles();
-    
-    console.log('[PanelResizer] Initialized with enhanced collapse functionality - starting expanded');
-  }
-  
-  addCollapseButton() {
-    const explorerHeader = this.projectExplorer.querySelector('.explorer-header');
-    if (!explorerHeader) return;
-    
     // Create toggle button
     const toggleButton = document.createElement('button');
-    toggleButton.className = 'explorer-toggle-btn';
-    toggleButton.innerHTML = '◀';
-    toggleButton.title = 'Collapse Project Explorer';
+    toggleButton.className = `panel-toggle-btn ${panelState.id}-toggle-btn`;
     
-    // Add button to header
-    explorerHeader.appendChild(toggleButton);
+    // Set button direction based on panel side
+    if (panelState.side === 'left') {
+      toggleButton.innerHTML = '◀';
+      toggleButton.title = `Collapse ${panelState.id}`;
+    } else {
+      toggleButton.innerHTML = '▶';
+      toggleButton.title = `Collapse ${panelState.id}`;
+    }
+    
+    // Add to header (look for existing controls container or append directly)
+    const controlsContainer = header.querySelector('.header-controls');
+    if (controlsContainer) {
+      controlsContainer.insertBefore(toggleButton, controlsContainer.firstChild);
+    } else {
+      header.appendChild(toggleButton);
+    }
+    
+    // Ensure header has proper styling for collapsed state
+    header.style.position = 'relative';
+    
+    panelState.toggleButton = toggleButton;
     
     // Add click handler
-    toggleButton.addEventListener('click', () => {
-      this.toggle();
-    });
-    
-    this.toggleButton = toggleButton;
+    toggleButton.addEventListener('click', () => this.toggle(panelState.id));
   }
-  
+
+  // Add styles for panel resizing and collapsing
   addStyles() {
     if (document.querySelector('#panel-resizer-styles')) return;
     
     const style = document.createElement('style');
     style.id = 'panel-resizer-styles';
     style.textContent = `
-      .explorer-header {
-        position: relative;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 15px;
-      }
-      
-      .explorer-toggle-btn {
+      .panel-toggle-btn {
         background: #3c3c3c;
         border: none;
         color: #cccccc;
@@ -89,457 +122,335 @@ class PanelResizer {
         justify-content: center;
         transition: all 0.2s ease;
         flex-shrink: 0;
+        margin-left: 8px;
       }
       
-      .explorer-toggle-btn:hover {
-        background: #0078d4;
-        color: white;
+      .panel-toggle-btn:hover {
+        background: #404040;
+        color: #ffffff;
       }
       
-      .project-explorer {
-        transition: width 0.3s ease;
-        overflow: hidden;
-        min-width: 32px !important; /* Override CSS file constraint */
-      }
-      
-      .project-explorer.collapsed {
+      .project-explorer.collapsed,
+      .game-engine-panel.collapsed {
         width: 32px !important;
         min-width: 32px !important;
-        max-width: 32px !important;
-        flex-shrink: 0 !important;
-      }
-      
-      .project-explorer.collapsed .explorer-header h3,
-      .project-explorer.collapsed .explorer-tree {
-        opacity: 0;
-        pointer-events: none;
-        width: 0;
         overflow: hidden;
-        margin: 0;
-        padding: 0;
       }
       
-      .project-explorer.collapsed .explorer-header {
-        padding: 0;
-        justify-content: flex-start;
-        position: relative;
-        width: 100%;
+      .project-explorer.collapsed .explorer-tree,
+      .project-explorer.collapsed h3,
+      .game-engine-panel.collapsed .game-engine-tabs,
+      .game-engine-panel.collapsed .game-engine-content {
+        display: none;
+      }
+      
+      .project-explorer.collapsed .explorer-header,
+      .game-engine-panel.collapsed .game-engine-header {
+        padding: 0 !important;
+        margin: 0 !important;
+        width: 32px;
         display: flex;
         align-items: center;
+        justify-content: center;
       }
       
-      .project-explorer.collapsed .explorer-toggle-btn {
-        margin: 4px;
+      .project-explorer .explorer-header,
+      .game-engine-panel .game-engine-header {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+      }
+      
+      .project-explorer .explorer-header h3,
+      .project-explorer .explorer-header .header-title,
+      .game-engine-panel .game-engine-header h3,
+      .game-engine-panel .game-engine-header .header-title {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
+      }
+      
+      .project-explorer.collapsed .panel-toggle-btn,
+      .game-engine-panel.collapsed .panel-toggle-btn {
+        margin: 0 !important;
         position: relative;
-        flex-shrink: 0;
-      }
-        width: 24px;
-        overflow: visible;
+        left: 0 !important;
+        right: 0 !important;
       }
       
-      .project-explorer.collapsed .explorer-toggle-btn {
-        position: static;
-        margin: 10px 0;
-        width: 24px;
-        height: 32px;
-        border-radius: 0 4px 4px 0;
+      .resizer.collapsed-mode,
+      .game-engine-resizer.collapsed-mode {
+        background: #3c3c3c;
+        opacity: 0.5;
+      }
+      
+      .resizer,
+      .game-engine-resizer {
+        width: 4px;
+        background: #2d2d30;
+        cursor: ew-resize;
+        transition: background 0.2s ease;
+        position: relative;
+      }
+      
+      .resizer:hover,
+      .game-engine-resizer:hover {
         background: #0078d4;
-        transform: none;
       }
       
-      .resizer.collapsed-mode {
-        opacity: 0.3;
-        pointer-events: none;
+      .resizer-handle {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 2px;
+        height: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        align-items: center;
+        justify-content: center;
+      }
+      
+      .resizer-line {
+        width: 2px;
+        height: 4px;
+        background: #666666;
+        border-radius: 1px;
       }
     `;
     
     document.head.appendChild(style);
   }
-  
-  setupEventListeners() {
-    // Mouse events for desktop
-    this.resizer.addEventListener('mousedown', (e) => {
-      this.startResize(e);
-    });
+
+  // Set up event listeners for a panel
+  setupEventListeners(panelState) {
+    // Mouse events for resizing
+    panelState.resizer.addEventListener('mousedown', (e) => this.startResize(e, panelState.id));
+    document.addEventListener('mousemove', (e) => this.handleResize(e, panelState.id));
+    document.addEventListener('mouseup', () => this.stopResize(panelState.id));
     
-    document.addEventListener('mousemove', (e) => {
-      this.handleResize(e);
-    });
+    // Prevent text selection during resize
+    panelState.resizer.addEventListener('selectstart', (e) => e.preventDefault());
     
-    document.addEventListener('mouseup', () => {
-      this.stopResize();
-    });
-    
-    // Touch events for mobile/tablet
-    this.resizer.addEventListener('touchstart', (e) => {
-      this.startResize(e.touches[0]);
-    });
-    
-    document.addEventListener('touchmove', (e) => {
-      if (this.isResizing) {
-        e.preventDefault();
-        this.handleResize(e.touches[0]);
-      }
-    });
-    
-    document.addEventListener('touchend', () => {
-      this.stopResize();
-    });
+    // Handle double-click to toggle
+    panelState.resizer.addEventListener('dblclick', () => this.toggle(panelState.id));
   }
-  
-  startResize(event) {
-    this.isResizing = true;
-    this.startX = event.clientX;
-    this.startWidth = parseInt(window.getComputedStyle(this.projectExplorer).width, 10);
+
+  // Start resizing a panel
+  startResize(event, panelId) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState) return;
     
-    // Add visual feedback
-    this.resizer.classList.add('dragging');
-    document.body.style.cursor = 'col-resize';
+    panelState.isResizing = true;
+    panelState.startX = event.clientX;
+    panelState.startWidth = parseInt(window.getComputedStyle(panelState.panel).width, 10);
+    
+    document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
     
-    console.log(`[PanelResizer] Started resize from width: ${this.startWidth}px (collapsed: ${this.isCollapsed})`);
+    console.log(`[PanelResizer] Started resize for ${panelId} from width: ${panelState.startWidth}px`);
   }
   
-  handleResize(event) {
-    if (!this.isResizing) return;
+  // Handle resizing a panel
+  handleResize(event, panelId) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState || !panelState.isResizing) return;
     
-    const deltaX = event.clientX - this.startX;
-    let newWidth = this.startWidth + deltaX;
+    let deltaX = event.clientX - panelState.startX;
     
-    // Enhanced width constraints based on current state
-    if (this.isCollapsed) {
-      // When collapsed, only allow expanding past threshold
-      if (newWidth > this.minWidth + 20) { // Small buffer to prevent accidental expand
-        this.expand();
-        newWidth = Math.max(this.minExpandedWidth, newWidth);
+    // Reverse delta for right-side panels
+    if (panelState.side === 'right') {
+      deltaX = -deltaX;
+    }
+    
+    let newWidth = panelState.startWidth + deltaX;
+    
+    // Enhanced width constraints with hysteresis
+    const collapseThreshold = panelState.minExpandedWidth * 0.6; // 90px - collapse threshold
+    const expandThreshold = collapseThreshold + 20; // 110px - expand threshold (hysteresis)
+    
+    if (panelState.isCollapsed) {
+      // When collapsed, only allow expanding past the higher threshold
+      if (newWidth > expandThreshold) {
+        this.expand(panelId);
+        newWidth = Math.max(panelState.minExpandedWidth, newWidth);
       } else {
-        newWidth = this.minWidth;
+        newWidth = panelState.minWidth;
       }
     } else {
-      // When expanded, allow resizing down to collapsed width
-      if (newWidth < this.minWidth) {
-        this.collapse();
+      // When expanded, check for auto-collapse at the lower threshold
+      if (newWidth < collapseThreshold) {
+        this.collapse(panelId);
         return;
       }
-      // Allow resizing between minWidth and maxWidth when expanded
-      newWidth = Math.max(this.minWidth, Math.min(this.maxWidth, newWidth));
+      
+      // Allow resizing down to the collapse threshold, not the expand threshold
+      newWidth = Math.max(collapseThreshold, Math.min(panelState.maxWidth, newWidth));
     }
     
     // Apply the new width
-    this.projectExplorer.style.width = `${newWidth}px`;
+    panelState.panel.style.width = `${newWidth}px`;
 
-    // Notify listeners that layout width changed (throttled to animation frame)
-    this._scheduleResizeEvent();
-
-    // Emit a custom event with the live width so editors can resize precisely
-    this._emitResized(newWidth);
+    // Emit resize event
+    this._emitResized(panelId, newWidth);
   }
   
-  collapse() {
-    if (this.isCollapsed) return;
+  // Collapse a panel
+  collapse(panelId) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState || panelState.isCollapsed) return;
     
     // Save current width before collapsing
-    this.lastExpandedWidth = parseInt(window.getComputedStyle(this.projectExplorer).width, 10);
+    panelState.lastExpandedWidth = parseInt(window.getComputedStyle(panelState.panel).width, 10);
     
-    this.isCollapsed = true;
-    this.projectExplorer.classList.add('collapsed');
-    this.resizer.classList.add('collapsed-mode');
-    
-    // Update button if it exists
-    if (this.toggleButton) {
-      this.toggleButton.innerHTML = '▶';
-      this.toggleButton.title = 'Expand Project Explorer';
-    }
-    
-    // Force width to collapsed size and trigger layout recalculation
-    this.projectExplorer.style.width = `${this.minWidth}px`;
-    this.projectExplorer.style.minWidth = `${this.minWidth}px`;
-    this.projectExplorer.style.maxWidth = `${this.minWidth}px`;
-    
-    // Force immediate layout recalculation
-    setTimeout(() => {
-      this._scheduleResizeEvent();
-    }, 50); // Small delay to let CSS transition start
-    
-    this.saveCollapseState(true);
-    this._emitResized(this.minWidth);
-    
-    console.log('[PanelResizer] Collapsed project explorer');
-  }
-  
-  expand(targetWidth = null) {
-    if (!this.isCollapsed) return;
-    
-    this.isCollapsed = false;
-    this.projectExplorer.classList.remove('collapsed');
-    this.resizer.classList.remove('collapsed-mode');
+    panelState.isCollapsed = true;
+    panelState.panel.classList.add('collapsed');
+    panelState.resizer.classList.add('collapsed-mode');
     
     // Update button if it exists
-    if (this.toggleButton) {
-      this.toggleButton.innerHTML = '◀';
-      this.toggleButton.title = 'Collapse Project Explorer';
+    if (panelState.toggleButton) {
+      if (panelState.side === 'left') {
+        panelState.toggleButton.innerHTML = '▶';
+        panelState.toggleButton.title = `Expand ${panelState.id}`;
+      } else {
+        panelState.toggleButton.innerHTML = '◀';
+        panelState.toggleButton.title = `Expand ${panelState.id}`;
+      }
     }
     
-    // Restore to last expanded width or use target
-    const newWidth = targetWidth || this.lastExpandedWidth;
-    this.projectExplorer.style.width = `${newWidth}px`;
-    this.projectExplorer.style.minWidth = `${this.minExpandedWidth}px`;
-    this.projectExplorer.style.maxWidth = `${this.maxWidth}px`;
+    // Set collapsed width
+    panelState.panel.style.width = `${panelState.minWidth}px`;
     
-    // Force immediate layout recalculation
-    setTimeout(() => {
-      this._scheduleResizeEvent();
-    }, 50); // Small delay to let CSS transition start
+    this.saveCollapseState(panelId, true);
+    this._emitResized(panelId, panelState.minWidth);
     
-    this.saveCollapseState(false);
-    this._emitResized(newWidth);
-    
-    console.log(`[PanelResizer] Expanded project explorer to ${newWidth}px`);
+    console.log(`[PanelResizer] Collapsed ${panelId} panel`);
   }
-  
-  toggle() {
-    if (this.isCollapsed) {
-      this.expand();
+
+  // Expand a panel
+  expand(panelId, targetWidth = null) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState || !panelState.isCollapsed) return;
+    
+    panelState.isCollapsed = false;
+    panelState.panel.classList.remove('collapsed');
+    panelState.resizer.classList.remove('collapsed-mode');
+    
+    // Update button if it exists
+    if (panelState.toggleButton) {
+      if (panelState.side === 'left') {
+        panelState.toggleButton.innerHTML = '◀';
+        panelState.toggleButton.title = `Collapse ${panelState.id}`;
+      } else {
+        panelState.toggleButton.innerHTML = '▶';
+        panelState.toggleButton.title = `Collapse ${panelState.id}`;
+      }
+    }
+    
+    // Restore previous width or use target width
+    const newWidth = targetWidth || panelState.lastExpandedWidth;
+    panelState.panel.style.width = `${newWidth}px`;
+    
+    this.saveCollapseState(panelId, false);
+    this._emitResized(panelId, newWidth);
+    
+    console.log(`[PanelResizer] Expanded ${panelId} panel to ${newWidth}px`);
+  }
+
+  // Toggle collapse/expand state
+  toggle(panelId) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState) return;
+    
+    if (panelState.isCollapsed) {
+      this.expand(panelId);
     } else {
-      this.collapse();
+      this.collapse(panelId);
     }
   }
-  
-  stopResize() {
-    if (!this.isResizing) return;
+
+  // Stop resizing
+  stopResize(panelId) {
+    const panelState = this.panels.get(panelId);
+    if (panelState) {
+      panelState.isResizing = false;
+    }
     
-    this.isResizing = false;
-    
-    // Remove visual feedback
-    this.resizer.classList.remove('dragging');
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
-    
-    const finalWidth = parseInt(window.getComputedStyle(this.projectExplorer).width, 10);
-    console.log(`[PanelResizer] Finished resize at width: ${finalWidth}px (collapsed: ${this.isCollapsed})`);
-    
-    // Save the width preference (only if not collapsed)
-    if (!this.isCollapsed) {
-      this.saveWidthPreference(finalWidth);
-      this.lastExpandedWidth = finalWidth;
-    }
-
-    // Fire a final resize notification after drag ends
-    try { window.dispatchEvent(new Event('resize')); } catch (_) {}
-
-    // Emit final width via custom event
-    this._emitResized(finalWidth);
-  }
-  
-  saveWidthPreference(width) {
-    try {
-      // Only save width if we're not collapsed
-      if (!this.isCollapsed) {
-        localStorage.setItem('project-explorer-width', width.toString());
-        console.log(`[PanelResizer] Saved width preference: ${width}px`);
-      }
-    } catch (error) {
-      console.warn('[PanelResizer] Could not save width preference:', error);
-    }
-  }
-  
-  saveCollapseState(collapsed) {
-    try {
-      localStorage.setItem('project-explorer-collapsed', collapsed.toString());
-      console.log(`[PanelResizer] Saved collapse state: ${collapsed}`);
-    } catch (error) {
-      console.warn('[PanelResizer] Could not save collapse state:', error);
-    }
-  }
-  
-  loadWidthPreference() {
-    try {
-      console.log('[PanelResizer] Loading preferences...');
-      
-      // Ensure we start expanded by default
-      this.isCollapsed = false;
-      this.projectExplorer.classList.remove('collapsed');
-      this.resizer.classList.remove('collapsed-mode');
-      
-      // Load normal width first
-      const savedWidth = localStorage.getItem('project-explorer-width');
-      if (savedWidth) {
-        const width = parseInt(savedWidth, 10);
-        if (width >= this.minExpandedWidth && width <= this.maxWidth) {
-          this.projectExplorer.style.width = `${width}px`;
-          this.lastExpandedWidth = width;
-          console.log(`[PanelResizer] Loaded width preference: ${width}px`);
-        }
-      } else {
-        // Set default width if no preference saved
-        this.projectExplorer.style.width = `${this.defaultWidth}px`;
-        this.lastExpandedWidth = this.defaultWidth;
-        console.log(`[PanelResizer] Using default width: ${this.defaultWidth}px`);
-      }
-      
-      // TEMPORARY: Skip collapse state loading to always start expanded
-      // This can be removed later once we verify it works
-      console.log('[PanelResizer] Staying expanded (ignoring saved collapse state for now)');
-      
-      // Uncomment these lines later to restore collapse state loading:
-      /*
-      const savedCollapsed = localStorage.getItem('project-explorer-collapsed');
-      console.log(`[PanelResizer] Saved collapse state: ${savedCollapsed}`);
-      
-      if (savedCollapsed === 'true') {
-        console.log('[PanelResizer] Will collapse after delay...');
-        setTimeout(() => {
-          if (this.toggleButton) {
-            this.collapse();
-          } else {
-            console.warn('[PanelResizer] Toggle button not ready, staying expanded');
-          }
-        }, 200);
-        return true;
-      } else {
-        console.log('[PanelResizer] Staying expanded (default or saved preference)');
-      }
-      */
-      
-    } catch (error) {
-      console.warn('[PanelResizer] Could not load preferences:', error);
-    }
-    return false;
-  }
-  
-  // Public API
-  setWidth(width) {
-    if (this.isCollapsed) {
-      // If collapsed, save this as the target expansion width
-      this.lastExpandedWidth = Math.max(this.minExpandedWidth, Math.min(this.maxWidth, width));
-      this.saveWidthPreference(this.lastExpandedWidth);
-    } else {
-      // If expanded, apply immediately
-      const constrainedWidth = Math.max(this.minExpandedWidth, Math.min(this.maxWidth, width));
-      this.projectExplorer.style.width = `${constrainedWidth}px`;
-      this.lastExpandedWidth = constrainedWidth;
-      this.saveWidthPreference(constrainedWidth);
-    }
-  }
-  
-  getWidth() {
-    return parseInt(window.getComputedStyle(this.projectExplorer).width, 10);
-  }
-  
-  getEffectiveWidth() {
-    // Returns the width that would be used if expanded
-    return this.isCollapsed ? this.lastExpandedWidth : this.getWidth();
-  }
-  
-  resetToDefault() {
-    if (this.isCollapsed) {
-      this.expand(this.defaultWidth);
-    } else {
-      this.setWidth(this.defaultWidth);
-    }
-  }
-  
-  // New public methods for collapse functionality
-  isCollapsedState() {
-    return this.isCollapsed;
-  }
-  
-  forceCollapse() {
-    this.collapse();
-  }
-  
-  forceExpand(width = null) {
-    this.expand(width);
-  }
-  
-  // Clear saved preferences and reset to defaults
-  resetPreferences() {
-    try {
-      localStorage.removeItem('project-explorer-width');
-      localStorage.removeItem('project-explorer-collapsed');
-      console.log('[PanelResizer] Cleared saved preferences');
-      
-      // Reset to defaults
-      this.lastExpandedWidth = this.defaultWidth;
-      if (this.isCollapsed) {
-        this.expand(this.defaultWidth);
-      } else {
-        this.setWidth(this.defaultWidth);
-      }
-    } catch (error) {
-      console.warn('[PanelResizer] Could not clear preferences:', error);
-    }
   }
 
-  // Convenient static method to call from console
-  static clearAllPreferences() {
-    if (window.panelResizer) {
-      window.panelResizer.resetPreferences();
-      console.log('✅ Preferences cleared! Reload page to see defaults.');
-    } else {
-      console.warn('❌ PanelResizer not initialized yet');
-    }
-  }
-  
-  // Debug method to check current state
-  debugState() {
-    console.log('[PanelResizer] Debug State:');
-    console.log('- isCollapsed:', this.isCollapsed);
-    console.log('- Current width:', this.getWidth());
-    console.log('- Last expanded width:', this.lastExpandedWidth);
-    console.log('- Has collapsed class:', this.projectExplorer.classList.contains('collapsed'));
-    console.log('- Computed width:', window.getComputedStyle(this.projectExplorer).width);
-    console.log('- Toggle button exists:', !!this.toggleButton);
-    console.log('- LocalStorage collapsed:', localStorage.getItem('project-explorer-collapsed'));
-    console.log('- LocalStorage width:', localStorage.getItem('project-explorer-width'));
-  }
-
-  _scheduleResizeEvent() {
-    if (this._resizeScheduled) return;
-    this._resizeScheduled = true;
-    requestAnimationFrame(() => {
-      this._resizeScheduled = false;
-      // Force layout recalculation
-      this.projectExplorer.offsetWidth; // Trigger reflow
-      try { 
-        window.dispatchEvent(new Event('resize')); 
-      } catch (_) {}
-      
-      // Also notify main content areas that layout changed
-      const mainContent = document.querySelector('.main-content');
-      if (mainContent) {
-        mainContent.dispatchEvent(new CustomEvent('layout-changed', {
-          detail: { 
-            explorerWidth: this.getWidth(),
-            isCollapsed: this.isCollapsed 
-          }
-        }));
-      }
+  // Add a right panel (like game emulator)
+  addRightPanel(config) {
+    return this.initializePanel({
+      ...config,
+      side: 'right'
     });
   }
 
-  _emitResized(width) {
+  // Remove a panel
+  removePanel(panelId) {
+    const panelState = this.panels.get(panelId);
+    if (panelState && panelState.toggleButton) {
+      panelState.toggleButton.remove();
+    }
+    this.panels.delete(panelId);
+  }
+
+  // Get panel state
+  getPanelState(panelId) {
+    return this.panels.get(panelId);
+  }
+
+  // Check if panel is collapsed
+  isCollapsed(panelId) {
+    const panelState = this.panels.get(panelId);
+    return panelState ? panelState.isCollapsed : false;
+  }
+
+  // Public API methods for external use
+  collapsePanel(panelId) {
+    this.collapse(panelId);
+  }
+
+  expandPanel(panelId) {
+    this.expand(panelId);
+  }
+
+  togglePanel(panelId) {
+    this.toggle(panelId);
+  }
+
+  // Utility methods
+  _emitResized(panelId, width) {
+    window.dispatchEvent(new CustomEvent('panelResized', {
+      detail: { panelId, width }
+    }));
+  }
+
+  saveCollapseState(panelId, collapsed) {
     try {
-      const evt = new CustomEvent('project-explorer.resized', { detail: { width } });
-      window.dispatchEvent(evt);
-    } catch (_) {
-      // Fallback if CustomEvent unsupported (very old browsers)
-      try { window.dispatchEvent(new Event('project-explorer.resized')); } catch (__) {}
+      localStorage.setItem(`panel-${panelId}-collapsed`, collapsed.toString());
+    } catch (e) {
+      console.warn('[PanelResizer] Could not save collapse state:', e);
+    }
+  }
+
+  loadCollapseState(panelId) {
+    try {
+      const saved = localStorage.getItem(`panel-${panelId}-collapsed`);
+      return saved === 'true';
+    } catch (e) {
+      console.warn('[PanelResizer] Could not load collapse state:', e);
+      return false;
     }
   }
 }
 
-// Initialize when DOM is ready
+// Initialize the panel resizer when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-  console.log('[PanelResizer] DOM ready, initializing...');
   window.panelResizer = new PanelResizer();
-  
-  // Load saved width preference after a short delay to ensure layout is ready
-  setTimeout(() => {
-    console.log('[PanelResizer] Loading preferences after delay...');
-    window.panelResizer.loadWidthPreference();
-  }, 150);
 });
-
-// Export for use
-window.PanelResizer = PanelResizer;
