@@ -2048,31 +2048,23 @@ class GameEmulator {
       // Get the print buffer from Lua
       const bufferSize = this.luaState.execute('return #_print_buffer');
       if (bufferSize > 0) {
-        // Extract all items from the buffer
+        // Extract all items from the buffer and write directly to console
         for (let i = 1; i <= bufferSize; i++) {
           const output = this.luaState.execute(`return _print_buffer[${i}]`);
           this.printOutput.push(output);
+          
+          // Write directly to GameConsole (or fallback)
+          if (this.gameConsole) {
+            this.gameConsole.writeToConsole(output, true);
+          }
         }
         
         // Clear the buffer
         this.luaState.execute('_print_buffer = {}');
-        
-        // Update the game engine output display
-        this.updateGameEngineOutput();
       }
     } catch (error) {
       // Silently ignore errors in print capture to avoid disrupting the game loop
       console.warn('[GameEmulator] Error capturing print output:', error.message);
-    }
-  }
-
-  updateGameEngineOutput() {
-    // Update the output console in the game engine panel
-    const outputContent = document.querySelector('.console-content');
-    if (outputContent && this.printOutput) {
-      // Show last 100 lines to prevent memory issues
-      const recentOutput = this.printOutput.slice(-100);
-      this.setConsoleContent(recentOutput);
     }
   }
 
@@ -2486,12 +2478,8 @@ class GameEmulator {
       </div>
     `;
 
-    // Initialize console with existing output
-    if (output && output.trim() !== 'No output yet...') {
-      this.setConsoleContent(output);
-    } else {
-      this.rawConsoleMessages = [];
-    }
+    // Initialize empty console - only Lua print() should write to it
+    this.rawConsoleMessages = [];
 
     // Setup console monitoring and event listeners
     this.setupConsoleMonitoring();
@@ -2891,83 +2879,22 @@ class GameEmulator {
     resultsWindow.document.close();
   }
 
-  // Centralized console output method - ALL console writes must go through this
+  // ========================================
+  // SIMPLIFIED CONSOLE SYSTEM 
+  // Only Lua print() should write to console
+  // ========================================
+  
+  // Legacy writeToConsole - now only used as fallback for GameConsole delegation
   writeToConsole(text, append = true) {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    // Initialize buffer if needed
-    if (!this.rawConsoleMessages) {
-      this.rawConsoleMessages = [];
-    }
-
-    // Set flag to prevent observer from triggering
-    this.isInternalWrite = true;
-
-    if (append) {
-      // Add to buffer
-      const textStr = String(text);
-      if (textStr.endsWith('\n')) {
-        this.rawConsoleMessages.push(textStr);
-      } else {
-        this.rawConsoleMessages.push(textStr + '\n');
-      }
-    } else {
-      // Replace entire buffer (for bulk operations)
-      if (typeof text === 'string') {
-        const lines = text.split('\n');
-        this.rawConsoleMessages = [];
-        for (const line of lines) {
-          if (line.trim() || this.rawConsoleMessages.length > 0) {
-            this.rawConsoleMessages.push(line + '\n');
-          }
-        }
-      } else if (Array.isArray(text)) {
-        this.rawConsoleMessages = text.map(line => {
-          const lineStr = String(line);
-          return lineStr.endsWith('\n') ? lineStr : lineStr + '\n';
-        });
-      }
-    }
-
-    // Apply current filter or show all
-    const filterInput = this.contentContainer.querySelector('#console-filter-input');
-    const filterValue = filterInput ? filterInput.value.trim() : '';
-    
-    if (filterValue) {
-      this.applyConsoleFilter(filterValue);
-    } else {
-      // No filter, show all content
-      consoleOutput.textContent = this.rawConsoleMessages.join('');
-    }
-
-    // Auto-scroll to bottom
-    consoleOutput.scrollTop = consoleOutput.scrollHeight;
-
-    // Clear flag to re-enable observer
-    this.isInternalWrite = false;
+    // NOTE: This method should no longer be called directly
+    // All console output should come from Lua print() -> captureLuaPrintOutput()
+    console.warn('[GameEmulator] writeToConsole called directly - should only use Lua print()');
   }
 
-  // Setup console monitoring to track external changes (fallback only)
+  // Setup console monitoring (legacy compatibility)
   setupConsoleMonitoring() {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    // Setup MutationObserver as a fallback for external changes
-    this.consoleObserver = new MutationObserver((mutations) => {
-      // Only sync if change came from outside our writeToConsole method
-      if (!this.isInternalWrite) {
-        console.warn('[GameEmulator] External console modification detected - this should use writeToConsole()');
-        this.syncConsoleBufferFromDOM();
-      }
-    });
-
-    // Start observing
-    this.consoleObserver.observe(consoleOutput, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+    // No longer needed - GameConsole handles its own monitoring
+    // This method exists for compatibility with old code that calls it
   }
 
   // Fallback sync method for external modifications
@@ -2991,26 +2918,13 @@ class GameEmulator {
     }
   }
 
-  // Public API for console management
+  // Legacy methods - no longer used with Lua print() only approach
   addToConsole(message, type = 'info') {
-    const timestamp = new Date().toLocaleTimeString();
-    const prefix = type === 'error' ? '❌' : type === 'warn' ? '⚠️' : 'ℹ️';
-    const formattedMessage = `[${timestamp}] ${prefix} ${message}`;
-    
-    this.writeToConsole(formattedMessage, true);
+    console.warn('[GameEmulator] addToConsole called - should only use Lua print()');
   }
 
-  // Set console content from array (for bulk updates like printOutput)
   setConsoleContent(outputArray) {
-    this.isInternalWrite = true;
-    
-    if (Array.isArray(outputArray)) {
-      this.writeToConsole(outputArray, false);
-    } else if (typeof outputArray === 'string') {
-      this.writeToConsole(outputArray, false);
-    }
-    
-    this.isInternalWrite = false;
+    console.warn('[GameEmulator] setConsoleContent called - should only use Lua print()');
   }
 
   clearConsole() {
@@ -3139,58 +3053,20 @@ class GameEmulator {
     return true;
   }
   
-  // Apply console filter (called by writeToConsole and filter input)
-  applyConsoleFilter(filterStr) {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput || !this.rawConsoleMessages) return;
-
-    const filter = this.parseFilterString(filterStr);
-    
-    // Only set flag if not already set (to avoid clearing it prematurely when called from writeToConsole)
-    const wasInternalWrite = this.isInternalWrite;
-    if (!wasInternalWrite) {
-      this.isInternalWrite = true;
-    }
-    
-    if (!filter || filterStr.trim() === '') {
-      // No filter, show all messages
-      consoleOutput.textContent = this.rawConsoleMessages.join('');
-    } else {
-      // Apply filter
-      const filteredLines = this.rawConsoleMessages.filter(line => this.matchesFilter(line, filter));
-      consoleOutput.textContent = filteredLines.join('');
-    }
-    
-    // Auto-scroll to bottom
-    consoleOutput.scrollTop = consoleOutput.scrollHeight;
-    
-    // Only clear flag if we set it (don't clear if it was already set by caller)
-    if (!wasInternalWrite) {
-      this.isInternalWrite = false;
+  // Apply console filter (legacy compatibility) 
+  applyConsoleFilter(filterValue) {
+    // Delegate to GameConsole if available
+    if (this.gameConsole) {
+      this.gameConsole.applyFilter(filterValue);
     }
   }
   
-  // Download console logs (unfiltered)
+  // Download console logs (legacy compatibility)
   downloadConsoleLogs() {
-    if (!this.rawConsoleMessages || this.rawConsoleMessages.length === 0) {
-      alert('No console logs to download');
-      return;
+    // Delegate to GameConsole if available  
+    if (this.gameConsole) {
+      this.gameConsole.downloadLogs();
     }
-    
-    const logContent = this.rawConsoleMessages.join('');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `console-logs-${timestamp}.txt`;
-    
-    const blob = new Blob([logContent], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   }
 
   // ========================================
@@ -3216,9 +3092,6 @@ class GameEmulator {
     if (!this.rawConsoleMessages) {
       this.rawConsoleMessages = [];
     }
-
-    // Set flag to prevent observer from triggering
-    this.isInternalWrite = true;
 
     if (append) {
       // Add to buffer
@@ -3259,9 +3132,6 @@ class GameEmulator {
 
     // Auto-scroll to bottom
     consoleOutput.scrollTop = consoleOutput.scrollHeight;
-
-    // Clear flag to re-enable observer
-    this.isInternalWrite = false;
   }
 
   // Override setConsoleContent to delegate to GameConsole
@@ -3270,20 +3140,29 @@ class GameEmulator {
       this.gameConsole.setMessages(outputArray);
     } else {
       // Fallback to original method
-      this.isInternalWrite = true;
-      
       if (Array.isArray(outputArray)) {
         this.originalWriteToConsole(outputArray, false);
       } else if (typeof outputArray === 'string') {
         this.originalWriteToConsole(outputArray, false);
       }
-      
-      this.isInternalWrite = false;
     }
   }
 
   // Override clearConsole to delegate to GameConsole
   clearConsole() {
+    // Clear local print output array
+    this.printOutput = [];
+    
+    // Clear Lua print buffer if Lua state exists
+    if (this.luaState) {
+      try {
+        this.luaState.execute('_print_buffer = {}');
+      } catch (error) {
+        console.warn('[GameEmulator] Error clearing Lua print buffer:', error.message);
+      }
+    }
+    
+    // Clear the GameConsole display
     if (this.gameConsole) {
       this.gameConsole.clearConsole();
     } else {
@@ -3302,13 +3181,8 @@ class GameEmulator {
     }
     this.consoleInitialized = false;
     
-    // Original cleanup
-    if (this.consoleObserver) {
-      this.consoleObserver.disconnect();
-      this.consoleObserver = null;
-    }
+    // Clear console data
     this.rawConsoleMessages = [];
-    this.isInternalWrite = false;
   }
 
   // Open the console panel programmatically
