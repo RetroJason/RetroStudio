@@ -203,6 +203,19 @@ class LuaExtensionLoader {
   }
 
   /**
+   * Reset all extensions (clear state for reload)
+   */
+  resetExtensions() {
+    console.log('[LuaExtensionLoader] Resetting all extensions...');
+    for (const [categoryName, extension] of this.extensions) {
+      if (typeof extension.reset === 'function') {
+        extension.reset();
+        console.log(`[LuaExtensionLoader] Reset ${categoryName} extension`);
+      }
+    }
+  }
+
+  /**
    * Generate IntelliSense definitions (for future use)
    */
   generateIntelliSenseDefinitions() {

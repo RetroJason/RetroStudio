@@ -99,7 +99,56 @@
     {
       "name": "Input",
       "description": "Keyboard and mouse input functions",
-      "functions": []
+      "functions": [
+        {
+          "name": "GetKeysHeld",
+          "description": "Returns a bit array of keys currently held",
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of currently held keys"},
+          "example": "Input.GetKeysHeld()"
+        },
+        {
+          "name": "GetKeysPressed", 
+          "description": "Returns the keys pressed since last update",
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of keys pressed this frame"},
+          "example": "Input.GetKeysPressed()"
+        },
+        {
+          "name": "GetKeysReleased",
+          "description": "Returns the keys released since last update", 
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of keys released this frame"},
+          "example": "Input.GetKeysReleased()"
+        },
+        {
+          "name": "IsKeyHeld",
+          "description": "Returns true if the key is held",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key is currently held"},
+          "example": "Input.IsKeyHeld(Input.Buttons.A)"
+        },
+        {
+          "name": "IsKeyPressed",
+          "description": "Returns true if the key was pressed this frame",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key was pressed this frame"},
+          "example": "Input.IsKeyPressed(Input.Buttons.A)"
+        },
+        {
+          "name": "IsKeyReleased",
+          "description": "Returns true if the key was released this frame",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key was released this frame"},
+          "example": "Input.IsKeyReleased(Input.Buttons.A)"
+        }
+      ]
     },
     {
       "name": "Math",

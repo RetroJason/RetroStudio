@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Input Test - RetroStudio</title>
+    <link rel="stylesheet" href="style/main.css">
+    <style>
+        body {
+            background: #1e1e1e;
+            color: #cccccc;
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        
+        .test-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 20px;
+        }
+        
+        .main-content {
+            background: #2d2d30;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #3c3c3c;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #0078d4;
+        }
+        
+        .header h1 {
+            margin: 0;
+            color: #0078d4;
+            font-size: 24px;
+        }
+        
+        .instructions {
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #0078d4;
+        }
+        
+        .instructions ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin-bottom: 8px;
+        }
+        
+        .load-script-section {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .btn {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            background: #106ebe;
+        }
+        
+        .btn.success {
+            background: #28a745;
+        }
+        
+        .btn.success:hover {
+            background: #1e7e34;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.info {
+            background: #1e3a8a;
+            color: #93c5fd;
+        }
+        
+        .status.success {
+            background: #0e5a1a;
+            color: #4caf50;
+        }
+        
+        .status.error {
+            background: #7f1d1d;
+            color: #fca5a5;
+        }
+        
+        .game-area {
+            background: #2d2d30;
+            border-radius: 8px;
+            border: 1px solid #3c3c3c;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        .sidebar {
+            background: #2d2d30;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #3c3c3c;
+            min-height: 600px;
+            width: 350px;
+        }
+        
+        .sidebar h3 {
+            margin: 0 0 15px 0;
+            color: #0078d4;
+            text-align: center;
+        }
+        
+        .console-output {
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            height: 500px;
+            overflow-y: auto;
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <div class="main-content">
+            <div class="header">
+                <h1>🎮 Input System Test</h1>
+                <p>Test keyboard input functionality for RetroStudio games</p>
+            </div>
+            
+            <div class="instructions">
+                <h3>How to test:</h3>
+                <ol>
+                    <li>Click "Load Input Test Script" to load the test Lua script</li>
+                    <li>Wait for the game emulator to start</li>
+                    <li>Click on the game canvas to activate input capture</li>
+                    <li>Press the mapped keys to see debug output</li>
+                    <li>Check the console output on the right for detailed messages</li>
+                </ol>
+            </div>
+            
+            <div class="load-script-section">
+                <button id="loadTestBtn" class="btn">Load Input Test Script</button>
+                <button id="stopTestBtn" class="btn" style="background: #dc3545;" disabled>Stop Test</button>
+                <div id="statusMessage" class="status info" style="display: none;">Ready to load test script</div>
+            </div>
+            
+            <div id="gameArea" class="game-area">
+                Click "Load Input Test Script" to start
+            </div>
+        </div>
+        
+        <div class="sidebar">
+            <h3>📋 Console Output</h3>
+            <div id="consoleOutput" class="console-output">
+                Waiting for test script to load...
+            </div>
+            <div style="margin-top: 10px; text-align: center;">
+                <button id="clearConsoleBtn" class="btn" style="background: #6c757d;">Clear Console</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/services/service-container.js"></script>
+    <script src="scripts/services/file-io-service.js"></script>
+    <script src="scripts/game-emulator.js"></script>
+    
+    <script>
+        let gameEmulator = null;
+        let consoleOutput = '';
+        
+        // Override console.log to capture output
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+            // Call original console.log
+            originalConsoleLog.apply(console, args);
+            
+            // Capture for our display
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            
+            consoleOutput += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            updateConsoleDisplay();
+        };
+        
+        function updateConsoleDisplay() {
+            const console = document.getElementById('consoleOutput');
+            console.textContent = consoleOutput;
+            console.scrollTop = console.scrollHeight;
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+            statusEl.style.display = 'block';
+        }
+        
+        async function loadTestScript() {
+            const loadBtn = document.getElementById('loadTestBtn');
+            const stopBtn = document.getElementById('stopTestBtn');
+            const gameArea = document.getElementById('gameArea');
+            
+            try {
+                loadBtn.disabled = true;
+                updateStatus('Initializing game emulator...', 'info');
+                
+                // Initialize services if not already done
+                if (!window.serviceContainer) {
+                    window.serviceContainer = new ServiceContainer();
+                    window.serviceContainer.register('fileIOService', new FileIOService());
+                }
+                
+                // Initialize game emulator
+                if (!gameEmulator) {
+                    gameEmulator = new GameEmulator();
+                    window.gameEmulator = gameEmulator;
+                    
+                    // Wait for initialization
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
+                updateStatus('Loading test script...', 'info');
+                
+                // Create a mock project structure with our test script
+                const testScript = await fetch('test-input.lua').then(r => r.text());
+                
+                // Override the concatenation method to use our test script
+                gameEmulator.concatenateLuaScripts = async function() {
+                    return {
+                        content: testScript,
+                        fileCount: 1,
+                        hasSetup: true,
+                        files: ['test-input.lua']
+                    };
+                };
+                
+                updateStatus('Starting game emulator...', 'info');
+                
+                // Replace game area with emulator
+                gameArea.innerHTML = '';
+                
+                // Start the game
+                await gameEmulator.playProject();
+                
+                updateStatus('✅ Input test loaded! Click the canvas and press keys!', 'success');
+                stopBtn.disabled = false;
+                
+            } catch (error) {
+                console.error('Failed to load test script:', error);
+                updateStatus('❌ Failed to load test script: ' + error.message, 'error');
+                loadBtn.disabled = false;
+            }
+        }
+        
+        function stopTest() {
+            const loadBtn = document.getElementById('loadTestBtn');
+            const stopBtn = document.getElementById('stopTestBtn');
+            
+            if (gameEmulator) {
+                gameEmulator.hideGameEngine();
+                updateStatus('Test stopped', 'info');
+            }
+            
+            loadBtn.disabled = false;
+            stopBtn.disabled = true;
+            
+            document.getElementById('gameArea').innerHTML = 'Click "Load Input Test Script" to start';
+        }
+        
+        function clearConsole() {
+            consoleOutput = '';
+            updateConsoleDisplay();
+        }
+        
+        // Event listeners
+        document.getElementById('loadTestBtn').addEventListener('click', loadTestScript);
+        document.getElementById('stopTestBtn').addEventListener('click', stopTest);
+        document.getElementById('clearConsoleBtn').addEventListener('click', clearConsole);
+        
+        // Initial setup
+        updateStatus('Ready to load input test script', 'info');
+        console.log('Input Test Page loaded. Click "Load Input Test Script" to begin.');
+    </script>
+</body>
+</html>
