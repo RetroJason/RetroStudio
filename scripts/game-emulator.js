@@ -18,10 +18,6 @@ class GameEmulator {
     // Input management
     this.inputManager = null; // Game input manager for keyboard capture
     
-    // Console management - NEW
-    this.gameConsole = null;
-    this.consoleInitialized = false;
-    
     // Set up project paths configuration
     this.setupProjectPaths();
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
@@ -172,65 +168,8 @@ class GameEmulator {
     return !!this.buildSystem;
   }
   
-  // Load external scripts dynamically for self-contained module
-  async loadScript(src) {
-    return new Promise((resolve, reject) => {
-      // Check if script is already loaded
-      const existingScript = document.querySelector(`script[src="${src}"]`);
-      if (existingScript) {
-        resolve();
-        return;
-      }
-      
-      const script = document.createElement('script');
-      script.src = src;
-      script.onload = resolve;
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-  }
-  
-  // Initialize console module
-  async initializeConsole() {
-    if (this.consoleInitialized) return;
-    
-    try {
-      // Load console script if not already loaded
-      if (typeof GameConsole === 'undefined') {
-        await this.loadScript('scripts/game-emulator/console.js');
-      }
-      
-      // Create console container in the slide panel
-      const consoleSlidePanel = this.contentContainer.querySelector('#consoleSlidePanel');
-      if (consoleSlidePanel) {
-        // Clear existing content and create console container
-        consoleSlidePanel.innerHTML = '<div id="game-console-container" class="console-container"></div>';
-        
-        // Initialize GameConsole
-        this.gameConsole = new GameConsole({
-          showTimestamps: false,
-          maxMessages: 5000,
-          autoScroll: true
-        });
-        
-        const consoleContainer = consoleSlidePanel.querySelector('#game-console-container');
-        this.gameConsole.initialize(consoleContainer);
-        
-        this.consoleInitialized = true;
-        console.log('[GameEmulator] Console module initialized');
-      } else {
-        console.error('[GameEmulator] Console slide panel not found');
-      }
-    } catch (error) {
-      console.error('[GameEmulator] Failed to initialize console:', error);
-    }
-  }
-  
   setupUI() {
     // The ribbon toolbar handles its own button setup
-    // Initialize console module
-    this.initializeConsole();
-    
     // TODO: Add proper keyboard shortcuts later without interfering with Monaco Editor
     console.log('[GameEmulator] UI setup complete - keyboard shortcuts disabled for now');
   }
@@ -2077,10 +2016,10 @@ class GameEmulator {
   }
 
   showGameEngine(scriptData) {
-    // NOTE: No longer rebuilding entire DOM - this was leftover from old tab-switching behavior
-    // The UI is already rendered from initialization, just need to initialize input manager
+    // Update game engine panel content with new script data
+    this.renderGameEngineContent(scriptData);
     
-    // Initialize input manager for the game
+    // Initialize input manager after panel is updated
     this.initializeInputManager();
   }
   
@@ -2419,7 +2358,17 @@ class GameEmulator {
         
         <!-- Console Slide Panel -->
         <div class="console-slide-panel" id="consoleSlidePanel">
-          <!-- GameConsole will be rendered here -->
+          <div class="console-header">
+            <span>Debug Console</span>
+          </div>
+          <div class="console-content">
+            <div class="console-output" id="console-output"></div>
+          </div>
+          <div class="console-footer">
+            <button class="console-clear-btn" title="Clear Console">Clear</button>
+            <input type="text" class="console-filter-input" id="console-filter-input" placeholder="Filter: +word -exclude &quot;exact&quot;" title="Filter syntax: +required -exclude &quot;exact match&quot;">
+            <button class="console-download-btn" id="console-download-btn" title="Download Console Logs">📥</button>
+          </div>
         </div>
       </div>
       
@@ -3193,116 +3142,8 @@ class GameEmulator {
     URL.revokeObjectURL(url);
   }
 
-  // ========================================
-  // CONSOLE WRAPPER METHODS
-  // ========================================
-  
-  // Override existing writeToConsole to delegate to GameConsole
-  writeToConsole(text, append = true) {
-    if (this.gameConsole) {
-      this.gameConsole.writeToConsole(text, append);
-    } else {
-      // Fallback: call original method if GameConsole not ready
-      this.originalWriteToConsole(text, append);
-    }
-  }
-
-  // Store reference to original method
-  originalWriteToConsole(text, append = true) {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    // Initialize buffer if needed
-    if (!this.rawConsoleMessages) {
-      this.rawConsoleMessages = [];
-    }
-
-    // Set flag to prevent observer from triggering
-    this.isInternalWrite = true;
-
-    if (append) {
-      // Add to buffer
-      const textStr = String(text);
-      if (textStr.endsWith('\n')) {
-        this.rawConsoleMessages.push(textStr);
-      } else {
-        this.rawConsoleMessages.push(textStr + '\n');
-      }
-    } else {
-      // Replace entire buffer (for bulk operations)
-      if (typeof text === 'string') {
-        const lines = text.split('\n');
-        this.rawConsoleMessages = [];
-        for (const line of lines) {
-          if (line.trim() || this.rawConsoleMessages.length > 0) {
-            this.rawConsoleMessages.push(line + '\n');
-          }
-        }
-      } else if (Array.isArray(text)) {
-        this.rawConsoleMessages = text.map(line => {
-          const lineStr = String(line);
-          return lineStr.endsWith('\n') ? lineStr : lineStr + '\n';
-        });
-      }
-    }
-
-    // Apply current filter or show all
-    const filterInput = this.contentContainer.querySelector('#console-filter-input');
-    const filterValue = filterInput ? filterInput.value.trim() : '';
-    
-    if (filterValue) {
-      this.applyConsoleFilter(filterValue);
-    } else {
-      // No filter, show all content
-      consoleOutput.textContent = this.rawConsoleMessages.join('');
-    }
-
-    // Auto-scroll to bottom
-    consoleOutput.scrollTop = consoleOutput.scrollHeight;
-
-    // Clear flag to re-enable observer
-    this.isInternalWrite = false;
-  }
-
-  // Override setConsoleContent to delegate to GameConsole
-  setConsoleContent(outputArray) {
-    if (this.gameConsole) {
-      this.gameConsole.setMessages(outputArray);
-    } else {
-      // Fallback to original method
-      this.isInternalWrite = true;
-      
-      if (Array.isArray(outputArray)) {
-        this.originalWriteToConsole(outputArray, false);
-      } else if (typeof outputArray === 'string') {
-        this.originalWriteToConsole(outputArray, false);
-      }
-      
-      this.isInternalWrite = false;
-    }
-  }
-
-  // Override clearConsole to delegate to GameConsole
-  clearConsole() {
-    if (this.gameConsole) {
-      this.gameConsole.clearConsole();
-    } else {
-      // Fallback to original method
-      this.rawConsoleMessages = [];
-      this.originalWriteToConsole('', false);
-    }
-  }
-
   // Cleanup method for when the component is destroyed
   cleanup() {
-    // Cleanup GameConsole first
-    if (this.gameConsole) {
-      this.gameConsole.cleanup();
-      this.gameConsole = null;
-    }
-    this.consoleInitialized = false;
-    
-    // Original cleanup
     if (this.consoleObserver) {
       this.consoleObserver.disconnect();
       this.consoleObserver = null;
