@@ -228,6 +228,11 @@ class PanelResizer {
         background: #666666;
         border-radius: 1px;
       }
+      
+      /* Console slide panel adjustments - margin to position canvas correctly */
+      .game-main-area.console-open .game-canvas-container {
+        margin-right: 350px; /* Position canvas to avoid overlap with console */
+      }
     `;
     
     document.head.appendChild(style);
@@ -453,6 +458,66 @@ class PanelResizer {
 
   togglePanel(panelId) {
     this.toggle(panelId);
+  }
+
+  // Request a resize from external components
+  requestResize(panelId, options = {}) {
+    const panelState = this.panels.get(panelId);
+    if (!panelState) {
+      console.warn(`[PanelResizer] Panel ${panelId} not found for resize request`);
+      return false;
+    }
+
+    // Handle different resize request types
+    if (options.adjustForSlidePanel !== undefined) {
+      const mainArea = panelState.panel.querySelector('.game-main-area');
+      if (!mainArea) {
+        console.warn(`[PanelResizer] Main area not found in panel ${panelId}`);
+        return false;
+      }
+
+      const currentWidth = parseInt(window.getComputedStyle(panelState.panel).width, 10);
+      const consoleWidth = 350; // Width of the console panel
+      const isCurrentlyOpen = mainArea.classList.contains('console-open');
+
+      if (options.adjustForSlidePanel && !isCurrentlyOpen) {
+        // Expand the panel to accommodate the console
+        const newWidth = currentWidth + consoleWidth;
+        panelState.panel.style.width = `${newWidth}px`;
+        mainArea.classList.add('console-open');
+        
+        // Store the original width before expansion
+        if (!panelState.widthBeforeConsole) {
+          panelState.widthBeforeConsole = currentWidth;
+        }
+      } else if (!options.adjustForSlidePanel && isCurrentlyOpen) {
+        // Contract the panel back to original size
+        const originalWidth = panelState.widthBeforeConsole || (currentWidth - consoleWidth);
+        panelState.panel.style.width = `${originalWidth}px`;
+        mainArea.classList.remove('console-open');
+        
+        // Clear the stored width
+        panelState.widthBeforeConsole = null;
+      }
+
+      // Emit resize event to notify other components
+      this._emitResized(panelId, parseInt(window.getComputedStyle(panelState.panel).width, 10));
+      
+      console.log(`[PanelResizer] Applied slide panel adjustment for ${panelId}: ${options.adjustForSlidePanel}`);
+      return true;
+    }
+
+    // Handle width change requests
+    if (options.width !== undefined) {
+      const newWidth = Math.max(panelState.minExpandedWidth, Math.min(panelState.maxWidth, options.width));
+      panelState.panel.style.width = `${newWidth}px`;
+      this._emitResized(panelId, newWidth);
+      
+      console.log(`[PanelResizer] Applied width change for ${panelId}: ${newWidth}px`);
+      return true;
+    }
+
+    return false;
   }
 
   // Utility methods
