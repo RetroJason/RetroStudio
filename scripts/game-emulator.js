@@ -2011,9 +2011,7 @@ class GameEmulator {
     if (outputContent && this.printOutput) {
       // Show last 100 lines to prevent memory issues
       const recentOutput = this.printOutput.slice(-100);
-      outputContent.textContent = recentOutput.join('\n');
-      // Auto-scroll to bottom
-      outputContent.scrollTop = outputContent.scrollHeight;
+      this.setConsoleContent(recentOutput);
     }
   }
 
@@ -2346,87 +2344,106 @@ class GameEmulator {
           <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
           <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
         </div>
-      </div>
-      <div class="game-canvas-container">
-        <canvas id="game-canvas" width="800" height="600"></canvas>
-        <div class="game-info">Game running... (simulated)</div>
+        <div class="utility-controls">
+          <button class="utility-btn" id="keyBindingsBtn" title="Show Keyboard Mapping">🎮</button>
+          <button class="utility-btn console-btn" id="consoleToggleBtn" title="Toggle Debug Console"></button>
+        </div>
       </div>
       
-      <!-- Key Bindings Collapsible Section -->
-      <div class="collapsible-section">
-        <div class="section-header" data-target="key-bindings">
-          <h4>🎮 Keyboard Mapping</h4>
-          <span class="collapse-icon">▼</span>
+      <div class="game-main-area">
+        <div class="game-canvas-container">
+          <canvas id="game-canvas" width="800" height="600"></canvas>
+          <div class="game-info">Game running... (simulated)</div>
         </div>
-        <div class="section-content expanded" id="key-bindings">
-          <div class="key-mapping-grid">
-            <div class="key-mapping-section">
-              <h5>D-Pad</h5>
-              <div class="key-mapping-item">
-                <span class="key">↑</span><span class="button">Up</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">↓</span><span class="button">Down</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">←</span><span class="button">Left</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">→</span><span class="button">Right</span>
-              </div>
-            </div>
-            <div class="key-mapping-section">
-              <h5>Action Buttons</h5>
-              <div class="key-mapping-item">
-                <span class="key">Z</span><span class="button">B Button</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">X</span><span class="button">A Button</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">A</span><span class="button">Y Button</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">S</span><span class="button">X Button</span>
-              </div>
-            </div>
-            <div class="key-mapping-section">
-              <h5>System</h5>
-              <div class="key-mapping-item">
-                <span class="key">Space</span><span class="button">Select</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">Enter</span><span class="button">Start</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">L-Shift</span><span class="button">L Shoulder</span>
-              </div>
-              <div class="key-mapping-item">
-                <span class="key">R-Shift</span><span class="button">R Shoulder</span>
-              </div>
-            </div>
+        
+        <!-- Console Slide Panel -->
+        <div class="console-slide-panel" id="consoleSlidePanel">
+          <div class="console-header">
+            <span>Debug Console</span>
           </div>
-          <div class="input-status">
-            <strong>Click the canvas above to activate input capture</strong>
+          <div class="console-content">
+            <div class="console-output" id="console-output"></div>
+          </div>
+          <div class="console-footer">
+            <button class="console-clear-btn" title="Clear Console">Clear</button>
+            <input type="text" class="console-filter-input" id="console-filter-input" placeholder="Filter: +word -exclude &quot;exact&quot;" title="Filter syntax: +required -exclude &quot;exact match&quot;">
+            <button class="console-download-btn" id="console-download-btn" title="Download Console Logs">📥</button>
           </div>
         </div>
       </div>
       
-      <!-- Debug Console Collapsible Section -->
-      <div class="collapsible-section">
-        <div class="section-header" data-target="debug-console">
-          <h4>🐛 Debug Console</h4>
-          <span class="collapse-icon">▶</span>
-        </div>
-        <div class="section-content collapsed" id="debug-console">
-          <div class="output-console">
-            <div class="console-content">${this.escapeHtml(output)}</div>
+      <!-- Key Bindings Popup -->
+      <div class="key-bindings-popup" id="keyBindingsPopup" style="display: none;">
+        <div class="key-bindings-container">
+          <div class="key-bindings-header">
+            <h4>🎮 Keyboard Mapping</h4>
+            <button class="close-popup-btn" id="closeKeyBindingsBtn">✕</button>
+          </div>
+          <div class="key-bindings-body">
+            <div class="key-mapping-grid">
+              <div class="key-mapping-section">
+                <h5>D-Pad</h5>
+                <div class="key-mapping-item">
+                  <span class="key">↑</span><span class="button">Up</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">↓</span><span class="button">Down</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">←</span><span class="button">Left</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">→</span><span class="button">Right</span>
+                </div>
+              </div>
+              <div class="key-mapping-section">
+                <h5>Action Buttons</h5>
+                <div class="key-mapping-item">
+                  <span class="key">Z</span><span class="button">B Button</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">X</span><span class="button">A Button</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">A</span><span class="button">Y Button</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">S</span><span class="button">X Button</span>
+                </div>
+              </div>
+              <div class="key-mapping-section">
+                <h5>System</h5>
+                <div class="key-mapping-item">
+                  <span class="key">Space</span><span class="button">Select</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">Enter</span><span class="button">Start</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">L-Shift</span><span class="button">L Shoulder</span>
+                </div>
+                <div class="key-mapping-item">
+                  <span class="key">R-Shift</span><span class="button">R Shoulder</span>
+                </div>
+              </div>
+            </div>
+            <div class="input-status">
+              <strong>Click the canvas above to activate input capture</strong>
+            </div>
           </div>
         </div>
       </div>
     `;
 
-    // Add event listeners after rendering content
+    // Initialize console with existing output
+    if (output && output.trim() !== 'No output yet...') {
+      this.setConsoleContent(output);
+    } else {
+      this.rawConsoleMessages = [];
+    }
+
+    // Setup console monitoring and event listeners
+    this.setupConsoleMonitoring();
     this.setupGameEngineEvents();
   }
 
@@ -2490,28 +2507,74 @@ class GameEmulator {
   }
 
   setupGameEngineEvents() {
-    // Collapsible section handling
-    const sectionHeaders = this.contentContainer.querySelectorAll('.section-header');
-    
-    sectionHeaders.forEach(header => {
-      header.addEventListener('click', () => {
-        const targetId = header.dataset.target;
-        const targetSection = this.contentContainer.querySelector(`#${targetId}`);
-        const collapseIcon = header.querySelector('.collapse-icon');
-        
-        if (targetSection.classList.contains('expanded')) {
-          // Collapse the section
-          targetSection.classList.remove('expanded');
-          targetSection.classList.add('collapsed');
-          collapseIcon.textContent = '▶';
+    // Key bindings popup handling
+    const keyBindingsBtn = this.contentContainer.querySelector('#keyBindingsBtn');
+    const keyBindingsPopup = this.contentContainer.querySelector('#keyBindingsPopup');
+    const closeKeyBindingsBtn = this.contentContainer.querySelector('#closeKeyBindingsBtn');
+
+    if (keyBindingsBtn) {
+      keyBindingsBtn.addEventListener('click', () => {
+        keyBindingsPopup.style.display = 'flex';
+      });
+    }
+
+    if (closeKeyBindingsBtn) {
+      closeKeyBindingsBtn.addEventListener('click', () => {
+        keyBindingsPopup.style.display = 'none';
+      });
+    }
+
+    // Make key bindings popup draggable
+    if (keyBindingsPopup) {
+      this.makeElementDraggable(keyBindingsPopup, keyBindingsPopup.querySelector('.key-bindings-header'));
+    }
+
+    // Console slide panel handling
+    const consoleToggleBtn = this.contentContainer.querySelector('#consoleToggleBtn');
+    const consoleSlidePanel = this.contentContainer.querySelector('#consoleSlidePanel');
+    const consoleClearBtn = this.contentContainer.querySelector('.console-clear-btn');
+
+    if (consoleToggleBtn) {
+      consoleToggleBtn.addEventListener('click', () => {
+        const isOpen = consoleSlidePanel.classList.contains('open');
+        if (isOpen) {
+          consoleSlidePanel.classList.remove('open');
+          // Use resizer API to handle panel adjustment
+          if (window.panelResizer) {
+            window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: false });
+          }
         } else {
-          // Expand the section
-          targetSection.classList.remove('collapsed');
-          targetSection.classList.add('expanded');
-          collapseIcon.textContent = '▼';
+          consoleSlidePanel.classList.add('open');
+          // Use resizer API to handle panel adjustment
+          if (window.panelResizer) {
+            window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: true });
+          }
         }
       });
-    });
+    }
+
+    // Console clear functionality
+    if (consoleClearBtn) {
+      consoleClearBtn.addEventListener('click', () => {
+        this.clearConsole();
+      });
+    }
+
+    // Console filter functionality
+    const consoleFilterInput = this.contentContainer.querySelector('#console-filter-input');
+    if (consoleFilterInput) {
+      consoleFilterInput.addEventListener('input', () => {
+        this.applyConsoleFilter(consoleFilterInput.value);
+      });
+    }
+
+    // Console download functionality
+    const consoleDownloadBtn = this.contentContainer.querySelector('#console-download-btn');
+    if (consoleDownloadBtn) {
+      consoleDownloadBtn.addEventListener('click', () => {
+        this.downloadConsoleLogs();
+      });
+    }
 
     // Game control buttons
     const playPauseBtn = this.contentContainer.querySelector('#playPauseBtn');
@@ -2552,6 +2615,46 @@ class GameEmulator {
         this.setVolume(volume);
       });
     }
+  }
+  
+  // Make an element draggable by its header
+  makeElementDraggable(element, dragHandle) {
+    let isDragging = false;
+    let dragOffset = { x: 0, y: 0 };
+    
+    dragHandle.style.cursor = 'move';
+    
+    dragHandle.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      const rect = element.getBoundingClientRect();
+      dragOffset.x = e.clientX - rect.left;
+      dragOffset.y = e.clientY - rect.top;
+      
+      // Prevent text selection while dragging
+      e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      
+      const x = e.clientX - dragOffset.x;
+      const y = e.clientY - dragOffset.y;
+      
+      // Keep within viewport bounds
+      const maxX = window.innerWidth - element.offsetWidth;
+      const maxY = window.innerHeight - element.offsetHeight;
+      
+      const clampedX = Math.max(0, Math.min(x, maxX));
+      const clampedY = Math.max(0, Math.min(y, maxY));
+      
+      element.style.left = clampedX + 'px';
+      element.style.top = clampedY + 'px';
+      element.style.right = 'auto'; // Remove right positioning when dragging
+    });
+    
+    document.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
   }
   
   escapeHtml(text) {
@@ -2735,6 +2838,340 @@ class GameEmulator {
     `);
     
     resultsWindow.document.close();
+  }
+
+  // Centralized console output method - ALL console writes must go through this
+  writeToConsole(text, append = true) {
+    const consoleOutput = this.contentContainer.querySelector('#console-output');
+    if (!consoleOutput) return;
+
+    // Initialize buffer if needed
+    if (!this.rawConsoleMessages) {
+      this.rawConsoleMessages = [];
+    }
+
+    // Set flag to prevent observer from triggering
+    this.isInternalWrite = true;
+
+    if (append) {
+      // Add to buffer
+      const textStr = String(text);
+      if (textStr.endsWith('\n')) {
+        this.rawConsoleMessages.push(textStr);
+      } else {
+        this.rawConsoleMessages.push(textStr + '\n');
+      }
+    } else {
+      // Replace entire buffer (for bulk operations)
+      if (typeof text === 'string') {
+        const lines = text.split('\n');
+        this.rawConsoleMessages = [];
+        for (const line of lines) {
+          if (line.trim() || this.rawConsoleMessages.length > 0) {
+            this.rawConsoleMessages.push(line + '\n');
+          }
+        }
+      } else if (Array.isArray(text)) {
+        this.rawConsoleMessages = text.map(line => {
+          const lineStr = String(line);
+          return lineStr.endsWith('\n') ? lineStr : lineStr + '\n';
+        });
+      }
+    }
+
+    // Apply current filter or show all
+    const filterInput = this.contentContainer.querySelector('#console-filter-input');
+    const filterValue = filterInput ? filterInput.value.trim() : '';
+    
+    if (filterValue) {
+      this.applyConsoleFilter(filterValue);
+    } else {
+      // No filter, show all content
+      consoleOutput.textContent = this.rawConsoleMessages.join('');
+    }
+
+    // Auto-scroll to bottom
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+
+    // Clear flag to re-enable observer
+    this.isInternalWrite = false;
+  }
+
+  // Setup console monitoring to track external changes (fallback only)
+  setupConsoleMonitoring() {
+    const consoleOutput = this.contentContainer.querySelector('#console-output');
+    if (!consoleOutput) return;
+
+    // Setup MutationObserver as a fallback for external changes
+    this.consoleObserver = new MutationObserver((mutations) => {
+      // Only sync if change came from outside our writeToConsole method
+      if (!this.isInternalWrite) {
+        console.warn('[GameEmulator] External console modification detected - this should use writeToConsole()');
+        this.syncConsoleBufferFromDOM();
+      }
+    });
+
+    // Start observing
+    this.consoleObserver.observe(consoleOutput, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+
+  // Fallback sync method for external modifications
+  syncConsoleBufferFromDOM() {
+    const consoleOutput = this.contentContainer.querySelector('#console-output');
+    if (!consoleOutput) return;
+
+    const currentText = consoleOutput.textContent || '';
+    if (currentText.trim() === '') {
+      this.rawConsoleMessages = [];
+      return;
+    }
+
+    const lines = currentText.split('\n');
+    this.rawConsoleMessages = [];
+    
+    for (const line of lines) {
+      if (line.trim() || this.rawConsoleMessages.length > 0) {
+        this.rawConsoleMessages.push(line + '\n');
+      }
+    }
+  }
+
+  // Public API for console management
+  addToConsole(message, type = 'info') {
+    const timestamp = new Date().toLocaleTimeString();
+    const prefix = type === 'error' ? '❌' : type === 'warn' ? '⚠️' : 'ℹ️';
+    const formattedMessage = `[${timestamp}] ${prefix} ${message}`;
+    
+    this.writeToConsole(formattedMessage, true);
+  }
+
+  // Set console content from array (for bulk updates like printOutput)
+  setConsoleContent(outputArray) {
+    this.isInternalWrite = true;
+    
+    if (Array.isArray(outputArray)) {
+      this.writeToConsole(outputArray, false);
+    } else if (typeof outputArray === 'string') {
+      this.writeToConsole(outputArray, false);
+    }
+    
+    this.isInternalWrite = false;
+  }
+
+  clearConsole() {
+    this.rawConsoleMessages = [];
+    this.writeToConsole('', false);
+  }
+
+  // Parse filter string according to specified syntax
+  parseFilterString(filterStr) {
+    if (!filterStr.trim()) return null;
+    
+    const tokens = [];
+    let current = '';
+    let inQuotes = false;
+    let escapeNext = false;
+    
+    for (let i = 0; i < filterStr.length; i++) {
+      const char = filterStr[i];
+      
+      if (escapeNext) {
+        current += char;
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inQuotes = !inQuotes;
+        current += char;
+        continue;
+      }
+      
+      if (char === ' ' && !inQuotes) {
+        if (current.trim()) {
+          tokens.push(current.trim());
+          current = '';
+        }
+        continue;
+      }
+      
+      current += char;
+    }
+    
+    if (current.trim()) {
+      tokens.push(current.trim());
+    }
+    
+    const parsed = {
+      required: [],     // +word
+      excluded: [],     // -word
+      optional: []      // word
+    };
+    
+    for (const token of tokens) {
+      if (token.startsWith('+')) {
+        const term = token.slice(1);
+        if (term.startsWith('"') && term.endsWith('"')) {
+          parsed.required.push({ term: term.slice(1, -1), exact: true });
+        } else {
+          parsed.required.push({ term: term, exact: false });
+        }
+      } else if (token.startsWith('-')) {
+        const term = token.slice(1);
+        if (term.startsWith('"') && term.endsWith('"')) {
+          parsed.excluded.push({ term: term.slice(1, -1), exact: true });
+        } else {
+          parsed.excluded.push({ term: term, exact: false });
+        }
+      } else {
+        if (token.startsWith('"') && token.endsWith('"')) {
+          parsed.optional.push({ term: token.slice(1, -1), exact: true });
+        } else {
+          parsed.optional.push({ term: token, exact: false });
+        }
+      }
+    }
+    
+    return parsed;
+  }
+  
+  // Check if a line matches the filter criteria
+  matchesFilter(line, filter) {
+    if (!filter) return true;
+    
+    // Check excluded terms first (they take precedence)
+    for (const excluded of filter.excluded) {
+      if (excluded.exact) {
+        if (line.includes(excluded.term)) return false;
+      } else {
+        if (line.toLowerCase().includes(excluded.term.toLowerCase())) return false;
+      }
+    }
+    
+    // Check required terms
+    for (const required of filter.required) {
+      if (required.exact) {
+        if (!line.includes(required.term)) return false;
+      } else {
+        if (!line.toLowerCase().includes(required.term.toLowerCase())) return false;
+      }
+    }
+    
+    // Check optional terms (at least one must match if any are specified)
+    if (filter.optional.length > 0) {
+      let hasOptionalMatch = false;
+      for (const optional of filter.optional) {
+        if (optional.exact) {
+          if (line.includes(optional.term)) {
+            hasOptionalMatch = true;
+            break;
+          }
+        } else {
+          if (line.toLowerCase().includes(optional.term.toLowerCase())) {
+            hasOptionalMatch = true;
+            break;
+          }
+        }
+      }
+      if (!hasOptionalMatch) return false;
+    }
+    
+    return true;
+  }
+  
+  // Apply console filter (called by writeToConsole and filter input)
+  applyConsoleFilter(filterStr) {
+    const consoleOutput = this.contentContainer.querySelector('#console-output');
+    if (!consoleOutput || !this.rawConsoleMessages) return;
+
+    const filter = this.parseFilterString(filterStr);
+    
+    // Only set flag if not already set (to avoid clearing it prematurely when called from writeToConsole)
+    const wasInternalWrite = this.isInternalWrite;
+    if (!wasInternalWrite) {
+      this.isInternalWrite = true;
+    }
+    
+    if (!filter || filterStr.trim() === '') {
+      // No filter, show all messages
+      consoleOutput.textContent = this.rawConsoleMessages.join('');
+    } else {
+      // Apply filter
+      const filteredLines = this.rawConsoleMessages.filter(line => this.matchesFilter(line, filter));
+      consoleOutput.textContent = filteredLines.join('');
+    }
+    
+    // Auto-scroll to bottom
+    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    
+    // Only clear flag if we set it (don't clear if it was already set by caller)
+    if (!wasInternalWrite) {
+      this.isInternalWrite = false;
+    }
+  }
+  
+  // Download console logs (unfiltered)
+  downloadConsoleLogs() {
+    if (!this.rawConsoleMessages || this.rawConsoleMessages.length === 0) {
+      alert('No console logs to download');
+      return;
+    }
+    
+    const logContent = this.rawConsoleMessages.join('');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `console-logs-${timestamp}.txt`;
+    
+    const blob = new Blob([logContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Cleanup method for when the component is destroyed
+  cleanup() {
+    if (this.consoleObserver) {
+      this.consoleObserver.disconnect();
+      this.consoleObserver = null;
+    }
+    this.rawConsoleMessages = [];
+    this.isInternalWrite = false;
+  }
+
+  // Open the console panel programmatically
+  showConsole() {
+    const consoleSlidePanel = this.contentContainer.querySelector('#consoleSlidePanel');
+    if (consoleSlidePanel && !consoleSlidePanel.classList.contains('open')) {
+      consoleSlidePanel.classList.add('open');
+      if (window.panelResizer) {
+        window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: true });
+      }
+    }
+  }
+
+  // Close the console panel programmatically
+  hideConsole() {
+    const consoleSlidePanel = this.contentContainer.querySelector('#consoleSlidePanel');
+    if (consoleSlidePanel && consoleSlidePanel.classList.contains('open')) {
+      consoleSlidePanel.classList.remove('open');
+      if (window.panelResizer) {
+        window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: false });
+      }
+    }
   }
 }
 
