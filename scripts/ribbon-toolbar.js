@@ -296,16 +296,6 @@ class RibbonToolbar {
       }
     });
     
-    this.setupButton('playProjectBtn', () => {
-      if (window.gameEmulator) {
-        if (window.gameEmulator.isRunning) {
-          window.gameEmulator.stopProject();
-        } else {
-          window.gameEmulator.playProject();
-        }
-      }
-    });
-    
     // Note: Create buttons are now handled dynamically
   }
 

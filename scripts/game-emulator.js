@@ -132,6 +132,9 @@ class GameEmulator {
     // Set up UI event handlers
     this.setupUI();
     
+    // Create game emulator panel by default (visible by default)
+    this.createGameEnginePanel();
+    
     // Add audio context resume handler
     this.addAudioContextResumeHandler();
     
@@ -1595,8 +1598,12 @@ class GameEmulator {
   startGameLoop() {
     console.log('[GameEmulator] Starting game loop...');
     this.isRunning = true;
+    this.isPaused = false; // Make sure we start unpaused
     this.lastFrameTime = performance.now();
     this.frameCount = 0;
+    
+    // Update button appearance
+    this.updatePlayPauseButton();
     
     const runFrame = () => {
       if (!this.isRunning || !this.luaState) {
@@ -1656,7 +1663,11 @@ class GameEmulator {
   stopGameLoop() {
     console.log('[GameEmulator] Stopping game loop...');
     this.isRunning = false;
+    this.isPaused = false; // Reset pause state when stopping
     this.updateStatus('Game loop stopped', 'info');
+    
+    // Update button appearance
+    this.updatePlayPauseButton();
   }
 
   /**
@@ -1677,6 +1688,74 @@ class GameEmulator {
     }
     
     this.updateStatus('Project stopped', 'info');
+  }
+
+  /**
+   * Toggle play/pause state - main control button
+   */
+  async togglePlayPause() {
+    if (!this.isRunning) {
+      // Not running, so start playing
+      await this.playProject();
+    } else if (this.isPaused) {
+      // Currently paused, so resume
+      this.resumeGame();
+    } else {
+      // Currently running, so pause
+      this.pauseGame();
+    }
+    
+    // Update button appearance
+    this.updatePlayPauseButton();
+  }
+
+  /**
+   * Pause the game (separate from toggle for clarity)
+   */
+  pauseGame() {
+    if (!this.isRunning) {
+      console.log('[GameEmulator] Cannot pause - game is not running');
+      return;
+    }
+
+    this.isPaused = true;
+    console.log('[GameEmulator] Game paused');
+    
+    if (this.audioEngine && this.audioEngine.workletNode) {
+      console.log('[GameEmulator] Pausing audio at mixer level');
+      this.audioEngine.workletNode.port.postMessage({ type: 'pause-audio' });
+    }
+    
+    this.updateStatus('Game paused', 'info');
+  }
+
+  /**
+   * Resume the game (separate from toggle for clarity)
+   */
+  resumeGame() {
+    if (!this.isRunning) {
+      console.log('[GameEmulator] Cannot resume - game is not running');
+      return;
+    }
+
+    this.isPaused = false;
+    console.log('[GameEmulator] Game resumed');
+    
+    if (this.audioEngine && this.audioEngine.workletNode) {
+      console.log('[GameEmulator] Resuming audio at mixer level');
+      this.audioEngine.workletNode.port.postMessage({ type: 'resume-audio' });
+    }
+    
+    this.updateStatus('Game resumed', 'info');
+  }
+
+  /**
+   * Stop the game - when play is pressed again, it will reload
+   */
+  stopGame() {
+    console.log('[GameEmulator] Stopping game...');
+    this.stopProject();
+    this.updatePlayPauseButton();
   }
 
   /**
@@ -1756,6 +1835,36 @@ class GameEmulator {
         text.textContent = 'Pause';
         pauseResumeBtn.classList.remove('paused');
         pauseResumeBtn.title = 'Pause Game';
+      }
+    }
+  }
+
+  updatePlayPauseButton() {
+    const playPauseBtn = document.querySelector('#playPauseBtn');
+    if (playPauseBtn) {
+      const icon = playPauseBtn.querySelector('.btn-icon');
+      const text = playPauseBtn.querySelector('.btn-text');
+      
+      if (!this.isRunning) {
+        // Not running - show play
+        icon.textContent = '▶️';
+        text.textContent = 'Play';
+        playPauseBtn.classList.remove('paused', 'running');
+        playPauseBtn.title = 'Play Game';
+      } else if (this.isPaused) {
+        // Running but paused - show play
+        icon.textContent = '▶️';
+        text.textContent = 'Resume';
+        playPauseBtn.classList.add('paused');
+        playPauseBtn.classList.remove('running');
+        playPauseBtn.title = 'Resume Game';
+      } else {
+        // Running and not paused - show pause
+        icon.textContent = '⏸️';
+        text.textContent = 'Pause';
+        playPauseBtn.classList.add('running');
+        playPauseBtn.classList.remove('paused');
+        playPauseBtn.title = 'Pause Game';
       }
     }
   }
@@ -2226,7 +2335,6 @@ class GameEmulator {
     gameEnginePanel.innerHTML = `
       <div class="game-engine-header">
         <h3>🎮 Game Engine</h3>
-        <button class="close-engine-btn">×</button>
       </div>
       <div class="game-engine-tabs">
         <button class="tab-btn active" data-tab="game">Game</button>
@@ -2235,9 +2343,13 @@ class GameEmulator {
       <div class="game-engine-content">
         <div class="tab-content active" id="game-tab">
           <div class="game-controls">
-            <button class="game-control-btn" id="pauseResumeBtn" title="Pause/Resume Game">
-              <span class="btn-icon">⏸️</span>
-              <span class="btn-text">Pause</span>
+            <button class="game-control-btn" id="playPauseBtn" title="Play/Pause Game">
+              <span class="btn-icon">▶️</span>
+              <span class="btn-text">Play</span>
+            </button>
+            <button class="game-control-btn" id="stopBtn" title="Stop Game">
+              <span class="btn-icon">⏹️</span>
+              <span class="btn-text">Stop</span>
             </button>
             <button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
               <span class="btn-icon">🔄</span>
@@ -2850,12 +2962,6 @@ class GameEmulator {
   }
   
   setupGameEngineEvents(panel) {
-    // Close button
-    const closeBtn = panel.querySelector('.close-engine-btn');
-    closeBtn.addEventListener('click', () => {
-      this.hideGameEngine();
-    });
-    
     // Tab switching
     const tabBtns = panel.querySelectorAll('.tab-btn');
     const tabContents = panel.querySelectorAll('.tab-content');
@@ -2879,12 +2985,19 @@ class GameEmulator {
     });
 
     // Game control buttons
-    const pauseResumeBtn = panel.querySelector('#pauseResumeBtn');
+    const playPauseBtn = panel.querySelector('#playPauseBtn');
+    const stopBtn = panel.querySelector('#stopBtn');
     const reloadBtn = panel.querySelector('#reloadBtn');
 
-    if (pauseResumeBtn) {
-      pauseResumeBtn.addEventListener('click', () => {
-        this.togglePauseResume();
+    if (playPauseBtn) {
+      playPauseBtn.addEventListener('click', () => {
+        this.togglePlayPause();
+      });
+    }
+
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        this.stopGame();
       });
     }
 
