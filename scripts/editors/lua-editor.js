@@ -9,9 +9,14 @@ class LuaEditor extends EditorBase {
     super(fileObject, readOnly);
     this.monacoEditor = null;
     this.editorContainer = null;
+    this._isLoadingContent = false;
   }
 
   createElement() { return super.createElement(); }
+
+  isLoadingContent() {
+    return this._isLoadingContent;
+  }
 
   createBody(bodyContainer) {
     this.editorContainer = document.createElement('div');
@@ -88,7 +93,7 @@ class LuaEditor extends EditorBase {
 
       // Set up change detection
       this.monacoEditor.onDidChangeModelContent(() => {
-        if (!this.readOnly) {
+        if (!this.readOnly && !this._isLoadingContent) {
           this.markDirty();
         }
       });
@@ -160,8 +165,9 @@ class LuaEditor extends EditorBase {
           this.monacoEditor = this._monacoBackup;
         }
         
+        this._isLoadingContent = true;
         this.monacoEditor.setValue(content);
-        console.log(`[LuaEditor] Content set in Monaco editor`);
+        this._isLoadingContent = false;
         
         // Set up auto-testing for Lua errors (after content is loaded and editor is ready)
         this.setupAutoTesting();
@@ -177,7 +183,9 @@ class LuaEditor extends EditorBase {
         if (!this.monacoEditor && this._monacoBackup) {
           this.monacoEditor = this._monacoBackup;
         }
+        this._isLoadingContent = true;
         this.monacoEditor.setValue('');
+        this._isLoadingContent = false;
         this.markClean();
       }
     }
@@ -520,7 +528,9 @@ class LuaEditor extends EditorBase {
     }
     
     if (this.monacoEditor) {
+      this._isLoadingContent = true;
       this.monacoEditor.setValue(content || '');
+      this._isLoadingContent = false;
       
       // Set up auto-testing for Lua errors (ensure it's set up when content is loaded)
       this.setupAutoTesting();

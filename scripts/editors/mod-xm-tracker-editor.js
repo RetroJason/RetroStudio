@@ -60,8 +60,6 @@ class ModXmTrackerEditor extends EditorBase {
     window[`_iframe_${this._id}`] = this._iframe;
     this._observeIframeRemoval();
     this._setupIframeCommunication();
-    this._hookResize();
-    this._sizeToTab('init');
   }
 
   _observeIframeRemoval() {
@@ -171,19 +169,7 @@ class ModXmTrackerEditor extends EditorBase {
 
   _maybeSendFile() {
     if (!this._readyReceived || this._initialLoadSent || !this._iframe || !this._iframe.contentWindow) return;
-    // Ensure host pane has non-zero size (preview tab animation may still be in progress)
-    const pane = this._getActiveTabPane() || this._closestTabPane();
-    const w = pane?.clientWidth || 0;
-    const h = pane?.clientHeight || 0;
-    if (!w || !h) {
-      this._initialLoadSizeChecks = (this._initialLoadSizeChecks || 0) + 1;
-      if (this._initialLoadSizeChecks < 40) { // retry up to ~4s (40 * 100ms)
-        setTimeout(() => this._maybeSendFile(), 100);
-      } else {
-        console.warn(`${this._logPrefix} giving up waiting for non-zero size; proceeding with load`);
-      }
-      if (w === 0 || h === 0) return; // don't proceed until we have a size (unless retries exhausted)
-    }
+    
     const isExisting = !this.isNewResource && this.path && !this.path.startsWith('temp://');
     if (isExisting) {
       const filename = this._initialFileRecord?.filename || (this.path ? this.path.split('/').pop() : 'untitled.mod');
@@ -197,73 +183,23 @@ class ModXmTrackerEditor extends EditorBase {
     this._initialLoadSent = true;
   }
 
-  _hookResize() {
-    this._onWinResize = () => this._sizeToTab('window');
-    window.addEventListener('resize', this._onWinResize);
-    this._onSidebarResize = () => this._sizeToTab('sidebar');
-    window.addEventListener('project-explorer.resized', this._onSidebarResize);
-    const pane = this._closestTabPane() || this._container;
-    if (typeof ResizeObserver !== 'undefined' && pane) {
-      this._hostRO = new ResizeObserver(() => this._sizeToTab('ro'));
-      try { this._hostRO.observe(pane); } catch(_) {}
-    }
-    this._onTabSwitched = () => {
-      this._sizeToTab('tab');
-      setTimeout(() => this._sizeToTab('tab-deferred'), 0);
-      try { requestAnimationFrame(() => this._sizeToTab('tab-raf')); } catch(_) {}
-    };
-    window.eventBus?.on?.('tab.switched', this._onTabSwitched);
-  }
-
-  _closestTabPane() {
-    try { return (this._container || this.element)?.closest?.('.tab-pane') || null; } catch(_) { return null; }
-  }
-
-  _getActiveTabPane() {
-    try {
-      const mine = this._container?.closest?.('.tab-pane');
-      if (mine && mine.classList && mine.classList.contains('active')) return mine;
-    } catch(_) {}
-    try { return window.tabManager?.tabContentArea?.querySelector?.('.tab-pane.active') || null; } catch(_) { return null; }
-  }
-
-  _getTabInnerSize() {
-    const target = this._getActiveTabPane() || this._closestTabPane();
-    if (!target) {
-      console.error('[ModXmTrackerEditor] No .tab-pane found for sizing (strict mode).');
-      return null;
-    }
-    const width = Math.floor(target.clientWidth || 0);
-    const height = Math.floor(target.clientHeight || 0);
-    if (!width || !height) {
-      console.error('[ModXmTrackerEditor] .tab-pane has zero size (strict mode).', {
-        clientW: target.clientWidth,
-        clientH: target.clientHeight
-      });
-      return null;
-    }
-    return { width, height, target };
-  }
-
-  _sizeToTab(reason) {
-    if (!this._container || !this._iframe) return;
-    const info = this._getTabInnerSize();
-    if (!info) return;
-    
-    // iframe automatically sizes to 100% of container, so just ensure container is sized
-    try { 
-      console.debug(this._logPrefix, 'sizeToTab', reason, { 
-        width: info.width, 
-        height: info.height 
-      }); 
-    } catch(_) {}
-  }
-
   // FileIOService integration methods
   async reload() { 
     console.log(`${this._logPrefix} reload called`);
     this._maybeSendFile();
     return true; 
+  }
+  
+  // Handle resize events from tab manager
+  resize() {
+    console.log(`${this._logPrefix} resize() called`);
+    // Force iframe to recalculate its size
+    if (this._iframe && this._container) {
+      // Trigger a style recalculation
+      this._iframe.style.display = 'none';
+      this._iframe.offsetHeight; // Force layout
+      this._iframe.style.display = 'block';
+    }
   }
   
   updateFilePath(newPath) { 
@@ -315,11 +251,6 @@ class ModXmTrackerEditor extends EditorBase {
     
     this._iframe = null;
     this._iframeRef = null;
-    
-    try { if (this._hostRO) { this._hostRO.disconnect?.(); this._hostRO = null; } } catch (_) {}
-    try { if (this._onWinResize) window.removeEventListener('resize', this._onWinResize); } catch (_) {}
-    try { if (this._onSidebarResize) window.removeEventListener('project-explorer.resized', this._onSidebarResize); } catch (_) {}
-    try { if (this._onTabSwitched && window.eventBus?.off) window.eventBus.off('tab.switched', this._onTabSwitched); } catch (_) {}
     
     console.log(`${this._logPrefix} cleanup completed`);
   }
