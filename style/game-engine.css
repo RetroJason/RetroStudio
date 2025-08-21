@@ -1,0 +1,336 @@
+/* Game Eng/* Header styling is inherited from main.css */
+
+/* Collapsible Sections */
+.collapsible-section {
+  border-bottom: 1px solid #3c3c3c;
+}
+
+.section-header {
+  background: #37373d;
+  padding: 12px 16px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #3c3c3c;
+  transition: background-color 0.2s ease;
+}
+
+.section-header:hover {
+  background: #3e3e40;
+}
+
+.section-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #cccccc;
+}
+
+.collapse-icon {
+  font-size: 12px;
+  color: #cccccc;
+  transition: transform 0.2s ease;
+}
+
+.section-content {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.section-content.expanded {
+  max-height: 1000px; /* Adjust as needed */
+}
+
+.section-content.collapsed {
+  max-height: 0;
+}
+
+/* Section Content Styling */
+.section-content {
+  padding: 16px;
+  background: #252526;
+}
+
+.section-content.collapsed {
+  padding: 0 16px;
+}
+
+/* Remove old tab styling */
+
+.game-engine-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #252526;
+  color: #cccccc;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Header styling is inherited from main.css */
+
+/* Game Content Styles */
+.game-controls {
+  padding: 12px;
+  background: #2d2d30;
+  border-bottom: 1px solid #3c3c3c;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.game-control-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid #555555;
+  background: #3c3c3c;
+  color: #cccccc;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.game-control-btn:hover {
+  background: #484848;
+  border-color: #666666;
+}
+
+.game-control-btn:active {
+  background: #2d2d30;
+}
+
+.game-control-btn.playing {
+  background: #4caf50;
+  border-color: #45a049;
+  color: white;
+}
+
+.game-control-btn.playing:hover {
+  background: #45a049;
+}
+
+.btn-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.btn-text {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.volume-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.mute-btn {
+  background: none;
+  border: none;
+  color: #cccccc;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.mute-btn:hover {
+  background: #404040;
+}
+
+.mute-btn.muted {
+  color: #f44336;
+}
+
+#volumeSlider {
+  width: 80px;
+  height: 4px;
+  background: #555555;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+#volumeSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #007acc;
+  cursor: pointer;
+}
+
+#volumeSlider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #007acc;
+  cursor: pointer;
+  border: none;
+}
+
+.game-canvas-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  background: #1e1e1e;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+#game-canvas {
+  border: 2px solid #3c3c3c;
+  border-radius: 4px;
+  background: #000000;
+  width: 100%;
+  max-width: 600px;
+  height: auto;
+  aspect-ratio: 4/3;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.game-info {
+  margin-top: 12px;
+  color: #999999;
+  font-size: 12px;
+  text-align: center;
+}
+
+.key-mapping-display {
+  margin-top: 20px;
+  padding: 16px;
+  background: #2d2d30;
+  border-radius: 6px;
+  border: 1px solid #3c3c3c;
+  max-width: 600px;
+  width: 100%;
+}
+
+.key-mapping-display h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #cccccc;
+  text-align: center;
+}
+
+.key-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.key-mapping-section {
+  background: #37373d;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #3c3c3c;
+}
+
+.key-mapping-section h5 {
+  margin: 0 0 6px 0;
+  font-size: 11px;
+  color: #999999;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+  border-bottom: 1px solid #3c3c3c;
+  padding-bottom: 4px;
+}
+
+.key-mapping-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 4px;
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+
+.key-mapping-item .key {
+  background: #404040;
+  color: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 9px;
+  min-width: 32px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.key-mapping-item .button {
+  color: #cccccc;
+  font-weight: 500;
+  font-size: 9px;
+}
+
+.input-status {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: #666666;
+  font-style: italic;
+}
+
+/* Console Tab Styles */
+.output-console {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #1e1e1e;
+}
+
+.console-content {
+  flex: 1;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #cccccc;
+  white-space: pre-wrap;
+  overflow-y: auto;
+  background: #1e1e1e;
+}
+
+/* Scrollbar Styling */
+.console-content::-webkit-scrollbar,
+.game-canvas-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.console-content::-webkit-scrollbar-track,
+.game-canvas-container::-webkit-scrollbar-track {
+  background: #2d2d30;
+}
+
+.console-content::-webkit-scrollbar-thumb,
+.game-canvas-container::-webkit-scrollbar-thumb {
+  background: #555555;
+  border-radius: 4px;
+}
+
+.console-content::-webkit-scrollbar-thumb:hover,
+.game-canvas-container::-webkit-scrollbar-thumb:hover {
+  background: #666666;
+}
+
+/* Collapsed state styles (handled by resizer.js) */
+.game-engine-panel.collapsed .game-engine-tabs,
+.game-engine-panel.collapsed .game-engine-content {
+  display: none;
+}
+
+.game-engine-panel.collapsed {
+  min-width: 32px !important;
+}

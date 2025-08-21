@@ -2,7 +2,8 @@
 // Main game engine emulator that integrates audio engine and project explorer
 
 class GameEmulator {
-  constructor() {
+  constructor(contentContainer = null) {
+    this.contentContainer = contentContainer; // DOM element to render content into
     this.audioEngine = null;
     this.resourceManager = null;
     this.projectExplorer = null;
@@ -27,6 +28,9 @@ class GameEmulator {
     this.frameCount = 0;
     this.lastFrameTime = 0;
     this.extensionLoader = null; // Lua extension loader
+
+    // Initialize the game engine panel content
+    this.initializeGameEnginePanel();
 
     this.initialize();
   }
@@ -132,8 +136,7 @@ class GameEmulator {
     // Set up UI event handlers
     this.setupUI();
     
-    // Create game emulator panel by default (visible by default)
-    this.createGameEnginePanel();
+    // NOTE: Panel content is now initialized in constructor, no need to create dynamically
     
     // Add audio context resume handler
     this.addAudioContextResumeHandler();
@@ -2015,10 +2018,10 @@ class GameEmulator {
   }
 
   showGameEngine(scriptData) {
-    // Create sliding game engine panel
-    this.createGameEnginePanel(scriptData);
+    // Update game engine panel content with new script data
+    this.renderGameEngineContent(scriptData);
     
-    // Initialize input manager after panel is created
+    // Initialize input manager after panel is updated
     this.initializeInputManager();
   }
   
@@ -2299,220 +2302,134 @@ class GameEmulator {
     document.addEventListener('keydown', handleKeyDown);
   }
   
-  createGameEnginePanel(scriptData) {
-    // Remove any existing game engine elements
-    const existingPanel = document.querySelector('.game-engine-panel');
-    const existingResizer = document.querySelector('.game-engine-resizer');
-    if (existingPanel) existingPanel.remove();
-    if (existingResizer) existingResizer.remove();
-    
-    // Get the content wrapper where we'll add the game engine
-    const contentWrapper = document.querySelector('.content-wrapper');
-    if (!contentWrapper) {
-      console.error('[GameEditor] Content wrapper not found');
+  /**
+   * Initialize the game engine panel content (called once on startup)
+   */
+  initializeGameEnginePanel() {
+    if (!this.contentContainer) {
+      console.error('[GameEmulator] No content container provided to constructor');
       return;
     }
-    
+
+    // Render the initial content
+    this.renderGameEngineContent();
+  }
+
+  /**
+   * Render the game engine panel content
+   */
+  renderGameEngineContent(scriptData) {
+    if (!this.contentContainer) {
+      console.error('[GameEmulator] No content container provided');
+      return;
+    }
+
     // Extract data from scriptData or use defaults
     const currentOutput = this.printOutput ? this.printOutput.join('\n') : 'No output yet...';
     const output = scriptData?.output || currentOutput;
-    const script = scriptData?.script || this.currentScript || 'No script loaded';
-    
-    // Create a new resizer for the game engine
-    const gameEngineResizer = document.createElement('div');
-    gameEngineResizer.className = 'game-engine-resizer';
-    gameEngineResizer.innerHTML = `
-      <div class="resizer-handle">
-        <div class="resizer-line"></div>
-        <div class="resizer-line"></div>
-        <div class="resizer-line"></div>
+
+    this.contentContainer.innerHTML = `
+      <div class="game-controls">
+        <button class="game-control-btn" id="playPauseBtn" title="Play/Pause Game">
+          <span class="btn-icon">▶️</span>
+          <span class="btn-text">Play</span>
+        </button>
+        <button class="game-control-btn" id="stopBtn" title="Stop Game">
+          <span class="btn-icon">⏹️</span>
+          <span class="btn-text">Stop</span>
+        </button>
+        <button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
+          <span class="btn-icon">🔄</span>
+          <span class="btn-text">Reload</span>
+        </button>
+        <div class="volume-controls">
+          <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
+          <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
+        </div>
       </div>
-    `;
-    
-    // Create the game engine panel
-    const gameEnginePanel = document.createElement('div');
-    gameEnginePanel.className = 'game-engine-panel';
-    gameEnginePanel.innerHTML = `
-      <div class="game-engine-header">
-        <h3>🎮 Game Engine</h3>
+      <div class="game-canvas-container">
+        <canvas id="game-canvas" width="800" height="600"></canvas>
+        <div class="game-info">Game running... (simulated)</div>
       </div>
-      <div class="game-engine-tabs">
-        <button class="tab-btn active" data-tab="game">Game</button>
-        <button class="tab-btn" data-tab="console">Console</button>
-      </div>
-      <div class="game-engine-content">
-        <div class="tab-content active" id="game-tab">
-          <div class="game-controls">
-            <button class="game-control-btn" id="playPauseBtn" title="Play/Pause Game">
-              <span class="btn-icon">▶️</span>
-              <span class="btn-text">Play</span>
-            </button>
-            <button class="game-control-btn" id="stopBtn" title="Stop Game">
-              <span class="btn-icon">⏹️</span>
-              <span class="btn-text">Stop</span>
-            </button>
-            <button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
-              <span class="btn-icon">🔄</span>
-              <span class="btn-text">Reload</span>
-            </button>
-            <div class="volume-controls">
-              <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
-              <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
+      
+      <!-- Key Bindings Collapsible Section -->
+      <div class="collapsible-section">
+        <div class="section-header" data-target="key-bindings">
+          <h4>🎮 Keyboard Mapping</h4>
+          <span class="collapse-icon">▼</span>
+        </div>
+        <div class="section-content expanded" id="key-bindings">
+          <div class="key-mapping-grid">
+            <div class="key-mapping-section">
+              <h5>D-Pad</h5>
+              <div class="key-mapping-item">
+                <span class="key">↑</span><span class="button">Up</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">↓</span><span class="button">Down</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">←</span><span class="button">Left</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">→</span><span class="button">Right</span>
+              </div>
+            </div>
+            <div class="key-mapping-section">
+              <h5>Action Buttons</h5>
+              <div class="key-mapping-item">
+                <span class="key">Z</span><span class="button">B Button</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">X</span><span class="button">A Button</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">A</span><span class="button">Y Button</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">S</span><span class="button">X Button</span>
+              </div>
+            </div>
+            <div class="key-mapping-section">
+              <h5>System</h5>
+              <div class="key-mapping-item">
+                <span class="key">Space</span><span class="button">Select</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">Enter</span><span class="button">Start</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">L-Shift</span><span class="button">L Shoulder</span>
+              </div>
+              <div class="key-mapping-item">
+                <span class="key">R-Shift</span><span class="button">R Shoulder</span>
+              </div>
             </div>
           </div>
-          <div class="game-canvas-container">
-            <canvas id="game-canvas" width="800" height="600"></canvas>
-            <div class="game-info">Game running... (simulated)</div>
-            <div class="key-mapping-display">
-              <h4>🎮 Keyboard Mapping</h4>
-              <div class="key-mapping-grid">
-                <div class="key-mapping-section">
-                  <h5>D-Pad</h5>
-                  <div class="key-mapping-item">
-                    <span class="key">↑</span><span class="button">Up</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">↓</span><span class="button">Down</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">←</span><span class="button">Left</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">→</span><span class="button">Right</span>
-                  </div>
-                </div>
-                <div class="key-mapping-section">
-                  <h5>Action Buttons</h5>
-                  <div class="key-mapping-item">
-                    <span class="key">Z</span><span class="button">B Button</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">X</span><span class="button">A Button</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">A</span><span class="button">Y Button</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">S</span><span class="button">X Button</span>
-                  </div>
-                </div>
-                <div class="key-mapping-section">
-                  <h5>System</h5>
-                  <div class="key-mapping-item">
-                    <span class="key">Space</span><span class="button">Select</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">Enter</span><span class="button">Start</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">L-Shift</span><span class="button">L Shoulder</span>
-                  </div>
-                  <div class="key-mapping-item">
-                    <span class="key">R-Shift</span><span class="button">R Shoulder</span>
-                  </div>
-                </div>
-              </div>
-              <div class="input-status">
-                <strong>Click the canvas above to activate input capture</strong>
-              </div>
-            </div>
+          <div class="input-status">
+            <strong>Click the canvas above to activate input capture</strong>
           </div>
         </div>
-        <div class="tab-content" id="console-tab">
+      </div>
+      
+      <!-- Debug Console Collapsible Section -->
+      <div class="collapsible-section">
+        <div class="section-header" data-target="debug-console">
+          <h4>🐛 Debug Console</h4>
+          <span class="collapse-icon">▶</span>
+        </div>
+        <div class="section-content collapsed" id="debug-console">
           <div class="output-console">
             <div class="console-content">${this.escapeHtml(output)}</div>
           </div>
         </div>
       </div>
     `;
-    
-    // Append the resizer and panel to the content wrapper
-    contentWrapper.appendChild(gameEngineResizer);
-    contentWrapper.appendChild(gameEnginePanel);
-    
-    // Add styles
-    this.addGameEngineStyles();
-    
-    // Modify the content wrapper layout to accommodate the game engine
-    this.adjustLayoutForGameEngine(contentWrapper, gameEngineResizer, gameEnginePanel);
-    
-    // Setup resizer functionality  
-    this.setupGameEngineResizer(gameEngineResizer, gameEnginePanel);
-    
-    // Slide in animation
-    setTimeout(() => {
-      gameEnginePanel.classList.add('visible');
-      gameEngineResizer.classList.add('visible');
-    }, 10);
-    
-    // Add event listeners
-    this.setupGameEngineEvents(gameEnginePanel);
+
+    // Add event listeners after rendering content
+    this.setupGameEngineEvents();
   }
-  
-  adjustLayoutForGameEngine(contentWrapper, resizer, panel) {
-    // Add class to body for global layout adjustments
-    document.body.classList.add('game-engine-active');
-    
-    // Adjust the content wrapper to use CSS Grid for proper layout
-    contentWrapper.style.display = 'grid';
-    contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 0fr';
-    contentWrapper.style.transition = 'grid-template-columns 0.3s ease-in-out';
-    
-    // Animate to show the game engine
-    requestAnimationFrame(() => {
-      contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 400px';
-    });
-  }
-  
-  setupGameEngineResizer(resizer, panel) {
-    const contentWrapper = resizer.parentElement;
-    let isResizing = false;
-    let startX = 0;
-    let startWidth = 0;
-    
-    resizer.addEventListener('mousedown', (e) => {
-      isResizing = true;
-      startX = e.clientX;
-      startWidth = panel.offsetWidth;
-      
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-      e.preventDefault();
-    });
-    
-    document.addEventListener('mousemove', (e) => {
-      if (!isResizing) return;
-      
-      const deltaX = startX - e.clientX; // Inverted because we're resizing from the right
-      let newWidth = startWidth + deltaX;
-      
-      // Enforce constraints
-      newWidth = Math.max(300, Math.min(800, newWidth));
-      
-      // Update grid template
-      const existingColumns = contentWrapper.style.gridTemplateColumns.split(' ');
-      existingColumns[4] = `${newWidth}px`;
-      contentWrapper.style.gridTemplateColumns = existingColumns.join(' ');
-      
-      e.preventDefault();
-    });
-    
-    document.addEventListener('mouseup', () => {
-      if (isResizing) {
-        isResizing = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    });
-    
-    // Double-click to reset
-    resizer.addEventListener('dblclick', () => {
-      const existingColumns = contentWrapper.style.gridTemplateColumns.split(' ');
-      existingColumns[4] = '400px';
-      contentWrapper.style.gridTemplateColumns = existingColumns.join(' ');
-    });
-  }
-  
+
   /**
    * Initialize the game input manager
    */
@@ -2572,408 +2489,34 @@ class GameEmulator {
     });
   }
 
-  hideGameEngine() {
-    // Stop the game when closing the emulator
-    if (this.isRunning) {
-      console.log('[GameEmulator] Stopping game due to emulator panel close');
-      this.stopProject();
-    }
+  setupGameEngineEvents() {
+    // Collapsible section handling
+    const sectionHeaders = this.contentContainer.querySelectorAll('.section-header');
     
-    // Cleanup input manager
-    if (this.inputManager) {
-      this.inputManager.destroy();
-      this.inputManager = null;
-      console.log('[GameEmulator] Input manager cleaned up');
-    }
-    
-    const contentWrapper = document.querySelector('.content-wrapper');
-    const gameEnginePanel = document.querySelector('.game-engine-panel');
-    const gameEngineResizer = document.querySelector('.game-engine-resizer');
-    
-    if (contentWrapper && gameEnginePanel && gameEngineResizer) {
-      // Animate out
-      gameEnginePanel.classList.remove('visible');
-      gameEngineResizer.classList.remove('visible');
-      
-      // Reset grid layout
-      contentWrapper.style.gridTemplateColumns = 'auto 4px 1fr 4px 0fr';
-      
-      setTimeout(() => {
-        // Remove elements
-        gameEnginePanel.remove();
-        gameEngineResizer.remove();
+    sectionHeaders.forEach(header => {
+      header.addEventListener('click', () => {
+        const targetId = header.dataset.target;
+        const targetSection = this.contentContainer.querySelector(`#${targetId}`);
+        const collapseIcon = header.querySelector('.collapse-icon');
         
-        // Reset layout
-        document.body.classList.remove('game-engine-active');
-        contentWrapper.style.display = '';
-        contentWrapper.style.gridTemplateColumns = '';
-        contentWrapper.style.transition = '';
-      }, 300);
-    }
-  }
-  
-  addGameEngineStyles() {
-    // Only add styles if they don't exist
-    if (document.querySelector('#game-engine-styles')) return;
-    
-    const style = document.createElement('style');
-    style.id = 'game-engine-styles';
-    style.textContent = `
-      /* Game engine layout integration */
-      body.game-engine-active .content-wrapper {
-        display: grid !important;
-        grid-template-columns: auto 4px 1fr 4px 0fr;
-        transition: grid-template-columns 0.3s ease-in-out;
-      }
-      
-      body.game-engine-active .content-wrapper.game-engine-visible {
-        grid-template-columns: auto 4px 1fr 4px 400px;
-      }
-      
-      .game-engine-resizer {
-        background: #3c3c3c;
-        cursor: col-resize;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        position: relative;
-        user-select: none;
-        opacity: 0;
-        transition: opacity 0.3s ease-in-out;
-        grid-column: 4;
-      }
-      
-      .game-engine-resizer.visible {
-        opacity: 1;
-      }
-      
-      .game-engine-resizer:hover {
-        background: #0078d4;
-      }
-      
-      .resizer-handle {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 2px;
-        opacity: 0.6;
-      }
-      
-      .resizer-line {
-        width: 2px;
-        height: 8px;
-        background: currentColor;
-        border-radius: 1px;
-      }
-      
-      .game-engine-resizer:hover .resizer-handle {
-        opacity: 1;
-      }
-      
-      .game-engine-panel {
-        background: #2d2d30;
-        border-left: 2px solid #3c3c3c;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        opacity: 0;
-        transform: translateX(100%);
-        transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        color: #cccccc;
-        grid-column: 5;
-      }
-      
-      .game-engine-panel.visible {
-        opacity: 1;
-        transform: translateX(0);
-      }
-      
-      /* Header styling now handled by main.css shared panel styles */
-      
-      .close-engine-btn {
-        background: #dc3545;
-        border: none;
-        color: white;
-        width: 30px;
-        height: 30px;
-        border-radius: 50%;
-        cursor: pointer;
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      
-      .close-engine-btn:hover {
-        background: #c82333;
-      }
-      
-      .game-engine-tabs {
-        background: #252526;
-        display: flex;
-        border-bottom: 1px solid #3c3c3c;
-        flex-shrink: 0;
-      }
-      
-      .tab-btn {
-        background: none;
-        border: none;
-        color: #cccccc;
-        padding: 12px 20px;
-        cursor: pointer;
-        border-bottom: 2px solid transparent;
-        transition: all 0.2s;
-        flex: 1;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      
-      .tab-btn.active {
-        color: #0078d4;
-        border-bottom-color: #0078d4;
-      }
-      
-      .tab-btn:hover:not(.active) {
-        background: #3c3c3c;
-      }
-      
-      .game-engine-content {
-        flex: 1;
-        overflow: hidden;
-        position: relative;
-      }
-      
-      .tab-content {
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: none;
-        overflow: auto;
-      }
-      
-      .tab-content.active {
-        display: block;
-      }
-      
-      .game-canvas-container {
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        height: 100%;
-      }
-
-      .game-controls {
-        display: flex;
-        gap: 12px;
-        margin-bottom: 15px;
-        padding: 10px;
-        background: #2d2d30;
-        border-radius: 6px;
-        border: 1px solid #3c3c3c;
-      }
-
-      .game-control-btn {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 8px 12px;
-        background: #0078d4;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 13px;
-        font-family: inherit;
-        transition: all 0.2s ease;
-        min-width: 80px;
-        justify-content: center;
-      }
-
-      .game-control-btn:hover {
-        background: #106ebe;
-        transform: translateY(-1px);
-      }
-
-      .game-control-btn:active {
-        transform: translateY(0);
-      }
-
-      .game-control-btn.paused {
-        background: #28a745;
-      }
-
-      .game-control-btn.paused:hover {
-        background: #1e7e34;
-      }
-
-      .game-control-btn .btn-icon {
-        font-size: 14px;
-      }
-
-      .game-control-btn .btn-text {
-        font-weight: 500;
-      }
-      
-      #game-canvas {
-        background: #000;
-        border: 2px solid #3c3c3c;
-        max-width: 100%;
-        max-height: calc(100% - 60px);
-      }
-      
-      .game-info {
-        margin-top: 10px;
-        color: #6c757d;
-        font-style: italic;
-      }
-      
-      .output-console, .script-viewer {
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      
-      .console-header, .script-header {
-        background: #1e1e1e;
-        padding: 10px 15px;
-        border-bottom: 1px solid #3c3c3c;
-        color: #0078d4;
-        font-weight: bold;
-        flex-shrink: 0;
-      }
-      
-      .console-content, .script-content {
-        flex: 1;
-        padding: 15px;
-        overflow: auto;
-        font-family: 'Consolas', 'Monaco', monospace;
-        font-size: 14px;
-        line-height: 1.5;
-        white-space: pre-wrap;
-        background: #1e1e1e;
-      }
-      
-      .console-content {
-        color: #d4edda;
-      }
-      
-      .script-content {
-        color: #f8f9fa;
-        background: #2d2d30;
-      }
-      
-      .key-mapping-display {
-        margin-top: 20px;
-        padding: 15px;
-        background: #2d2d30;
-        border-radius: 6px;
-        border: 1px solid #3c3c3c;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      }
-      
-      .key-mapping-display h4 {
-        margin: 0 0 15px 0;
-        color: #0078d4;
-        font-size: 16px;
-        text-align: center;
-      }
-      
-      .key-mapping-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 15px;
-        margin-bottom: 15px;
-      }
-      
-      .key-mapping-section h5 {
-        margin: 0 0 8px 0;
-        color: #f0f6fc;
-        font-size: 14px;
-        text-align: center;
-        border-bottom: 1px solid #3c3c3c;
-        padding-bottom: 4px;
-      }
-      
-      .key-mapping-item {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 4px 8px;
-        background: #1e1e1e;
-        border-radius: 3px;
-        margin-bottom: 3px;
-      }
-      
-      .key-mapping-item .key {
-        background: #0078d4;
-        color: white;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-family: 'Consolas', monospace;
-        font-size: 11px;
-        font-weight: bold;
-        min-width: 50px;
-        text-align: center;
-      }
-      
-      .key-mapping-item .button {
-        color: #cccccc;
-        font-size: 11px;
-        margin-left: 8px;
-      }
-      
-      .input-status {
-        text-align: center;
-        padding: 8px;
-        background: #1e1e1e;
-        border-radius: 3px;
-        color: #ffb74d;
-        font-size: 12px;
-        border: 1px dashed #3c3c3c;
-      }
-      
-      .input-status.active {
-        background: #0e5a1a;
-        color: #4caf50;
-        border-color: #4caf50;
-      }
-    `;
-    
-    document.head.appendChild(style);
-  }
-  
-  setupGameEngineEvents(panel) {
-    // Tab switching
-    const tabBtns = panel.querySelectorAll('.tab-btn');
-    const tabContents = panel.querySelectorAll('.tab-content');
-    
-    tabBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const targetTab = btn.dataset.tab;
-        
-        // Update active tab button
-        tabBtns.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        
-        // Update active tab content
-        tabContents.forEach(content => {
-          content.classList.remove('active');
-          if (content.id === `${targetTab}-tab`) {
-            content.classList.add('active');
-          }
-        });
+        if (targetSection.classList.contains('expanded')) {
+          // Collapse the section
+          targetSection.classList.remove('expanded');
+          targetSection.classList.add('collapsed');
+          collapseIcon.textContent = '▶';
+        } else {
+          // Expand the section
+          targetSection.classList.remove('collapsed');
+          targetSection.classList.add('expanded');
+          collapseIcon.textContent = '▼';
+        }
       });
     });
 
     // Game control buttons
-    const playPauseBtn = panel.querySelector('#playPauseBtn');
-    const stopBtn = panel.querySelector('#stopBtn');
-    const reloadBtn = panel.querySelector('#reloadBtn');
+    const playPauseBtn = this.contentContainer.querySelector('#playPauseBtn');
+    const stopBtn = this.contentContainer.querySelector('#stopBtn');
+    const reloadBtn = this.contentContainer.querySelector('#reloadBtn');
 
     if (playPauseBtn) {
       playPauseBtn.addEventListener('click', () => {
@@ -2994,8 +2537,8 @@ class GameEmulator {
     }
 
     // Volume controls
-    const muteBtn = panel.querySelector('#muteBtn');
-    const volumeSlider = panel.querySelector('#volumeSlider');
+    const muteBtn = this.contentContainer.querySelector('#muteBtn');
+    const volumeSlider = this.contentContainer.querySelector('#volumeSlider');
 
     if (muteBtn) {
       muteBtn.addEventListener('click', () => {
@@ -3196,14 +2739,5 @@ class GameEmulator {
 }
 
 // Initialize when page loads
-window.addEventListener('DOMContentLoaded', async () => {
-  if (!window.gameEmulator) {
-    window.gameEmulator = new GameEmulator();
-    
-    // Emit ready event after gameEmulator is fully initialized
-    document.dispatchEvent(new CustomEvent('gameEmulatorReady'));
-    console.log('[GameEmulator] Ready event emitted');
-  } else {
-    console.log('[GameEmulator] Instance already exists, skipping initialization');
-  }
-});
+// GameEmulator class is instantiated by application.js
+// No fallback instantiation needed

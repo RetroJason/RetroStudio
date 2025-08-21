@@ -625,7 +625,7 @@ body.no-select {
   display: block;
 }
 
-/* Content wrapper for project explorer and main content */
+/* Content wrapper for project explorer, main content, and game engine */
 .content-wrapper {
   display: flex;
   flex: 1;
@@ -646,6 +646,28 @@ body.no-select {
   cursor: col-resize;
   flex-shrink: 0;
   transition: background 0.2s ease;
+}
+
+.main-content {
+  flex: 1;
+  min-width: 0;
+  background: #1e1e1e;
+}
+
+.game-engine-resizer {
+  width: 4px;
+  background: #3c3c3c;
+  cursor: col-resize;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.game-engine-panel {
+  width: 400px;
+  max-width: 800px;
+  flex-shrink: 0;
+  background: #252526;
+  border-left: 1px solid #3c3c3c;
 }
 
 .resizer:hover {
@@ -1346,9 +1368,10 @@ body.no-select {
   padding: 15px 20px;
   border-bottom: 1px solid #3c3c3c;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
   flex-shrink: 0;
+  position: relative;
 }
 
 .explorer-header h3,
@@ -1357,4 +1380,22 @@ body.no-select {
   color: #0078d4;
   font-size: 18px;
   font-weight: 600;
+  text-align: center;
+  flex: 1;
+}
+
+/* Position toggle buttons consistently */
+.explorer-header .panel-toggle-btn,
+.game-engine-header .panel-toggle-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.explorer-header .panel-toggle-btn {
+  right: 20px;
+}
+
+.game-engine-header .panel-toggle-btn {
+  left: 15px; /* Match visual spacing with right panel */
 }

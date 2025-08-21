@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="style/project-explorer.css">
   <link rel="stylesheet" href="style/viewers.css">
   <link rel="stylesheet" href="style/palette-editor.css">
+  <link rel="stylesheet" href="style/game-engine.css">
   <link rel="stylesheet" href="styles/mod-player.css">
   
   <!-- Monaco Editor -->
@@ -59,19 +60,19 @@
       </div>
     </div>
     
-    <!-- Content Area (Project Explorer + Main Content) -->
+    <!-- Content Area (Project Explorer + Main Content + Game Engine) -->
     <div class="content-wrapper">
       <!-- Project Explorer (left panel) -->
       <div class="project-explorer" id="projectExplorer">
         <div class="explorer-header">
-          <h3>📁 Project Explorer</h3>
+          <h3>Project Explorer</h3>
         </div>
         <div class="explorer-tree" id="projectTree">
           <!-- Tree will be populated by JavaScript -->
         </div>
       </div>
       
-      <!-- Resizer -->
+      <!-- Left Resizer -->
       <div class="resizer" id="resizer"></div>
       
       <!-- Main Content Area -->
@@ -95,6 +96,19 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+      
+      <!-- Right Resizer -->
+      <div class="game-engine-resizer" id="gameEngineResizer"></div>
+      
+      <!-- Game Engine Panel (right panel) -->
+      <div class="game-engine-panel" id="gameEnginePanel">
+        <div class="game-engine-header">
+          <h3>Simulator</h3>
+        </div>
+        <div class="game-engine-content" id="gameEngineContent">
+          <!-- Content will be rendered by game-emulator.js -->
         </div>
       </div>
     </div>

@@ -21,6 +21,19 @@ class PanelResizer {
       headerSelector: '.explorer-header'
     });
     
+    // Initialize right panel (game engine)
+    this.initializePanel({
+      id: 'gameEngine',
+      panelId: 'gameEnginePanel',
+      resizerId: 'gameEngineResizer',
+      side: 'right',
+      minWidth: 32,
+      minExpandedWidth: 300,
+      maxWidth: 800,
+      defaultWidth: 400,
+      headerSelector: '.game-engine-header'
+    });
+    
     console.log('[PanelResizer] Initialized with support for left and right panels');
   }
   
@@ -84,13 +97,8 @@ class PanelResizer {
       toggleButton.title = `Collapse ${panelState.id}`;
     }
     
-    // Add to header (look for existing controls container or append directly)
-    const controlsContainer = header.querySelector('.header-controls');
-    if (controlsContainer) {
-      controlsContainer.insertBefore(toggleButton, controlsContainer.firstChild);
-    } else {
-      header.appendChild(toggleButton);
-    }
+    // Add button to header - CSS will handle positioning
+    header.appendChild(toggleButton);
     
     // Ensure header has proper styling for collapsed state
     header.style.position = 'relative';
@@ -388,6 +396,29 @@ class PanelResizer {
     return this.initializePanel({
       ...config,
       side: 'right'
+    });
+  }
+
+  // Add a game engine panel specifically
+  addGameEnginePanel() {
+    const panel = document.querySelector('.game-engine-panel');
+    const resizer = document.querySelector('.game-engine-resizer');
+    
+    if (!panel || !resizer) {
+      console.warn('[PanelResizer] Game engine panel or resizer not found, will retry when created');
+      return false;
+    }
+    
+    return this.initializePanel({
+      id: 'gameEngine',
+      panelId: 'game-engine-panel',
+      resizerId: 'game-engine-resizer',
+      side: 'right',
+      minWidth: 32,
+      minExpandedWidth: 300,
+      maxWidth: 800,
+      defaultWidth: 400,
+      headerSelector: '.game-engine-header'
     });
   }
 
