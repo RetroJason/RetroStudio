@@ -1636,3 +1636,6 @@ PaletteEditor.getIcon = () => '🎨';
 PaletteEditor.getPriority = () => 10;
 PaletteEditor.getCapabilities = () => ['color-editing', 'import-export'];
 PaletteEditor.canCreate = true;
+
+// Register the component
+PaletteEditor.registerComponent();

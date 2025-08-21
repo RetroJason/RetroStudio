@@ -174,13 +174,8 @@
   <script src="scripts/controls/volume-control.js"></script>
   <script src="scripts/controls/loop-control.js"></script>
   
-  <!-- Viewers -->
+  <!-- Base classes (needed by editors) -->
   <script src="scripts/viewers/viewer-base.js"></script>
-  <script src="scripts/viewers/mod-viewer.js"></script>
-  <script src="scripts/viewers/wav-viewer.js"></script>
-  <script src="scripts/viewers/hex-viewer.js"></script>
-  <script src="scripts/viewers/simple-image-viewer.js"></script>
-  <script src="scripts/viewers/viewer-plugins.js"></script>
   
   <!-- Components -->
   <script src="scripts/components/waveform-display.js"></script>
@@ -189,16 +184,12 @@
   <script src="scripts/build-system.js"></script>
   
   <!-- Interfaces -->
+  <script src="scripts/interfaces/registerable.js"></script>
   <script src="scripts/interfaces/buildable.js"></script>
   
-  <!-- Editors -->
+  <!-- Editors (base classes only - actual editors loaded dynamically) -->
   <script src="scripts/editors/editor-base.js"></script>
   <script src="scripts/editors/compound-editor.js"></script>
-  <script src="scripts/editors/lua-editor.js"></script>
-  <script src="scripts/editors/sound-fx-editor.js"></script>
-  <script src="scripts/editors/palette-editor.js"></script>
-  <script src="scripts/editors/mod-xm-tracker-editor.js"></script>
-  <script src="scripts/editors/editor-registry.js"></script>
   
   <!-- UI Management -->
   <script src="scripts/ribbon-toolbar.js"></script>
@@ -206,7 +197,7 @@
   <script src="scripts/project-explorer.js"></script>
   <script src="scripts/game-emulator/game-emulator.js"></script>
   
-  <!-- Application Bootstrap (must load last) -->
+  <!-- Application Bootstrap (components will be loaded dynamically after init) -->
   <script src="scripts/core/application.js"></script>
   
   <!-- Monaco Editor (load after everything else) -->

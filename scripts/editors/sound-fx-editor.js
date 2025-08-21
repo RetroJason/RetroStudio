@@ -1228,3 +1228,6 @@ SoundFXEditor.getIcon = () => '🔊';
 SoundFXEditor.getPriority = () => 10;
 SoundFXEditor.getCapabilities = () => ['audio-preview', 'waveform-display', 'buildable'];
 SoundFXEditor.canCreate = true;
+
+// Register the component
+SoundFXEditor.registerComponent();

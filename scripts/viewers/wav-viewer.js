@@ -874,5 +874,5 @@ WavViewer.getCapabilities = () => ['audio-playback', 'waveform-display'];
 
 // Auto-register the viewer
 if (typeof ComponentRegistry !== 'undefined') {
-  ComponentRegistry.register('WavViewer', WavViewer);
+  WavViewer.registerComponent();
 }

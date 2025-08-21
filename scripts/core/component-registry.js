@@ -406,6 +406,18 @@ class ComponentRegistry {
       }
     }
   }
+
+  // Static convenience method for registration
+  static register(type, componentClass) {
+    const componentRegistry = window.serviceContainer.get('componentRegistry');
+    if (type.toLowerCase().includes('viewer')) {
+      componentRegistry.autoRegisterViewer(componentClass);
+    } else if (type.toLowerCase().includes('editor')) {
+      componentRegistry.autoRegisterEditor(componentClass);
+    } else {
+      console.warn(`[ComponentRegistry] Unknown component type '${type}' for ${componentClass.name}`);
+    }
+  }
 }
 
 // Export for use

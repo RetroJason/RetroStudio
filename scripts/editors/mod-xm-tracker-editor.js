@@ -568,5 +568,16 @@ class ModXmTrackerEditor extends EditorBase {
   }
 }
 
+// Static metadata for auto-registration
+ModXmTrackerEditor.getFileExtensions = () => ['.mod', '.xm', '.s3m', '.it'];
+ModXmTrackerEditor.getDisplayName = () => 'MOD/XM Tracker';
+ModXmTrackerEditor.getIcon = () => '🎵';
+ModXmTrackerEditor.getPriority = () => 10;
+ModXmTrackerEditor.getCapabilities = () => ['audio-editing', 'tracker'];
+ModXmTrackerEditor.canCreate = true;
+
 // Export for global access
 window.ModXmTrackerEditor = ModXmTrackerEditor;
+
+// Register the component
+ModXmTrackerEditor.registerComponent();

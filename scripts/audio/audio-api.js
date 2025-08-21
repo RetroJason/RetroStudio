@@ -437,56 +437,62 @@ class AudioEngine extends EventTarget {
     } else if (e.data.type === 'mod-loaded') {
       console.log('[AudioEngine] MOD loaded successfully, title:', e.data.title, 'duration:', e.data.duration);
       
-      // Update the currently playing resource with the actual duration
+      // Check if this is for a currently playing resource first
+      let handledByCurrentResource = false;
       if (this.currentResourceId && this.resources.has(this.currentResourceId)) {
         const resource = this.resources.get(this.currentResourceId);
         if (resource.type === 'mod') {
           resource.duration = e.data.duration;
           resource.title = e.data.title;
           console.log('[AudioEngine] Updated current MOD resource', this.currentResourceId, 'with duration:', e.data.duration);
+          handledByCurrentResource = true;
         }
       }
       
-      // Find the correct pending analysis resource by iterating through loading promises
-      let matchingResourceId = null;
-      let matchingResource = null;
-      
-      console.log('[AudioEngine] Looking for pending analysis resource, promises count:', this._loadingPromises.size);
-      for (const [resourceId, promiseData] of this._loadingPromises.entries()) {
-        const resource = this.resources.get(resourceId);
-        if (resource && resource.type === 'mod' && !resource.duration) {
-          // This resource doesn't have a duration yet, so it's likely the one we just analyzed
-          console.log(`[AudioEngine] Found likely match: ${resourceId}, checking if it needs duration...`);
-          matchingResourceId = resourceId;
-          matchingResource = resource;
-          break;
-        }
-      }
-      
-      // If we found a matching resource, update it
-      if (matchingResource && matchingResourceId) {
-        matchingResource.duration = e.data.duration;
-        matchingResource.title = e.data.title;
-        console.log('[AudioEngine] Updated MOD resource', matchingResourceId, 'with duration:', e.data.duration);
+      // Only try analysis resource matching if this wasn't handled by current resource
+      if (!handledByCurrentResource && this._loadingPromises.size > 0) {
+        // Find the correct pending analysis resource by iterating through loading promises
+        let matchingResourceId = null;
+        let matchingResource = null;
         
-        // Resolve the loading promise
-        const promiseData = this._loadingPromises.get(matchingResourceId);
-        if (promiseData) {
-          console.log('[AudioEngine] Resolving loading promise for:', matchingResourceId);
-          clearTimeout(promiseData.timeoutId);
-          this._loadingPromises.delete(matchingResourceId);
-          promiseData.resolve(); // Analysis complete, resource is ready
+        console.log('[AudioEngine] Looking for pending analysis resource, promises count:', this._loadingPromises.size);
+        for (const [resourceId, promiseData] of this._loadingPromises.entries()) {
+          const resource = this.resources.get(resourceId);
+          if (resource && resource.type === 'mod' && !resource.duration) {
+            // This resource doesn't have a duration yet, so it's likely the one we just analyzed
+            console.log(`[AudioEngine] Found likely match: ${resourceId}, checking if it needs duration...`);
+            matchingResourceId = resourceId;
+            matchingResource = resource;
+            break;
+          }
         }
         
-        // Emit event for duration update
-        console.log('[AudioEngine] Emitting resourceUpdated event for:', matchingResourceId);
-        this.dispatchEvent(new CustomEvent('resourceUpdated', {
-          detail: { resourceId: matchingResourceId, property: 'duration', value: e.data.duration }
-        }));
-      } else {
-        console.warn('[AudioEngine] Could not find matching resource for MOD analysis result');
-        console.log('[AudioEngine] Available resources:', Array.from(this.resources.keys()));
-        console.log('[AudioEngine] Pending promises:', Array.from(this._loadingPromises.keys()));
+        // If we found a matching resource, update it
+        if (matchingResource && matchingResourceId) {
+          matchingResource.duration = e.data.duration;
+          matchingResource.title = e.data.title;
+          console.log('[AudioEngine] Updated MOD resource', matchingResourceId, 'with duration:', e.data.duration);
+          
+          // Resolve the loading promise
+          const promiseData = this._loadingPromises.get(matchingResourceId);
+          if (promiseData) {
+            console.log('[AudioEngine] Resolving loading promise for:', matchingResourceId);
+            clearTimeout(promiseData.timeoutId);
+            this._loadingPromises.delete(matchingResourceId);
+            promiseData.resolve(); // Analysis complete, resource is ready
+          }
+          
+          // Emit event for duration update
+          console.log('[AudioEngine] Emitting resourceUpdated event for:', matchingResourceId);
+          this.dispatchEvent(new CustomEvent('resourceUpdated', {
+            detail: { resourceId: matchingResourceId, property: 'duration', value: e.data.duration }
+          }));
+        } else if (this._loadingPromises.size > 0) {
+          console.warn('[AudioEngine] Could not find matching resource for MOD analysis result');
+          console.log('[AudioEngine] Available resources:', Array.from(this.resources.keys()));
+          console.log('[AudioEngine] Pending promises:', Array.from(this._loadingPromises.keys()));
+          console.log('[AudioEngine] Message data:', e.data);
+        }
       }
       
       // Only start playing if there's a current resource (meaning this was for playback, not analysis)
