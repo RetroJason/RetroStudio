@@ -208,6 +208,22 @@ class GameEmulator {
   
   updateStatus(message, type = 'info') {
     console.log(`[GameEmulator] Status: ${message}`);
+    
+    // Update play button text based on running state
+    this.updatePlayButton();
+  }
+
+  updatePlayButton() {
+    const playBtn = document.getElementById('playProjectBtn');
+    if (playBtn) {
+      if (this.isRunning) {
+        playBtn.textContent = '⏹️ Stop';
+        playBtn.title = 'Stop Project';
+      } else {
+        playBtn.textContent = '▶️ Play';
+        playBtn.title = 'Run Project';
+      }
+    }
   }
   
   async playProject() {
@@ -473,7 +489,7 @@ class GameEmulator {
         
         // Handle audio resources (SFX and MUSIC)
         if (resource.type === 'SFX' || resource.type === 'MUSIC') {
-          const loadPromise = this.loadAudioFileOnDemand(resource.name)
+          const loadPromise = this.preloadAudioResource(resource)
             .then((audioResourceId) => {
               resource.loaded = true;
               resource.audioResource = audioResourceId;
@@ -798,6 +814,116 @@ class GameEmulator {
       }
     }
     return null;
+  }
+
+  /**
+   * Invalidate ALL cached resources
+   * This is called when any build operation occurs to ensure viewers get the latest version
+   */
+  invalidateAllResourceCache() {
+    console.log(`[GameEmulator] Invalidating ALL cached resources due to build operation`);
+    
+    // Clear all audio resources
+    const audioResourceCount = this.loadedAudioResources.size;
+    for (const [path, resourceId] of this.loadedAudioResources.entries()) {
+      console.log(`[GameEmulator] Clearing cached audio resource: ${path} -> ${resourceId}`);
+      
+      // Unload from audio engine
+      if (this.audioEngine) {
+        this.audioEngine.unloadResource(resourceId);
+      }
+      
+      // Unload from resource manager
+      if (this.resourceManager) {
+        this.resourceManager.unloadResource(resourceId);
+      }
+    }
+    
+    // Clear the entire cache
+    this.loadedAudioResources.clear();
+    
+    // Clear resource manager cache
+    if (this.resourceManager && typeof this.resourceManager.clear === 'function') {
+      this.resourceManager.clear();
+    }
+    
+    // Clear resource mappings that might be cached
+    if (this.resourceMap) {
+      // Reset loaded status for all resources so they reload on next access
+      for (const [resourceId, resource] of this.resourceMap.entries()) {
+        if (resource.loaded) {
+          resource.loaded = false;
+          resource.audioResource = null;
+        }
+      }
+    }
+    
+    console.log(`[GameEmulator] Cleared ${audioResourceCount} audio resources and reset all resource cache`);
+  }
+
+  /**
+   * Preload a single audio resource directly from build files
+   * Used during emulator startup to load ALL resources into memory
+   * @param {Object} resource - Resource object with filePath and type info
+   * @returns {Promise<string>} Resource ID
+   */
+  async preloadAudioResource(resource) {
+    console.log(`[GameEmulator] Preloading audio resource: ${resource.id} from ${resource.filePath}`);
+    
+    try {
+      // Load the file from build storage
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (!fileManager) {
+        throw new Error('FileManager not available');
+      }
+      
+      // Convert UI path to storage path
+      const storagePath = resource.filePath.replace('test/Game Objects/', 'build/');
+      console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
+      
+      const fileData = await fileManager.loadFile(storagePath);
+      if (!fileData) {
+        throw new Error(`Failed to load file from storage: ${storagePath}`);
+      }
+      
+      // Convert file data to ArrayBuffer
+      let arrayBuffer;
+      if (fileData.content instanceof ArrayBuffer) {
+        arrayBuffer = fileData.content;
+      } else if (fileData.binaryData && fileData.fileContent) {
+        // Decode base64 binary data
+        const binaryString = atob(fileData.fileContent);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        arrayBuffer = bytes.buffer;
+      } else {
+        throw new Error(`Unsupported file data format for ${storagePath}`);
+      }
+      
+      console.log(`[GameEmulator] Converted to ArrayBuffer, size: ${arrayBuffer.byteLength} bytes`);
+      
+      // Determine audio type from file extension
+      const extension = resource.name.toLowerCase();
+      const isModFile = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => extension.endsWith(ext));
+      const audioType = isModFile ? 'mod' : 'wav';
+      const mimeType = isModFile ? 'application/octet-stream' : 'audio/wav';
+      
+      // Create File object for ResourceManager
+      const file = new File([arrayBuffer], resource.name, { type: mimeType });
+      console.log(`[GameEmulator] Created File object: ${file.name}, size: ${file.size}, type: ${file.type}`);
+      
+      // Load through ResourceManager
+      const resourceId = await this.resourceManager.loadFromFile(file, audioType);
+      console.log(`[GameEmulator] Successfully loaded audio resource: ${resourceId}`);
+      
+      return resourceId;
+      
+    } catch (error) {
+      console.error(`[GameEmulator] Failed to preload audio resource ${resource.id}:`, error);
+      throw error;
+    }
   }
 
   // Load an audio file on demand (called by viewers)
@@ -1440,6 +1566,21 @@ class GameEmulator {
     console.log('[GameEmulator] Stopping game loop...');
     this.isRunning = false;
     this.updateStatus('Game loop stopped', 'info');
+  }
+
+  /**
+   * Stop the currently running project
+   */
+  stopProject() {
+    console.log('[GameEmulator] Stopping project...');
+    this.stopGameLoop();
+    
+    // Stop all audio
+    if (this.audioEngine) {
+      this.audioEngine.stopAllAudio();
+    }
+    
+    this.updateStatus('Project stopped', 'info');
   }
   
   async executeLuaScript(scriptContent) {
