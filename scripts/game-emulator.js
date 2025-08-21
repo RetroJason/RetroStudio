@@ -2689,21 +2689,7 @@ class GameEmulator {
         transform: translateX(0);
       }
       
-      .game-engine-header {
-        background: #1e1e1e;
-        padding: 15px 20px;
-        border-bottom: 1px solid #3c3c3c;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-shrink: 0;
-      }
-      
-      .game-engine-header h3 {
-        margin: 0;
-        color: #0078d4;
-        font-size: 18px;
-      }
+      /* Header styling now handled by main.css shared panel styles */
       
       .close-engine-btn {
         background: #dc3545;

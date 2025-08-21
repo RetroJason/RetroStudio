@@ -18,21 +18,7 @@
   overflow: hidden;
 }
 
-.explorer-header {
-  padding: 10px;
-  background-color: #2d2d30;
-  border-bottom: 1px solid #3c3c3c;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.explorer-header h3 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: #cccccc;
-}
+/* Header styling now handled by main.css shared panel styles */
 
 .btn-small {
   padding: 4px 8px;
