@@ -16,6 +16,7 @@ class GameEmulator {
     this.printOutput = []; // Store Lua print output
     this.luaState = null; // Lua execution state
     this.isRunning = false; // Game loop state
+    this.isPaused = false; // Pause state
     this.frameCount = 0;
     this.lastFrameTime = 0;
     this.extensionLoader = null; // Lua extension loader
@@ -1407,18 +1408,14 @@ class GameEmulator {
         
         // Check what functions are defined in the global scope
         try {
+          // Check function definitions silently
           L.execute(`
-            print("=== Checking defined functions ===")
-            print("Setup function type: " .. type(Setup))
-            print("Update function type: " .. type(Update))
-            if System then
-              print("System table exists with LogLua function: " .. type(System.LogLua))
-            else
-              print("System table not defined")
-            end
-            print("=== End function check ===")
+            -- Silent function verification (no debug output)
+            local setup_type = type(Setup)
+            local update_type = type(Update)
+            local system_exists = System ~= nil
+            -- Functions exist, no output needed
           `);
-          this.captureLuaPrintOutput();
         } catch (checkError) {
           console.error('[GameEmulator] Error checking function definitions:', checkError);
         }
@@ -1532,15 +1529,19 @@ class GameEmulator {
       this.frameCount++;
       
       try {
-        // Call Update(deltaTime) in Lua
-        this.luaState.execute(`Update(${deltaTime})`);
-        
-        // Check for new print output from Lua
-        this.captureLuaPrintOutput();
+        // Only update if not paused
+        if (!this.isPaused) {
+          // Call Update(deltaTime) in Lua
+          this.luaState.execute(`Update(${deltaTime})`);
+          
+          // Check for new print output from Lua
+          this.captureLuaPrintOutput();
+        }
         
         // Log every 60 frames (once per second at 60fps)
         if (this.frameCount % 60 === 0) {
-          console.log(`[GameEmulator] Game loop running - Frame ${this.frameCount}, Delta: ${deltaTime.toFixed(2)}ms`);
+          const status = this.isPaused ? '(Paused)' : '';
+          console.log(`[GameEmulator] Game loop running - Frame ${this.frameCount}, Delta: ${deltaTime.toFixed(2)}ms ${status}`);
         }
       } catch (error) {
         console.error('[GameEmulator] Error in Update() function:', error);
@@ -1581,6 +1582,79 @@ class GameEmulator {
     }
     
     this.updateStatus('Project stopped', 'info');
+  }
+
+  /**
+   * Toggle pause/resume state
+   */
+  togglePauseResume() {
+    if (!this.isRunning) {
+      console.log('[GameEmulator] Cannot pause/resume - game is not running');
+      return;
+    }
+
+    this.isPaused = !this.isPaused;
+    console.log(`[GameEmulator] ${this.isPaused ? 'Paused' : 'Resumed'} game`);
+    
+    // Update button appearance
+    this.updatePauseResumeButton();
+    
+    if (this.isPaused) {
+      // Pause audio if any
+      if (this.audioEngine) {
+        this.audioEngine.stopAllAudio();
+      }
+      this.updateStatus('Game paused', 'info');
+    } else {
+      this.updateStatus('Game resumed', 'info');
+    }
+  }
+
+  /**
+   * Reload the game (rebuild and restart)
+   */
+  async reloadGame() {
+    console.log('[GameEmulator] Reloading game...');
+    this.updateStatus('Reloading game...', 'info');
+    
+    try {
+      // Stop current game
+      this.stopGameLoop();
+      
+      // Clear any paused state
+      this.isPaused = false;
+      this.updatePauseResumeButton();
+      
+      // Restart the game (this will rebuild and reload)
+      await this.playProject();
+      
+    } catch (error) {
+      console.error('[GameEmulator] Error reloading game:', error);
+      this.updateStatus(`Reload failed: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Update pause/resume button appearance
+   */
+  updatePauseResumeButton() {
+    const pauseResumeBtn = document.querySelector('#pauseResumeBtn');
+    if (pauseResumeBtn) {
+      const icon = pauseResumeBtn.querySelector('.btn-icon');
+      const text = pauseResumeBtn.querySelector('.btn-text');
+      
+      if (this.isPaused) {
+        icon.textContent = '▶️';
+        text.textContent = 'Resume';
+        pauseResumeBtn.classList.add('paused');
+        pauseResumeBtn.title = 'Resume Game';
+      } else {
+        icon.textContent = '⏸️';
+        text.textContent = 'Pause';
+        pauseResumeBtn.classList.remove('paused');
+        pauseResumeBtn.title = 'Pause Game';
+      }
+    }
   }
   
   async executeLuaScript(scriptContent) {
@@ -2050,26 +2124,29 @@ class GameEmulator {
       </div>
       <div class="game-engine-tabs">
         <button class="tab-btn active" data-tab="game">Game</button>
-        <button class="tab-btn" data-tab="output">Output</button>
-        <button class="tab-btn" data-tab="script">Script</button>
+        <button class="tab-btn" data-tab="console">Console</button>
       </div>
       <div class="game-engine-content">
         <div class="tab-content active" id="game-tab">
+          <div class="game-controls">
+            <button class="game-control-btn" id="pauseResumeBtn" title="Pause/Resume Game">
+              <span class="btn-icon">⏸️</span>
+              <span class="btn-text">Pause</span>
+            </button>
+            <button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
+              <span class="btn-icon">🔄</span>
+              <span class="btn-text">Reload</span>
+            </button>
+          </div>
           <div class="game-canvas-container">
             <canvas id="game-canvas" width="800" height="600"></canvas>
             <div class="game-info">Game running... (simulated)</div>
           </div>
         </div>
-        <div class="tab-content" id="output-tab">
+        <div class="tab-content" id="console-tab">
           <div class="output-console">
-            <div class="console-header">📝 Print Output</div>
+            <div class="console-header">📝 Console Output</div>
             <div class="console-content">${this.escapeHtml(output)}</div>
-          </div>
-        </div>
-        <div class="tab-content" id="script-tab">
-          <div class="script-viewer">
-            <div class="script-header">📜 Concatenated Script (${scriptData?.fileCount || 0} files)</div>
-            <div class="script-content">${this.escapeHtml(scriptData?.content || 'No script content available')}</div>
           </div>
         </div>
       </div>
@@ -2163,6 +2240,12 @@ class GameEmulator {
   }
   
   hideGameEngine() {
+    // Stop the game when closing the emulator
+    if (this.isRunning) {
+      console.log('[GameEmulator] Stopping game due to emulator panel close');
+      this.stopProject();
+    }
+    
     const contentWrapper = document.querySelector('.content-wrapper');
     const gameEnginePanel = document.querySelector('.game-engine-panel');
     const gameEngineResizer = document.querySelector('.game-engine-resizer');
@@ -2357,6 +2440,58 @@ class GameEmulator {
         align-items: center;
         height: 100%;
       }
+
+      .game-controls {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 15px;
+        padding: 10px;
+        background: #2d2d30;
+        border-radius: 6px;
+        border: 1px solid #3c3c3c;
+      }
+
+      .game-control-btn {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: #0078d4;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-family: inherit;
+        transition: all 0.2s ease;
+        min-width: 80px;
+        justify-content: center;
+      }
+
+      .game-control-btn:hover {
+        background: #106ebe;
+        transform: translateY(-1px);
+      }
+
+      .game-control-btn:active {
+        transform: translateY(0);
+      }
+
+      .game-control-btn.paused {
+        background: #28a745;
+      }
+
+      .game-control-btn.paused:hover {
+        background: #1e7e34;
+      }
+
+      .game-control-btn .btn-icon {
+        font-size: 14px;
+      }
+
+      .game-control-btn .btn-text {
+        font-weight: 500;
+      }
       
       #game-canvas {
         background: #000;
@@ -2438,6 +2573,22 @@ class GameEmulator {
         });
       });
     });
+
+    // Game control buttons
+    const pauseResumeBtn = panel.querySelector('#pauseResumeBtn');
+    const reloadBtn = panel.querySelector('#reloadBtn');
+
+    if (pauseResumeBtn) {
+      pauseResumeBtn.addEventListener('click', () => {
+        this.togglePauseResume();
+      });
+    }
+
+    if (reloadBtn) {
+      reloadBtn.addEventListener('click', () => {
+        this.reloadGame();
+      });
+    }
   }
   
   escapeHtml(text) {
