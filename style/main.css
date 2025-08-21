@@ -634,7 +634,6 @@ body.no-select {
 
 .project-explorer {
   width: 300px;
-  min-width: 200px;
   max-width: 500px;
   flex-shrink: 0;
   background: #252526;
