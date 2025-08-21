@@ -29,7 +29,7 @@ The new `GameConsole` class (`console.js`) provides a standalone, reusable conso
 - **Centralized Output**: All console writes go through `writeToConsole()` method
 - **Advanced Filtering**: Supports complex filter syntax (+required -excluded "exact" optional)
 - **Message Buffer**: Maintains complete message history for filtering and downloading
-- **DOM Monitoring**: Uses MutationObserver to detect external modifications
+- **Clean Architecture**: Direct data flow from Lua print() with no mutation observers
 - **Export Functionality**: Download logs as timestamped text files
 - **Configurable Options**: Timestamps, line numbers, auto-scroll, message limits
 

@@ -5,8 +5,6 @@ class GameConsole {
   constructor(options = {}) {
     this.containerId = options.containerId || 'console-container';
     this.rawMessages = [];
-    this.isInternalWrite = false;
-    this.observer = null;
     this.options = {
       showTimestamps: options.showTimestamps || false,
       maxMessages: options.maxMessages || 10000,
@@ -21,7 +19,6 @@ class GameConsole {
     this.container = container;
     this.renderContent();
     this.setupEventListeners();
-    this.setupMonitoring();
     this.writeToConsole('Console initialized\n', false);
   }
 
@@ -107,23 +104,10 @@ class GameConsole {
     }
   }
 
-  // Set up DOM mutation monitoring for external changes
+  // No monitoring needed - only Lua print() writes to console
   setupMonitoring() {
-    const consoleOutput = this.container.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    this.observer = new MutationObserver((mutations) => {
-      if (!this.isInternalWrite) {
-        console.warn('[GameConsole] External console modification detected - use writeToConsole() instead');
-        this.syncBufferFromDOM();
-      }
-    });
-
-    this.observer.observe(consoleOutput, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+    // Monitoring disabled - console only accepts Lua print() output
+    // If external modifications occur, they would be bugs to fix at the source
   }
 
   // Central method to write to console - ALL writes should go through this
@@ -136,39 +120,30 @@ class GameConsole {
       this.rawMessages = [];
     }
 
-    // Set flag to prevent observer triggering
-    this.isInternalWrite = true;
+    if (append) {
+      // Add single message to buffer
+      const textStr = String(text);
+      const message = this.formatMessage(textStr);
+      this.rawMessages.push(message);
 
-    try {
-      if (append) {
-        // Add single message to buffer
-        const textStr = String(text);
-        const message = this.formatMessage(textStr);
-        this.rawMessages.push(message);
-
-        // Enforce max message limit
-        if (this.rawMessages.length > this.options.maxMessages) {
-          this.rawMessages = this.rawMessages.slice(-this.options.maxMessages);
-        }
-      } else {
-        // Replace entire buffer (for bulk operations)
-        if (typeof text === 'string') {
-          const lines = text.split('\n').filter(line => line.trim() || this.rawMessages.length > 0);
-          this.rawMessages = lines.map(line => this.formatMessage(line + '\n'));
-        } else if (Array.isArray(text)) {
-          this.rawMessages = text.map(line => this.formatMessage(String(line)));
-        } else {
-          this.rawMessages = [this.formatMessage(String(text))];
-        }
+      // Enforce max message limit
+      if (this.rawMessages.length > this.options.maxMessages) {
+        this.rawMessages = this.rawMessages.slice(-this.options.maxMessages);
       }
-
-      // Apply current filter and update display
-      this.updateDisplay();
-
-    } finally {
-      // Always clear the flag
-      this.isInternalWrite = false;
+    } else {
+      // Replace entire buffer (for bulk operations)
+      if (typeof text === 'string') {
+        const lines = text.split('\n').filter(line => line.trim() || this.rawMessages.length > 0);
+        this.rawMessages = lines.map(line => this.formatMessage(line + '\n'));
+      } else if (Array.isArray(text)) {
+        this.rawMessages = text.map(line => this.formatMessage(String(line)));
+      } else {
+        this.rawMessages = [this.formatMessage(String(text))];
+      }
     }
+
+    // Apply current filter and update display
+    this.updateDisplay();
   }
 
   // Format a message with optional timestamp and line numbers
@@ -201,34 +176,22 @@ class GameConsole {
     const consoleOutput = this.container?.querySelector('#console-output');
     if (!consoleOutput || !this.rawMessages) return;
 
-    const wasInternalWrite = this.isInternalWrite;
-    if (!wasInternalWrite) {
-      this.isInternalWrite = true;
+    const filterInput = this.container.querySelector('#console-filter-input');
+    const filterValue = this.currentFilter || (filterInput ? filterInput.value.trim() : '');
+
+    if (!filterValue) {
+      // No filter, show all messages
+      consoleOutput.textContent = this.rawMessages.join('');
+    } else {
+      // Apply filter
+      const filter = this.parseFilterString(filterValue);
+      const filteredMessages = this.rawMessages.filter(message => this.matchesFilter(message, filter));
+      consoleOutput.textContent = filteredMessages.join('');
     }
 
-    try {
-      const filterInput = this.container.querySelector('#console-filter-input');
-      const filterValue = this.currentFilter || (filterInput ? filterInput.value.trim() : '');
-
-      if (!filterValue) {
-        // No filter, show all messages
-        consoleOutput.textContent = this.rawMessages.join('');
-      } else {
-        // Apply filter
-        const filter = this.parseFilterString(filterValue);
-        const filteredMessages = this.rawMessages.filter(message => this.matchesFilter(message, filter));
-        consoleOutput.textContent = filteredMessages.join('');
-      }
-
-      // Auto-scroll to bottom if enabled
-      if (this.options.autoScroll) {
-        consoleOutput.scrollTop = consoleOutput.scrollHeight;
-      }
-
-    } finally {
-      if (!wasInternalWrite) {
-        this.isInternalWrite = false;
-      }
+    // Auto-scroll to bottom if enabled
+    if (this.options.autoScroll) {
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
     }
   }
 
@@ -343,18 +306,6 @@ class GameConsole {
     return true;
   }
 
-  // Sync buffer from DOM content (fallback for external changes)
-  syncBufferFromDOM() {
-    const consoleOutput = this.container?.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    const content = consoleOutput.textContent || '';
-    if (content) {
-      const lines = content.split('\n').filter(line => line.trim());
-      this.rawMessages = lines.map(line => this.formatMessage(line));
-    }
-  }
-
   // Clear all console content
   clearConsole() {
     this.rawMessages = [];
@@ -415,13 +366,7 @@ class GameConsole {
 
   // Cleanup method
   cleanup() {
-    if (this.observer) {
-      this.observer.disconnect();
-      this.observer = null;
-    }
-    
     this.rawMessages = [];
-    this.isInternalWrite = false;
     this.currentFilter = '';
   }
 }
