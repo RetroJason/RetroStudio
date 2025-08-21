@@ -932,6 +932,12 @@ class EditorBase extends ViewerBase {
       uniqueNameChecked: true
     };
   }
+
+  // Resize method that can be called by tab manager when dimensions change
+  resize() {
+    // Override in subclasses if they need to handle resize events
+    // This base implementation does nothing
+  }
 }
 
 // Export for use
