@@ -14,6 +14,10 @@ class GameEmulator {
     this.currentVolume = 75;
     this.isMuted = false;
     
+    // Pause/resume state
+    this.pausedSongs = []; // Track songs that were paused
+    this.pausedSounds = []; // Track sound effects that were stopped during pause
+    
     // Set up project paths configuration
     this.setupProjectPaths();
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
@@ -1664,12 +1668,44 @@ class GameEmulator {
     this.updatePauseResumeButton();
     
     if (this.isPaused) {
-      // Pause audio if any
-      if (this.audioEngine) {
-        this.audioEngine.stopAllAudio();
+      // Pause all currently playing songs (don't stop them completely)
+      if (this.audioEngine && this.audioEngine.activeSongs) {
+        this.pausedSongs = Array.from(this.audioEngine.activeSongs.keys());
+        console.log('[GameEmulator] Pausing songs:', this.pausedSongs);
+        
+        for (const resourceId of this.pausedSongs) {
+          this.audioEngine.pauseSong(resourceId, true);
+        }
       }
+      
+      // Stop all audio immediately (including any playing SFX)
+      if (this.audioEngine && this.audioEngine.workletNode) {
+        console.log('[GameEmulator] Stopping all audio during pause');
+        this.audioEngine.workletNode.port.postMessage({ type: 'stop-all-audio' });
+        
+        // Also clear the activeSounds tracking since all sounds are stopped
+        if (this.audioEngine.activeSounds) {
+          this.pausedSounds = Array.from(this.audioEngine.activeSounds.keys());
+          this.audioEngine.activeSounds.clear();
+        }
+      }
+      
       this.updateStatus('Game paused', 'info');
     } else {
+      // Resume previously paused songs
+      if (this.audioEngine && this.pausedSongs && this.pausedSongs.length > 0) {
+        console.log('[GameEmulator] Resuming songs:', this.pausedSongs);
+        
+        for (const resourceId of this.pausedSongs) {
+          this.audioEngine.pauseSong(resourceId, false);
+        }
+        
+        this.pausedSongs = []; // Clear the paused songs list
+      }
+      
+      // Clear the stopped sounds list (SFX that were playing can't be resumed)
+      this.pausedSounds = [];
+      
       this.updateStatus('Game resumed', 'info');
     }
   }

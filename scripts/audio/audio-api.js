@@ -214,9 +214,15 @@ class AudioEngine extends EventTarget {
       });
       playback.isPlaying = false;
     } else {
-      // Resume - request more PCM data
-      this.modWorker.postMessage({ type: 'get-pcm', frames: 2048 });
+      // Resume - restart the PCM request cycle
       playback.isPlaying = true;
+      
+      // Restart the worklet playback cycle
+      this.workletNode.port.postMessage({ type: 'start-playing' });
+      this.workletNode.port.postMessage({ type: 'request-pcm' });
+      
+      // Request initial PCM data from MOD worker to kickstart the cycle
+      this.modWorker.postMessage({ type: 'get-pcm', frames: 2048 });
     }
     
     console.log(`[AudioEngine] ${pause ? 'Paused' : 'Resumed'} song: ${resourceId}`);
