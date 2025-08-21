@@ -10,6 +10,10 @@ class GameEmulator {
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
     this._inflightLoads = new Map(); // filename -> Promise
     
+    // Volume control properties
+    this.currentVolume = 75;
+    this.isMuted = false;
+    
     // Set up project paths configuration
     this.setupProjectPaths();
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
@@ -217,13 +221,73 @@ class GameEmulator {
   updatePlayButton() {
     const playBtn = document.getElementById('playProjectBtn');
     if (playBtn) {
+      const iconElement = playBtn.querySelector('.ribbon-icon');
+      const textElement = playBtn.querySelector('.ribbon-text');
+      
       if (this.isRunning) {
-        playBtn.textContent = '⏹️ Stop';
+        if (iconElement) iconElement.textContent = '⏹️';
+        if (textElement) textElement.textContent = 'Stop';
         playBtn.title = 'Stop Project';
       } else {
-        playBtn.textContent = '▶️ Play';
+        if (iconElement) iconElement.textContent = '▶️';
+        if (textElement) textElement.textContent = 'Run';
         playBtn.title = 'Run Project';
       }
+    }
+  }
+
+  /**
+   * Toggle mute state
+   */
+  toggleMute() {
+    this.isMuted = !this.isMuted;
+    
+    if (this.isMuted) {
+      this.previousVolume = this.currentVolume;
+      this.setVolume(0);
+    } else {
+      this.setVolume(this.previousVolume || 75);
+    }
+    
+    this.updateMuteButton();
+    console.log(`[GameEmulator] Audio ${this.isMuted ? 'muted' : 'unmuted'}`);
+  }
+
+  /**
+   * Set volume level
+   */
+  setVolume(volume) {
+    this.currentVolume = Math.max(0, Math.min(100, volume));
+    
+    // Update the volume slider to reflect the new value
+    const volumeSlider = document.getElementById('volumeSlider');
+    if (volumeSlider) {
+      volumeSlider.value = this.currentVolume;
+    }
+    
+    // Set volume on audio engine if available
+    if (this.audioEngine && this.audioEngine.setMasterVolume) {
+      this.audioEngine.setMasterVolume(this.currentVolume / 100);
+    }
+    
+    // Update mute state based on volume
+    if (this.currentVolume === 0 && !this.isMuted) {
+      this.isMuted = true;
+      this.updateMuteButton();
+    } else if (this.currentVolume > 0 && this.isMuted) {
+      this.isMuted = false;
+      this.updateMuteButton();
+    }
+  }
+
+  /**
+   * Update mute button appearance
+   */
+  updateMuteButton() {
+    const muteBtn = document.getElementById('muteBtn');
+    if (muteBtn) {
+      muteBtn.textContent = this.isMuted ? '🔇' : '🔊';
+      muteBtn.title = this.isMuted ? 'Unmute Audio' : 'Mute Audio';
     }
   }
   
@@ -2137,6 +2201,10 @@ class GameEmulator {
               <span class="btn-icon">🔄</span>
               <span class="btn-text">Reload</span>
             </button>
+            <div class="volume-controls">
+              <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
+              <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
+            </div>
           </div>
           <div class="game-canvas-container">
             <canvas id="game-canvas" width="800" height="600"></canvas>
@@ -2145,7 +2213,6 @@ class GameEmulator {
         </div>
         <div class="tab-content" id="console-tab">
           <div class="output-console">
-            <div class="console-header">📝 Console Output</div>
             <div class="console-content">${this.escapeHtml(output)}</div>
           </div>
         </div>
@@ -2587,6 +2654,23 @@ class GameEmulator {
     if (reloadBtn) {
       reloadBtn.addEventListener('click', () => {
         this.reloadGame();
+      });
+    }
+
+    // Volume controls
+    const muteBtn = panel.querySelector('#muteBtn');
+    const volumeSlider = panel.querySelector('#volumeSlider');
+
+    if (muteBtn) {
+      muteBtn.addEventListener('click', () => {
+        this.toggleMute();
+      });
+    }
+
+    if (volumeSlider) {
+      volumeSlider.addEventListener('input', (e) => {
+        const volume = parseInt(e.target.value);
+        this.setVolume(volume);
       });
     }
   }
