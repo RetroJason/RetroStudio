@@ -1321,3 +1321,41 @@ body.no-select {
   border: none;
   transition: all 0.2s ease;
 }
+
+/* Shared Panel Header Styles */
+.panel-header {
+  background: #1e1e1e;
+  padding: 15px 20px;
+  border-bottom: 1px solid #3c3c3c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.panel-header h3 {
+  margin: 0;
+  color: #0078d4;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Override specific headers to use shared styling */
+.explorer-header,
+.game-engine-header {
+  background: #1e1e1e;
+  padding: 15px 20px;
+  border-bottom: 1px solid #3c3c3c;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.explorer-header h3,
+.game-engine-header h3 {
+  margin: 0;
+  color: #0078d4;
+  font-size: 18px;
+  font-weight: 600;
+}
