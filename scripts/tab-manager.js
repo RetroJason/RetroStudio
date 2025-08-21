@@ -1460,7 +1460,7 @@ class TabManager {
         }
       }
 
-      this._performTabClose(tabId);
+      this._performTabClose(tabId, tabInfo);
       
     } catch (error) {
       console.error(`[TabManager] Unexpected error in closeTab for ${tabId}:`, error);
