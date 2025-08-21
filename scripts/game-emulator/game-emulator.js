@@ -25,7 +25,6 @@ class GameEmulator {
     // Set up project paths configuration
     this.setupProjectPaths();
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
-    this.printOutput = []; // Store Lua print output
     this.luaState = null; // Lua execution state
     this.isRunning = false; // Game loop state
     this.isPaused = false; // Pause state
@@ -1489,7 +1488,7 @@ class GameEmulator {
       this.luaState = L;
       
       // Initialize print output capture
-      this.printOutput = [];
+      // GameConsole will handle all output display
       
       // Simple approach: Override print function in Lua to accumulate output
       // We'll capture it differently by checking Lua's output after each execution
@@ -2051,12 +2050,9 @@ class GameEmulator {
         // Extract all items from the buffer and write directly to console
         for (let i = 1; i <= bufferSize; i++) {
           const output = this.luaState.execute(`return _print_buffer[${i}]`);
-          this.printOutput.push(output);
           
-          // Write directly to GameConsole (or fallback)
-          if (this.gameConsole) {
-            this.gameConsole.writeToConsole(output, true);
-          }
+          // Write directly to GameConsole
+          this.gameConsole.writeToConsole(output, true);
         }
         
         // Clear the buffer
@@ -2376,7 +2372,7 @@ class GameEmulator {
     }
 
     // Extract data from scriptData or use defaults
-    const currentOutput = this.printOutput ? this.printOutput.join('\n') : 'No output yet...';
+    const currentOutput = 'No output yet...'; // GameConsole handles all output display
     const output = scriptData?.output || currentOutput;
 
     this.contentContainer.innerHTML = `
@@ -2479,10 +2475,8 @@ class GameEmulator {
     `;
 
     // Initialize empty console - only Lua print() should write to it
-    this.rawConsoleMessages = [];
-
-    // Setup console monitoring and event listeners
-    this.setupConsoleMonitoring();
+    
+    // Setup event listeners
     this.setupGameEngineEvents();
   }
 
@@ -2577,17 +2571,9 @@ class GameEmulator {
       consoleToggleBtn.addEventListener('click', () => {
         const isOpen = consoleSlidePanel.classList.contains('open');
         if (isOpen) {
-          consoleSlidePanel.classList.remove('open');
-          // Use resizer API to handle panel adjustment
-          if (window.panelResizer) {
-            window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: false });
-          }
+          this.hideConsole();
         } else {
-          consoleSlidePanel.classList.add('open');
-          // Use resizer API to handle panel adjustment
-          if (window.panelResizer) {
-            window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: true });
-          }
+          this.showConsole();
         }
       });
     }
@@ -2596,22 +2582,6 @@ class GameEmulator {
     if (consoleClearBtn) {
       consoleClearBtn.addEventListener('click', () => {
         this.clearConsole();
-      });
-    }
-
-    // Console filter functionality
-    const consoleFilterInput = this.contentContainer.querySelector('#console-filter-input');
-    if (consoleFilterInput) {
-      consoleFilterInput.addEventListener('input', () => {
-        this.applyConsoleFilter(consoleFilterInput.value);
-      });
-    }
-
-    // Console download functionality
-    const consoleDownloadBtn = this.contentContainer.querySelector('#console-download-btn');
-    if (consoleDownloadBtn) {
-      consoleDownloadBtn.addEventListener('click', () => {
-        this.downloadConsoleLogs();
       });
     }
 
@@ -2880,279 +2850,12 @@ class GameEmulator {
   }
 
   // ========================================
-  // SIMPLIFIED CONSOLE SYSTEM 
+  // CONSOLE SYSTEM 
   // Only Lua print() should write to console
   // ========================================
-  
-  // Legacy writeToConsole - now only used as fallback for GameConsole delegation
-  writeToConsole(text, append = true) {
-    // NOTE: This method should no longer be called directly
-    // All console output should come from Lua print() -> captureLuaPrintOutput()
-    console.warn('[GameEmulator] writeToConsole called directly - should only use Lua print()');
-  }
 
-  // Setup console monitoring (legacy compatibility)
-  setupConsoleMonitoring() {
-    // No longer needed - GameConsole handles its own monitoring
-    // This method exists for compatibility with old code that calls it
-  }
-
-  // Fallback sync method for external modifications
-  syncConsoleBufferFromDOM() {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    const currentText = consoleOutput.textContent || '';
-    if (currentText.trim() === '') {
-      this.rawConsoleMessages = [];
-      return;
-    }
-
-    const lines = currentText.split('\n');
-    this.rawConsoleMessages = [];
-    
-    for (const line of lines) {
-      if (line.trim() || this.rawConsoleMessages.length > 0) {
-        this.rawConsoleMessages.push(line + '\n');
-      }
-    }
-  }
-
-  // Legacy methods - no longer used with Lua print() only approach
-  addToConsole(message, type = 'info') {
-    console.warn('[GameEmulator] addToConsole called - should only use Lua print()');
-  }
-
-  setConsoleContent(outputArray) {
-    console.warn('[GameEmulator] setConsoleContent called - should only use Lua print()');
-  }
-
+  // Clear console - direct call to GameConsole
   clearConsole() {
-    this.rawConsoleMessages = [];
-    this.writeToConsole('', false);
-  }
-
-  // Parse filter string according to specified syntax
-  parseFilterString(filterStr) {
-    if (!filterStr.trim()) return null;
-    
-    const tokens = [];
-    let current = '';
-    let inQuotes = false;
-    let escapeNext = false;
-    
-    for (let i = 0; i < filterStr.length; i++) {
-      const char = filterStr[i];
-      
-      if (escapeNext) {
-        current += char;
-        escapeNext = false;
-        continue;
-      }
-      
-      if (char === '\\') {
-        escapeNext = true;
-        continue;
-      }
-      
-      if (char === '"') {
-        inQuotes = !inQuotes;
-        current += char;
-        continue;
-      }
-      
-      if (char === ' ' && !inQuotes) {
-        if (current.trim()) {
-          tokens.push(current.trim());
-          current = '';
-        }
-        continue;
-      }
-      
-      current += char;
-    }
-    
-    if (current.trim()) {
-      tokens.push(current.trim());
-    }
-    
-    const parsed = {
-      required: [],     // +word
-      excluded: [],     // -word
-      optional: []      // word
-    };
-    
-    for (const token of tokens) {
-      if (token.startsWith('+')) {
-        const term = token.slice(1);
-        if (term.startsWith('"') && term.endsWith('"')) {
-          parsed.required.push({ term: term.slice(1, -1), exact: true });
-        } else {
-          parsed.required.push({ term: term, exact: false });
-        }
-      } else if (token.startsWith('-')) {
-        const term = token.slice(1);
-        if (term.startsWith('"') && term.endsWith('"')) {
-          parsed.excluded.push({ term: term.slice(1, -1), exact: true });
-        } else {
-          parsed.excluded.push({ term: term, exact: false });
-        }
-      } else {
-        if (token.startsWith('"') && token.endsWith('"')) {
-          parsed.optional.push({ term: token.slice(1, -1), exact: true });
-        } else {
-          parsed.optional.push({ term: token, exact: false });
-        }
-      }
-    }
-    
-    return parsed;
-  }
-  
-  // Check if a line matches the filter criteria
-  matchesFilter(line, filter) {
-    if (!filter) return true;
-    
-    // Check excluded terms first (they take precedence)
-    for (const excluded of filter.excluded) {
-      if (excluded.exact) {
-        if (line.includes(excluded.term)) return false;
-      } else {
-        if (line.toLowerCase().includes(excluded.term.toLowerCase())) return false;
-      }
-    }
-    
-    // Check required terms
-    for (const required of filter.required) {
-      if (required.exact) {
-        if (!line.includes(required.term)) return false;
-      } else {
-        if (!line.toLowerCase().includes(required.term.toLowerCase())) return false;
-      }
-    }
-    
-    // Check optional terms (at least one must match if any are specified)
-    if (filter.optional.length > 0) {
-      let hasOptionalMatch = false;
-      for (const optional of filter.optional) {
-        if (optional.exact) {
-          if (line.includes(optional.term)) {
-            hasOptionalMatch = true;
-            break;
-          }
-        } else {
-          if (line.toLowerCase().includes(optional.term.toLowerCase())) {
-            hasOptionalMatch = true;
-            break;
-          }
-        }
-      }
-      if (!hasOptionalMatch) return false;
-    }
-    
-    return true;
-  }
-  
-  // Apply console filter (legacy compatibility) 
-  applyConsoleFilter(filterValue) {
-    // Delegate to GameConsole if available
-    if (this.gameConsole) {
-      this.gameConsole.applyFilter(filterValue);
-    }
-  }
-  
-  // Download console logs (legacy compatibility)
-  downloadConsoleLogs() {
-    // Delegate to GameConsole if available  
-    if (this.gameConsole) {
-      this.gameConsole.downloadLogs();
-    }
-  }
-
-  // ========================================
-  // CONSOLE WRAPPER METHODS
-  // ========================================
-  
-  // Override existing writeToConsole to delegate to GameConsole
-  writeToConsole(text, append = true) {
-    if (this.gameConsole) {
-      this.gameConsole.writeToConsole(text, append);
-    } else {
-      // Fallback: call original method if GameConsole not ready
-      this.originalWriteToConsole(text, append);
-    }
-  }
-
-  // Store reference to original method
-  originalWriteToConsole(text, append = true) {
-    const consoleOutput = this.contentContainer.querySelector('#console-output');
-    if (!consoleOutput) return;
-
-    // Initialize buffer if needed
-    if (!this.rawConsoleMessages) {
-      this.rawConsoleMessages = [];
-    }
-
-    if (append) {
-      // Add to buffer
-      const textStr = String(text);
-      if (textStr.endsWith('\n')) {
-        this.rawConsoleMessages.push(textStr);
-      } else {
-        this.rawConsoleMessages.push(textStr + '\n');
-      }
-    } else {
-      // Replace entire buffer (for bulk operations)
-      if (typeof text === 'string') {
-        const lines = text.split('\n');
-        this.rawConsoleMessages = [];
-        for (const line of lines) {
-          if (line.trim() || this.rawConsoleMessages.length > 0) {
-            this.rawConsoleMessages.push(line + '\n');
-          }
-        }
-      } else if (Array.isArray(text)) {
-        this.rawConsoleMessages = text.map(line => {
-          const lineStr = String(line);
-          return lineStr.endsWith('\n') ? lineStr : lineStr + '\n';
-        });
-      }
-    }
-
-    // Apply current filter or show all
-    const filterInput = this.contentContainer.querySelector('#console-filter-input');
-    const filterValue = filterInput ? filterInput.value.trim() : '';
-    
-    if (filterValue) {
-      this.applyConsoleFilter(filterValue);
-    } else {
-      // No filter, show all content
-      consoleOutput.textContent = this.rawConsoleMessages.join('');
-    }
-
-    // Auto-scroll to bottom
-    consoleOutput.scrollTop = consoleOutput.scrollHeight;
-  }
-
-  // Override setConsoleContent to delegate to GameConsole
-  setConsoleContent(outputArray) {
-    if (this.gameConsole) {
-      this.gameConsole.setMessages(outputArray);
-    } else {
-      // Fallback to original method
-      if (Array.isArray(outputArray)) {
-        this.originalWriteToConsole(outputArray, false);
-      } else if (typeof outputArray === 'string') {
-        this.originalWriteToConsole(outputArray, false);
-      }
-    }
-  }
-
-  // Override clearConsole to delegate to GameConsole
-  clearConsole() {
-    // Clear local print output array
-    this.printOutput = [];
-    
     // Clear Lua print buffer if Lua state exists
     if (this.luaState) {
       try {
@@ -3163,26 +2866,15 @@ class GameEmulator {
     }
     
     // Clear the GameConsole display
-    if (this.gameConsole) {
-      this.gameConsole.clearConsole();
-    } else {
-      // Fallback to original method
-      this.rawConsoleMessages = [];
-      this.originalWriteToConsole('', false);
-    }
+    this.gameConsole.clearConsole();
   }
 
   // Cleanup method for when the component is destroyed
   cleanup() {
-    // Cleanup GameConsole first
-    if (this.gameConsole) {
-      this.gameConsole.cleanup();
-      this.gameConsole = null;
-    }
+    // Cleanup GameConsole
+    this.gameConsole.cleanup();
+    this.gameConsole = null;
     this.consoleInitialized = false;
-    
-    // Clear console data
-    this.rawConsoleMessages = [];
   }
 
   // Open the console panel programmatically
