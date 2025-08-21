@@ -214,8 +214,9 @@ class RetroStudioApplication {
   async startSystems() {
     console.log('[Application] Starting main systems...');
 
-    // Create and start main game emulator
-    const gameEmulator = new GameEmulator();
+    // Create and start main game emulator with content container
+    const gameEngineContent = document.getElementById('gameEngineContent');
+    const gameEmulator = new GameEmulator(gameEngineContent);
     this.services.registerSingleton('gameEmulator', gameEmulator);
     
     // Make legacy globals available for backward compatibility
