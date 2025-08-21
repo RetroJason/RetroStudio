@@ -1020,5 +1020,5 @@ ModViewer.getCapabilities = () => ['audio-playback', 'visualization'];
 
 // Auto-register the viewer
 if (typeof ComponentRegistry !== 'undefined') {
-  ComponentRegistry.register('ModViewer', ModViewer);
+  ModViewer.registerComponent();
 }

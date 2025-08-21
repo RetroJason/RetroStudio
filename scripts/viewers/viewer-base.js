@@ -73,6 +73,21 @@ class ViewerBase {
       this.element.parentNode.removeChild(this.element);
     }
   }
+
+  // Static method to register component (from Registerable interface)
+  static registerComponent() {
+    if (typeof ComponentRegistry !== 'undefined') {
+      const componentType = this.getComponentType();
+      ComponentRegistry.register(componentType, this);
+    } else {
+      console.warn(`[${this.name}] ComponentRegistry not available for registration`);
+    }
+  }
+
+  // Implement Registerable interface
+  static getComponentType() {
+    return 'Viewer';
+  }
 }
 
 // Export for use

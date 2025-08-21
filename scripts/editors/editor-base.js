@@ -1,5 +1,5 @@
 // editor-base.js
-// Base class for all resource editors (extends ViewerBase)
+// Base class for all resource editors (extends ViewerBase and implements Registerable)
 
 console.log('[EditorBase] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
 
@@ -937,6 +937,21 @@ class EditorBase extends ViewerBase {
   resize() {
     // Override in subclasses if they need to handle resize events
     // This base implementation does nothing
+  }
+
+  // Static method to register component (from Registerable interface)
+  static registerComponent() {
+    if (typeof ComponentRegistry !== 'undefined') {
+      const componentType = this.getComponentType();
+      ComponentRegistry.register(componentType, this);
+    } else {
+      console.warn(`[${this.name}] ComponentRegistry not available for registration`);
+    }
+  }
+
+  // Implement Registerable interface
+  static getComponentType() {
+    return 'Editor';
   }
 }
 

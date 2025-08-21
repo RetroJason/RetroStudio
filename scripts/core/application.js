@@ -154,21 +154,53 @@ class RetroStudioApplication {
 
   // Register components
   async registerComponents() {
-    console.log('[Application] Registering components...');
+    console.log('[Application] Component registration system ready');
+    
+    // Load component scripts dynamically after service is ready
+    await this.loadComponentScripts();
+    
+    console.log('[Application] All components loaded and registered');
+  }
 
-    // Auto-register built-in editors and viewers using self-describing metadata
-    const registry = this.components;
-    const autoEditors = [LuaEditor, SoundFXEditor, PaletteEditor, ModXmTrackerEditor];
-    const autoViewers = [ModViewer, WavViewer, HexViewer, SimpleImageViewer];
+  // Load component scripts dynamically
+  async loadComponentScripts() {
+    const componentScripts = [
+      // Editors
+      'scripts/editors/lua-editor.js',
+      'scripts/editors/sound-fx-editor.js', 
+      'scripts/editors/palette-editor.js',
+      'scripts/editors/mod-xm-tracker-editor.js',
+      'scripts/editors/editor-registry.js',
+      
+      // Viewers
+      'scripts/viewers/mod-viewer.js',
+      'scripts/viewers/wav-viewer.js',
+      'scripts/viewers/hex-viewer.js',
+      'scripts/viewers/simple-image-viewer.js',
+      'scripts/viewers/viewer-plugins.js'
+    ];
 
-    autoEditors.forEach((cls) => {
-      try { registry.autoRegisterEditor(cls); } catch (e) { console.error('[Application] Failed to auto-register editor', cls?.name, e); }
+    // Load scripts sequentially to maintain dependency order
+    for (const scriptPath of componentScripts) {
+      await this.loadScript(scriptPath);
+    }
+  }
+
+  // Load a single script dynamically
+  loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = src;
+      script.onload = () => {
+        console.log(`[Application] Loaded component script: ${src}`);
+        resolve();
+      };
+      script.onerror = () => {
+        console.error(`[Application] Failed to load script: ${src}`);
+        reject(new Error(`Failed to load script: ${src}`));
+      };
+      document.head.appendChild(script);
     });
-    autoViewers.forEach((cls) => {
-      try { registry.autoRegisterViewer(cls); } catch (e) { console.error('[Application] Failed to auto-register viewer', cls?.name, e); }
-    });
-
-    console.log('[Application] Components registered');
   }
 
   // Initialize plugins

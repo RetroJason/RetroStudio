@@ -771,3 +771,170 @@
 .game-engine-panel.collapsed {
   min-width: 32px !important;
 }
+
+/* ========================================
+ * ERROR POPUP STYLES
+ * ======================================== */
+.error-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 20000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.error-popup-overlay.visible {
+  opacity: 1;
+}
+
+.error-popup {
+  background: #2d2d30;
+  border: 2px solid #dc3545;
+  border-radius: 8px;
+  min-width: 400px;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  transform: scale(0.9);
+  transition: transform 0.2s ease;
+}
+
+.error-popup-overlay.visible .error-popup {
+  transform: scale(1);
+}
+
+.error-popup-header {
+  background: #dc3545;
+  color: white;
+  padding: 15px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.error-icon {
+  font-size: 24px;
+}
+
+.error-popup-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.error-popup-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.error-popup-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.error-popup-content {
+  padding: 20px;
+  color: #cccccc;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.error-message {
+  font-size: 16px;
+  line-height: 1.5;
+  margin-bottom: 15px;
+}
+
+.error-details-section {
+  border-top: 1px solid #3c3c3c;
+  padding-top: 15px;
+}
+
+.error-details-toggle {
+  background: #6c757d;
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+  margin-bottom: 10px;
+}
+
+.error-details-toggle:hover {
+  background: #5a6268;
+}
+
+.error-details {
+  background: #1e1e1e;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.error-details pre {
+  margin: 0;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  color: #f8f9fa;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.error-popup-actions {
+  background: #252526;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #3c3c3c;
+}
+
+.error-popup-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.error-popup-btn.primary {
+  background: #0078d4;
+  color: white;
+}
+
+.error-popup-btn.primary:hover {
+  background: #106ebe;
+}
+
+.error-popup-btn.secondary {
+  background: #6c757d;
+  color: white;
+}
+
+.error-popup-btn.secondary:hover {
+  background: #5a6268;
+}

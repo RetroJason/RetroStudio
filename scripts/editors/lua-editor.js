@@ -771,3 +771,6 @@ class LuaEditor extends EditorBase {
 }
 
 window.LuaEditor = LuaEditor;
+
+// Register the component
+LuaEditor.registerComponent();

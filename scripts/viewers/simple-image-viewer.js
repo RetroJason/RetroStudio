@@ -524,5 +524,5 @@ SimpleImageViewer.getFileExtensions = () => ['.png', '.gif', '.jpg', '.jpeg', '.
 
 // Auto-register the viewer
 if (typeof ComponentRegistry !== 'undefined') {
-  ComponentRegistry.register('SimpleImageViewer', SimpleImageViewer);
+  SimpleImageViewer.registerComponent();
 }

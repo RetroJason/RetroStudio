@@ -215,5 +215,5 @@ HexViewer.getCapabilities = () => ['binary-display'];
 
 // Auto-register the viewer
 if (typeof ComponentRegistry !== 'undefined') {
-  ComponentRegistry.register('HexViewer', HexViewer);
+  HexViewer.registerComponent();
 }
