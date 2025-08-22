@@ -1,5 +1,8 @@
 /* Web Audio Engine Test - Main Styles - Dark Theme */
 
+/* Import editor-specific styles */
+@import url('texture-editor.css');
+
 /* Custom Modal Dialog */
 .modal-overlay {
   position: fixed;

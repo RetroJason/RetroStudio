@@ -1,5 +1,5 @@
 // palette-editor.js
-// Advanced palette editor for .pal files
+// Advanced palette editor using the abstracted Palette class
 
 console.log('[PaletteEditor] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
 
@@ -8,9 +8,8 @@ class PaletteEditor extends EditorBase {
     console.log('[PaletteEditor] Constructor called with NEW SIGNATURE:', fileObject, readOnly);
     super(fileObject, readOnly);
     
-    // Palette data
-    this.colors = [];
-    this.paletteSize = 256; // Fixed at 256 colors
+    // Use the abstracted Palette class
+    this.palette = null;
     this.selectedColorIndex = 0;
     
     // UI elements
@@ -541,90 +540,69 @@ class PaletteEditor extends EditorBase {
     });
   }
 
-  loadPalette() {
+  async loadPalette() {
     console.log(`[PaletteEditor] loadPalette - isNewResource: ${this.isNewResource}`);
     console.log(`[PaletteEditor] loadPalette - file:`, this.file);
     
     if (this.isNewResource) {
-      // For new resources, use the default content from createNew()
-      console.log(`[PaletteEditor] Loading new resource with default content`);
-      const defaultContent = this.constructor.createNew();
-      this.file = { ...this.file, content: defaultContent };
-      this.parsePaletteFile();
+      // For new resources, create a default palette
+      console.log(`[PaletteEditor] Loading new resource with default palette`);
+      this.palette = Palette.createDefault(256);
+      this.palette.name = 'New Palette';
     } else {
-      this.loadFileContent().then(() => {
-        this.parsePaletteFile();
-        this.renderPaletteGrid();
-        this.updateColorEditor();
-      }).catch(error => {
+      try {
+        await this.loadFileContent();
+        
+        // Use the abstracted Palette class to load content
+        const filename = this.file?.name || this.path || 'palette.act';
+        this.palette = await Palette.fromFile(this.file.content, filename);
+        
+        console.log(`[PaletteEditor] Loaded palette: ${this.palette.toString()}`);
+      } catch (error) {
         console.error('[PaletteEditor] Failed to load file content:', error);
-        this.createDefaultPalette();
-        this.renderPaletteGrid();
-        this.updateColorEditor();
-      });
-      return; // Early return to avoid calling render methods twice
+        // Fall back to default palette
+        this.palette = Palette.createDefault(256);
+        this.palette.name = 'Default Palette';
+      }
     }
+    
+    // Ensure we have a valid palette
+    if (!this.palette || !this.palette.isValid()) {
+      console.warn('[PaletteEditor] Invalid palette, creating default');
+      this.palette = Palette.createDefault(256);
+      this.palette.name = 'Default Palette';
+    }
+    
     this.renderPaletteGrid();
     this.updateColorEditor();
   }
 
-  createDefaultPalette() {
-    // Create a default 256-color palette with a nice gradient
-    this.colors = [];
-    this.paletteSize = 256;
-    
-    // Generate a 256-color palette
-    for (let i = 0; i < 256; i++) {
-      const hue = (i / 256) * 360;
-      const saturation = 70 + (i % 4) * 10; // Vary saturation slightly
-      const lightness = 40 + (i % 8) * 7; // Vary lightness
-      this.colors.push(this.hslToHex(hue, saturation, lightness));
-    }
+  // Legacy compatibility methods - now using abstracted Palette class
+  get colors() {
+    return this.palette ? this.palette.getColors() : [];
   }
-
-  parsePaletteFile() {
-    try {
-      if (this.file) {
-        // Parse different palette formats
-        const extension = this.getFileExtension().toLowerCase();
-        console.log(`[PaletteEditor] Parsing file with extension: ${extension}`);
-        
-        switch (extension) {
-          case '.pal':
-            this.parseGIMPPalette();
-            break;
-          case '.act':
-            this.parseACTPalette();
-            break;
-          case '.aco':
-            this.parseACOPalette();
-            break;
-          default:
-            this.parseGenericPalette();
-        }
-        
-        console.log(`[PaletteEditor] After parsing - colors: ${this.colors.length}, paletteSize: ${this.paletteSize}`);
-      }
-    } catch (error) {
-      console.error('Failed to parse palette:', error);
-      this.createDefaultPalette();
-    }
+  
+  get paletteSize() {
+    return this.palette ? this.palette.getColorCount() : 0;
   }
 
   async refreshContent() {
     console.log(`[PaletteEditor] Refreshing content for: ${this.path}`);
     try {
-      // Reload the file content from storage
-  await this.loadFileContent();
-  if (!this.file || typeof this.file.content !== 'string') {
-    // Treat as not found or unsupported content
-    throw new Error('Content not found');
-  }
-  // Re-parse and re-render after loading
-  this.parsePaletteFile();
-  this.renderPaletteGrid();
-  this.updateColorEditor();
-  console.log(`[PaletteEditor] Successfully refreshed content for: ${this.path}`);
+      // Reload using the abstracted Palette class
+      await this.loadFileContent();
+      if (!this.file || !this.file.content) {
+        throw new Error('Content not found');
+      }
+      
+      // Reload the palette using the abstracted class
+      const filename = this.file?.name || this.path || 'palette.act';
+      this.palette = await Palette.fromFile(this.file.content, filename);
+      
+      // Re-render after loading
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      console.log(`[PaletteEditor] Successfully refreshed content for: ${this.path}`);
     } catch (error) {
       console.error(`[PaletteEditor] Failed to refresh content for ${this.path}:`, error);
       // Bubble up so TabManager can decide to close the tab
@@ -781,8 +759,6 @@ class PaletteEditor extends EditorBase {
       }
     }
     
-    console.log(`[PaletteEditor] parseGIMPPalette - parsed ${this.colors.length} colors`);
-    this.paletteSize = this.colors.length;
   }
 
   parseACTPalette() {
@@ -1076,59 +1052,49 @@ class PaletteEditor extends EditorBase {
   }
 
   setSelectedColor(hex) {
-    this.colors[this.selectedColorIndex] = hex;
-    this.renderPaletteGrid();
-    this.updateColorEditor();
-    this.markDirty();
+    if (this.palette) {
+      this.palette.setColor(this.selectedColorIndex, hex);
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      this.markDirty();
+    }
   }
 
   randomizePalette() {
-    for (let i = 0; i < this.paletteSize; i++) {
-      const r = Math.floor(Math.random() * 256);
-      const g = Math.floor(Math.random() * 256);
-      const b = Math.floor(Math.random() * 256);
-      this.colors[i] = this.rgbToHex(r, g, b);
+    if (this.palette) {
+      this.palette.randomize();
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      this.markDirty();
     }
-    
-    this.renderPaletteGrid();
-    this.updateColorEditor();
-    this.markDirty();
   }
 
   sortPalette() {
-    // Sort colors by hue, then saturation, then lightness
-    const sortedColors = [...this.colors].sort((a, b) => {
-      const hslA = this.hexToHsl(a);
-      const hslB = this.hexToHsl(b);
-      
-      // First by hue
-      if (Math.abs(hslA.h - hslB.h) > 1) {
-        return hslA.h - hslB.h;
-      }
-      
-      // Then by saturation
-      if (Math.abs(hslA.s - hslB.s) > 1) {
-        return hslB.s - hslA.s; // Higher saturation first
-      }
-      
-      // Finally by lightness
-      return hslA.l - hslB.l;
-    });
-    
-    this.colors = sortedColors;
-    this.renderPaletteGrid();
-    this.updateColorEditor();
-    this.markDirty();
+    if (this.palette) {
+      // For now, sort by hue - could be extended to offer multiple sort options
+      this.palette.sortByHue();
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      this.markDirty();
+      console.log('[PaletteEditor] Sorted palette by hue');
+    }
   }
 
   openImageSteal() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
-    input.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        this.stealColorsFromImage(file);
+    input.multiple = true; // Allow multiple image selection
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files);
+      if (files.length > 0) {
+        if (files.length === 1) {
+          // Single image - use existing workflow
+          this.stealColorsFromImage(files[0]);
+        } else {
+          // Multiple images - combine them first
+          this.stealColorsFromMultipleImages(files);
+        }
       }
     };
     input.click();
@@ -1136,114 +1102,254 @@ class PaletteEditor extends EditorBase {
 
   async stealColorsFromImage(imageFile) {
     try {
-      const img = new Image();
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
+      // Show algorithm selection popup
+      const selectedAlgorithm = await this.showAlgorithmSelection();
+      if (!selectedAlgorithm) {
+        return; // User cancelled
+      }
+
+      console.log('PaletteEditor: Stealing colors from image:', imageFile.name);
       
-      img.onload = () => {
-        // Resize image for processing (max 200x200 for performance)
-        const maxSize = 200;
-        let { width, height } = img;
-        
-        if (width > maxSize || height > maxSize) {
-          const ratio = Math.min(maxSize / width, maxSize / height);
-          width *= ratio;
-          height *= ratio;
-        }
-        
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Extract colors using median cut algorithm
-        const imageData = ctx.getImageData(0, 0, width, height);
-        const extractedColors = this.extractColorsFromImageData(imageData, this.paletteSize);
-        
-        this.colors = extractedColors;
-        this.renderPaletteGrid();
-        this.updateColorEditor();
-        this.markDirty();
-      };
+      // Create ImageData instance and load the image
+      const imageData = new ImageData();
       
-      img.src = URL.createObjectURL(imageFile);
+      // Convert file to array buffer for loading
+      const arrayBuffer = await imageFile.arrayBuffer();
+      await imageData.loadFromContent(arrayBuffer, imageFile.name);
+      
+      if (imageData.getFrameCount() === 0) {
+        throw new Error('No frames loaded from image');
+      }
+      
+      console.log('PaletteEditor: Image loaded, reducing to 256 colors...');
+      
+      // Reduce the image to 256 colors (maximum palette size) with progress
+      const reductionResult = await imageData.reduceColors(0, 256, {
+        container: document.body, // Use document.body for modal-style progress
+        algorithm: selectedAlgorithm
+      });
+      
+      if (!reductionResult || !reductionResult.palette) {
+        throw new Error('Failed to reduce image colors');
+      }
+      
+      console.log(`PaletteEditor: Reduced from ${reductionResult.originalColors} to ${reductionResult.reducedColors} colors`);
+      
+      // Update the palette with the reduced colors
+      this.palette.setColors(reductionResult.palette);
+      this.palette.name = `Stolen from ${imageFile.name}`;
+      
+      // Update the UI
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      this.markDirty();
+      
+      // Show success message
+      console.log('PaletteEditor: Successfully stole colors from image');
+      
     } catch (error) {
       console.error('Failed to steal colors from image:', error);
-      alert('Failed to extract colors from image');
+      alert(`Failed to extract colors from image: ${error.message}`);
     }
   }
 
-  extractColorsFromImageData(imageData, targetColors) {
-    // Simple color quantization using median cut algorithm
-    const pixels = [];
-    
-    // Sample pixels (every 4th pixel for performance)
-    for (let i = 0; i < imageData.data.length; i += 16) {
-      const r = imageData.data[i];
-      const g = imageData.data[i + 1];
-      const b = imageData.data[i + 2];
-      const a = imageData.data[i + 3];
+  async stealColorsFromMultipleImages(imageFiles) {
+    try {
+      // Show algorithm selection popup
+      const selectedAlgorithm = await this.showAlgorithmSelection();
+      if (!selectedAlgorithm) {
+        return; // User cancelled
+      }
+
+      console.log('PaletteEditor: Stealing colors from multiple images:', imageFiles.map(f => f.name));
       
-      if (a > 128) { // Skip transparent pixels
-        pixels.push([r, g, b]);
+      // Load all images
+      const loadedImages = [];
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        console.log(`Loading image ${i + 1}/${imageFiles.length}: ${file.name}`);
+        
+        const imageData = new ImageData();
+        const arrayBuffer = await file.arrayBuffer();
+        await imageData.loadFromContent(arrayBuffer, file.name);
+        
+        if (imageData.getFrameCount() > 0) {
+          loadedImages.push(imageData);
+        } else {
+          console.warn(`No frames loaded from ${file.name}`);
+        }
       }
+      
+      if (loadedImages.length === 0) {
+        throw new Error('No valid images loaded');
+      }
+      
+      console.log(`PaletteEditor: Loaded ${loadedImages.length} images, combining...`);
+      
+      // Combine all images into one
+      const combinedImage = ImageData.combine(
+        loadedImages, 
+        `Combined (${imageFiles.map(f => f.name).join(', ')})`
+      );
+      
+      if (combinedImage.getFrameCount() === 0) {
+        throw new Error('No frames in combined image');
+      }
+      
+      console.log(`PaletteEditor: Combined image has ${combinedImage.getFrameCount()} frames, reducing to 256 colors...`);
+      
+      // Reduce colors across all frames
+      const reductionResult = await combinedImage.reduceColors(null, 256, {
+        container: document.body,
+        algorithm: selectedAlgorithm,
+        allFrames: true // Process all frames together
+      });
+      
+      if (!reductionResult || !reductionResult.palette) {
+        throw new Error('Failed to reduce combined image colors');
+      }
+      
+      console.log(`PaletteEditor: Reduced from ${reductionResult.originalColors} to ${reductionResult.reducedColors} colors across ${reductionResult.frameCount} frames`);
+      
+      // Update the palette with the reduced colors
+      this.palette.setColors(reductionResult.palette);
+      this.palette.name = `Stolen from ${imageFiles.length} images`;
+      
+      // Update the UI
+      this.renderPaletteGrid();
+      this.updateColorEditor();
+      this.markDirty();
+      
+      // Show success message
+      console.log('PaletteEditor: Successfully stole colors from multiple images');
+      
+    } catch (error) {
+      console.error('Failed to steal colors from multiple images:', error);
+      alert(`Failed to extract colors from images: ${error.message}`);
     }
-    
-    // Use median cut to find representative colors
-    const colors = this.medianCut(pixels, targetColors);
-    return colors.map(color => this.rgbToHex(color[0], color[1], color[2]));
   }
 
-  medianCut(pixels, targetColors) {
-    if (pixels.length === 0) return [];
-    if (targetColors === 1) {
-      // Return average color
-      const avg = [0, 0, 0];
-      for (const pixel of pixels) {
-        avg[0] += pixel[0];
-        avg[1] += pixel[1];
-        avg[2] += pixel[2];
-      }
-      avg[0] = Math.round(avg[0] / pixels.length);
-      avg[1] = Math.round(avg[1] / pixels.length);
-      avg[2] = Math.round(avg[2] / pixels.length);
-      return [avg];
-    }
-    
-    // Find the channel with the largest range
-    const ranges = [0, 1, 2].map(channel => {
-      const values = pixels.map(p => p[channel]);
-      return Math.max(...values) - Math.min(...values);
+  async showAlgorithmSelection() {
+    return new Promise((resolve) => {
+      // Create modal overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `;
+
+      // Create dialog
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        background: #2d2d2d;
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        max-width: 400px;
+        min-width: 350px;
+        font-family: Arial, sans-serif;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      `;
+
+      dialog.innerHTML = `
+        <h3 style="margin: 0 0 20px 0; color: #4CAF50;">Select Color Reduction Algorithm</h3>
+        <p style="margin: 0 0 20px 0; line-height: 1.4; color: #ccc;">
+          Choose the algorithm to use for reducing the image to 256 colors:
+        </p>
+        
+        <div style="margin-bottom: 25px;">
+          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
+            <input type="radio" name="algorithm" value="auto" checked style="margin-right: 10px;">
+            <strong>Auto (Recommended)</strong><br>
+            <small style="color: #aaa; margin-left: 20px;">Automatically selects the best algorithm based on image complexity</small>
+          </label>
+          
+          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
+            <input type="radio" name="algorithm" value="median-cut" style="margin-right: 10px;">
+            <strong>Median Cut</strong><br>
+            <small style="color: #aaa; margin-left: 20px;">High quality, slower. Best for photos and complex images</small>
+          </label>
+          
+          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
+            <input type="radio" name="algorithm" value="simple-sample" style="margin-right: 10px;">
+            <strong>Simple Sampling</strong><br>
+            <small style="color: #aaa; margin-left: 20px;">Fast, lower quality. Good for pixel art and simple images</small>
+          </label>
+        </div>
+        
+        <div style="text-align: right;">
+          <button class="cancel-btn" style="background: #666; color: white; border: none; padding: 10px 20px; margin-right: 10px; border-radius: 5px; cursor: pointer;">Cancel</button>
+          <button class="confirm-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">Proceed</button>
+        </div>
+      `;
+
+      // Add hover effects
+      const labels = dialog.querySelectorAll('label');
+      labels.forEach(label => {
+        label.addEventListener('mouseenter', () => {
+          label.style.borderColor = '#4CAF50';
+          label.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
+        });
+        label.addEventListener('mouseleave', () => {
+          label.style.borderColor = '#444';
+          label.style.backgroundColor = 'transparent';
+        });
+      });
+
+      // Handle button clicks
+      const cancelBtn = dialog.querySelector('.cancel-btn');
+      const confirmBtn = dialog.querySelector('.confirm-btn');
+
+      cancelBtn.addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        resolve(null);
+      });
+
+      confirmBtn.addEventListener('click', () => {
+        const selectedRadio = dialog.querySelector('input[name="algorithm"]:checked');
+        const algorithm = selectedRadio ? selectedRadio.value : 'auto';
+        document.body.removeChild(overlay);
+        resolve(algorithm);
+      });
+
+      // Handle escape key
+      const handleEscape = (e) => {
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', handleEscape);
+          document.body.removeChild(overlay);
+          resolve(null);
+        }
+      };
+      document.addEventListener('keydown', handleEscape);
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      // Focus the first radio button
+      dialog.querySelector('input[type="radio"]').focus();
     });
-    
-    const splitChannel = ranges.indexOf(Math.max(...ranges));
-    
-    // Sort by the channel with largest range
-    pixels.sort((a, b) => a[splitChannel] - b[splitChannel]);
-    
-    // Split in half
-    const mid = Math.floor(pixels.length / 2);
-    const left = pixels.slice(0, mid);
-    const right = pixels.slice(mid);
-    
-    // Recursively split
-    const leftColors = Math.floor(targetColors / 2);
-    const rightColors = targetColors - leftColors;
-    
-    return [
-      ...this.medianCut(left, leftColors),
-      ...this.medianCut(right, rightColors)
-    ];
   }
 
   exportPalette() {
-    const content = this.exportToGIMP();
-    const blob = new Blob([content], { type: 'text/plain' });
+    // Use the abstracted Palette class for proper ACT export
+    const actData = this.palette.exportToACT();
+    const blob = new Blob([actData], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${this.file?.name || 'palette'}.pal`;
+    a.download = `${this.file?.name || 'palette'}.act`;
     a.click();
     URL.revokeObjectURL(url);
+    
+    console.log('PaletteEditor: Exported palette as ACT file');
   }
 
   updateFromColorPicker() {
@@ -1417,28 +1523,10 @@ class PaletteEditor extends EditorBase {
   }
 
   static createNew() {
-    // Return default 256-color palette content in GIMP format
-    let paletteContent = `GIMP Palette
-#
-# 256-Color Default Palette
-#
-`;
-    
-    // Generate a nice 256-color palette
-    for (let i = 0; i < 256; i++) {
-      const hue = (i / 256) * 360;
-      const saturation = 70 + (i % 4) * 10; // Vary saturation slightly
-      const lightness = 40 + (i % 8) * 7; // Vary lightness
-      
-      const rgb = PaletteEditor.hslToRgb(hue, saturation, lightness);
-      const r = Math.round(rgb.r).toString().padStart(3, ' ');
-      const g = Math.round(rgb.g).toString().padStart(3, ' ');
-      const b = Math.round(rgb.b).toString().padStart(3, ' ');
-      
-      paletteContent += `${r} ${g} ${b} Color${i}\n`;
-    }
-    
-    return paletteContent;
+    // Use the abstracted Palette class to create default content
+    // Return ACT format for embedded systems compatibility
+    const palette = Palette.createDefault(256);
+    return palette.exportToACT();
   }
   
   // Helper method for HSL to RGB conversion (static version)
@@ -1555,74 +1643,18 @@ class PaletteEditor extends EditorBase {
   }
 
   getPaletteData() {
-    // Determine format based on file extension
-    const extension = this.getFileExtension(this.path || this.file?.name || 'untitled.pal');
-    
-    switch (extension.toLowerCase()) {
-      case '.act':
-        return this.exportToACT();
-      case '.pal':
-      default:
-        return this.exportToPAL();
+    // Use the abstracted Palette class for saving
+    // We always save to ACT format for embedded systems compatibility
+    if (!this.palette) {
+      console.error('[PaletteEditor] No palette data available for saving');
+      return new Uint8Array(772).buffer; // Return empty ACT file
     }
+    
+    return this.palette.exportToACT();
   }
 
-  exportToPAL() {
-    // Convert current palette to JASC-PAL format
-    const lines = [];
-    lines.push('JASC-PAL');
-    lines.push('0100');
-    lines.push(this.colors.length.toString());
-    
-    this.colors.forEach(color => {
-      const r = parseInt(color.substr(1, 2), 16);
-      const g = parseInt(color.substr(3, 2), 16);
-      const b = parseInt(color.substr(5, 2), 16);
-      lines.push(`${r} ${g} ${b}`);
-    });
-    
-    return lines.join('\n');
-  }
-
-  exportToACT() {
-    // Convert current palette to Adobe Color Table (.act) format
-    // ACT files are binary with 768 bytes (256 RGB triplets) + optional 4-byte metadata
-    const bytes = new Uint8Array(772); // 768 + 4 metadata bytes
-    
-    // Fill with RGB triplets (256 colors)
-    for (let i = 0; i < 256; i++) {
-      let r = 0, g = 0, b = 0;
-      
-      if (i < this.colors.length && this.colors[i]) {
-        const color = this.colors[i];
-        r = parseInt(color.substr(1, 2), 16);
-        g = parseInt(color.substr(3, 2), 16);
-        b = parseInt(color.substr(5, 2), 16);
-      }
-      
-      const offset = i * 3;
-      bytes[offset] = r;
-      bytes[offset + 1] = g;
-      bytes[offset + 2] = b;
-    }
-    
-    // Add metadata (optional 4 bytes at the end)
-    // Bytes 768-769: Number of colors (big-endian)
-    const numColors = Math.min(this.colors.length, 256);
-    bytes[768] = (numColors >> 8) & 0xFF; // High byte
-    bytes[769] = numColors & 0xFF;        // Low byte
-    
-    // Bytes 770-771: Transparency index (big-endian, -1 = no transparency)
-    bytes[770] = 0xFF; // High byte (-1)
-    bytes[771] = 0xFF; // Low byte (-1)
-    
-    // Convert to base64 for storage
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
+  // Removed old export methods - now using abstracted Palette class
+  // All saving is done through this.palette.exportToACT()
 }
 
 // Export for use
@@ -1630,7 +1662,7 @@ window.PaletteEditor = PaletteEditor;
 
 // Static metadata for auto-registration
 PaletteEditor.getFileExtensions = () => ['.pal', '.act', '.aco'];
-PaletteEditor.getFileExtension = () => '.pal';
+PaletteEditor.getFileExtension = () => '.act'; // Changed default to ACT for embedded systems
 PaletteEditor.getDisplayName = () => 'Palette Editor';
 PaletteEditor.getIcon = () => '🎨';
 PaletteEditor.getPriority = () => 10;

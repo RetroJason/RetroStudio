@@ -869,48 +869,75 @@ class PalBuilder extends BaseBuilder {
         ? window.ProjectPaths.toBuildOutputPath(file.path)
         : file.path.replace(/^Resources\//, 'build/');
 
-      // Determine if text-like; palettes are text for .pal
-      let content;
-      if (typeof file.content === 'string') {
-        content = file.content;
-      } else if (file.content instanceof ArrayBuffer || ArrayBuffer.isView(file.content)) {
-        try {
-          const bytes = file.content instanceof ArrayBuffer ? new Uint8Array(file.content) : new Uint8Array(file.content.buffer, file.content.byteOffset, file.content.byteLength);
-          content = new TextDecoder('utf-8').decode(bytes);
-        } catch (e) {
-          console.warn('[PalBuilder] Failed to decode ArrayBuffer content, attempting storage load');
-        }
-      }
-      if (typeof content !== 'string') {
-        if (file.file && typeof file.file.text === 'function') {
-          content = await file.file.text();
-        } else {
-          // Fallback: try to load latest from storage
+      // Check if this is an ACT file - if so, handle as binary data
+      const isActFile = file.path.toLowerCase().endsWith('.act');
+      
+      if (isActFile) {
+        // ACT files are binary - copy as-is without text conversion
+        let content = file.content;
+        
+        // If content is not already binary, try to load from storage
+        if (typeof content === 'string') {
           const fm = window.serviceContainer?.get('fileManager');
           const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
             ? window.ProjectPaths.normalizeStoragePath(file.path)
             : file.path;
           const loaded = fm ? await fm.loadFile(normPath) : null;
-          const stored = loaded && (loaded.content !== undefined ? loaded.content : loaded.fileContent);
-          if (typeof stored === 'string') {
-            content = stored;
-          } else if (stored instanceof ArrayBuffer || ArrayBuffer.isView(stored)) {
-            try {
-              const bytes = stored instanceof ArrayBuffer ? new Uint8Array(stored) : new Uint8Array(stored.buffer, stored.byteOffset, stored.byteLength);
-              content = new TextDecoder('utf-8').decode(bytes);
-            } catch (e) {
-              console.warn('[PalBuilder] Failed to decode stored ArrayBuffer');
+          content = loaded && (loaded.content !== undefined ? loaded.content : loaded.fileContent);
+        }
+        
+        const fileManager = window.serviceContainer?.get('fileManager');
+        if (fileManager) {
+          await fileManager.saveFile(outputPath, content, { binaryData: true });
+        } else if (window.fileIOService) {
+          await window.fileIOService.saveFile(outputPath, content, { binaryData: true });
+        }
+        
+        console.log(`[PalBuilder] Copied ACT file: ${file.path} → ${outputPath}`);
+      } else {
+        // Handle .pal and .aco files as text
+        let content;
+        if (typeof file.content === 'string') {
+          content = file.content;
+        } else if (file.content instanceof ArrayBuffer || ArrayBuffer.isView(file.content)) {
+          try {
+            const bytes = file.content instanceof ArrayBuffer ? new Uint8Array(file.content) : new Uint8Array(file.content.buffer, file.content.byteOffset, file.content.byteLength);
+            content = new TextDecoder('utf-8').decode(bytes);
+          } catch (e) {
+            console.warn('[PalBuilder] Failed to decode ArrayBuffer content, attempting storage load');
+          }
+        }
+        if (typeof content !== 'string') {
+          if (file.file && typeof file.file.text === 'function') {
+            content = await file.file.text();
+          } else {
+            // Fallback: try to load latest from storage
+            const fm = window.serviceContainer?.get('fileManager');
+            const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+              ? window.ProjectPaths.normalizeStoragePath(file.path)
+              : file.path;
+            const loaded = fm ? await fm.loadFile(normPath) : null;
+            const stored = loaded && (loaded.content !== undefined ? loaded.content : loaded.fileContent);
+            if (typeof stored === 'string') {
+              content = stored;
+            } else if (stored instanceof ArrayBuffer || ArrayBuffer.isView(stored)) {
+              try {
+                const bytes = stored instanceof ArrayBuffer ? new Uint8Array(stored) : new Uint8Array(stored.buffer, stored.byteOffset, stored.byteLength);
+                content = new TextDecoder('utf-8').decode(bytes);
+              } catch (e) {
+                console.warn('[PalBuilder] Failed to decode stored ArrayBuffer');
+              }
             }
           }
         }
-      }
-      if (typeof content !== 'string') content = '';
+        if (typeof content !== 'string') content = '';
 
-      const fileManager = window.serviceContainer?.get('fileManager');
-      if (fileManager) {
-        await fileManager.saveFile(outputPath, content, { binaryData: false });
-      } else if (window.fileIOService) {
-        await window.fileIOService.saveFile(outputPath, content, { binaryData: false });
+        const fileManager = window.serviceContainer?.get('fileManager');
+        if (fileManager) {
+          await fileManager.saveFile(outputPath, content, { binaryData: false });
+        } else if (window.fileIOService) {
+          await window.fileIOService.saveFile(outputPath, content, { binaryData: false });
+        }
       }
 
       return {

@@ -1,0 +1,217 @@
+/* Texture Editor Styles */
+
+.texture-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.texture-editor-layout {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  padding: 10px;
+}
+
+.texture-controls-panel {
+  width: 300px;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 15px;
+  overflow-y: auto;
+}
+
+.texture-preview-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 15px;
+}
+
+.texture-section {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 15px;
+  margin-bottom: 10px;
+}
+
+.texture-section h3 {
+  margin: 0 0 15px 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+/* Scale Controls */
+.scale-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 15px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.scale-controls label {
+  font-weight: bold;
+  min-width: 50px;
+}
+
+.scale-controls input[type="range"] {
+  flex: 1;
+  margin: 0 10px;
+}
+
+.scale-controls span {
+  min-width: 40px;
+  text-align: right;
+  font-family: monospace;
+}
+
+/* Preview Container */
+.preview-container {
+  flex: 1;
+  display: flex;
+  gap: 20px;
+  overflow: auto;
+  padding: 10px;
+  background: var(--bg-quaternary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.preview-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 200px;
+}
+
+.preview-section h4 {
+  margin: 0 0 10px 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  text-align: center;
+}
+
+.preview-canvas {
+  border: 2px solid var(--border-color);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  image-rendering: pixelated; /* Preserve pixel art */
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* Form Controls */
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.control-group label {
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.control-group select,
+.control-group input {
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.control-row label {
+  min-width: 100px;
+  font-weight: bold;
+}
+
+/* Source Info */
+.source-info {
+  background: var(--bg-quaternary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 10px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Palette Controls */
+.palette-preview {
+  margin-top: 10px;
+  min-height: 50px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-quaternary);
+}
+
+/* Action Buttons */
+.texture-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.texture-actions button {
+  flex: 1;
+  padding: 10px 15px;
+  background: var(--accent-color);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.texture-actions button:hover {
+  background: var(--accent-color-hover);
+}
+
+.texture-actions button:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+/* Responsive design */
+@media (max-width: 800px) {
+  .texture-editor-layout {
+    flex-direction: column;
+  }
+  
+  .texture-controls-panel {
+    width: 100%;
+    min-width: unset;
+  }
+  
+  .preview-container {
+    flex-direction: column;
+  }
+}

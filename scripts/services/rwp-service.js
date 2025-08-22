@@ -152,7 +152,6 @@ class RwpService {
         // Resolve UI paths into this project
         const relUi = this.stripProjectPrefix(f.path || f.uiPath);
         const uiPath = `${projectName}/${relUi}`;
-        const storagePath = this.normalizeToStorage(uiPath);
 
         // Get file bytes from ZIP using the stored path
         const key = f.path || f.uiPath;
@@ -167,16 +166,28 @@ class RwpService {
           content = new TextDecoder().decode(rawBytes);
         }
 
-        await this.fileManager.saveFile(storagePath, content, {
-          binaryData: !!f.binary,
-          builderId: f.builderId || undefined
+        // Create a File-like object to pass to addFileToProject
+        // This will trigger the normal file addition flow including palette conversion
+        const fileName = uiPath.split('/').pop();
+        const folderPath = uiPath.split('/').slice(0, -1).join('/');
+        
+        // Create a synthetic File object with the content
+        const fileBlob = new Blob([content], { 
+          type: f.binary ? 'application/octet-stream' : 'text/plain' 
         });
+        const syntheticFile = new File([fileBlob], fileName, { 
+          lastModified: Date.now() 
+        });
+        
+        // Add builderId as a property for compatibility
+        syntheticFile.builderId = f.builderId;
+        // Don't set syntheticFile.path - let addFileToProject compute the correct path
+        // This allows palette conversion to work with the new filename
+        syntheticFile.isNewFile = true;
 
-        // Update explorer structure
-        const parts = uiPath.split('/');
-        const fileName = parts.pop();
-        const folder = parts.join('/');
-    explorer.addFileToProject({ name: fileName, path: uiPath, isNewFile: true }, folder, true, true);
+        // Use the normal addFileToProject flow which handles conversion automatically
+        await explorer.addFileToProject(syntheticFile, folderPath, true, true);
+        
       } catch (e) {
         console.warn('[RwpService] Failed to import file entry:', f?.uiPath || f?.path, e);
       }

@@ -1,0 +1,237 @@
+// palette-test.html
+// Simple test page for the abstracted Palette class
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Palette Class Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #2a2a2a;
+            color: #fff;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            background: #3a3a3a;
+        }
+        .color-display {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2px;
+            margin: 10px 0;
+        }
+        .color-square {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #666;
+            box-sizing: border-box;
+        }
+        .test-result {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .success { background-color: #2d5a27; }
+        .error { background-color: #5a2727; }
+        .info { background-color: #27405a; }
+        button {
+            background: #4a4a4a;
+            color: #fff;
+            border: 1px solid #666;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #5a5a5a;
+        }
+    </style>
+</head>
+<body>
+    <h1>Palette Class Test</h1>
+    
+    <div class="test-section">
+        <h3>Test 1: Create Default Palette</h3>
+        <button onclick="testDefaultPalette()">Run Test</button>
+        <div id="default-palette-result"></div>
+        <div id="default-palette-colors" class="color-display"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 2: Create from Color Array</h3>
+        <button onclick="testFromColors()">Run Test</button>
+        <div id="from-colors-result"></div>
+        <div id="from-colors-colors" class="color-display"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 3: Export to PAL Format</h3>
+        <button onclick="testExportPAL()">Run Test</button>
+        <div id="export-pal-result"></div>
+        <pre id="export-pal-content" style="background: #1a1a1a; padding: 10px; border-radius: 4px; font-size: 12px; max-height: 200px; overflow-y: auto;"></pre>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 4: Parse GIMP Palette</h3>
+        <button onclick="testParseGIMP()">Run Test</button>
+        <div id="parse-gimp-result"></div>
+        <div id="parse-gimp-colors" class="color-display"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>Test 5: Color Manipulation</h3>
+        <button onclick="testColorManipulation()">Run Test</button>
+        <div id="color-manipulation-result"></div>
+        <div id="color-manipulation-colors" class="color-display"></div>
+    </div>
+
+    <script src="../graphics/palette.js"></script>
+    <script>
+        function log(containerId, message, type = 'info') {
+            const container = document.getElementById(containerId);
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            container.appendChild(div);
+        }
+
+        function displayColors(containerId, colors) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            colors.forEach(color => {
+                const square = document.createElement('div');
+                square.className = 'color-square';
+                square.style.backgroundColor = color;
+                square.title = color;
+                container.appendChild(square);
+            });
+        }
+
+        function testDefaultPalette() {
+            const container = document.getElementById('default-palette-result');
+            container.innerHTML = '';
+            
+            try {
+                const palette = Palette.createDefault(32); // Smaller for testing
+                log('default-palette-result', `✓ Created default palette with ${palette.getColorCount()} colors`, 'success');
+                log('default-palette-result', `✓ Palette name: "${palette.name}"`, 'info');
+                log('default-palette-result', `✓ Format: ${palette.format}`, 'info');
+                log('default-palette-result', `✓ First color: ${palette.getColor(0)}`, 'info');
+                log('default-palette-result', `✓ Last color: ${palette.getColor(palette.getColorCount() - 1)}`, 'info');
+                
+                displayColors('default-palette-colors', palette.getColors());
+            } catch (error) {
+                log('default-palette-result', `✗ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testFromColors() {
+            const container = document.getElementById('from-colors-result');
+            container.innerHTML = '';
+            
+            try {
+                const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffffff', '#000000'];
+                const palette = Palette.fromColors(colors, 'Test Colors');
+                
+                log('from-colors-result', `✓ Created palette from ${colors.length} colors`, 'success');
+                log('from-colors-result', `✓ Palette has ${palette.getColorCount()} colors`, 'info');
+                log('from-colors-result', `✓ Palette name: "${palette.name}"`, 'info');
+                
+                displayColors('from-colors-colors', palette.getColors());
+            } catch (error) {
+                log('from-colors-result', `✗ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testExportPAL() {
+            const container = document.getElementById('export-pal-result');
+            const contentContainer = document.getElementById('export-pal-content');
+            container.innerHTML = '';
+            contentContainer.textContent = '';
+            
+            try {
+                const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00'];
+                const palette = Palette.fromColors(colors, 'Export Test');
+                const palContent = palette.exportToPAL();
+                
+                log('export-pal-result', '✓ Successfully exported to PAL format', 'success');
+                log('export-pal-result', `✓ Content length: ${palContent.length} characters`, 'info');
+                
+                contentContainer.textContent = palContent;
+            } catch (error) {
+                log('export-pal-result', `✗ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testParseGIMP() {
+            const container = document.getElementById('parse-gimp-result');
+            container.innerHTML = '';
+            
+            try {
+                // Sample JASC palette content
+                const gimpContent = `JASC-PAL
+0100
+4
+255 0 0
+0 255 0
+0 0 255
+255 255 0`;
+                
+                const palette = new Palette();
+                palette.parseGIMPPalette(gimpContent);
+                
+                log('parse-gimp-result', `✓ Parsed GIMP palette successfully`, 'success');
+                log('parse-gimp-result', `✓ Found ${palette.getColorCount()} colors`, 'info');
+                log('parse-gimp-result', `✓ Colors: ${palette.getColors().join(', ')}`, 'info');
+                
+                displayColors('parse-gimp-colors', palette.getColors());
+            } catch (error) {
+                log('parse-gimp-result', `✗ Error: ${error.message}`, 'error');
+            }
+        }
+
+        function testColorManipulation() {
+            const container = document.getElementById('color-manipulation-result');
+            container.innerHTML = '';
+            
+            try {
+                const palette = new Palette();
+                
+                // Test adding colors
+                const index1 = palette.addColor('#ff0000');
+                const index2 = palette.addColor('#00ff00');
+                const index3 = palette.addColor('#0000ff');
+                
+                log('color-manipulation-result', `✓ Added color at index ${index1}: ${palette.getColor(index1)}`, 'success');
+                log('color-manipulation-result', `✓ Added color at index ${index2}: ${palette.getColor(index2)}`, 'success');
+                log('color-manipulation-result', `✓ Added color at index ${index3}: ${palette.getColor(index3)}`, 'success');
+                
+                // Test setting color
+                palette.setColor(1, '#ffff00');
+                log('color-manipulation-result', `✓ Set color at index 1: ${palette.getColor(1)}`, 'success');
+                
+                // Test validation
+                const isValid = palette.isValid();
+                log('color-manipulation-result', `✓ Palette is valid: ${isValid}`, isValid ? 'success' : 'error');
+                
+                displayColors('color-manipulation-colors', palette.getColors());
+            } catch (error) {
+                log('color-manipulation-result', `✗ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Run a basic test on load
+        window.addEventListener('load', () => {
+            log('default-palette-result', 'Palette class loaded successfully', 'success');
+        });
+    </script>
+</body>
+</html>
