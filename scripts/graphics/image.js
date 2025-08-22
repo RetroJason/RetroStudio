@@ -792,12 +792,17 @@ class ImageData {
     }
 
     return {
-      indexedData: indexedData,
       palette: workingPalette,
+      indexedFrames: [{
+        indexedData: indexedData,
+        width: frame.width,
+        height: frame.height
+      }],
+      frameCount: 1,
       paletteOffset: offset,
       colorCount: workingPalette.length,
-      width: frame.width,
-      height: frame.height
+      originalColors: this.getUniqueColors(frameIndex).length,
+      reducedColors: workingPalette.length
     };
   }
 
