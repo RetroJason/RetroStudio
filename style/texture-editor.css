@@ -1,0 +1,350 @@
+/* texture-editor.css */
+/* Styles for the texture editor interface */
+
+.texture-editor-container {
+  height: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Segoe UI', sans-serif;
+  padding: 10px;
+}
+
+.texture-preview-panel {
+  width: 100%;
+  height: 100%;
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 15px;
+  overflow: auto;
+}
+
+/* Preview section container with horizontal layout */
+.preview-container-horizontal {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.preview-section {
+  flex: 1;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  background: #2d2d30;
+  max-height: 400px;
+  overflow: auto; /* Add scroll bars when content exceeds container */
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  background: #3c3c3c;
+  border-bottom: 1px solid #5a5a5a;
+}
+
+.preview-section h4 {
+  margin: 0;
+  color: #9cdcfe;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.output-size {
+  color: #d4d4d4;
+  font-size: 11px;
+  margin-right: 10px;
+}
+
+.info-button {
+  background: #007acc;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.info-button:hover {
+  background: #1177bb;
+}
+
+/* Settings between images */
+.between-images-settings {
+  min-width: 250px;
+  padding: 15px;
+  background: #3c3c3c;
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  align-self: flex-start;
+}
+
+/* Top row with palette dropdown, colors dropdown and create button */
+.palette-controls-top-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.palette-dropdown-container {
+  flex: 2;
+}
+
+.colors-dropdown-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.colors-label {
+  color: #d4d4d4;
+  font-size: 11px;
+  margin: 0;
+  text-align: center;
+}
+
+.palette-dropdown, .colors-dropdown {
+  padding: 6px 12px;
+  background: #2d2d30;
+  border: 1px solid #5a5a5a;
+  color: #d4d4d4;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.create-button {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 3px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.create-button:hover {
+  background: #45a049;
+}
+
+/* Palette display area */
+.palette-display-container {
+  border: 2px solid #FF69B4;
+  border-radius: 10px;
+  padding: 15px;
+  min-height: 100px;
+  background: #2d2d30;
+}
+
+.palette-display {
+  color: #d4d4d4;
+  text-align: center;
+  font-size: 13px;
+  padding: 20px;
+}
+
+.palette-display.active {
+  padding: 10px;
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(20px, 1fr));
+  gap: 2px;
+  max-width: 200px;
+  margin: 0 auto;
+}
+
+.palette-swatch {
+  aspect-ratio: 1;
+  border: 1px solid #1e1e1e;
+  cursor: pointer;
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.palette-swatch:hover {
+  border-color: #007acc;
+  transform: scale(1.1);
+}
+
+/* Apply button at bottom */
+.apply-button-bottom {
+  background: #FF0000;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 3px;
+  font-size: 14px;
+  cursor: pointer;
+  align-self: stretch;
+}
+
+.apply-button-bottom:hover {
+  background: #CC0000;
+}
+
+/* Scale controls under each image */
+.image-scale-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px;
+  background: #2d2d30;
+  border-top: 1px solid #3c3c3c;
+  font-size: 12px;
+}
+
+.image-scale-controls label {
+  color: #d4d4d4;
+  margin: 0;
+}
+
+.image-scale-controls input[type="range"] {
+  width: 100px;
+}
+
+.image-scale-controls span {
+  color: #9cdcfe;
+  font-weight: 500;
+  min-width: 35px;
+  text-align: right;
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-item label {
+  color: #d4d4d4;
+  font-size: 13px;
+}
+
+.palette-controls-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.palette-controls-row select,
+.apply-button {
+  padding: 6px 12px;
+  background: #2d2d30;
+  border: 1px solid #5a5a5a;
+  color: #d4d4d4;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.apply-button {
+  background: #007acc;
+  color: white;
+  cursor: pointer;
+  border: none;
+}
+
+.apply-button:hover {
+  background: #1177bb;
+}
+
+.palette-visualization {
+  margin-top: 10px;
+  padding: 10px;
+  background: #2d2d30;
+  border: 1px solid #5a5a5a;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
+.texture-editor .preview-canvas {
+  border: none !important;
+  border-radius: 0;
+  background: 
+    linear-gradient(45deg, #2d2d30 25%, transparent 25%), 
+    linear-gradient(-45deg, #2d2d30 25%, transparent 25%), 
+    linear-gradient(45deg, transparent 75%, #2d2d30 75%), 
+    linear-gradient(-45deg, transparent 75%, #2d2d30 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  display: block;
+  margin: 10px;
+  /* Remove any forced dimensions - let JavaScript control size */
+  width: auto !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* Range slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: #3c3c3c;
+  border-radius: 3px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: #007acc;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: #007acc;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* Scrollbar styling */
+.texture-preview-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.texture-preview-panel::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+
+.texture-preview-panel::-webkit-scrollbar-thumb {
+  background: #3c3c3c;
+  border-radius: 4px;
+}
+
+.texture-preview-panel::-webkit-scrollbar-thumb:hover {
+  background: #5a5a5a;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .texture-editor-container {
+    padding: 5px;
+  }
+  
+  .texture-preview-panel {
+    padding: 10px;
+  }
+}

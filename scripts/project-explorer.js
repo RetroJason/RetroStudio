@@ -39,7 +39,7 @@ class ProjectExplorer {
               Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
               SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
               Images: { type: 'folder', filter: ['.png', '.gif'], children: {} },
-              Palettes: { type: 'folder', filter: ['.pal', '.act', '.aco'], children: {} },
+              Palettes: { type: 'folder', filter: ['.act', '.pal', '.aco'], children: {} },
               Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
               Binary: { type: 'folder', filter: ['*'], children: {} }
             }
@@ -1064,37 +1064,81 @@ class ProjectExplorer {
       lastModified = Date.now();
     }
     
+    // Check if this is a palette file that needs conversion to ACT
+    const ext = this.getFileExtension(fileName).toLowerCase();
+    let finalFileName = fileName;
+    let needsConversion = false;
+    
+    if (['.pal', '.aco'].includes(ext)) {
+      // Convert .pal and .aco files to .act format
+      finalFileName = fileName.substring(0, fileName.lastIndexOf('.')) + '.act';
+      needsConversion = true;
+      console.log(`[ProjectExplorer] Will convert palette ${fileName} to ${finalFileName}`);
+      
+      // Show user feedback about conversion
+      if (window.gameEmulator && window.gameEmulator.setStatus) {
+        window.gameEmulator.setStatus(`Converting ${fileName} to ACT format...`);
+      }
+    }
+    
     // Add the file reference (not the content - content is in storage)
-  const ext = this.getFileExtension(fileName).toLowerCase();
-  const builderId = ext === '.sfx' ? 'sfx' : (['.pal', '.act', '.aco'].includes(ext) ? 'pal' : undefined);
+    const finalExt = this.getFileExtension(finalFileName).toLowerCase();
+    const builderId = finalExt === '.sfx' ? 'sfx' : (['.pal', '.act', '.aco'].includes(finalExt) ? 'pal' : undefined);
 
-    current[fileName] = {
+    current[finalFileName] = {
       type: 'file',
-      path: file.path || `${path}/${fileName}`,
+      path: file.path || `${path}/${finalFileName}`,
       size: fileSize,
       lastModified: lastModified,
       isNewFile: file.isNewFile || false,
       builderId
     };
     
-    console.log(`[ProjectExplorer] Added file reference: ${fileName} to ${path}`);
+    console.log(`[ProjectExplorer] Added file reference: ${finalFileName} to ${path}`);
 
     // Persist content to storage for storage-first workflows
-  const uiFullPath = file.path || `${path}/${fileName}`;
+  const uiFullPath = file.path || `${path}/${finalFileName}`;
   const storageFullPath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(uiFullPath) : uiFullPath;
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
         const textExts = ['.lua', '.txt', '.pal', '.sfx'];
-        const isBinary = !textExts.includes(ext);
+        const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
+          let finalContent = content;
+          
+          // Convert palette files to ACT format if needed
+          if (needsConversion && window.Palette) {
+            try {
+              console.log(`[ProjectExplorer] Converting ${fileName} to ACT format...`);
+              const palette = new Palette();
+              await palette.loadFromContent(content, fileName);
+              finalContent = palette.exportToACT();
+              console.log(`[ProjectExplorer] Successfully converted ${fileName} to ACT format`);
+              
+              // Update user feedback
+              if (window.gameEmulator && window.gameEmulator.setStatus) {
+                window.gameEmulator.setStatus(`Converted ${fileName} to ${finalFileName}`);
+              }
+            } catch (conversionError) {
+              console.error(`[ProjectExplorer] Failed to convert ${fileName} to ACT:`, conversionError);
+              // Fall back to original content if conversion fails
+              finalContent = content;
+              
+              // Show error feedback
+              if (window.gameEmulator && window.gameEmulator.setStatus) {
+                window.gameEmulator.setStatus(`Failed to convert ${fileName} - using original format`);
+              }
+            }
+          }
+          
           if (window.fileIOService) {
-            await window.fileIOService.saveFile(storageFullPath, content, {
-              binaryData: isBinary,
+            await window.fileIOService.saveFile(storageFullPath, finalContent, {
+              binaryData: needsConversion ? true : isBinary, // ACT files are always binary
               builderId
             });
-            console.log(`[ProjectExplorer] Persisted dropped file to storage: ${storageFullPath}`);
+            console.log(`[ProjectExplorer] Persisted ${needsConversion ? 'converted' : 'dropped'} file to storage: ${storageFullPath}`);
           }
         }).catch(err => console.warn('[ProjectExplorer] Failed reading dropped file:', err)).finally(() => {
           // Resolve persist promise regardless of success (so caller can proceed)
@@ -1115,13 +1159,13 @@ class ProjectExplorer {
     }
     
     // Emit file addition event for other components to listen to
-    this.emitFileAddedEvent(file, path);
+    this.emitFileAddedEvent({ ...file, name: finalFileName }, path);
     
     // Auto-open file in tab if not skipping
     if (!skipAutoOpen) {
       persistDone.then(async () => {
         try {
-          await this.openFileInTab(file, path);
+          await this.openFileInTab({ ...file, name: finalFileName }, path);
         } catch (e) {
           console.warn('[ProjectExplorer] Auto-open failed after persist:', e);
         }
@@ -2205,6 +2249,316 @@ class ProjectExplorer {
 
     // Emit to document for global listening
     document.dispatchEvent(event);
+    
+    // Also emit general refresh event for components that need to update their file lists
+    this.emitFileListRefreshEvent();
+  }
+
+  /**
+   * Get filtered list of files from the focused project
+   * @param {string} folder - Folder name to filter by (e.g., "Palettes", "Images", "Music")
+   * @param {string|Array} extensions - File extensions to filter by (e.g., ".pal", [".png", ".jpg"])
+   * @param {string} projectName - Optional project name, defaults to focused project
+   * @returns {Array} Array of file objects with name, path, fullPath properties
+   */
+  GetFiles(folder = null, extensions = null, projectName = null) {
+    const project = projectName || this.getFocusedProjectName();
+    if (!project) {
+      console.warn('[ProjectExplorer] No project available for GetFiles');
+      return [];
+    }
+
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const projectStructure = this.projectData.structure[project];
+    
+    if (!projectStructure) {
+      console.warn(`[ProjectExplorer] Project '${project}' not found`);
+      return [];
+    }
+
+    const files = [];
+    
+    // Helper function to recursively collect files
+    const collectFiles = (node, currentPath) => {
+      if (!node || !node.children) return;
+      
+      Object.keys(node.children).forEach(key => {
+        const child = node.children[key];
+        const childPath = currentPath ? `${currentPath}/${key}` : key;
+        
+        if (child.type === 'file') {
+          // Check if we should include this file
+          let shouldInclude = true;
+          
+          // Filter by folder if specified
+          if (folder && !currentPath.includes(folder)) {
+            shouldInclude = false;
+          }
+          
+          // Filter by extensions if specified
+          if (shouldInclude && extensions) {
+            const fileExt = this.getFileExtension(key);
+            const extArray = Array.isArray(extensions) ? extensions : [extensions];
+            shouldInclude = extArray.some(ext => 
+              ext === '*' || fileExt.toLowerCase() === ext.toLowerCase()
+            );
+          }
+          
+          if (shouldInclude) {
+            files.push({
+              name: key,
+              path: currentPath,
+              fullPath: childPath,
+              extension: this.getFileExtension(key),
+              type: 'file'
+            });
+          }
+        } else if (child.type === 'folder') {
+          // Recursively search subfolders
+          collectFiles(child, childPath);
+        }
+      });
+    };
+    
+    // Start collecting from the sources root
+    if (projectStructure.children && projectStructure.children[sourcesRoot]) {
+      collectFiles(projectStructure.children[sourcesRoot], `${project}/${sourcesRoot}`);
+    }
+    
+    console.log(`[ProjectExplorer] GetFiles(${folder}, ${extensions}) found ${files.length} files:`, files);
+    return files;
+  }
+
+  /**
+   * Get all files from the Sources folder, optionally filtered by subfolder
+   * @param {string} subfolder - Optional subfolder name (e.g., "Palettes", "Images", "Music", "SFX", "Lua", "Binary")
+   * @param {string} projectName - Optional project name, defaults to focused project
+   * @returns {Array} Array of file objects
+   */
+  GetSourceFiles(subfolder = null, projectName = null) {
+    const project = projectName || this.getFocusedProjectName();
+    if (!project) {
+      console.warn('[ProjectExplorer] No project available for GetSourceFiles');
+      return [];
+    }
+
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const projectStructure = this.projectData.structure[project];
+    
+    if (!projectStructure || !projectStructure.children || !projectStructure.children[sourcesRoot]) {
+      console.warn(`[ProjectExplorer] Sources folder not found in project '${project}'`);
+      return [];
+    }
+
+    const files = [];
+    const sourcesNode = projectStructure.children[sourcesRoot];
+    
+    // Helper function to recursively collect files
+    const collectFiles = (node, currentPath) => {
+      if (!node || !node.children) return;
+      
+      Object.keys(node.children).forEach(key => {
+        const child = node.children[key];
+        const childPath = currentPath ? `${currentPath}/${key}` : key;
+        
+        if (child.type === 'file') {
+          files.push({
+            name: key,
+            path: currentPath,
+            fullPath: childPath,
+            extension: this.getFileExtension(key),
+            type: 'file',
+            folder: currentPath.split('/').pop() // Get the immediate parent folder name
+          });
+        } else if (child.type === 'folder') {
+          collectFiles(child, childPath);
+        }
+      });
+    };
+    
+    if (subfolder) {
+      // Get files from specific subfolder
+      if (sourcesNode.children && sourcesNode.children[subfolder]) {
+        const subfolderPath = `${project}/${sourcesRoot}/${subfolder}`;
+        collectFiles(sourcesNode.children[subfolder], subfolderPath);
+      } else {
+        console.warn(`[ProjectExplorer] Subfolder '${subfolder}' not found in Sources`);
+      }
+    } else {
+      // Get all files from Sources
+      collectFiles(sourcesNode, `${project}/${sourcesRoot}`);
+    }
+    
+    console.log(`[ProjectExplorer] GetSourceFiles(${subfolder}) found ${files.length} files`);
+    return files;
+  }
+
+  /**
+   * Get all files from the Build folder, optionally filtered by subfolder
+   * @param {string} subfolder - Optional subfolder name
+   * @param {string} projectName - Optional project name, defaults to focused project
+   * @returns {Array} Array of file objects
+   */
+  GetBuildFiles(subfolder = null, projectName = null) {
+    const project = projectName || this.getFocusedProjectName();
+    if (!project) {
+      console.warn('[ProjectExplorer] No project available for GetBuildFiles');
+      return [];
+    }
+
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+    const projectStructure = this.projectData.structure[project];
+    
+    if (!projectStructure || !projectStructure.children || !projectStructure.children[buildRoot]) {
+      console.warn(`[ProjectExplorer] Build folder not found in project '${project}'`);
+      return [];
+    }
+
+    const files = [];
+    const buildNode = projectStructure.children[buildRoot];
+    
+    // Helper function to recursively collect files
+    const collectFiles = (node, currentPath) => {
+      if (!node || !node.children) return;
+      
+      Object.keys(node.children).forEach(key => {
+        const child = node.children[key];
+        const childPath = currentPath ? `${currentPath}/${key}` : key;
+        
+        if (child.type === 'file') {
+          files.push({
+            name: key,
+            path: currentPath,
+            fullPath: childPath,
+            extension: this.getFileExtension(key),
+            type: 'file',
+            folder: currentPath.split('/').pop()
+          });
+        } else if (child.type === 'folder') {
+          collectFiles(child, childPath);
+        }
+      });
+    };
+    
+    if (subfolder) {
+      // Get files from specific subfolder
+      if (buildNode.children && buildNode.children[subfolder]) {
+        const subfolderPath = `${project}/${buildRoot}/${subfolder}`;
+        collectFiles(buildNode.children[subfolder], subfolderPath);
+      } else {
+        console.warn(`[ProjectExplorer] Subfolder '${subfolder}' not found in Build`);
+      }
+    } else {
+      // Get all files from Build
+      collectFiles(buildNode, `${project}/${buildRoot}`);
+    }
+    
+    console.log(`[ProjectExplorer] GetBuildFiles(${subfolder}) found ${files.length} files`);
+    return files;
+  }
+
+  // Convenience methods for specific source folders
+  /**
+   * Get all palette files from Sources/Palettes
+   */
+  GetPaletteFiles(projectName = null) {
+    return this.GetSourceFiles('Palettes', projectName);
+  }
+
+  /**
+   * Get all image files from Sources/Images
+   */
+  GetImageFiles(projectName = null) {
+    return this.GetSourceFiles('Images', projectName);
+  }
+
+  /**
+   * Get all music files from Sources/Music
+   */
+  GetMusicFiles(projectName = null) {
+    return this.GetSourceFiles('Music', projectName);
+  }
+
+  /**
+   * Get all sound effect files from Sources/SFX
+   */
+  GetSFXFiles(projectName = null) {
+    return this.GetSourceFiles('SFX', projectName);
+  }
+
+  /**
+   * Get all Lua script files from Sources/Lua
+   */
+  GetLuaFiles(projectName = null) {
+    return this.GetSourceFiles('Lua', projectName);
+  }
+
+  /**
+   * Get all binary files from Sources/Binary
+   */
+  GetBinaryFiles(projectName = null) {
+    return this.GetSourceFiles('Binary', projectName);
+  }
+
+  /**
+   * Emit a refresh event when file lists need to be updated
+   */
+  emitFileListRefreshEvent() {
+    console.log('[ProjectExplorer] Emitting file list refresh event');
+    
+    const event = new CustomEvent('projectFileListRefresh', {
+      detail: {
+        project: this.getFocusedProjectName(),
+        timestamp: Date.now()
+      }
+    });
+
+    document.dispatchEvent(event);
+  }
+
+  /**
+   * Emit refresh event when files are deleted
+   */
+  emitFileDeletedEvent(fileName, path) {
+    console.log(`[ProjectExplorer] Emitting file deleted event: ${fileName} at ${path}`);
+    
+    const event = new CustomEvent('projectFileDeleted', {
+      detail: {
+        fileName: fileName,
+        path: path,
+        fullPath: path.endsWith(fileName) ? path : `${path}/${fileName}`,
+        extension: this.getFileExtension(fileName),
+        timestamp: Date.now()
+      }
+    });
+
+    document.dispatchEvent(event);
+    
+    // Also emit general refresh event
+    this.emitFileListRefreshEvent();
+  }
+
+  /**
+   * Emit refresh event when files are renamed
+   */
+  emitFileRenamedEvent(oldName, newName, path) {
+    console.log(`[ProjectExplorer] Emitting file renamed event: ${oldName} -> ${newName} at ${path}`);
+    
+    const event = new CustomEvent('projectFileRenamed', {
+      detail: {
+        oldName: oldName,
+        newName: newName,
+        path: path,
+        fullPath: path.endsWith(newName) ? path : `${path}/${newName}`,
+        extension: this.getFileExtension(newName),
+        timestamp: Date.now()
+      }
+    });
+
+    document.dispatchEvent(event);
+    
+    // Also emit general refresh event
+    this.emitFileListRefreshEvent();
   }
 }
 

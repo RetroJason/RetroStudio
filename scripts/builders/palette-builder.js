@@ -46,22 +46,26 @@ class PaletteBuilder {
     console.log(`[PaletteBuilder] Building palette: ${inputPath} -> ${outputPath}`);
     
     try {
-      // Ensure PaletteUtils is available
-      if (!window.PaletteUtils) {
-        throw new Error('PaletteUtils not available - required for palette building');
+      // Ensure Palette class is available
+      if (!window.Palette) {
+        throw new Error('Palette class not available - required for palette building');
       }
 
       // Get input file extension
       const inputExtension = this.getFileExtension(inputPath);
       console.log(`[PaletteBuilder] Input format: ${inputExtension}`);
 
-      // Parse the input palette file
-      const colors = window.PaletteUtils.parsePalette(fileContent, inputExtension);
-      console.log(`[PaletteBuilder] Parsed ${colors.length} colors from input file`);
+      // Create Palette instance and load the content
+      const palette = new Palette();
+      await palette.loadFromContent(fileContent, inputPath);
+      
+      console.log(`[PaletteBuilder] Parsed ${palette.getColors().length} colors from input file`);
 
-      // Convert to .act format
-      const actBuffer = window.PaletteUtils.exportToACT(colors);
-      const actBase64 = window.PaletteUtils.arrayBufferToBase64(actBuffer);
+      // Convert to .act format using the abstracted Palette class
+      const actBuffer = palette.exportToACT();
+
+      // Convert ArrayBuffer to base64 for storage
+      const base64String = btoa(String.fromCharCode(...new Uint8Array(actBuffer)));
 
       // Generate output path with .act extension
       const outputActPath = this.changeExtension(outputPath, '.act');
@@ -71,13 +75,14 @@ class PaletteBuilder {
       return {
         success: true,
         outputPath: outputActPath,
-        outputContent: actBase64,
+        outputContent: base64String,
         contentType: 'binary',
         metadata: {
-          colorCount: colors.length,
+          colorCount: palette.getColors().length,
           sourceFormat: inputExtension,
           targetFormat: '.act',
-          builder: 'PaletteBuilder'
+          builder: 'PaletteBuilder',
+          paletteName: palette.name || 'Unnamed'
         }
       };
 
