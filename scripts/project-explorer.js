@@ -2388,29 +2388,54 @@ class ProjectExplorer {
       return null;
     }
 
-    const defaultPalette = window.ProjectConfigManager.getDefaultPalette();
-    console.log(`[ProjectExplorer] Current default palette: ${defaultPalette || 'none'}`);
-    return defaultPalette;
+    const defaultPalettePath = window.ProjectConfigManager.getDefaultPalette();
+    if (!defaultPalettePath) {
+      console.log('[ProjectExplorer] No default palette set');
+      return null;
+    }
+
+    // Load and return the actual Palette object
+    try {
+      // TODO: Load the palette file from storage and return Palette object
+      // For now, return the path until we implement palette loading
+      console.log(`[ProjectExplorer] Default palette path: ${defaultPalettePath}`);
+      return defaultPalettePath; // Temporary - should return Palette object
+    } catch (error) {
+      console.error('[ProjectExplorer] Error loading default palette:', error);
+      return null;
+    }
   }
 
-  // Get the default palette with full project path
-  getDefaultPaletteFullPath() {
-    const defaultPalette = this.getDefaultPalette();
-    if (!defaultPalette) return null;
+  // Get the default palette storage path
+  async getDefaultPalettePath() {
+    if (!window.ProjectConfigManager) {
+      console.warn('[ProjectExplorer] ProjectConfigManager not available');
+      return null;
+    }
 
-    // Convert storage path back to full UI path
+    const defaultPalette = await window.ProjectConfigManager.getDefaultPalette();
+    if (!defaultPalette) {
+      console.log('[ProjectExplorer] No default palette path set');
+      return null;
+    }
+
+    // Convert storage path to full UI path
     const focusedProject = this.getFocusedProjectName();
     if (!focusedProject) return defaultPalette;
+
+    // Ensure we have a string (ProjectConfigManager should return string path)
+    if (typeof defaultPalette !== 'string') {
+      console.error('[ProjectExplorer] Expected string path from ProjectConfigManager, got:', typeof defaultPalette, defaultPalette);
+      return null;
+    }
 
     // If it already has the project prefix, return as-is
     if (defaultPalette.startsWith(focusedProject + '/')) {
       return defaultPalette;
     }
 
-    // Add project prefix
-    const fullPath = `${focusedProject}/${defaultPalette}`;
-    console.log(`[ProjectExplorer] Default palette full path: ${fullPath}`);
-    return fullPath;
+    // Add project prefix to create full UI path
+    return `${focusedProject}/${defaultPalette}`;
   }
 
   // Initialize project configuration when project is loaded/created
@@ -2598,7 +2623,7 @@ class ProjectExplorer {
     }
 
     // Add indicator to the default palette file
-    const defaultPaletteFullPath = await window.ProjectConfigManager.getDefaultPaletteFullPath();
+    const defaultPaletteFullPath = await this.getDefaultPalettePath();
     if (!defaultPaletteFullPath) {
       console.log('[ProjectExplorer] Could not determine full path for default palette');
       return;

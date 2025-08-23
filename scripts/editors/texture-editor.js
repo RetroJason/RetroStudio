@@ -4,10 +4,12 @@
 console.log('[TextureEditor] Class definition loading');
 
 /**
- * TextureData - Data structure for texture information
+ * TextureData - Data structure for texture information with event support
  */
-class TextureData {
+class TextureData extends EventTarget {
   constructor(options = {}) {
+    super(); // Call EventTarget constructor
+    
     this.width = options.width || 32;
     this.height = options.height || 32;
     this.colorDepth = options.colorDepth || 8;
@@ -19,6 +21,68 @@ class TextureData {
     this.name = options.name || 'texture';
     this.sourceImage = options.sourceImage || null;
     this.rotation = options.rotation || 0;
+    
+    // Metadata for .texture file format with auto-population
+    this._metadata = {
+      sourceImagePath: options.sourceImagePath || '',
+      palettePath: options.palettePath || '',
+      outputPixelFormat: options.outputPixelFormat || 'RGBA',
+      scale: options.scale || 1.0
+    };
+    
+    // Auto-populate default palette path if not provided
+    this.populateDefaultPalette();
+  }
+
+  // Getter for metadata
+  get metadata() {
+    return this._metadata;
+  }
+
+  // Method to update metadata with event emission
+  updateMetadata(property, value) {
+    if (this._metadata.hasOwnProperty(property)) {
+      const oldValue = this._metadata[property];
+      this._metadata[property] = value;
+      
+      // Emit event for metadata change
+      this.dispatchEvent(new CustomEvent('metadataChanged', {
+        detail: { property, oldValue, newValue: value, metadata: this._metadata }
+      }));
+    }
+  }
+
+  // Legacy property accessors for backward compatibility  
+  get sourceImagePath() { return this._metadata.sourceImagePath; }
+  set sourceImagePath(value) { this.updateMetadata('sourceImagePath', value); }
+
+  get palettePath() { return this._metadata.palettePath; }
+  set palettePath(value) { this.updateMetadata('palettePath', value); }
+
+  get outputPixelFormat() { return this._metadata.outputPixelFormat; }
+  set outputPixelFormat(value) { this.updateMetadata('outputPixelFormat', value); }
+
+  get scale() { return this._metadata.scale; }
+  set scale(value) { this.updateMetadata('scale', value); }
+
+  // Async method to populate default palette path if not set
+  async populateDefaultPalette() {
+    if (this.palettePath && this.palettePath !== '') {
+      return; // Already has a palette path
+    }
+
+    try {
+      const projectExplorer = window.gameEmulator?.projectExplorer;
+      if (projectExplorer && typeof projectExplorer.getDefaultPalettePath === 'function') {
+        const defaultPalettePath = await projectExplorer.getDefaultPalettePath();
+        if (defaultPalettePath) {
+          this.palettePath = defaultPalettePath;
+          console.log('[TextureData] Auto-populated default palette path:', defaultPalettePath);
+        }
+      }
+    } catch (error) {
+      console.log('[TextureData] Could not populate default palette path:', error);
+    }
   }
 
   static getColorDepthOptions() {
@@ -95,6 +159,17 @@ class TextureEditor extends EditorBase {
     // Setup event listeners for file system changes
     this.setupFileSystemEventListeners();
     
+    // Setup two-way data binding for metadata
+    this.setupMetadataEventListeners();
+    
+    // Ensure default palette is populated after everything is set up
+    setTimeout(() => {
+      if (this.textureData) {
+        console.log('[TextureEditor] Manually triggering populateDefaultPalette after setup');
+        this.textureData.populateDefaultPalette();
+      }
+    }, 500); // Give some time for project explorer to be ready
+    
     console.log('[TextureEditor] Constructor completed, textureData:', this.textureData);
   }
 
@@ -123,6 +198,58 @@ class TextureEditor extends EditorBase {
     document.addEventListener('projectFileAdded', this.paletteFileChangeHandler);
     document.addEventListener('projectFileDeleted', this.paletteFileChangeHandler);
     document.addEventListener('projectFileRenamed', this.paletteFileChangeHandler);
+  }
+
+  setupMetadataEventListeners() {
+    // Listen for metadata changes from TextureData
+    this.metadataChangeHandler = (event) => {
+      console.log('[TextureEditor] Metadata changed:', event.detail);
+      // Update the metadata display
+      this.updateMetadataDisplay();
+      
+      // Update existing UI controls based on metadata changes
+      if (event.detail.property === 'outputPixelFormat' && this.colorDepthSelect) {
+        // Sync color depth select with metadata format
+        const formatToDepthMap = {
+          'RGBA': 32,
+          'RGB': 24,
+          'INDEXED': 8,
+          'GRAYSCALE': 8
+        };
+        const depth = formatToDepthMap[event.detail.newValue] || 8;
+        this.colorDepthSelect.value = depth;
+      }
+      
+      // Auto-load palette when palettePath changes
+      if (event.detail.property === 'palettePath' && event.detail.newValue) {
+        console.log('[TextureEditor] Auto-loading palette:', event.detail.newValue);
+        this.loadPaletteByPath(event.detail.newValue);
+      }
+    };
+
+    // Add the event listener to textureData
+    this.textureData.addEventListener('metadataChanged', this.metadataChangeHandler);
+    
+    // Listen for changes from existing UI controls to update metadata
+    this.setupUIToMetadataBinding();
+  }
+
+  setupUIToMetadataBinding() {
+    // Defer UI binding until controls are created
+    setTimeout(() => {
+      if (this.colorDepthSelect) {
+        this.colorDepthSelect.addEventListener('change', () => {
+          // Update metadata format based on color depth
+          const depth = parseInt(this.colorDepthSelect.value);
+          let format = 'RGBA';
+          if (depth <= 8) format = 'INDEXED';
+          else if (depth === 24) format = 'RGB';
+          else if (depth === 32) format = 'RGBA';
+          
+          this.textureData.outputPixelFormat = format;
+        });
+      }
+    }, 100);
   }
 
   // Override destroy method to clean up event listeners
@@ -674,10 +801,47 @@ class TextureEditor extends EditorBase {
       }
     });
 
+    // Metadata Display Section
+    const metadataSection = document.createElement('div');
+    metadataSection.className = 'metadata-section';
+    metadataSection.style.cssText = `
+      margin-bottom: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #444;
+    `;
+
+    const metadataTitle = document.createElement('h5');
+    metadataTitle.textContent = 'Texture Metadata';
+    metadataTitle.style.cssText = `
+      color: #4a9eff;
+      margin: 0 0 10px 0;
+      font-size: 12px;
+      font-weight: 600;
+    `;
+    metadataSection.appendChild(metadataTitle);
+
+    this.metadataDisplay = document.createElement('div');
+    this.metadataDisplay.className = 'metadata-display';
+    this.metadataDisplay.style.cssText = `
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: #ccc;
+      line-height: 1.4;
+      background: #1a1a1a;
+      padding: 8px;
+      border-radius: 3px;
+      border: 1px solid #333;
+    `;
+    metadataSection.appendChild(this.metadataDisplay);
+
+    // Update metadata display
+    this.updateMetadataDisplay();
+
     // Assemble the panel
     panel.appendChild(colorDepthSection);
     panel.appendChild(actionSection);
     panel.appendChild(this.paletteDisplay);
+    panel.appendChild(metadataSection);
     panel.appendChild(this.applyBtn);
 
     // Initialize state
@@ -685,6 +849,22 @@ class TextureEditor extends EditorBase {
     this.currentPalette = null;
 
     return panel;
+  }
+
+  updateMetadataDisplay() {
+    if (!this.metadataDisplay || !this.textureData) return;
+
+    const metadata = this.textureData.metadata;
+    const metadataItems = [
+      `Source: ${metadata.sourceImagePath || 'None'}`,
+      `Palette: ${metadata.palettePath || 'None'}`,
+      `Format: ${metadata.outputPixelFormat}`,
+      `Scale: ${metadata.scale}x`
+    ];
+
+    this.metadataDisplay.innerHTML = metadataItems.map(item => 
+      `<div style="margin-bottom: 2px;">${item}</div>`
+    ).join('');
   }
 
   async loadSourceImageFromDataUrl(dataUrl) {
@@ -729,6 +909,7 @@ class TextureEditor extends EditorBase {
     
     this.sourceImage = img;
     this.textureData.sourceImage = this.filename || 'unknown';
+    this.textureData.sourceImagePath = this.filePath || this.filename || 'unknown';
     this.textureData.width = img.width;
     this.textureData.height = img.height;
     
@@ -2036,6 +2217,23 @@ class TextureEditor extends EditorBase {
     } catch (error) {
       console.error('[TextureEditor] Error loading palette:', error);
       alert('Failed to load palette: ' + error.message);
+    }
+  }
+
+  async loadPaletteByPath(palettePath) {
+    try {
+      // Extract filename from path (e.g., "Sources/Palettes/new_2.act" -> "new_2.act")
+      const filename = palettePath.split('/').pop();
+      console.log('[TextureEditor] Loading palette by path:', palettePath, '-> filename:', filename);
+      
+      // Use the existing loadPaletteFromProject method
+      await this.loadPaletteFromProject(filename);
+      
+      // Update UI state to show palette is loaded
+      this.setButtonState('load');
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error loading palette by path:', error);
     }
   }
 
