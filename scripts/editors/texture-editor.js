@@ -27,7 +27,8 @@ class TextureData extends EventTarget {
       sourceImagePath: options.sourceImagePath || '',
       palettePath: options.palettePath || '',
       outputPixelFormat: options.outputPixelFormat || 'd2_mode_i8',
-      scale: options.scale || 1.0
+      scale: options.scale || 1.0,
+      paletteOffset: options.paletteOffset || 0
     };
     
     // Auto-populate default palette path if not provided
@@ -64,6 +65,9 @@ class TextureData extends EventTarget {
 
   get scale() { return this._metadata.scale; }
   set scale(value) { this.updateMetadata('scale', value); }
+
+  get paletteOffset() { return this._metadata.paletteOffset; }
+  set paletteOffset(value) { this.updateMetadata('paletteOffset', value); }
 
   // Async method to populate default palette path if not set
   async populateDefaultPalette() {
@@ -269,6 +273,37 @@ class TextureData extends EventTarget {
       }
     ];
   }
+
+  // Get the number of colors supported by a texture format
+  static getFormatColorCount(formatValue) {
+    const formatMap = {
+      'd2_mode_i1': 2,
+      'd2_mode_i2': 4,
+      'd2_mode_i4': 16,
+      'd2_mode_i8': 256,
+      'd2_mode_ai44': 16,
+      'd2_mode_alpha1': 2,
+      'd2_mode_alpha2': 4,
+      'd2_mode_alpha4': 16,
+      'd2_mode_alpha8': 256,
+      'd2_mode_rgb444': 4096,
+      'd2_mode_rgb555': 32768,
+      'd2_mode_rgb565': 65536,
+      'd2_mode_argb1555': 32768,
+      'd2_mode_rgba5551': 32768,
+      'd2_mode_argb4444': 4096,
+      'd2_mode_rgba4444': 4096,
+      'd2_mode_rgb888': 16777216,
+      'd2_mode_argb8888': 16777216,
+      'd2_mode_rgba8888': 16777216
+    };
+    return formatMap[formatValue] || 256;
+  }
+
+  // Check if format uses a palette
+  static isIndexedFormat(formatValue) {
+    return formatValue.startsWith('d2_mode_i') || formatValue === 'd2_mode_ai44';
+  }
 }
 
 console.log('[TextureEditor] TextureData class defined:', typeof TextureData);
@@ -377,6 +412,14 @@ class TextureEditor extends EditorBase {
         if (this.colorDepthSelect && selectedFormat) {
           this.colorDepthSelect.value = selectedFormat.bitsPerPixel;
         }
+        
+        // Refresh palette display to show format-appropriate chunking
+        if (this.currentPalette) {
+          this.displayPalette(this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette);
+        }
+        
+        // Reset palette offset when format changes
+        this.textureData.metadata.paletteOffset = 0;
       }
       
       // Auto-load palette when palettePath changes
@@ -1102,7 +1145,8 @@ class TextureEditor extends EditorBase {
       `Source: ${metadata.sourceImagePath || 'None'}`,
       `Palette: ${metadata.palettePath || 'None'}`,
       `Format: ${metadata.outputPixelFormat}`,
-      `Scale: ${metadata.scale}x`
+      `Scale: ${metadata.scale}x`,
+      `Palette Offset: ${metadata.paletteOffset || 0}`
     ];
 
     this.metadataDisplay.innerHTML = metadataItems.map(item => 
@@ -2559,8 +2603,147 @@ class TextureEditor extends EditorBase {
       this.paletteDisplay.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">No colors in palette</div>';
       return;
     }
+
+    // Get current format and its color limit
+    const currentFormat = this.textureData.outputPixelFormat;
+    const isIndexed = TextureData.isIndexedFormat(currentFormat);
+    const formatColorCount = TextureData.getFormatColorCount(currentFormat);
+    const currentOffset = this.textureData.metadata.paletteOffset || 0;
     
-    // Create palette grid
+    if (isIndexed && palette.length > formatColorCount) {
+      // Show palette in selectable chunks for indexed formats
+      this.displayIndexedPalette(palette, formatColorCount, currentOffset);
+    } else {
+      // Show full palette for true color formats
+      this.displayFullPalette(palette);
+    }
+  }
+
+  displayIndexedPalette(palette, colorsPerChunk, currentOffset) {
+    const totalChunks = Math.ceil(palette.length / colorsPerChunk);
+    
+    // Add info header
+    const infoHeader = document.createElement('div');
+    infoHeader.style.cssText = `
+      font-size: 12px;
+      color: #4a9eff;
+      margin-bottom: 10px;
+      text-align: center;
+    `;
+    infoHeader.textContent = `${this.textureData.outputPixelFormat} - ${colorsPerChunk} colors per block. Click a block to select it.`;
+    this.paletteDisplay.appendChild(infoHeader);
+
+    // Create container for all palette chunks
+    const chunksContainer = document.createElement('div');
+    chunksContainer.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    `;
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+      const startIndex = chunkIndex * colorsPerChunk;
+      const endIndex = Math.min(startIndex + colorsPerChunk, palette.length);
+      const chunkColors = palette.slice(startIndex, endIndex);
+      
+      // Create chunk container
+      const chunkContainer = document.createElement('div');
+      const isSelected = startIndex === currentOffset;
+      chunkContainer.style.cssText = `
+        display: flex;
+        align-items: center;
+        padding: 8px;
+        border: 2px solid ${isSelected ? '#4a9eff' : '#444'};
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+        background: ${isSelected ? 'rgba(74, 158, 255, 0.1)' : 'transparent'};
+      `;
+      
+      // Add chunk label
+      const chunkLabel = document.createElement('div');
+      chunkLabel.style.cssText = `
+        min-width: 60px;
+        font-size: 11px;
+        color: ${isSelected ? '#4a9eff' : '#ccc'};
+        font-weight: ${isSelected ? 'bold' : 'normal'};
+      `;
+      chunkLabel.textContent = `Offset ${startIndex}:`;
+      chunkContainer.appendChild(chunkLabel);
+      
+      // Create color grid for this chunk
+      const colorGrid = document.createElement('div');
+      colorGrid.style.cssText = `
+        display: flex;
+        gap: 2px;
+        flex: 1;
+        margin-left: 10px;
+      `;
+      
+      chunkColors.forEach((color, localIndex) => {
+        const colorSwatch = document.createElement('div');
+        colorSwatch.style.cssText = `
+          width: 16px;
+          height: 16px;
+          background-color: ${color};
+          border: 1px solid #666;
+          border-radius: 2px;
+          flex-shrink: 0;
+        `;
+        colorSwatch.title = `Color ${startIndex + localIndex}: ${color}`;
+        colorGrid.appendChild(colorSwatch);
+      });
+      
+      chunkContainer.appendChild(colorGrid);
+      
+      // Add click handler to select this chunk
+      chunkContainer.addEventListener('click', () => {
+        // Update palette offset in metadata
+        this.textureData.metadata.paletteOffset = startIndex;
+        
+        // Refresh display to show new selection
+        this.displayPalette(palette);
+        
+        // Trigger auto-generation if enabled
+        this.checkAndAutoGenerateTexture();
+        
+        console.log(`[TextureEditor] Selected palette offset: ${startIndex}`);
+      });
+      
+      // Add hover effect
+      chunkContainer.addEventListener('mouseenter', () => {
+        if (startIndex !== currentOffset) {
+          chunkContainer.style.borderColor = '#666';
+          chunkContainer.style.background = 'rgba(255, 255, 255, 0.05)';
+        }
+      });
+      
+      chunkContainer.addEventListener('mouseleave', () => {
+        if (startIndex !== currentOffset) {
+          chunkContainer.style.borderColor = '#444';
+          chunkContainer.style.background = 'transparent';
+        }
+      });
+      
+      chunksContainer.appendChild(chunkContainer);
+    }
+    
+    this.paletteDisplay.appendChild(chunksContainer);
+    
+    // Add summary info
+    const summaryInfo = document.createElement('div');
+    summaryInfo.style.cssText = `
+      font-size: 11px;
+      color: #888;
+      text-align: center;
+      margin-top: 10px;
+    `;
+    summaryInfo.textContent = `${palette.length} total colors, ${totalChunks} blocks of ${colorsPerChunk} colors each`;
+    this.paletteDisplay.appendChild(summaryInfo);
+  }
+
+  displayFullPalette(palette) {
+    // Create palette grid for true color formats (no chunking needed)
     const paletteGrid = document.createElement('div');
     paletteGrid.style.cssText = `
       display: grid;
