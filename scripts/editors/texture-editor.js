@@ -26,7 +26,7 @@ class TextureData extends EventTarget {
     this._metadata = {
       sourceImagePath: options.sourceImagePath || '',
       palettePath: options.palettePath || '',
-      outputPixelFormat: options.outputPixelFormat || 'RGBA',
+      outputPixelFormat: options.outputPixelFormat || 'd2_mode_i8',
       scale: options.scale || 1.0
     };
     
@@ -106,10 +106,167 @@ class TextureData extends EventTarget {
 
   static getFormatOptions() {
     return [
-      { value: 'RGBA', label: 'RGBA', description: 'Red, Green, Blue, Alpha' },
-      { value: 'RGB', label: 'RGB', description: 'Red, Green, Blue' },
-      { value: 'INDEXED', label: 'Indexed', description: 'Palette-based color' },
-      { value: 'GRAYSCALE', label: 'Grayscale', description: 'Grayscale values' }
+      // Most Common Formats First
+      { 
+        value: 'd2_mode_i8', 
+        label: 'Indexed 8-bit', 
+        description: '8 bits per pixel, 256 colors from palette',
+        bitsPerPixel: 8,
+        category: 'Common',
+        colorCount: '256 colors'
+      },
+      { 
+        value: 'd2_mode_i4', 
+        label: 'Indexed 4-bit', 
+        description: '4 bits per pixel, 16 colors from palette',
+        bitsPerPixel: 4,
+        category: 'Common',
+        colorCount: '16 colors'
+      },
+      { 
+        value: 'd2_mode_rgb565', 
+        label: 'RGB 16-bit (565)', 
+        description: '16 bits per pixel, 5R:6G:5B format, 65,536 colors',
+        bitsPerPixel: 16,
+        category: 'Common',
+        colorCount: '65,536 colors'
+      },
+      { 
+        value: 'd2_mode_argb1555', 
+        label: 'ARGB 16-bit (1555)', 
+        description: '16 bits per pixel, 1A:5R:5G:5B format, 32,768 colors + alpha',
+        bitsPerPixel: 16,
+        category: 'Common',
+        colorCount: '32,768 colors'
+      },
+      { 
+        value: 'd2_mode_ai44', 
+        label: 'Alpha+Index 8-bit', 
+        description: '8 bits per pixel, 4-bit alpha + 4-bit palette index, 16 colors',
+        bitsPerPixel: 8,
+        category: 'Common',
+        colorCount: '16 colors'
+      },
+
+      // True Color formats
+      { 
+        value: 'd2_mode_argb8888', 
+        label: 'ARGB 32-bit', 
+        description: '32 bits per pixel, 8A:8R:8G:8B format, 16.7M colors + alpha',
+        bitsPerPixel: 32,
+        category: 'True Color',
+        colorCount: '16.7M colors'
+      },
+      { 
+        value: 'd2_mode_rgba8888', 
+        label: 'RGBA 32-bit', 
+        description: '32 bits per pixel, 8R:8G:8B:8A format, 16.7M colors + alpha',
+        bitsPerPixel: 32,
+        category: 'True Color',
+        colorCount: '16.7M colors'
+      },
+      { 
+        value: 'd2_mode_rgb888', 
+        label: 'RGB 24-bit', 
+        description: '24 bits per pixel, 8R:8G:8B format, 16.7M colors',
+        bitsPerPixel: 24,
+        category: 'True Color',
+        colorCount: '16.7M colors'
+      },
+
+      // High Color formats
+      { 
+        value: 'd2_mode_rgba5551', 
+        label: 'RGBA 16-bit (5551)', 
+        description: '16 bits per pixel, 5R:5G:5B:1A format, 32,768 colors + alpha',
+        bitsPerPixel: 16,
+        category: 'High Color',
+        colorCount: '32,768 colors'
+      },
+      { 
+        value: 'd2_mode_rgb555', 
+        label: 'RGB 15-bit (555)', 
+        description: '15 bits per pixel, 5R:5G:5B format, 32,768 colors',
+        bitsPerPixel: 15,
+        category: 'High Color',
+        colorCount: '32,768 colors'
+      },
+      { 
+        value: 'd2_mode_argb4444', 
+        label: 'ARGB 16-bit (4444)', 
+        description: '16 bits per pixel, 4A:4R:4G:4B format, 4,096 colors + alpha',
+        bitsPerPixel: 16,
+        category: 'High Color',
+        colorCount: '4,096 colors'
+      },
+      { 
+        value: 'd2_mode_rgba4444', 
+        label: 'RGBA 16-bit (4444)', 
+        description: '16 bits per pixel, 4R:4G:4B:4A format, 4,096 colors + alpha',
+        bitsPerPixel: 16,
+        category: 'High Color',
+        colorCount: '4,096 colors'
+      },
+      { 
+        value: 'd2_mode_rgb444', 
+        label: 'RGB 12-bit (444)', 
+        description: '12 bits per pixel, 4R:4G:4B format, 4,096 colors',
+        bitsPerPixel: 12,
+        category: 'High Color',
+        colorCount: '4,096 colors'
+      },
+
+      // Indexed formats (remaining)
+      { 
+        value: 'd2_mode_i2', 
+        label: 'Indexed 2-bit', 
+        description: '2 bits per pixel, 4 colors from palette',
+        bitsPerPixel: 2,
+        category: 'Indexed',
+        colorCount: '4 colors'
+      },
+      { 
+        value: 'd2_mode_i1', 
+        label: 'Indexed 1-bit', 
+        description: '1 bit per pixel, 2 colors from palette',
+        bitsPerPixel: 1,
+        category: 'Indexed',
+        colorCount: '2 colors'
+      },
+
+      // Alpha/Monochrome formats
+      { 
+        value: 'd2_mode_alpha8', 
+        label: 'Alpha 8-bit', 
+        description: '8 bits per pixel, 256 alpha levels (monochrome)',
+        bitsPerPixel: 8,
+        category: 'Alpha',
+        colorCount: '256 levels'
+      },
+      { 
+        value: 'd2_mode_alpha4', 
+        label: 'Alpha 4-bit', 
+        description: '4 bits per pixel, 16 alpha levels (monochrome)',
+        bitsPerPixel: 4,
+        category: 'Alpha',
+        colorCount: '16 levels'
+      },
+      { 
+        value: 'd2_mode_alpha2', 
+        label: 'Alpha 2-bit', 
+        description: '2 bits per pixel, 4 alpha levels (monochrome)',
+        bitsPerPixel: 2,
+        category: 'Alpha',
+        colorCount: '4 levels'
+      },
+      { 
+        value: 'd2_mode_alpha1', 
+        label: 'Alpha 1-bit', 
+        description: '1 bit per pixel, 2 alpha levels (monochrome)',
+        bitsPerPixel: 1,
+        category: 'Alpha',
+        colorCount: '2 levels'
+      }
     ];
   }
 }
@@ -208,16 +365,18 @@ class TextureEditor extends EditorBase {
       this.updateMetadataDisplay();
       
       // Update existing UI controls based on metadata changes
-      if (event.detail.property === 'outputPixelFormat' && this.colorDepthSelect) {
-        // Sync color depth select with metadata format
-        const formatToDepthMap = {
-          'RGBA': 32,
-          'RGB': 24,
-          'INDEXED': 8,
-          'GRAYSCALE': 8
-        };
-        const depth = formatToDepthMap[event.detail.newValue] || 8;
-        this.colorDepthSelect.value = depth;
+      if (event.detail.property === 'outputPixelFormat') {
+        // Update the format label
+        const formats = TextureData.getFormatOptions();
+        const selectedFormat = formats.find(f => f.value === event.detail.newValue);
+        if (selectedFormat && this.formatLabel) {
+          this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${selectedFormat.label}</span>`;
+        }
+        
+        // Also update color depth for backward compatibility
+        if (this.colorDepthSelect && selectedFormat) {
+          this.colorDepthSelect.value = selectedFormat.bitsPerPixel;
+        }
       }
       
       // Auto-load palette when palettePath changes
@@ -240,16 +399,14 @@ class TextureEditor extends EditorBase {
   setupUIToMetadataBinding() {
     // Defer UI binding until controls are created
     setTimeout(() => {
+      // Format is now handled by the format selection modal button
+      // No need to bind anything here as the modal handles the selection
+      
+      // Color depth select is now secondary (for compatibility/display)
       if (this.colorDepthSelect) {
         this.colorDepthSelect.addEventListener('change', () => {
-          // Update metadata format based on color depth
-          const depth = parseInt(this.colorDepthSelect.value);
-          let format = 'RGBA';
-          if (depth <= 8) format = 'INDEXED';
-          else if (depth === 24) format = 'RGB';
-          else if (depth === 32) format = 'RGBA';
-          
-          this.textureData.outputPixelFormat = format;
+          console.log('[TextureEditor] Color depth select changed:', this.colorDepthSelect.value);
+          // Color depth changes can suggest format changes but format select takes precedence
         });
       }
     }, 100);
@@ -701,6 +858,72 @@ class TextureEditor extends EditorBase {
     colorDepthSection.appendChild(arrow);
     colorDepthSection.appendChild(this.colorDepthSelect);
 
+    // Output Format Section
+    const formatSection = document.createElement('div');
+    formatSection.className = 'format-section';
+    formatSection.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 15px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid #444;
+    `;
+
+    const formatLabel = document.createElement('label');
+    formatLabel.innerHTML = 'Output Format: <span style="color: #4a9eff;">Indexed 8-bit</span>';
+    formatLabel.style.cssText = `
+      color: #ddd;
+      font-weight: 500;
+      white-space: nowrap;
+      flex: 1;
+    `;
+    
+    // Store reference for updates
+    this.formatLabel = formatLabel;
+
+    const formatArrow = document.createElement('span');
+    formatArrow.textContent = '→';
+    formatArrow.style.cssText = `
+      color: #888;
+      font-size: 16px;
+      margin: 0 5px;
+    `;
+
+    this.formatSelectBtn = document.createElement('button');
+    this.formatSelectBtn.className = 'format-select-btn';
+    this.formatSelectBtn.textContent = 'Select Format';
+    this.formatSelectBtn.style.cssText = `
+      padding: 8px 15px;
+      background: #4a9eff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    `;
+
+    // Add hover effect
+    this.formatSelectBtn.addEventListener('mouseenter', () => {
+      this.formatSelectBtn.style.background = '#3a8eef';
+    });
+    this.formatSelectBtn.addEventListener('mouseleave', () => {
+      this.formatSelectBtn.style.background = '#4a9eff';
+    });
+
+    // Add click handler to show format selection modal
+    this.formatSelectBtn.addEventListener('click', () => this.showFormatSelectionModal());
+
+    formatSection.appendChild(formatLabel);
+    formatSection.appendChild(formatArrow);
+    formatSection.appendChild(this.formatSelectBtn);
+
+    // Store the format label for updates
+    this.formatLabel = formatLabel;
+
     // Action Buttons Section
     const actionSection = document.createElement('div');
     actionSection.className = 'action-section';
@@ -858,7 +1081,7 @@ class TextureEditor extends EditorBase {
     this.updateMetadataDisplay();
 
     // Assemble the panel
-    panel.appendChild(colorDepthSection);
+    panel.appendChild(formatSection);
     panel.appendChild(actionSection);
     panel.appendChild(this.paletteDisplay);
     panel.appendChild(metadataSection);
@@ -2095,6 +2318,43 @@ class TextureEditor extends EditorBase {
     } catch (error) {
       console.error('[TextureEditor] Error in palette load modal:', error);
       alert('Failed to load palette: ' + error.message);
+    }
+  }
+
+  async showFormatSelectionModal() {
+    console.log('[TextureEditor] Show Format Selection Modal');
+    
+    // Get all available texture formats
+    const formats = TextureData.getFormatOptions();
+    
+    // Convert formats to simple list items for ModalUtils.showSelectionList
+    const formatItems = formats.map(format => ({
+      value: format.value,
+      label: format.label,
+      description: `${format.description} (${format.colorCount})`
+    }));
+
+    try {
+      const result = await ModalUtils.showSelectionList(
+        'Select Texture Format',
+        'Choose a GPU texture format for your output:',
+        formatItems
+      );
+
+      if (result) {
+        // Update the format in texture data
+        this.textureData.outputPixelFormat = result;
+        
+        // Update the UI label
+        const format = formats.find(f => f.value === result);
+        if (format && this.formatLabel) {
+          this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${format.label}</span>`;
+        }
+        
+        console.log('[TextureEditor] Selected format:', result);
+      }
+    } catch (error) {
+      console.error('[TextureEditor] Error in format selection modal:', error);
     }
   }
 

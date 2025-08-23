@@ -34,10 +34,13 @@ class ModalUtils {
         color: white;
         padding: 30px;
         border-radius: 10px;
-        max-width: 400px;
-        min-width: 350px;
+        max-width: 500px;
+        min-width: 400px;
+        max-height: 80vh;
         font-family: Arial, sans-serif;
         box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        display: flex;
+        flex-direction: column;
       `;
 
       // Build options HTML
@@ -54,16 +57,18 @@ class ModalUtils {
       });
 
       dialog.innerHTML = `
-        <h3 style="margin: 0 0 20px 0; color: #4CAF50;">${title}</h3>
-        <p style="margin: 0 0 20px 0; line-height: 1.4; color: #ccc;">
-          ${message}
-        </p>
+        <div style="flex-shrink: 0;">
+          <h3 style="margin: 0 0 20px 0; color: #4CAF50;">${title}</h3>
+          <p style="margin: 0 0 20px 0; line-height: 1.4; color: #ccc;">
+            ${message}
+          </p>
+        </div>
         
-        <div style="margin-bottom: 25px;">
+        <div style="flex: 1; overflow-y: auto; max-height: 50vh; margin-bottom: 25px; padding-right: 10px;">
           ${optionsHtml}
         </div>
         
-        <div style="text-align: right;">
+        <div style="flex-shrink: 0; text-align: right; border-top: 1px solid #444; padding-top: 20px;">
           <button class="cancel-btn" style="background: #666; color: white; border: none; padding: 10px 20px; margin-right: 10px; border-radius: 5px; cursor: pointer;">${config.cancelText || 'Cancel'}</button>
           <button class="confirm-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">${config.confirmText || 'Proceed'}</button>
         </div>
@@ -85,19 +90,68 @@ class ModalUtils {
       overlay.appendChild(dialog);
       document.body.appendChild(overlay);
 
+      // Add custom scrollbar styling for the options container
+      const optionsContainer = dialog.querySelector('div[style*="overflow-y: auto"]');
+      if (optionsContainer) {
+        optionsContainer.style.cssText += `
+          scrollbar-width: thin;
+          scrollbar-color: #4CAF50 #444;
+        `;
+        
+        // Add webkit scrollbar styles for webkit browsers
+        const style = document.createElement('style');
+        style.setAttribute('data-modal-scrollbar', 'true');
+        style.textContent = `
+          .modal-options-container::-webkit-scrollbar {
+            width: 8px;
+          }
+          .modal-options-container::-webkit-scrollbar-track {
+            background: #444;
+            border-radius: 4px;
+          }
+          .modal-options-container::-webkit-scrollbar-thumb {
+            background: #4CAF50;
+            border-radius: 4px;
+          }
+          .modal-options-container::-webkit-scrollbar-thumb:hover {
+            background: #45a049;
+          }
+        `;
+        document.head.appendChild(style);
+        optionsContainer.className = 'modal-options-container';
+        
+        // Clean up style element when modal closes
+        const cleanup = () => {
+          if (document.head.contains(style)) {
+            document.head.removeChild(style);
+          }
+        };
+        overlay.addEventListener('remove', cleanup);
+      }
+
       // Handle button clicks
       const cancelBtn = dialog.querySelector('.cancel-btn');
       const confirmBtn = dialog.querySelector('.confirm-btn');
 
+      // Helper function to clean up modal
+      const cleanupModal = () => {
+        if (document.body.contains(overlay)) {
+          document.body.removeChild(overlay);
+        }
+        // Clean up any added styles
+        const modalStyles = document.querySelectorAll('style[data-modal-scrollbar]');
+        modalStyles.forEach(style => style.remove());
+      };
+
       cancelBtn.addEventListener('click', () => {
-        document.body.removeChild(overlay);
+        cleanupModal();
         resolve(null);
       });
 
       confirmBtn.addEventListener('click', () => {
         const selectedRadio = dialog.querySelector('input[name="selection"]:checked');
         const value = selectedRadio ? selectedRadio.value : null;
-        document.body.removeChild(overlay);
+        cleanupModal();
         resolve(value);
       });
 
@@ -105,7 +159,7 @@ class ModalUtils {
       const handleEscape = (e) => {
         if (e.key === 'Escape') {
           document.removeEventListener('keydown', handleEscape);
-          document.body.removeChild(overlay);
+          cleanupModal();
           resolve(null);
         }
       };
@@ -116,7 +170,7 @@ class ModalUtils {
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
           document.removeEventListener('keydown', handleEscape);
-          document.body.removeChild(overlay);
+          cleanupModal();
           resolve(null);
         }
       });
