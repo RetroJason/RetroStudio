@@ -777,6 +777,9 @@ class TextureEditor extends EditorBase {
     if (this.outputCanvas && this.textureData.sourceImageData) {
       this.processTexture();
     }
+
+    // Auto-load default palette if available
+    this.autoLoadDefaultPalette();
     
     // Update UI
     this.markDirty();
@@ -805,6 +808,68 @@ class TextureEditor extends EditorBase {
     if (this.paletteContainer) {
       const isIndexed = this.textureData?.colorDepth <= 8;
       this.paletteContainer.style.display = isIndexed ? 'block' : 'none';
+    }
+  }
+
+  // Auto-load default palette if configured
+  async autoLoadDefaultPalette() {
+    if (!window.ProjectConfigManager) return;
+    
+    const defaultPalettePath = window.ProjectConfigManager.getDefaultPalette();
+    if (!defaultPalettePath) {
+      console.log('[TextureEditor] No default palette configured');
+      return;
+    }
+
+    try {
+      console.log(`[TextureEditor] Auto-loading default palette: ${defaultPalettePath}`);
+      
+      // Check if file exists
+      if (window.fileIOService) {
+        const exists = await window.fileIOService.fileExists(defaultPalettePath);
+        if (!exists) {
+          console.warn(`[TextureEditor] Default palette file not found: ${defaultPalettePath}`);
+          return;
+        }
+
+        // Load the palette file
+        const paletteData = await window.fileIOService.readFile(defaultPalettePath);
+        const palette = new Palette();
+        
+        // Load based on file extension
+        const extension = defaultPalettePath.split('.').pop().toLowerCase();
+        let loadResult;
+        
+        switch (extension) {
+          case 'pal':
+            loadResult = palette.loadFromPAL(paletteData);
+            break;
+          case 'act':
+            loadResult = palette.loadFromACT(paletteData);
+            break;
+          case 'aco':
+            loadResult = palette.loadFromACO(paletteData);
+            break;
+          default:
+            console.warn(`[TextureEditor] Unsupported palette format: ${extension}`);
+            return;
+        }
+
+        if (loadResult.success) {
+          this.textureData.palette = palette;
+          this.updatePaletteDisplay();
+          console.log(`[TextureEditor] Default palette loaded successfully: ${palette.colors.length} colors`);
+          
+          // Reprocess texture if we're in an indexed color mode
+          if (this.textureData.colorDepth <= 8) {
+            this.processTexture();
+          }
+        } else {
+          console.error(`[TextureEditor] Failed to load default palette: ${loadResult.error}`);
+        }
+      }
+    } catch (error) {
+      console.error(`[TextureEditor] Error auto-loading default palette:`, error);
     }
   }
 
@@ -1504,6 +1569,44 @@ class TextureEditor extends EditorBase {
     if (this.currentPalette) {
       this.displayPalette(this.currentPalette);
     }
+
+    // Update default palette indicator if available
+    this.updateDefaultPaletteIndicator();
+  }
+
+  updateDefaultPaletteIndicator() {
+    // Find or create the default palette indicator
+    let indicator = document.querySelector('.default-palette-indicator');
+    if (!indicator) {
+      // Create indicator near the palette controls
+      const paletteControlsPanel = document.querySelector('.palette-controls-panel');
+      if (paletteControlsPanel) {
+        indicator = document.createElement('div');
+        indicator.className = 'default-palette-indicator';
+        indicator.style.cssText = `
+          margin-top: 5px;
+          padding: 5px 8px;
+          background: #2a4a2a;
+          border: 1px solid #4a6a4a;
+          border-radius: 4px;
+          font-size: 11px;
+          color: #8fa;
+          display: none;
+        `;
+        paletteControlsPanel.appendChild(indicator);
+      }
+    }
+
+    if (indicator && window.configManager) {
+      const defaultPalettePath = window.configManager.getDefaultPalette();
+      if (defaultPalettePath) {
+        const fileName = defaultPalettePath.split('/').pop();
+        indicator.textContent = `🎨 Default: ${fileName}`;
+        indicator.style.display = 'block';
+      } else {
+        indicator.style.display = 'none';
+      }
+    }
   }
 
   displayPalette(palette) {
@@ -1742,7 +1845,7 @@ class TextureEditor extends EditorBase {
     }
   }
 
-  showLoadPaletteModal() {
+  async showLoadPaletteModal() {
     console.log('[TextureEditor] Show Load Palette Modal');
     
     // Set button states
@@ -1761,74 +1864,32 @@ class TextureEditor extends EditorBase {
       alert('No palette files found in project. Add some .act, .pal, or .aco files to the Palettes folder.');
       return;
     }
-    
-    // Create modal for palette selection
-    const modal = document.createElement('div');
-    modal.className = 'palette-select-modal';
-    modal.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10000;
-    `;
-    
-    const modalContent = document.createElement('div');
-    modalContent.style.cssText = `
-      background: #333;
-      border-radius: 8px;
-      padding: 20px;
-      max-width: 400px;
-      width: 90%;
-      color: white;
-    `;
-    
-    modalContent.innerHTML = `
-      <h3>Select Palette</h3>
-      <div style="margin: 15px 0;">
-        ${paletteFiles.map(file => `
-          <label style="display: block; margin: 8px 0; cursor: pointer;">
-            <input type="radio" name="palette" value="${file.name}" style="margin-right: 8px;">
-            ${file.name}
-          </label>
-        `).join('')}
-      </div>
-      <div style="margin-top: 20px; text-align: right;">
-        <button id="cancelBtn" style="padding: 8px 16px; margin-right: 10px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">Cancel</button>
-        <button id="loadBtn" style="padding: 8px 16px; background: #4a9eff; color: white; border: none; border-radius: 4px; cursor: pointer;">Load</button>
-      </div>
-    `;
-    
-    modal.appendChild(modalContent);
-    document.body.appendChild(modal);
-    
-    // Handle modal events
-    modalContent.querySelector('#cancelBtn').addEventListener('click', () => {
-      document.body.removeChild(modal);
-    });
-    
-    modalContent.querySelector('#loadBtn').addEventListener('click', async () => {
-      const selected = modalContent.querySelector('input[name="palette"]:checked');
-      if (!selected) {
-        alert('Please select a palette');
-        return;
+
+    // Convert palette files to options format
+    const paletteOptions = paletteFiles.map(file => ({
+      value: file.name,
+      label: file.name,
+      description: `${file.size ? Math.round(file.size / 1024) + ' KB' : 'Unknown size'} - ${file.name.split('.').pop().toUpperCase()} format`
+    }));
+
+    try {
+      const selectedPalette = await ModalUtils.showSelectionList(
+        'Select Palette',
+        'Choose a palette file from your project:',
+        paletteOptions,
+        {
+          confirmText: 'Load',
+          cancelText: 'Cancel'
+        }
+      );
+
+      if (selectedPalette) {
+        await this.loadPaletteFromProject(selectedPalette);
       }
-      
-      await this.loadPaletteFromProject(selected.value);
-      document.body.removeChild(modal);
-    });
-    
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        document.body.removeChild(modal);
-      }
-    });
+    } catch (error) {
+      console.error('[TextureEditor] Error in palette load modal:', error);
+      alert('Failed to load palette: ' + error.message);
+    }
   }
 
   showExtractPaletteModal() {
@@ -1853,153 +1914,53 @@ class TextureEditor extends EditorBase {
     this.showExtractPaletteModalWithAlgorithms(maxColors);
   }
 
-  showExtractPaletteModalWithAlgorithms(colorCount) {
+  async showExtractPaletteModalWithAlgorithms(colorCount) {
     // Check if source image is available
     if (!this.textureData.sourceImageData) {
       alert('No source image available for palette extraction');
       return;
     }
-    
-    // Create modal
-    const modal = document.createElement('div');
-    modal.className = 'palette-extract-modal';
-    modal.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10000;
-    `;
-    
-    const modalContent = document.createElement('div');
-    modalContent.style.cssText = `
-      background: #333;
-      border-radius: 8px;
-      padding: 20px;
-      max-width: 400px;
-      width: 90%;
-      color: white;
-    `;
-    
-    // Progress container
-    const progressContainer = document.createElement('div');
-    progressContainer.style.cssText = `
-      display: none;
-      margin: 15px 0;
-    `;
-    
-    const progressBar = document.createElement('div');
-    progressBar.style.cssText = `
-      width: 0%;
-      height: 4px;
-      background: #4a9eff;
-      border-radius: 2px;
-      transition: width 0.2s;
-      margin-bottom: 5px;
-    `;
-    
-    const progressText = document.createElement('div');
-    progressText.style.cssText = `
-      font-size: 12px;
-      color: #ccc;
-    `;
-    progressText.textContent = 'Processing...';
-    
-    progressContainer.appendChild(progressBar);
-    progressContainer.appendChild(progressText);
-    
-    modalContent.innerHTML = `
-      <h3>Extract Palette (${colorCount} colors)</h3>
-      <p>Choose color reduction algorithm:</p>
-      <div style="margin: 15px 0;">
-        <label style="display: block; margin: 5px 0;">
-          <input type="radio" name="algorithm" value="auto" checked> Auto (Recommended)
-        </label>
-        <label style="display: block; margin: 5px 0;">
-          <input type="radio" name="algorithm" value="median-cut"> Median Cut (Precise)
-        </label>
-        <label style="display: block; margin: 5px 0;">
-          <input type="radio" name="algorithm" value="simple-sample"> Simple Sample (Fast)
-        </label>
-      </div>
-    `;
-    
-    modalContent.appendChild(progressContainer);
-    
-    const buttonContainer = document.createElement('div');
-    buttonContainer.style.cssText = `
-      margin-top: 20px;
-      text-align: right;
-    `;
-    
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.style.cssText = `
-      padding: 8px 16px;
-      margin-right: 10px;
-      background: #666;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    `;
-    
-    const extractBtn = document.createElement('button');
-    extractBtn.textContent = 'Extract';
-    extractBtn.style.cssText = `
-      padding: 8px 16px;
-      background: #4a9eff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    `;
-    
-    buttonContainer.appendChild(cancelBtn);
-    buttonContainer.appendChild(extractBtn);
-    modalContent.appendChild(buttonContainer);
-    
-    modal.appendChild(modalContent);
-    document.body.appendChild(modal);
-    
-    // Event handlers
-    cancelBtn.addEventListener('click', () => {
-      document.body.removeChild(modal);
-    });
-    
-    extractBtn.addEventListener('click', async () => {
-      const selectedAlgorithm = modalContent.querySelector('input[name="algorithm"]:checked').value;
-      
-      // Show progress
-      progressContainer.style.display = 'block';
-      extractBtn.disabled = true;
-      
-      try {
+
+    const algorithmOptions = [
+      {
+        value: 'auto',
+        label: 'Auto (Recommended)',
+        description: 'Automatically selects the best algorithm based on image complexity'
+      },
+      {
+        value: 'median-cut',
+        label: 'Median Cut',
+        description: 'High quality, slower. Best for photos and complex images'
+      },
+      {
+        value: 'simple-sample',
+        label: 'Simple Sampling',
+        description: 'Fast, lower quality. Good for pixel art and simple images'
+      }
+    ];
+
+    try {
+      const selectedAlgorithm = await ModalUtils.showSelectionList(
+        `Extract Palette (${colorCount} colors)`,
+        'Choose the algorithm to use for reducing the image colors:',
+        algorithmOptions,
+        {
+          defaultValue: 'auto',
+          confirmText: 'Extract',
+          cancelText: 'Cancel'
+        }
+      );
+
+      if (selectedAlgorithm) {
         await this.extractPaletteWithAlgorithm(colorCount, selectedAlgorithm, (progress, message) => {
-          progressBar.style.width = `${progress * 100}%`;
-          progressText.textContent = message || 'Processing...';
+          // TODO: Add progress UI support to modal
+          console.log(`[TextureEditor] Progress: ${Math.round(progress * 100)}% - ${message}`);
         });
-        
-        document.body.removeChild(modal);
-      } catch (error) {
-        console.error('[TextureEditor] Palette extraction failed:', error);
-        alert('Palette extraction failed: ' + error.message);
-        extractBtn.disabled = false;
-        progressContainer.style.display = 'none';
       }
-    });
-    
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        document.body.removeChild(modal);
-      }
-    });
+    } catch (error) {
+      console.error('[TextureEditor] Error in palette extraction modal:', error);
+      alert('Failed to extract palette: ' + error.message);
+    }
   }
 
   async extractPaletteWithAlgorithm(colorCount, algorithm, progressCallback) {

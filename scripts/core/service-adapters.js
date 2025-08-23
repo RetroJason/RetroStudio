@@ -220,39 +220,32 @@ class ProjectExplorerAdapter {
   }
 
   setupIntegration() {
-    // Enhanced context menu with component awareness
-    const originalShowContextMenu = this.projectExplorer.showContextMenu.bind(this.projectExplorer);
-    this.projectExplorer.showContextMenu = (eventOrX, maybeY) => {
-      // Support both legacy (x, y) and new (event, filePath) signatures
-      let event = null;
-      let filePath = null;
-
-      if (typeof eventOrX === 'object' && eventOrX && 'clientX' in eventOrX) {
-        // Called with MouseEvent
-        event = eventOrX;
-      } else if (typeof eventOrX === 'number' && typeof maybeY === 'number') {
-        // Called with coordinates
-        event = { pageX: eventOrX, pageY: maybeY };
-      } else {
-        // Fallback: synthesize at 0,0
-        event = { pageX: 0, pageY: 0 };
-      }
-
-      // Derive filePath from currently selected node when not provided
-      try {
-        const sel = this.projectExplorer.selectedNode;
-        if (sel && typeof sel.dataset?.path === 'string') {
-          filePath = sel.dataset.path;
+    // Set up context menu handling directly on project explorer
+    if (this.projectExplorer.treeContainer) {
+      this.projectExplorer.treeContainer.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        
+        // Find the closest tree item
+        const treeItem = e.target.closest('[data-path]');
+        if (treeItem) {
+          // Select the node
+          if (this.projectExplorer.selectNode) {
+            this.projectExplorer.selectNode(treeItem);
+          }
+          
+          // Get the file path
+          const filePath = treeItem.dataset.path;
+          
+          // Show enhanced context menu
+          this.showEnhancedContextMenu(e, filePath);
         }
-      } catch (_) { /* ignore */ }
-
-      return this.showEnhancedContextMenu(event, filePath, originalShowContextMenu);
-    };
+      });
+    }
 
     this.setupEventConnections();
   }
 
-  async showEnhancedContextMenu(event, filePath, originalShow) {
+  async showEnhancedContextMenu(event, filePath) {
   const menuItems = [];
 
   // Determine node type via ProjectExplorer
@@ -304,6 +297,25 @@ class ProjectExplorerAdapter {
           label: `View with ${viewer.displayName}`,
           icon: viewer.icon,
           action: () => this.openWithViewer(filePath, viewer)
+        });
+      }
+
+      // Add palette-specific options for palette files
+      if (this.isPaletteFile(filePath)) {
+        // Add separator if we already have items
+        if (menuItems.length > 0) {
+          menuItems.push({ separator: true });
+        }
+
+        // Always show "Set as Default Palette" option
+        menuItems.push({
+          label: 'Set as Default Palette',
+          icon: '🎨',
+          action: async () => {
+            if (explorer?.setDefaultPalette) {
+              await explorer.setDefaultPalette(filePath);
+            }
+          }
         });
       }
     }
@@ -393,14 +405,22 @@ class ProjectExplorerAdapter {
     };
 
     items.forEach(item => {
-      const menuItem = document.createElement('div');
-  // Use class that matches existing CSS (.context-item) for proper hover highlight
-  menuItem.className = 'context-item';
-      menuItem.innerHTML = `${item.icon || ''} ${item.label}`;
-      menuItem.onclick = (e) => {
-        try { item.action?.(e); } finally { removeMenu(); }
-      };
-      menu.appendChild(menuItem);
+      if (item.separator) {
+        // Add separator
+        const separator = document.createElement('div');
+        separator.className = 'context-separator';
+        menu.appendChild(separator);
+      } else {
+        // Add menu item
+        const menuItem = document.createElement('div');
+        // Use class that matches existing CSS (.context-item) for proper hover highlight
+        menuItem.className = 'context-item';
+        menuItem.innerHTML = `${item.icon || ''} ${item.label}`;
+        menuItem.onclick = (e) => {
+          try { item.action?.(e); } finally { removeMenu(); }
+        };
+        menu.appendChild(menuItem);
+      }
     });
 
     document.body.appendChild(menu);
@@ -509,6 +529,12 @@ class ProjectExplorerAdapter {
         console.warn('[ProjectExplorerAdapter] Failed handling file.rename.requested:', e);
       }
     });
+  }
+
+  isPaletteFile(filePath) {
+    if (!filePath) return false;
+    const extension = filePath.split('.').pop().toLowerCase();
+    return ['pal', 'act', 'aco'].includes(extension);
   }
 }
 
