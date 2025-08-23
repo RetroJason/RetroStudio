@@ -223,7 +223,10 @@ class TextureEditor extends EditorBase {
       // Auto-load palette when palettePath changes
       if (event.detail.property === 'palettePath' && event.detail.newValue) {
         console.log('[TextureEditor] Auto-loading palette:', event.detail.newValue);
-        this.loadPaletteByPath(event.detail.newValue);
+        this.loadPaletteByPath(event.detail.newValue).then(() => {
+          // After palette is loaded, check if we can auto-generate
+          this.checkAndAutoGenerateTexture();
+        });
       }
     };
 
@@ -250,6 +253,23 @@ class TextureEditor extends EditorBase {
         });
       }
     }, 100);
+  }
+
+  // Check if texture is ready for auto-generation and trigger it
+  checkAndAutoGenerateTexture() {
+    // Only auto-generate if we have both source image and palette
+    const hasSourceImage = this.sourceImage && this.originalCanvas;
+    const hasPalette = this.currentPalette && this.currentPalette.colors;
+    
+    console.log('[TextureEditor] Auto-generation check - Source Image:', hasSourceImage, 'Palette:', hasPalette);
+    
+    if (hasSourceImage && hasPalette) {
+      console.log('[TextureEditor] Auto-generating texture output...');
+      // Small delay to ensure UI is updated
+      setTimeout(() => {
+        this.applyPaletteToImage();
+      }, 100);
+    }
   }
 
   // Override destroy method to clean up event listeners
@@ -961,6 +981,11 @@ class TextureEditor extends EditorBase {
 
     // Auto-load default palette if available
     this.autoLoadDefaultPalette();
+    
+    // Check if we can auto-generate texture output now that image is loaded
+    setTimeout(() => {
+      this.checkAndAutoGenerateTexture();
+    }, 200); // Small delay to allow palette loading to complete
     
     // Update UI
     this.markDirty();
@@ -2211,6 +2236,9 @@ class TextureEditor extends EditorBase {
       this.currentPalette = palette;
       this.displayPalette(palette.getColors());
       this.enableApplyButton();
+      
+      // Check if we can auto-generate texture output now that palette is loaded
+      this.checkAndAutoGenerateTexture();
       
       console.log(`[TextureEditor] Loaded palette: ${filename}`);
       
