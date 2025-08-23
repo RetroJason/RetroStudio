@@ -14,7 +14,6 @@ class ProjectExplorer {
     this.focusedProjectName = null;
     this.selectedNode = null;
     this.treeContainer = null;
-    this.contextMenu = null;
     this.fileUpload = null;
     this.pendingTreeOperations = [];
   this.collapsedPaths = new Set(); // Track user-collapsed folders by path
@@ -57,8 +56,10 @@ class ProjectExplorer {
   const prev = this.focusedProjectName;
   if (prev === name) return;
   this.focusedProjectName = name;
+  
   // Notify listeners about focus change
   try { window.eventBus?.emit?.('project.focus.changed', { project: name, previous: prev }); } catch (_) {}
+  
   // Update UI to reflect active marker
   if (this.treeContainer) this.renderTree();
   }
@@ -70,9 +71,15 @@ class ProjectExplorer {
   }
   
   initialize() {
+    console.log('[ProjectExplorer] initialize() called');
+    console.log('[ProjectExplorer] DOM ready state:', document.readyState);
+    
     this.treeContainer = document.getElementById('projectTree');
-    this.contextMenu = document.getElementById('contextMenu');
     this.fileUpload = document.getElementById('fileUpload');
+    
+    console.log('[ProjectExplorer] Elements found:');
+    console.log('- treeContainer:', this.treeContainer);
+    console.log('- fileUpload:', this.fileUpload);
     
     if (!this.treeContainer) {
       console.error('[ProjectExplorer] Tree container not found');
@@ -88,23 +95,7 @@ class ProjectExplorer {
   setupEventListeners() {
     // Listen to tab manager events for file highlighting (with deferred setup)
     this.setupTabManagerEventListener();
-    
-    // Global click to hide context menu
-    document.addEventListener('click', (e) => {
-      if (!this.contextMenu.contains(e.target)) {
-        this.hideContextMenu();
-      }
-    });
-    
-    // Context menu actions
-    this.contextMenu.addEventListener('click', (e) => {
-      const action = e.target.dataset.action;
-      if (action) {
-        this.handleContextAction(action);
-        this.hideContextMenu();
-      }
-    });
-    
+
     // File upload change
     this.fileUpload.addEventListener('change', (e) => {
       this.handleFileUpload(e.target.files);
@@ -197,8 +188,11 @@ class ProjectExplorer {
     const rootList = document.createElement('ul');
     rootList.className = 'tree-node';
     
-  this.renderNode(this.projectData.structure, rootList, '');
+    this.renderNode(this.projectData.structure, rootList, '');
     this.treeContainer.appendChild(rootList);
+    
+    // Only update visual indicators - no logic here
+    this.updatePaletteFileVisuals();
   }
   
   renderNode(nodeData, container, path) {
@@ -325,10 +319,6 @@ class ProjectExplorer {
           // Toggle folder on double-click
           this.toggleNode(li, expand);
         }
-      });      item.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        this.selectNode(item);
-        this.showContextMenu(e.clientX, e.clientY);
       });
       
       // Drag and drop for folders
@@ -492,174 +482,6 @@ class ProjectExplorer {
     
     console.log('[ProjectExplorer] Selected:', item.dataset.path);
   }
-  
-  showContextMenu(x, y) {
-    if (!this.selectedNode) return;
-    
-    const path = this.selectedNode.dataset.path;
-    const type = this.selectedNode.dataset.type;
-    
-    // Show/hide menu items based on selection
-    const uploadItem = this.contextMenu.querySelector('[data-action="upload"]');
-    const newFolderItem = this.contextMenu.querySelector('[data-action="newfolder"]');
-    const renameItem = this.contextMenu.querySelector('[data-action="rename"]');
-    const deleteItem = this.contextMenu.querySelector('[data-action="delete"]');
-    const closeProjectItem = this.contextMenu.querySelector('[data-action="closeproject"]');
-    const setActiveItem = this.contextMenu.querySelector('[data-action="setactive"]');
-    const openWithItem = this.contextMenu.querySelector('[data-action="openwith"]');
-    
-    // Upload and New Folder only available for folders
-    uploadItem.style.display = type === 'folder' ? 'block' : 'none';
-    newFolderItem.style.display = type === 'folder' ? 'block' : 'none';
-    
-    // "Open with" only available for files
-    if (openWithItem) {
-      openWithItem.style.display = type === 'file' ? 'block' : 'none';
-      
-      // Populate viewer submenu for files
-      if (type === 'file') {
-        this.populateViewerSubmenu(path);
-      }
-    }
-    
-    // Rename and Delete available for files and non-root folders, but not for build files/folders
-    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: null, rest: path };
-    const rest = pp.rest || '';
-    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-    const isProjectRoot = !rest; // path like 'ProjectName'
-    const isRootFolder = isProjectRoot || rest === sourcesRoot || rest === buildRoot;
-    const isBuildFile = rest.startsWith(buildRoot + '/');
-    const canModify = !isRootFolder && !isBuildFile;
-    
-    if (type === 'file') {
-      renameItem.style.display = canModify ? 'block' : 'none';
-      deleteItem.style.display = canModify ? 'block' : 'none';
-    } else if (type === 'folder') {
-      renameItem.style.display = canModify ? 'block' : 'none';
-      deleteItem.style.display = canModify ? 'block' : 'none';
-    }
-
-    // Close Project only on project root
-    if (closeProjectItem) {
-      closeProjectItem.style.display = isProjectRoot ? 'block' : 'none';
-    }
-    // Set Active Project only on project root (hide if already active)
-    if (setActiveItem) {
-      const alreadyActive = isProjectRoot && this.getFocusedProjectName && (this.getFocusedProjectName() === path);
-      setActiveItem.style.display = isProjectRoot && !alreadyActive ? 'block' : 'none';
-    }
-    
-    // Check if any menu items are visible before showing the context menu
-    const visibleItems = [uploadItem, newFolderItem, openWithItem, renameItem, deleteItem, closeProjectItem, setActiveItem].filter(item => 
-      item && item.style.display !== 'none'
-    );
-    
-    // Only show context menu if there are visible items
-    if (visibleItems.length > 0) {
-      this.contextMenu.style.display = 'block';
-      this.contextMenu.style.left = `${x}px`;
-      this.contextMenu.style.top = `${y}px`;
-    } else {
-      console.log('[ProjectExplorer] No context menu items available for this selection');
-    }
-  }
-
-  populateViewerSubmenu(filePath) {
-    const submenu = document.getElementById('viewerSubmenu');
-    if (!submenu) {
-      console.warn('[ProjectExplorer] Viewer submenu element not found');
-      return;
-    }
-    
-    // Clear existing items
-    submenu.innerHTML = '';
-    
-    // Get component registry
-    const componentRegistry = window.serviceContainer?.get('componentRegistry');
-    if (!componentRegistry) {
-      console.warn('[ProjectExplorer] ComponentRegistry not available for viewer submenu');
-      return;
-    }
-    
-    console.log(`[ProjectExplorer] Populating viewer submenu for: ${filePath}`);
-    
-    // Get available editors and viewers for this file
-    const editor = componentRegistry.getEditorForFile(filePath);
-    const viewer = componentRegistry.getViewerForFile(filePath);
-    const fileExt = this.getFileExtension(filePath);
-    
-    console.log(`[ProjectExplorer] File extension: ${fileExt}, Default editor:`, editor?.displayName, 'Default viewer:', viewer?.displayName);
-    
-    let hasItems = false;
-    
-    // Add editor option (if available)
-    if (editor) {
-      const editorItem = document.createElement('div');
-      editorItem.className = 'context-item';
-      editorItem.innerHTML = `${editor.icon} Edit with ${editor.displayName}`;
-      editorItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        console.log(`[ProjectExplorer] Selected editor: ${editor.displayName}`);
-        this.openFileWithEditor(filePath, editor);
-        this.hideContextMenu();
-      });
-      submenu.appendChild(editorItem);
-      hasItems = true;
-    }
-    
-    // Add ALL available viewers (not just the default one)
-    const allViewers = componentRegistry.getAllViewers();
-    console.log(`[ProjectExplorer] All available viewers:`, allViewers.map(v => `${v.displayName} (${v.extensions.join(', ')})`));
-    
-    for (const viewerInfo of allViewers) {
-      // Check if this viewer supports this file type
-      const supportsFile = viewerInfo.extensions.includes('*') || viewerInfo.extensions.includes(fileExt);
-      console.log(`[ProjectExplorer] Checking viewer ${viewerInfo.displayName}: supports ${fileExt}? ${supportsFile}`);
-      
-      if (!supportsFile) continue;
-      
-      const viewerItem = document.createElement('div');
-      viewerItem.className = 'context-item';
-      viewerItem.innerHTML = `${viewerInfo.icon} View with ${viewerInfo.displayName}`;
-      viewerItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        console.log(`[ProjectExplorer] Selected viewer: ${viewerInfo.displayName}`);
-        this.openFileWithViewer(filePath, viewerInfo);
-        this.hideContextMenu();
-      });
-      submenu.appendChild(viewerItem);
-      hasItems = true;
-    }
-    
-    if (!hasItems) {
-      const noItems = document.createElement('div');
-      noItems.className = 'context-item disabled';
-      noItems.innerHTML = 'No viewers available';
-      submenu.appendChild(noItems);
-    }
-    
-    console.log(`[ProjectExplorer] Added ${submenu.children.length} items to viewer submenu`);
-  }
-
-  openFileWithEditor(filePath, editorInfo) {
-    console.log(`[ProjectExplorer] Opening ${filePath} with editor: ${editorInfo.displayName}`, editorInfo);
-    if (window.tabManager) {
-      window.tabManager.openInTab(filePath, editorInfo);
-    }
-  }
-
-  openFileWithViewer(filePath, viewerInfo) {
-    console.log(`[ProjectExplorer] Opening ${filePath} with viewer: ${viewerInfo.displayName}`, viewerInfo);
-    if (window.tabManager) {
-      // Open viewers in dedicated tabs so they don't get overridden by preview
-      window.tabManager.openInTab(filePath, viewerInfo);
-    }
-  }
-  
-  hideContextMenu() {
-    this.contextMenu.style.display = 'none';
-  }
 
   // Ensure custom modal utils are available (dynamic load fallback)
   async _ensureModalUtils() {
@@ -686,46 +508,6 @@ class ProjectExplorer {
     return false;
   }
   
-  handleContextAction(action) {
-    if (!this.selectedNode) return;
-    
-    const path = this.selectedNode.dataset.path;
-    const type = this.selectedNode.dataset.type;
-    
-    switch (action) {
-      case 'upload':
-        if (type === 'folder') {
-          this.currentUploadPath = path;
-          this.fileUpload.click();
-        }
-        break;
-      case 'newfolder':
-        if (type === 'folder') {
-          this.createNewFolder(path);
-        }
-        break;
-      case 'rename':
-        this.renameNode(path, type);
-        break;
-      case 'delete':
-  this.deleteNode(path);
-        break;
-      case 'setactive': {
-        // Only valid for root project items
-        const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(path) : { project: path, rest: '' };
-        const projectName = pp.project || path;
-        this.setFocusedProjectName(projectName);
-        // Emit event so other systems can react
-        try { window.eventBus?.emit?.('project.focus.changed', { project: projectName }); } catch (_) {}
-        // Re-render to update labels
-        this.renderTree();
-        break;
-      }
-      case 'closeproject':
-        this.closeProject(path);
-        break;
-    }
-  }
 
   async closeProject(projectPath) {
     // projectPath is the project name (no slash) when invoked from root
@@ -2559,6 +2341,479 @@ class ProjectExplorer {
     
     // Also emit general refresh event
     this.emitFileListRefreshEvent();
+  }
+
+  // Check if a file is a palette file based on its extension
+  isPaletteFile(filePath) {
+    if (!filePath) return false;
+    const extension = filePath.split('.').pop().toLowerCase();
+    return ['pal', 'act', 'aco'].includes(extension);
+  }
+
+  // Set the specified palette as the default
+  async setDefaultPalette(palettePath) {
+    if (!window.ProjectConfigManager) {
+      console.error('[ProjectExplorer] ProjectConfigManager not available');
+      return;
+    }
+
+    if (!this.isPaletteFile(palettePath)) {
+      console.error('[ProjectExplorer] File is not a palette:', palettePath);
+      return;
+    }
+
+    // Convert full path to storage path (remove project prefix)
+    const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(palettePath) : { project: null, rest: palettePath };
+    const storagePath = pp.rest || palettePath;
+    console.log(`[ProjectExplorer] Converting palette path for storage: ${palettePath} -> ${storagePath}`);
+
+    // Set in project config manager
+    await window.ProjectConfigManager.setDefaultPalette(storagePath);
+    console.log(`[ProjectExplorer] Set default palette: ${storagePath}`);
+
+    // Update visual indicators
+    this.updatePaletteFileVisuals();
+
+    // Show user feedback
+    if (window.application && window.application.showToast) {
+      const fileName = palettePath.split('/').pop();
+      window.application.showToast(`Default palette set to: ${fileName}`, 'success');
+    }
+  }
+
+  // Get the current default palette
+  getDefaultPalette() {
+    if (!window.ProjectConfigManager) {
+      console.warn('[ProjectExplorer] ProjectConfigManager not available');
+      return null;
+    }
+
+    const defaultPalette = window.ProjectConfigManager.getDefaultPalette();
+    console.log(`[ProjectExplorer] Current default palette: ${defaultPalette || 'none'}`);
+    return defaultPalette;
+  }
+
+  // Get the default palette with full project path
+  getDefaultPaletteFullPath() {
+    const defaultPalette = this.getDefaultPalette();
+    if (!defaultPalette) return null;
+
+    // Convert storage path back to full UI path
+    const focusedProject = this.getFocusedProjectName();
+    if (!focusedProject) return defaultPalette;
+
+    // If it already has the project prefix, return as-is
+    if (defaultPalette.startsWith(focusedProject + '/')) {
+      return defaultPalette;
+    }
+
+    // Add project prefix
+    const fullPath = `${focusedProject}/${defaultPalette}`;
+    console.log(`[ProjectExplorer] Default palette full path: ${fullPath}`);
+    return fullPath;
+  }
+
+  // Initialize project configuration when project is loaded/created
+  async initializeProjectConfig() {
+    console.log('[ProjectExplorer] Initializing project configuration');
+    
+    if (!window.ProjectConfigManager) {
+      console.error('[ProjectExplorer] ProjectConfigManager not available');
+      return;
+    }
+    
+    try {
+      // Initialize config with write-through behavior (auto-creates if needed)
+      await window.ProjectConfigManager.initializeForProject();
+      console.log('[ProjectExplorer] Project configuration initialized');
+      
+      // Update UI to show config changes
+      this.updatePaletteFileVisuals();
+    } catch (error) {
+      console.error('[ProjectExplorer] Failed to initialize project config:', error);
+    }
+  }
+
+  // Clear the default palette
+  async clearDefaultPalette() {
+    if (!window.ProjectConfigManager) {
+      console.error('[ProjectExplorer] ProjectConfigManager not available');
+      return;
+    }
+
+    // Clear in project config manager (write-through)
+    await window.ProjectConfigManager.clearDefaultPalette();
+    console.log('[ProjectExplorer] Cleared default palette');
+
+    // Update visual indicators
+    this.updatePaletteFileVisuals();
+
+    // Show user feedback
+    if (window.application && window.application.showToast) {
+      window.application.showToast('Default palette cleared', 'info');
+    }
+  }
+
+  // Initialize project configuration after project is fully loaded into storage
+  async initializeProjectConfig() {
+    if (!window.ProjectConfigManager || !this.focusedProjectName) {
+      return;
+    }
+
+    const projectName = this.focusedProjectName;
+    console.log('[ProjectExplorer] Initializing config for project:', projectName);
+
+    // Step 1: Initialize the config manager for this project (will create config if doesn't exist)
+    await window.ProjectConfigManager.initializeForProject(projectName);
+
+    // Add config file to project structure if it doesn't exist there
+    const configPath = 'Sources/config.json';
+    if (!this.doesFileExist(`${projectName}/${configPath}`)) {
+      this.addFileToProjectStructure(projectName, configPath, { type: 'file' });
+      console.log('[ProjectExplorer] Added config file to project structure:', configPath);
+    }
+
+    // Step 2: Get the current default palette from config
+    const configDefaultPalette = await window.ProjectConfigManager.getDefaultPalette();
+    console.log('[ProjectExplorer] Config default palette:', configDefaultPalette);
+
+    // Step 3: Get all palette files from the project structure (already rendered)
+    const paletteFileObjects = this.GetSourceFiles('Palettes');
+    const paletteFiles = paletteFileObjects
+      .filter(file => this.isPaletteFileByName(file.name))
+      .map(file => `Sources/Palettes/${file.name}`);
+    console.log('[ProjectExplorer] Found palette files:', paletteFiles);
+
+    // Step 4: Validate and set default palette
+    let needsNewDefault = false;
+    
+    if (!configDefaultPalette) {
+      console.log('[ProjectExplorer] No default palette set in config');
+      needsNewDefault = true;
+    } else if (!paletteFiles.includes(configDefaultPalette)) {
+      console.log('[ProjectExplorer] Config default palette does not exist in project:', configDefaultPalette);
+      needsNewDefault = true;
+    }
+
+    if (needsNewDefault) {
+      if (paletteFiles.length > 0) {
+        // Set first available palette as default
+        const newDefault = paletteFiles[0];
+        console.log('[ProjectExplorer] Setting first palette as default:', newDefault);
+        await window.ProjectConfigManager.setDefaultPalette(newDefault);
+      } else {
+        // Create a default palette file
+        console.log('[ProjectExplorer] No palettes found, creating default palette');
+        await this.createDefaultPalette();
+      }
+    }
+
+    console.log('[ProjectExplorer] Project config initialization complete');
+    
+    // Re-render tree to show config file and update visuals
+    this.renderTree();
+    this.updatePaletteFileVisuals();
+  }
+
+  // Create a default palette file when none exists
+  async createDefaultPalette() {
+    try {
+      // Create a basic default palette (16 colors, Pico-8 style)
+      const defaultPaletteData = this.generateDefaultPaletteData();
+      const defaultPath = 'Sources/Palettes/default.act';
+      
+      // Save the palette file
+      await window.fileIOService.saveFile(defaultPath, defaultPaletteData, { binaryData: true, builderId: 'pal' });
+      
+      // Add to project structure
+      this.addFileToProjectStructure(this.focusedProjectName, defaultPath, { type: 'file' });
+      
+      // Set as default in config
+      await window.ProjectConfigManager.setDefaultPalette(defaultPath);
+      
+      // Refresh the UI
+      this.renderTree();
+      
+      console.log('[ProjectExplorer] Created default palette:', defaultPath);
+    } catch (error) {
+      console.error('[ProjectExplorer] Error creating default palette:', error);
+    }
+  }
+
+  // Generate default palette data (basic 16-color palette)
+  generateDefaultPaletteData() {
+    // Create a simple 16-color palette in ACT format (3 bytes per color, 768 bytes total)
+    const palette = new Uint8Array(768);
+    const colors = [
+      [0, 0, 0],       // Black
+      [29, 43, 83],    // Dark blue
+      [126, 37, 83],   // Dark purple
+      [0, 135, 81],    // Dark green
+      [171, 82, 54],   // Brown
+      [95, 87, 79],    // Dark grey
+      [194, 195, 199], // Light grey
+      [255, 241, 232], // White
+      [255, 0, 77],    // Red
+      [255, 163, 0],   // Orange
+      [255, 236, 39],  // Yellow
+      [0, 228, 54],    // Green
+      [41, 173, 255],  // Blue
+      [131, 118, 156], // Indigo
+      [255, 119, 168], // Pink
+      [255, 204, 170]  // Peach
+    ];
+    
+    // Fill the palette (repeat the 16 colors to fill 256 slots)
+    for (let i = 0; i < 256; i++) {
+      const colorIndex = i % colors.length;
+      const baseIndex = i * 3;
+      palette[baseIndex] = colors[colorIndex][0];     // R
+      palette[baseIndex + 1] = colors[colorIndex][1]; // G
+      palette[baseIndex + 2] = colors[colorIndex][2]; // B
+    }
+    
+    return palette.buffer;
+  }
+
+  // Update visual indicators for palette files
+  async updatePaletteFileVisuals() {
+    console.log('[ProjectExplorer] updatePaletteFileVisuals called');
+    
+    if (!window.ProjectConfigManager) {
+      console.log('[ProjectExplorer] ProjectConfigManager not available');
+      return;
+    }
+    
+    const defaultPalette = await window.ProjectConfigManager.getDefaultPalette();
+    console.log('[ProjectExplorer] Current default palette:', defaultPalette);
+
+    // Remove existing indicators
+    const existingIndicators = this.treeContainer.querySelectorAll('.default-palette-indicator');
+    console.log('[ProjectExplorer] Removing', existingIndicators.length, 'existing indicators');
+    existingIndicators.forEach(indicator => indicator.remove());
+
+    if (!defaultPalette) {
+      console.log('[ProjectExplorer] No default palette set');
+      return;
+    }
+
+    // Add indicator to the default palette file
+    const defaultPaletteFullPath = await window.ProjectConfigManager.getDefaultPaletteFullPath();
+    if (!defaultPaletteFullPath) {
+      console.log('[ProjectExplorer] Could not determine full path for default palette');
+      return;
+    }
+
+    // Find the file element and add indicator
+    const fileElements = this.treeContainer.querySelectorAll('.tree-item[data-type="file"]');
+    console.log('[ProjectExplorer] Checking', fileElements.length, 'file elements for default palette match');
+    
+    fileElements.forEach(element => {
+      const filePath = element.getAttribute('data-path');
+      if (this.isPaletteFile(filePath)) {
+        const isMatch = filePath === defaultPaletteFullPath;
+        console.log('[ProjectExplorer] Palette file:', filePath, 'isMatch:', isMatch);
+        
+        if (isMatch) {
+          // Add default indicator
+          const indicator = document.createElement('span');
+          indicator.className = 'default-palette-indicator';
+          indicator.innerHTML = ' ⭐';
+          indicator.title = 'Default Palette';
+          indicator.style.color = '#ffd700';
+          indicator.style.fontWeight = 'bold';
+          
+          const fileName = element.querySelector('.tree-label');
+          if (fileName && !fileName.querySelector('.default-palette-indicator')) {
+            fileName.appendChild(indicator);
+            console.log('[ProjectExplorer] Added default palette indicator to:', filePath);
+          }
+        }
+      }
+    });
+  }
+
+  // Auto-promote single palette to default if none is set
+  async checkAndAutoPromoteSinglePalette() {
+    console.log('[ProjectExplorer] checkAndAutoPromoteSinglePalette called');
+    
+    if (!window.ProjectConfigManager) {
+      console.log('[ProjectExplorer] ProjectConfigManager not available for auto-promotion');
+      return;
+    }
+    
+    try {
+      // Check if we already have a default palette
+      const currentDefault = window.ProjectConfigManager.getDefaultPalette();
+      console.log('[ProjectExplorer] Current default palette for auto-promotion check:', currentDefault);
+      
+      if (currentDefault) {
+        console.log('[ProjectExplorer] Default palette already exists, skipping auto-promotion');
+        return; // Already have a default
+      }
+      
+      // Find all palette files in the project
+      const paletteFiles = this.getAllPaletteFiles();
+      console.log('[ProjectExplorer] Found palette files:', paletteFiles);
+      
+      // If exactly one palette file exists, promote it to default
+      if (paletteFiles.length === 1) {
+        const fullPalettePath = paletteFiles[0];
+        console.log('[ProjectExplorer] Auto-promoting single palette to default:', fullPalettePath);
+        
+        // Convert full path to storage path (remove project prefix)
+        const pp = window.ProjectPaths?.parseProjectPath ? window.ProjectPaths.parseProjectPath(fullPalettePath) : { project: null, rest: fullPalettePath };
+        const storagePath = pp.rest || fullPalettePath;
+        console.log('[ProjectExplorer] Storage path for auto-promotion:', storagePath);
+        
+        await window.ProjectConfigManager.setDefaultPalette(storagePath);
+        console.log(`[ProjectExplorer] Auto-promoted single palette to default: ${storagePath}`);
+      } else {
+        console.log('[ProjectExplorer] Not auto-promoting -', paletteFiles.length, 'palette files found');
+      }
+    } catch (error) {
+      console.error('[ProjectExplorer] Error during auto-promotion:', error);
+    }
+    
+    // Only ensure config file if it doesn't exist (to prevent race conditions)
+    const focusedProject = this.getFocusedProjectName();
+    if (focusedProject) {
+      const configPath = `${focusedProject}/Sources/config.json`;
+      const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(configPath) : 'Sources/config.json';
+      
+      // Check if config already exists in storage before trying to create it
+      if (window.fileIOService) {
+        try {
+          const existingConfig = await window.fileIOService.loadFile(storagePath);
+          if (!existingConfig) {
+            this.ensureConfigFile(focusedProject);
+          }
+        } catch (e) {
+          // File doesn't exist, create it
+          this.ensureConfigFile(focusedProject);
+        }
+      }
+    }
+  }
+
+  // Get all palette files in the current project
+  getAllPaletteFiles() {
+    const paletteFiles = [];
+    const fileElements = this.treeContainer.querySelectorAll('.tree-item[data-type="file"]');
+    
+    fileElements.forEach(element => {
+      const filePath = element.getAttribute('data-path');
+      if (this.isPaletteFile(filePath)) {
+        // Convert from project path (e.g., "test/Sources/Palettes/file.act") 
+        // to storage path (e.g., "Sources/Palettes/file.act")
+        const storagePath = this.convertProjectPathToStoragePath(filePath);
+        if (storagePath) {
+          paletteFiles.push(storagePath);
+        }
+      }
+    });
+    
+    return paletteFiles;
+  }
+
+  // Get all palette files from storage (not UI)
+  async getAllPaletteFilesFromStorage() {
+    const paletteFiles = [];
+    
+    if (!window.fileIOService) {
+      console.log('[ProjectExplorer] FileIOService not available');
+      return paletteFiles;
+    }
+
+    try {
+      // Get all files from storage in the Palettes folder
+      const allFiles = await window.fileIOService.listFiles();
+      
+      for (const filePath of allFiles) {
+        // Check if this is a palette file in the Sources/Palettes folder
+        if (filePath.startsWith('Sources/Palettes/') && this.isPaletteFileByName(filePath)) {
+          paletteFiles.push(filePath);
+        }
+      }
+    } catch (error) {
+      console.error('[ProjectExplorer] Error getting palette files from storage:', error);
+    }
+
+    return paletteFiles;
+  }
+
+  // Helper to check if a file is a palette file by name/extension
+  isPaletteFileByName(fileName) {
+    if (!fileName) return false;
+    const ext = this.getFileExtension(fileName).toLowerCase();
+    return ['.pal', '.act', '.aco'].includes(ext);
+  }
+
+  // Convert project path to storage path
+  convertProjectPathToStoragePath(projectPath) {
+    if (!projectPath || !this.focusedProjectName) return null;
+    
+    // Remove project name prefix: "test/Sources/Palettes/file.act" -> "Sources/Palettes/file.act"
+    const prefix = this.focusedProjectName + '/';
+    if (projectPath.startsWith(prefix)) {
+      return projectPath.substring(prefix.length);
+    }
+    
+    return null;
+  }
+
+  // Helper method to add a file directly to the project structure
+  addFileToProjectStructure(projectName, filePath, metadata) {
+    if (!this.projectData.structure[projectName]) {
+      console.error('[ProjectExplorer] Project not found:', projectName);
+      return;
+    }
+
+    const parts = filePath.split('/');
+    const fileName = parts.pop(); // Remove and get the filename
+    const folderPath = parts; // Remaining parts are the folder path
+    
+    let current = this.projectData.structure[projectName].children;
+    
+    // Navigate to the target folder, creating missing folders as needed
+    for (const part of folderPath) {
+      if (!current[part]) {
+        current[part] = {
+          type: 'folder',
+          children: {}
+        };
+      }
+      current = current[part].children;
+    }
+    
+    // Add the file
+    current[fileName] = {
+      type: 'file',
+      path: `${projectName}/${filePath}`,
+      ...metadata
+    };
+  }
+
+  // Check if the current default palette is valid
+  isDefaultPaletteValid() {
+    if (!window.ProjectConfigManager) return false;
+    
+    const defaultPalette = window.ProjectConfigManager.getDefaultPalette();
+    if (!defaultPalette) return false;
+    
+    // Check if the file still exists in the project
+    return this.doesFileExist(defaultPalette);
+  }
+
+  // Helper method to check if a file exists in the current project
+  doesFileExist(filePath) {
+    const fileElements = this.treeContainer.querySelectorAll('.tree-item[data-type="file"]');
+    for (const element of fileElements) {
+      if (element.getAttribute('data-path') === filePath) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 

@@ -193,7 +193,13 @@ class RwpService {
       }
     }
 
+    // Render the tree first with all files loaded
     explorer.renderTree?.();
+    
+    // Then initialize project configuration
+    if (explorer.initializeProjectConfig) {
+      await explorer.initializeProjectConfig();
+    }
   }
 
   ensureDeps() {

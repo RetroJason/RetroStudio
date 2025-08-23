@@ -3,6 +3,127 @@
 
 class ModalUtils {
   /**
+   * Show a selection list dialog with radio buttons
+   * @param {string} title - Dialog title
+   * @param {string} message - Dialog message/description
+   * @param {Array} options - Array of option objects {value, label, description}
+   * @param {Object} config - Additional configuration
+   * @returns {Promise<string|null>} - Resolves with selected value or null if cancelled
+   */
+  static showSelectionList(title, message, options, config = {}) {
+    return new Promise((resolve) => {
+      // Create modal overlay
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+      `;
+
+      // Create modal dialog
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        background: #2d2d2d;
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        max-width: 400px;
+        min-width: 350px;
+        font-family: Arial, sans-serif;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      `;
+
+      // Build options HTML
+      let optionsHtml = '';
+      options.forEach((option, index) => {
+        const isChecked = index === 0 || option.value === config.defaultValue;
+        optionsHtml += `
+          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
+            <input type="radio" name="selection" value="${option.value}" ${isChecked ? 'checked' : ''} style="margin-right: 10px;">
+            <strong>${option.label}</strong><br>
+            <small style="color: #aaa; margin-left: 20px;">${option.description}</small>
+          </label>
+        `;
+      });
+
+      dialog.innerHTML = `
+        <h3 style="margin: 0 0 20px 0; color: #4CAF50;">${title}</h3>
+        <p style="margin: 0 0 20px 0; line-height: 1.4; color: #ccc;">
+          ${message}
+        </p>
+        
+        <div style="margin-bottom: 25px;">
+          ${optionsHtml}
+        </div>
+        
+        <div style="text-align: right;">
+          <button class="cancel-btn" style="background: #666; color: white; border: none; padding: 10px 20px; margin-right: 10px; border-radius: 5px; cursor: pointer;">${config.cancelText || 'Cancel'}</button>
+          <button class="confirm-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">${config.confirmText || 'Proceed'}</button>
+        </div>
+      `;
+
+      // Add hover effects
+      const labels = dialog.querySelectorAll('label');
+      labels.forEach(label => {
+        label.addEventListener('mouseenter', () => {
+          label.style.borderColor = '#4CAF50';
+          label.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
+        });
+        label.addEventListener('mouseleave', () => {
+          label.style.borderColor = '#444';
+          label.style.backgroundColor = 'transparent';
+        });
+      });
+
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+
+      // Handle button clicks
+      const cancelBtn = dialog.querySelector('.cancel-btn');
+      const confirmBtn = dialog.querySelector('.confirm-btn');
+
+      cancelBtn.addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        resolve(null);
+      });
+
+      confirmBtn.addEventListener('click', () => {
+        const selectedRadio = dialog.querySelector('input[name="selection"]:checked');
+        const value = selectedRadio ? selectedRadio.value : null;
+        document.body.removeChild(overlay);
+        resolve(value);
+      });
+
+      // Handle escape key
+      const handleEscape = (e) => {
+        if (e.key === 'Escape') {
+          document.removeEventListener('keydown', handleEscape);
+          document.body.removeChild(overlay);
+          resolve(null);
+        }
+      };
+      
+      document.addEventListener('keydown', handleEscape);
+
+      // Handle overlay click (close on outside click)
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          document.removeEventListener('keydown', handleEscape);
+          document.body.removeChild(overlay);
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  /**
    * Show a custom form dialog with multiple fields
    * @param {string} title - Dialog title
    * @param {Array} fields - Array of field configurations

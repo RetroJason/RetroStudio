@@ -49,6 +49,28 @@
     }
   });
 
+  // Register project schema for default palette management
+  window.configManager.registerSchema('project', {
+    type: 'object',
+    properties: {
+      defaultPalette: { 
+        type: 'string', 
+        default: '',
+        description: 'Path to the default palette file for this project'
+      },
+      lastOpenedFiles: {
+        type: 'array',
+        default: [],
+        description: 'List of recently opened files in this project'
+      },
+      projectSettings: {
+        type: 'object',
+        default: {},
+        description: 'Project-specific settings and preferences'
+      }
+    }
+  });
+
   console.log('[Core] Configuration manager initialized');
 
   // Set up default configurations

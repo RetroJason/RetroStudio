@@ -1230,112 +1230,41 @@ class PaletteEditor extends EditorBase {
   }
 
   async showAlgorithmSelection() {
-    return new Promise((resolve) => {
-      // Create modal overlay
-      const overlay = document.createElement('div');
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.7);
-        z-index: 9999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      `;
+    const algorithmOptions = [
+      {
+        value: 'auto',
+        label: 'Auto (Recommended)',
+        description: 'Automatically selects the best algorithm based on image complexity'
+      },
+      {
+        value: 'median-cut',
+        label: 'Median Cut',
+        description: 'High quality, slower. Best for photos and complex images'
+      },
+      {
+        value: 'simple-sample',
+        label: 'Simple Sampling',
+        description: 'Fast, lower quality. Good for pixel art and simple images'
+      }
+    ];
 
-      // Create dialog
-      const dialog = document.createElement('div');
-      dialog.style.cssText = `
-        background: #2d2d2d;
-        color: white;
-        padding: 30px;
-        border-radius: 10px;
-        max-width: 400px;
-        min-width: 350px;
-        font-family: Arial, sans-serif;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-      `;
-
-      dialog.innerHTML = `
-        <h3 style="margin: 0 0 20px 0; color: #4CAF50;">Select Color Reduction Algorithm</h3>
-        <p style="margin: 0 0 20px 0; line-height: 1.4; color: #ccc;">
-          Choose the algorithm to use for reducing the image to 256 colors:
-        </p>
-        
-        <div style="margin-bottom: 25px;">
-          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
-            <input type="radio" name="algorithm" value="auto" checked style="margin-right: 10px;">
-            <strong>Auto (Recommended)</strong><br>
-            <small style="color: #aaa; margin-left: 20px;">Automatically selects the best algorithm based on image complexity</small>
-          </label>
-          
-          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
-            <input type="radio" name="algorithm" value="median-cut" style="margin-right: 10px;">
-            <strong>Median Cut</strong><br>
-            <small style="color: #aaa; margin-left: 20px;">High quality, slower. Best for photos and complex images</small>
-          </label>
-          
-          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
-            <input type="radio" name="algorithm" value="simple-sample" style="margin-right: 10px;">
-            <strong>Simple Sampling</strong><br>
-            <small style="color: #aaa; margin-left: 20px;">Fast, lower quality. Good for pixel art and simple images</small>
-          </label>
-        </div>
-        
-        <div style="text-align: right;">
-          <button class="cancel-btn" style="background: #666; color: white; border: none; padding: 10px 20px; margin-right: 10px; border-radius: 5px; cursor: pointer;">Cancel</button>
-          <button class="confirm-btn" style="background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">Proceed</button>
-        </div>
-      `;
-
-      // Add hover effects
-      const labels = dialog.querySelectorAll('label');
-      labels.forEach(label => {
-        label.addEventListener('mouseenter', () => {
-          label.style.borderColor = '#4CAF50';
-          label.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
-        });
-        label.addEventListener('mouseleave', () => {
-          label.style.borderColor = '#444';
-          label.style.backgroundColor = 'transparent';
-        });
-      });
-
-      // Handle button clicks
-      const cancelBtn = dialog.querySelector('.cancel-btn');
-      const confirmBtn = dialog.querySelector('.confirm-btn');
-
-      cancelBtn.addEventListener('click', () => {
-        document.body.removeChild(overlay);
-        resolve(null);
-      });
-
-      confirmBtn.addEventListener('click', () => {
-        const selectedRadio = dialog.querySelector('input[name="algorithm"]:checked');
-        const algorithm = selectedRadio ? selectedRadio.value : 'auto';
-        document.body.removeChild(overlay);
-        resolve(algorithm);
-      });
-
-      // Handle escape key
-      const handleEscape = (e) => {
-        if (e.key === 'Escape') {
-          document.removeEventListener('keydown', handleEscape);
-          document.body.removeChild(overlay);
-          resolve(null);
+    try {
+      const selectedAlgorithm = await ModalUtils.showSelectionList(
+        'Select Color Reduction Algorithm',
+        'Choose the algorithm to use for reducing the image to 256 colors:',
+        algorithmOptions,
+        {
+          defaultValue: 'auto',
+          confirmText: 'Proceed',
+          cancelText: 'Cancel'
         }
-      };
-      document.addEventListener('keydown', handleEscape);
+      );
 
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-
-      // Focus the first radio button
-      dialog.querySelector('input[type="radio"]').focus();
-    });
+      return selectedAlgorithm;
+    } catch (error) {
+      console.error('[PaletteEditor] Error in algorithm selection modal:', error);
+      return null;
+    }
   }
 
   exportPalette() {

@@ -58,7 +58,9 @@ class ConfigManager {
           } catch(_) {
             return ['Sources/Lua', 'Sources/Music', 'Sources/SFX', 'Sources/Binary'];
           }
-        })()
+        })(),
+        // Default palette settings
+        defaultPalette: null // Will store the path to the default palette file
       },
 
       // Plugin Configuration
@@ -230,6 +232,21 @@ class ConfigManager {
       cloned[key] = this.deepClone(value);
     }
     return cloned;
+  }
+
+  // Default palette management methods
+  setDefaultPalette(palettePath) {
+    this.set('project.defaultPalette', palettePath);
+    console.log(`[ConfigManager] Set default palette: ${palettePath}`);
+  }
+
+  getDefaultPalette() {
+    return this.get('project.defaultPalette', null);
+  }
+
+  clearDefaultPalette() {
+    this.set('project.defaultPalette', null);
+    console.log('[ConfigManager] Cleared default palette');
   }
 }
 

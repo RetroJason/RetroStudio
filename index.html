@@ -115,24 +115,6 @@
   </div>
   
   <!-- Context Menu -->
-  <div id="contextMenu" class="context-menu" style="display: none;">
-    <div class="context-item" data-action="upload">📁 Upload Files...</div>
-    <div class="context-item" data-action="newfolder">📂 New Folder</div>
-    <div class="context-separator"></div>
-    <div class="context-item" data-action="rename">✏️ Rename</div>
-    <div class="context-item" data-action="delete">🗑️ Delete</div>
-    <div class="context-separator"></div>
-    <div class="context-submenu" data-action="openwith">
-      <div class="context-item submenu-trigger">👁️ Open with ▶</div>
-      <div class="submenu-content" id="viewerSubmenu">
-        <!-- Dynamically populated with available viewers/editors -->
-      </div>
-    </div>
-    <div class="context-separator"></div>
-    <div class="context-item" data-action="setactive">📌 Set Active Project</div>
-    <div class="context-separator"></div>
-    <div class="context-item" data-action="closeproject">🔻 Close Project</div>
-  </div>
   
   <!-- Hidden file input for uploads -->
   <input type="file" id="fileUpload" multiple style="display: none;">
@@ -142,6 +124,7 @@
   <script src="scripts/core/service-container.js"></script>
   <script src="scripts/core/event-bus.js"></script>
   <script src="scripts/core/config-manager.js"></script>
+  <script src="scripts/core/project-config-manager.js"></script>
   <script src="scripts/core/project-paths.js"></script>
   <script src="scripts/core/plugin-system.js"></script>
   <script src="scripts/core/component-registry.js"></script>
