@@ -1368,20 +1368,22 @@ body.no-select {
 .explorer-header,
 .game-engine-header {
   background: #1e1e1e;
-  padding: 15px 20px;
+  padding: 6px 20px;
   border-bottom: 1px solid #3c3c3c;
   display: flex;
   justify-content: center;
   align-items: center;
   flex-shrink: 0;
   position: relative;
+  min-height: 32px;
+  box-sizing: border-box;
 }
 
 .explorer-header h3,
 .game-engine-header h3 {
   margin: 0;
   color: #0078d4;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 600;
   text-align: center;
   flex: 1;
