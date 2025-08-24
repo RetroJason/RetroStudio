@@ -148,7 +148,8 @@ class PanelResizer {
       .project-explorer.collapsed .explorer-tree,
       .project-explorer.collapsed h3,
       .game-engine-panel.collapsed .game-engine-tabs,
-      .game-engine-panel.collapsed .game-engine-content {
+      .game-engine-panel.collapsed .game-engine-content,
+      .game-engine-panel.collapsed h3 {
         display: none;
       }
       

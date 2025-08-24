@@ -751,27 +751,32 @@
 }
 
 .tab.dirty {
-  border-left: 3px solid #ff6b6b;
+  background-color: #4a3728;
 }
 
 .tab.dirty .tab-title {
   color: #ffb74d;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .tab.dirty .tab-title::after {
-  content: " *";
+  content: " ●";
   color: #ff6b6b;
   font-weight: bold;
-  font-size: 14px;
+  font-size: 16px;
+}
+
+.tab.dirty.active {
+  background-color: #d4651a;
 }
 
 .tab.dirty.active .tab-title {
   color: #ffffff;
+  font-weight: 600;
 }
 
 .tab.dirty.active .tab-title::after {
-  color: #ff8a80;
+  color: #ffcccb;
 }
 
 /* Loading states */
