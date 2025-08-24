@@ -48,14 +48,23 @@ class TabManager {
   }
   
   _hidePreviewByDefault() {
-    const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
-    const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
+    // Don't hide preview by default anymore - instead show welcome message
+    // Only hide preview when there are actually dedicated tabs open
+    const hasDedicatedTabs = this.dedicatedTabs.size > 0;
     
-    if (previewTab) {
-      previewTab.style.display = 'none';
-    }
-    if (previewPane) {
-      previewPane.style.display = 'none';
+    if (hasDedicatedTabs) {
+      const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
+      const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
+      
+      if (previewTab) {
+        previewTab.style.display = 'none';
+      }
+      if (previewPane) {
+        previewPane.style.display = 'none';
+      }
+    } else {
+      // Show welcome preview when no dedicated tabs exist
+      this._showWelcomePreview();
     }
   }
 
@@ -1268,6 +1277,38 @@ class TabManager {
     console.log('[TabManager] Preview cleared and hidden');
   }
   
+  _showWelcomePreview() {
+    // Ensure preview tab exists and is visible
+    this._ensurePreviewTabExists();
+    
+    const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
+    const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
+    
+    if (previewTab) {
+      previewTab.style.display = 'flex';
+      previewTab.querySelector('.tab-title').textContent = 'Welcome';
+    }
+    
+    if (previewPane) {
+      previewPane.style.display = 'block';
+      previewPane.innerHTML = `
+        <div class="preview-pane">
+          <div class="preview-header">
+            <h3>Welcome to Game Engine Editor</h3>
+            <p>Select a resource from the Project Explorer to preview it here, or double-click to open in a new tab.</p>
+          </div>
+        </div>
+      `;
+    }
+    
+    // Clear preview state since this is the welcome message
+    this.previewPath = null;
+    this.previewFileName = null;
+    this.previewViewer = null;
+    
+    console.log('[TabManager] Welcome preview tab shown');
+  }
+  
   _closePreviewTab() {
     console.log('[TabManager] Closing preview tab');
     
@@ -1503,16 +1544,16 @@ class TabManager {
         console.log(`[TabManager] Switching to preview tab`);
         this.switchToTab('preview');
       } else {
-        // Switch to first available tab or hide preview
+        // Switch to first available tab or show welcome preview
         if (this.dedicatedTabs.size > 0) {
           const firstTabId = this.dedicatedTabs.keys().next().value;
           console.log(`[TabManager] Switching to first available tab: ${firstTabId}`);
           this.switchToTab(firstTabId);
         } else {
-          console.log(`[TabManager] No tabs remaining, hiding preview and setting activeTabId to null`);
-          // No preview content, hide preview tab
-          this._hidePreviewWithAnimation();
-          this.activeTabId = null;
+          console.log(`[TabManager] No tabs remaining, showing welcome preview tab`);
+          // No dedicated tabs left, show the welcome preview tab
+          this._showWelcomePreview();
+          this.switchToTab('preview');
         }
       }
     }
