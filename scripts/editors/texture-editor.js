@@ -550,6 +550,12 @@ class TextureEditor extends EditorBase {
 
   createBody(bodyContainer) {
     bodyContainer.className = 'texture-editor-container';
+    bodyContainer.style.cssText = `
+      padding: 0;
+      margin: 0;
+      overflow: hidden;
+      height: 100%;
+    `;
     
     // Initialize texture data now that the UI is ready
     console.log('[TextureEditor] createBody - initializing texture data');
@@ -635,10 +641,25 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] createPreviewPanel() called');
     const panel = document.createElement('div');
     panel.className = 'texture-preview-panel';
+    panel.style.cssText = `
+      padding: 8px;
+      margin: 0;
+      height: calc(100% - 16px);
+      overflow: hidden;
+    `;
     
     // Main preview layout - horizontal with settings in between
     const previewContainer = document.createElement('div');
     previewContainer.className = 'preview-container-horizontal';
+    previewContainer.style.cssText = `
+      display: flex;
+      flex-direction: row;
+      align-items: flex-start;
+      gap: 0;
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+    `;
     
     // Original image section
     const originalSection = document.createElement('div');
@@ -646,17 +667,101 @@ class TextureEditor extends EditorBase {
     
     const originalHeader = document.createElement('div');
     originalHeader.className = 'preview-header';
+    originalHeader.style.cssText = `
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 8px 8px;
+  background: #3a3a3a;
+  border-bottom: 1px solid #555;
+  gap: 10px;
+    `;
+    
+    // Left side of header (title and info button)
+    const originalHeaderLeft = document.createElement('div');
+    originalHeaderLeft.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
     
     const originalTitle = document.createElement('h4');
     originalTitle.textContent = 'Original';
+    originalTitle.style.margin = '0';
     
     const originalInfoBtn = document.createElement('button');
     originalInfoBtn.textContent = 'i';
     originalInfoBtn.className = 'info-button';
     originalInfoBtn.addEventListener('click', () => this.showImageInfo('original'));
     
-    originalHeader.appendChild(originalTitle);
-    originalHeader.appendChild(originalInfoBtn);
+    originalHeaderLeft.appendChild(originalTitle);
+    originalHeaderLeft.appendChild(originalInfoBtn);
+    
+    // Right side of header (zoom controls)
+    const originalZoomControls = document.createElement('div');
+    originalZoomControls.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+    
+    const originalZoomLabel = document.createElement('label');
+    originalZoomLabel.textContent = 'Zoom:';
+    originalZoomLabel.style.cssText = `
+      font-size: 12px;
+      color: #ccc;
+      margin: 0;
+    `;
+    
+    this.originalScaleSlider = document.createElement('input');
+    this.originalScaleSlider.type = 'range';
+    this.originalScaleSlider.min = '0.1';
+    this.originalScaleSlider.max = '4.0';
+    this.originalScaleSlider.step = '0.1';
+    this.originalScaleSlider.value = '1.0';
+    this.originalScaleSlider.style.cssText = `
+      width: 80px;
+      margin: 0;
+    `;
+    this.originalScaleSlider.addEventListener('input', () => this.updatePreviewScale());
+    
+    const originalScaleValue = document.createElement('span');
+    originalScaleValue.textContent = '1.0x';
+    originalScaleValue.id = 'original-scale-value';
+    originalScaleValue.style.cssText = `
+      font-size: 11px;
+      color: #ccc;
+      min-width: 30px;
+    `;
+    
+    // Fit to area button with icon
+    const originalFitButton = document.createElement('button');
+    originalFitButton.innerHTML = '⌂'; // House/fit icon
+    originalFitButton.className = 'fit-button';
+    originalFitButton.title = 'Fit to Area';
+    originalFitButton.style.cssText = `
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      background: #4a9eff;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    originalFitButton.addEventListener('click', () => this.fitOriginalToArea());
+    
+    originalZoomControls.appendChild(originalZoomLabel);
+    originalZoomControls.appendChild(this.originalScaleSlider);
+    originalZoomControls.appendChild(originalScaleValue);
+    originalZoomControls.appendChild(originalFitButton);
+    
+    originalHeader.appendChild(originalHeaderLeft);
+    originalHeader.appendChild(originalZoomControls);
     originalSection.appendChild(originalHeader);
     
     this.originalCanvas = document.createElement('canvas');
@@ -666,31 +771,7 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Canvas context created:', !!this.originalCtx);
     originalSection.appendChild(this.originalCanvas);
     
-    // Scale controls under original image
-    const originalScaleContainer = document.createElement('div');
-    originalScaleContainer.className = 'image-scale-controls';
-    
-    const originalScaleLabel = document.createElement('label');
-    originalScaleLabel.textContent = 'Scale: ';
-    
-    this.originalScaleSlider = document.createElement('input');
-    this.originalScaleSlider.type = 'range';
-    this.originalScaleSlider.min = '0.1';
-    this.originalScaleSlider.max = '4.0';
-    this.originalScaleSlider.step = '0.1';
-    this.originalScaleSlider.value = '1.0';
-    this.originalScaleSlider.addEventListener('input', () => this.updatePreviewScale());
-    
-    const originalScaleValue = document.createElement('span');
-    originalScaleValue.textContent = '1.0x';
-    originalScaleValue.id = 'original-scale-value';
-    
-    originalScaleContainer.appendChild(originalScaleLabel);
-    originalScaleContainer.appendChild(this.originalScaleSlider);
-    originalScaleContainer.appendChild(originalScaleValue);
-    originalSection.appendChild(originalScaleContainer);
-    
-    // Settings section (between images)
+    // Settings section (between images) - simplified structure
     const settingsSection = document.createElement('div');
     settingsSection.className = 'between-images-settings';
     settingsSection.style.cssText = `
@@ -699,15 +780,16 @@ class TextureEditor extends EditorBase {
       transition: width 0.3s ease;
       overflow: hidden;
       min-height: 400px;
-      width: 25px;
-      min-width: 25px;
+      width: 20px;
+      min-width: 20px;
+      margin: 0 10px;
     `;
     
     // Store reference for toggling
     this.settingsSection = settingsSection;
     this.isSettingsCollapsed = true;
     
-    // Create collapse/expand toggle bar
+    // Create collapse/expand toggle bar - this IS the entire settings section when collapsed
     const toggleBar = document.createElement('div');
     toggleBar.className = 'settings-toggle-bar';
     toggleBar.style.cssText = `
@@ -716,7 +798,7 @@ class TextureEditor extends EditorBase {
       color: white;
       cursor: pointer;
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: center;
       font-size: 12px;
       font-weight: bold;
@@ -725,16 +807,13 @@ class TextureEditor extends EditorBase {
       transition: all 0.3s ease;
       writing-mode: vertical-rl;
       text-orientation: mixed;
-      padding-top: 10px;
-      padding-bottom: 10px;
+      padding: 10px 0px 10px 0px;
       min-height: 100px;
-      padding-left: 0;
-      padding-right: 0;
     `;
     toggleBar.textContent = 'Show Settings';
-    toggleBar.title = 'Click to collapse settings panel';
+    toggleBar.title = 'Click to show settings panel';
     
-    // Create collapsible content container
+    // Create collapsible content container (initially hidden)
     const settingsContent = document.createElement('div');
     settingsContent.className = 'settings-content';
     settingsContent.style.cssText = `
@@ -742,7 +821,6 @@ class TextureEditor extends EditorBase {
       overflow: hidden;
       background: transparent;
       border: none;
-      flex-shrink: 0;
       width: 0px;
       min-width: 0;
       padding: 0;
@@ -761,7 +839,7 @@ class TextureEditor extends EditorBase {
       this.toggleSettingsPanel();
     });
     
-    // Assemble the settings section
+    // Assemble the settings section - only append toggle bar initially
     settingsSection.appendChild(toggleBar);
     settingsSection.appendChild(settingsContent);
     
@@ -776,23 +854,111 @@ class TextureEditor extends EditorBase {
     
     const processedHeader = document.createElement('div');
     processedHeader.className = 'preview-header';
+    processedHeader.style.cssText = `
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 8px 8px;
+  background: #3a3a3a;
+  border-bottom: 1px solid #555;
+  gap: 10px;
+    `;
+    
+    // Left side of header (title, size, and info button)
+    const processedHeaderLeft = document.createElement('div');
+    processedHeaderLeft.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
     
     const processedTitle = document.createElement('h4');
     processedTitle.textContent = 'Texture Output';
+    processedTitle.style.margin = '0';
     
     const outputSize = document.createElement('span');
     outputSize.className = 'output-size';
     outputSize.id = 'output-size';
     outputSize.textContent = '';
+    outputSize.style.cssText = `
+      font-size: 12px;
+      color: #888;
+    `;
     
     const processedInfoBtn = document.createElement('button');
     processedInfoBtn.textContent = 'i';
     processedInfoBtn.className = 'info-button';
     processedInfoBtn.addEventListener('click', () => this.showImageInfo('processed'));
     
-    processedHeader.appendChild(processedTitle);
-    processedHeader.appendChild(outputSize);
-    processedHeader.appendChild(processedInfoBtn);
+    processedHeaderLeft.appendChild(processedTitle);
+    processedHeaderLeft.appendChild(outputSize);
+    processedHeaderLeft.appendChild(processedInfoBtn);
+    
+    // Right side of header (zoom controls)
+    const processedZoomControls = document.createElement('div');
+    processedZoomControls.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+    
+    const processedZoomLabel = document.createElement('label');
+    processedZoomLabel.textContent = 'Zoom:';
+    processedZoomLabel.style.cssText = `
+      font-size: 12px;
+      color: #ccc;
+      margin: 0;
+    `;
+    
+    this.processedScaleSlider = document.createElement('input');
+    this.processedScaleSlider.type = 'range';
+    this.processedScaleSlider.min = '0.1';
+    this.processedScaleSlider.max = '4.0';
+    this.processedScaleSlider.step = '0.1';
+    this.processedScaleSlider.value = '1.0';
+    this.processedScaleSlider.style.cssText = `
+      width: 80px;
+      margin: 0;
+    `;
+    this.processedScaleSlider.addEventListener('input', () => this.updatePreviewScale());
+    
+    const processedScaleValue = document.createElement('span');
+    processedScaleValue.textContent = '1.0x';
+    processedScaleValue.id = 'processed-scale-value';
+    processedScaleValue.style.cssText = `
+      font-size: 11px;
+      color: #ccc;
+      min-width: 30px;
+    `;
+    
+    // Fit to area button with icon
+    const processedFitButton = document.createElement('button');
+    processedFitButton.innerHTML = '⌂'; // House/fit icon
+    processedFitButton.className = 'fit-button';
+    processedFitButton.title = 'Fit to Area';
+    processedFitButton.style.cssText = `
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      background: #4a9eff;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    processedFitButton.addEventListener('click', () => this.fitProcessedToArea());
+    
+    processedZoomControls.appendChild(processedZoomLabel);
+    processedZoomControls.appendChild(this.processedScaleSlider);
+    processedZoomControls.appendChild(processedScaleValue);
+    processedZoomControls.appendChild(processedFitButton);
+    
+    processedHeader.appendChild(processedHeaderLeft);
+    processedHeader.appendChild(processedZoomControls);
     processedSection.appendChild(processedHeader);
     
     this.outputCanvas = document.createElement('canvas');
@@ -801,33 +967,11 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Texture output canvas created:', !!this.outputCanvas);
     processedSection.appendChild(this.outputCanvas);
     
-    // Scale controls under processed image
-    const processedScaleContainer = document.createElement('div');
-    processedScaleContainer.className = 'image-scale-controls';
-    
-    const processedScaleLabel = document.createElement('label');
-    processedScaleLabel.textContent = 'Scale: ';
-    
-    this.processedScaleSlider = document.createElement('input');
-    this.processedScaleSlider.type = 'range';
-    this.processedScaleSlider.min = '0.1';
-    this.processedScaleSlider.max = '4.0';
-    this.processedScaleSlider.step = '0.1';
-    this.processedScaleSlider.value = '1.0';
-    this.processedScaleSlider.addEventListener('input', () => this.updatePreviewScale());
-    
-    const processedScaleValue = document.createElement('span');
-    processedScaleValue.textContent = '1.0x';
-    processedScaleValue.id = 'processed-scale-value';
-    
-    processedScaleContainer.appendChild(processedScaleLabel);
-    processedScaleContainer.appendChild(this.processedScaleSlider);
-    processedScaleContainer.appendChild(processedScaleValue);
-    processedSection.appendChild(processedScaleContainer);
-    
     previewContainer.appendChild(originalSection);
     previewContainer.appendChild(settingsSection);
     previewContainer.appendChild(processedSection);
+    
+    // Create main panel structure with simple horizontal layout
     panel.appendChild(previewContainer);
     
     console.log('[TextureEditor] createPreviewPanel() completed - outputCanvas:', !!this.outputCanvas);
@@ -836,7 +980,10 @@ class TextureEditor extends EditorBase {
   }
 
   updatePreviewScale() {
-    // Handle original image scale
+    // NOTE: These scale sliders are for PREVIEW DISPLAY only
+    // They do not affect the actual texture metadata scale
+    
+    // Handle original image scale (preview display only)
     let originalScale = 1.0;
     if (this.originalScaleSlider) {
       originalScale = parseFloat(this.originalScaleSlider.value);
@@ -846,7 +993,7 @@ class TextureEditor extends EditorBase {
       }
     }
     
-    // Handle processed image scale  
+    // Handle processed image scale (preview display only)
     let processedScale = 1.0;
     if (this.processedScaleSlider) {
       processedScale = parseFloat(this.processedScaleSlider.value);
@@ -856,14 +1003,15 @@ class TextureEditor extends EditorBase {
       }
     }
     
-    console.log('[TextureEditor] updatePreviewScale called with scales:', originalScale, processedScale);
+    console.log('[TextureEditor] updatePreviewScale called with PREVIEW scales:', originalScale, processedScale);
+    console.log('[TextureEditor] Actual texture metadata scale remains:', this.textureData.scale);
     
     // Update canvas display size while maintaining native resolution and aspect ratio
     if (this.originalCanvas && this.sourceImage) {
       console.log('[TextureEditor] Source image native dimensions:', this.sourceImage.width, 'x', this.sourceImage.height);
       console.log('[TextureEditor] Calculated aspect ratio:', (this.sourceImage.width / this.sourceImage.height).toFixed(3));
       
-      // Calculate display dimensions based on native size * scale
+      // Calculate display dimensions based on native size * preview scale
       const displayWidth = Math.round(this.sourceImage.width * originalScale);
       const displayHeight = Math.round(this.sourceImage.height * originalScale);
       
@@ -883,15 +1031,20 @@ class TextureEditor extends EditorBase {
       
     // Apply scaling to preview canvas if it exists  
     if (this.outputCanvas && this.sourceImage) {
+      // Use the processed scale slider for output canvas preview display
       const processedDisplayWidth = Math.round(this.sourceImage.width * processedScale);
       const processedDisplayHeight = Math.round(this.sourceImage.height * processedScale);
+      
+      console.log('[TextureEditor] Output canvas using processed preview scale:', processedScale);
+      console.log('[TextureEditor] Output display dimensions:', processedDisplayWidth, 'x', processedDisplayHeight);
       
       this.outputCanvas.style.setProperty('width', `${processedDisplayWidth}px`, 'important');
       this.outputCanvas.style.setProperty('height', `${processedDisplayHeight}px`, 'important');
       
       const previewComputedStyle = window.getComputedStyle(this.outputCanvas);
-      console.log('[TextureEditor] Preview canvas computed dimensions:', previewComputedStyle.width, 'x', previewComputedStyle.height);
-      console.log('[TextureEditor] Preview canvas native resolution:', this.outputCanvas.width, 'x', this.outputCanvas.height);
+      console.log('[TextureEditor] Output canvas computed dimensions:', previewComputedStyle.width, 'x', previewComputedStyle.height);
+      console.log('[TextureEditor] Output canvas native resolution:', this.outputCanvas.width, 'x', this.outputCanvas.height);
+      console.log('[TextureEditor] Actual texture metadata scale remains:', this.textureData.scale);
     }
     
     console.log('[TextureEditor] Applied native resolution scaling - scroll bars will appear if needed');
@@ -902,8 +1055,8 @@ class TextureEditor extends EditorBase {
     
     if (this.isSettingsCollapsed) {
       // Collapse the settings panel
-      this.settingsSection.style.width = '25px'; // Just wide enough for toggle button
-      this.settingsSection.style.minWidth = '25px';
+      this.settingsSection.style.width = '20px'; // Just wide enough for toggle button
+      this.settingsSection.style.minWidth = '20px';
       this.settingsContent.style.width = '0px';
       this.settingsContent.style.opacity = '0';
       this.settingsContent.style.padding = '0';
@@ -958,18 +1111,17 @@ class TextureEditor extends EditorBase {
     `;
 
     const colorDepthLabel = document.createElement('label');
-    colorDepthLabel.innerHTML = 'Color Depth: <span style="color: #4a9eff;">8-bit</span>';
+    colorDepthLabel.textContent = 'Color Depth:';
     colorDepthLabel.style.cssText = `
+      font-weight: bold;
       color: #ddd;
-      font-weight: 500;
-      white-space: nowrap;
+      min-width: 100px;
     `;
 
     const arrow = document.createElement('span');
     arrow.textContent = '→';
     arrow.style.cssText = `
       color: #888;
-      font-size: 16px;
       margin: 0 5px;
     `;
 
@@ -1297,6 +1449,55 @@ class TextureEditor extends EditorBase {
       img.src = dataUrl;
     });
   }
+  
+  calculateAutoFitScale(imageWidth, imageHeight) {
+    // Get the available space for the original canvas container
+    // Assume a reasonable max display size (adjust these values as needed)
+    const maxDisplayWidth = 300;  // Maximum width for the original canvas display
+    const maxDisplayHeight = 300; // Maximum height for the original canvas display
+    
+    // Calculate scale to fit within the container while maintaining aspect ratio
+    const scaleX = maxDisplayWidth / imageWidth;
+    const scaleY = maxDisplayHeight / imageHeight;
+    
+    // Use the smaller scale to ensure the image fits completely
+    const autoFitScale = Math.min(scaleX, scaleY, 1.0); // Don't scale up, only down
+    
+    // Round to reasonable precision
+    return Math.round(autoFitScale * 100) / 100;
+  }
+  
+  fitOriginalToArea() {
+    if (this.sourceImage) {
+      const autoFitScale = this.calculateAutoFitScale(this.sourceImage.width, this.sourceImage.height);
+      
+      // Update the preview scale slider
+      if (this.originalScaleSlider) {
+        this.originalScaleSlider.value = autoFitScale;
+      }
+      
+      // Update the preview display
+      this.updatePreviewScale();
+      
+      console.log('[TextureEditor] Fit original to area - scale set to:', autoFitScale);
+    }
+  }
+  
+  fitProcessedToArea() {
+    if (this.sourceImage) {
+      const autoFitScale = this.calculateAutoFitScale(this.sourceImage.width, this.sourceImage.height);
+      
+      // Update the preview scale slider
+      if (this.processedScaleSlider) {
+        this.processedScaleSlider.value = autoFitScale;
+      }
+      
+      // Update the preview display
+      this.updatePreviewScale();
+      
+      console.log('[TextureEditor] Fit processed to area - scale set to:', autoFitScale);
+    }
+  }
 
   setImageToCanvas(img, resolve) {
     console.log('[TextureEditor] setImageToCanvas - loading image into custom ImageData class');
@@ -1336,9 +1537,27 @@ class TextureEditor extends EditorBase {
     // Update color depth indicator to show actual image colors
     this.updateColorDepthIndicator();
     
-    // Set initial canvas display size to native resolution (1:1 scale)
-    this.originalCanvas.style.setProperty('width', `${img.width}px`, 'important');
-    this.originalCanvas.style.setProperty('height', `${img.height}px`, 'important');
+    // Calculate auto-fit scale for the original canvas container
+    const autoFitScale = this.calculateAutoFitScale(img.width, img.height);
+    console.log('[TextureEditor] Auto-fit scale calculated:', autoFitScale);
+    
+    // Update the texture metadata scale (this is the actual texture scale)
+    this.textureData.scale = autoFitScale;
+    
+    // Set initial canvas display size to auto-fit scale
+    const displayWidth = Math.round(img.width * autoFitScale);
+    const displayHeight = Math.round(img.height * autoFitScale);
+    this.originalCanvas.style.setProperty('width', `${displayWidth}px`, 'important');
+    this.originalCanvas.style.setProperty('height', `${displayHeight}px`, 'important');
+    
+    // Update the scale slider to reflect the auto-fit scale (for preview purposes only)
+    if (this.originalScaleSlider) {
+      this.originalScaleSlider.value = autoFitScale;
+      const originalScaleValue = document.getElementById('original-scale-value');
+      if (originalScaleValue) {
+        originalScaleValue.textContent = `${autoFitScale}x`;
+      }
+    }
     console.log('[TextureEditor] Set initial canvas display size:', img.width, 'x', img.height);
     
     if (this.originalScaleSlider) {
