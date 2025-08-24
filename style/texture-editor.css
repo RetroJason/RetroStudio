@@ -78,13 +78,29 @@
 /* Settings between images */
 .between-images-settings {
   min-width: 250px;
-  padding: 15px;
-  background: #3c3c3c;
+  background: transparent;
   border-radius: 3px;
+  display: flex;
+  flex-direction: row;
+  align-self: flex-start;
+  transition: all 0.3s ease;
+}
+
+.settings-toggle-bar {
+  flex-shrink: 0;
+}
+
+.settings-toggle-bar:hover {
+  background: #5a9eff !important;
+}
+
+.settings-content {
+  flex: 1;
+  padding: 15px;
   display: flex;
   flex-direction: column;
   gap: 15px;
-  align-self: flex-start;
+  min-width: 250px;
 }
 
 /* Top row with palette dropdown, colors dropdown and create button */

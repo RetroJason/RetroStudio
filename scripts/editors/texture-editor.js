@@ -693,12 +693,81 @@ class TextureEditor extends EditorBase {
     // Settings section (between images)
     const settingsSection = document.createElement('div');
     settingsSection.className = 'between-images-settings';
+    settingsSection.style.cssText = `
+      display: flex;
+      flex-direction: row;
+      transition: width 0.3s ease;
+      overflow: hidden;
+      min-height: 400px;
+      width: 25px;
+      min-width: 25px;
+    `;
+    
+    // Store reference for toggling
+    this.settingsSection = settingsSection;
+    this.isSettingsCollapsed = true;
+    
+    // Create collapse/expand toggle bar
+    const toggleBar = document.createElement('div');
+    toggleBar.className = 'settings-toggle-bar';
+    toggleBar.style.cssText = `
+      width: 20px;
+      background: #4a9eff;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: bold;
+      user-select: none;
+      border-radius: 4px;
+      transition: all 0.3s ease;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      padding-top: 10px;
+      padding-bottom: 10px;
+      min-height: 100px;
+      padding-left: 0;
+      padding-right: 0;
+    `;
+    toggleBar.textContent = 'Show Settings';
+    toggleBar.title = 'Click to collapse settings panel';
+    
+    // Create collapsible content container
+    const settingsContent = document.createElement('div');
+    settingsContent.className = 'settings-content';
+    settingsContent.style.cssText = `
+      transition: all 0.3s ease;
+      overflow: hidden;
+      background: transparent;
+      border: none;
+      flex-shrink: 0;
+      width: 0px;
+      min-width: 0;
+      padding: 0;
+      opacity: 0;
+      display: none;
+    `;
 
     // New streamlined palette controls
     console.log('[TextureEditor] About to create palette controls panel');
     const paletteControlsPanel = this.createPaletteControlsPanel();
     console.log('[TextureEditor] Palette controls panel created');
-    settingsSection.appendChild(paletteControlsPanel);
+    settingsContent.appendChild(paletteControlsPanel);
+    
+    // Add toggle functionality
+    toggleBar.addEventListener('click', () => {
+      this.toggleSettingsPanel();
+    });
+    
+    // Assemble the settings section
+    settingsSection.appendChild(toggleBar);
+    settingsSection.appendChild(settingsContent);
+    
+    // Store references
+    this.settingsToggleBar = toggleBar;
+    this.settingsContent = settingsContent;
     
     // Texture Output image section
     console.log('[TextureEditor] About to create texture output section');
@@ -828,14 +897,52 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Applied native resolution scaling - scroll bars will appear if needed');
   }
 
+  toggleSettingsPanel() {
+    this.isSettingsCollapsed = !this.isSettingsCollapsed;
+    
+    if (this.isSettingsCollapsed) {
+      // Collapse the settings panel
+      this.settingsSection.style.width = '25px'; // Just wide enough for toggle button
+      this.settingsSection.style.minWidth = '25px';
+      this.settingsContent.style.width = '0px';
+      this.settingsContent.style.opacity = '0';
+      this.settingsContent.style.padding = '0';
+      this.settingsContent.style.minWidth = '0';
+      this.settingsContent.style.overflow = 'hidden';
+      this.settingsContent.style.display = 'none';
+      
+      // Update toggle bar text only
+      this.settingsToggleBar.textContent = 'Show Settings';
+      this.settingsToggleBar.title = 'Click to expand settings panel';
+      
+      console.log('[TextureEditor] Settings panel collapsed');
+    } else {
+      // Expand the settings panel
+      this.settingsSection.style.width = 'auto'; // Allow full width
+      this.settingsSection.style.minWidth = 'auto';
+      this.settingsContent.style.width = 'auto';
+      this.settingsContent.style.opacity = '1';
+      this.settingsContent.style.padding = '5px';
+      this.settingsContent.style.minWidth = '250px';
+      this.settingsContent.style.overflow = 'hidden';
+      this.settingsContent.style.display = 'block';
+      
+      // Update toggle bar text only
+      this.settingsToggleBar.textContent = 'Hide Settings';
+      this.settingsToggleBar.title = 'Click to collapse settings panel';
+      
+      console.log('[TextureEditor] Settings panel expanded');
+    }
+  }
+
   createPaletteControlsPanel() {
     const panel = document.createElement('div');
     panel.className = 'palette-controls-panel';
     panel.style.cssText = `
-      padding: 15px;
+      padding: 8px;
       background: #2a2a2a;
       border-radius: 6px;
-      margin-bottom: 15px;
+      margin-bottom: 8px;
     `;
 
     // Color Depth Section
@@ -845,8 +952,8 @@ class TextureEditor extends EditorBase {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 15px;
-      padding-bottom: 15px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #444;
     `;
 
@@ -908,8 +1015,8 @@ class TextureEditor extends EditorBase {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 15px;
-      padding-bottom: 15px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
       border-bottom: 1px solid #444;
     `;
 
@@ -972,8 +1079,8 @@ class TextureEditor extends EditorBase {
     actionSection.className = 'action-section';
     actionSection.style.cssText = `
       display: flex;
-      gap: 10px;
-      margin-bottom: 15px;
+      gap: 8px;
+      margin-bottom: 8px;
     `;
 
     // Load Palette Button
