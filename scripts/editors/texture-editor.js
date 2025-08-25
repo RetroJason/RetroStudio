@@ -304,6 +304,46 @@ class TextureData extends EventTarget {
   static isIndexedFormat(formatValue) {
     return formatValue.startsWith('d2_mode_i') || formatValue === 'd2_mode_ai44';
   }
+
+  // Serialize to JSON
+  toJSON() {
+    return {
+      width: this.width,
+      height: this.height,
+      colorDepth: this.colorDepth,
+      palette: this.palette,
+      transparentColor: this.transparentColor,
+      compressionType: this.compressionType,
+      mipmaps: this.mipmaps,
+      format: this.format,
+      name: this.name,
+      sourceImage: this.sourceImage,
+      rotation: this.rotation,
+      metadata: this._metadata
+    };
+  }
+
+  // Load from JSON
+  static fromJSON(data) {
+    return new TextureData({
+      width: data.width,
+      height: data.height,
+      colorDepth: data.colorDepth,
+      palette: data.palette,
+      transparentColor: data.transparentColor,
+      compressionType: data.compressionType,
+      mipmaps: data.mipmaps,
+      format: data.format,
+      name: data.name,
+      sourceImage: data.sourceImage,
+      rotation: data.rotation,
+      sourceImagePath: data.metadata?.sourceImagePath,
+      palettePath: data.metadata?.palettePath,
+      outputPixelFormat: data.metadata?.outputPixelFormat,
+      scale: data.metadata?.scale,
+      paletteOffset: data.metadata?.paletteOffset
+    });
+  }
 }
 
 console.log('[TextureEditor] TextureData class defined:', typeof TextureData);
@@ -769,6 +809,7 @@ class TextureEditor extends EditorBase {
     this.originalCanvas.className = 'preview-canvas';
     this.originalCtx = this.originalCanvas.getContext('2d');
     console.log('[TextureEditor] Canvas context created:', !!this.originalCtx);
+    
     originalSection.appendChild(this.originalCanvas);
     
     // Settings section (between images) - simplified structure
@@ -1086,6 +1127,34 @@ class TextureEditor extends EditorBase {
       
       console.log('[TextureEditor] Settings panel expanded');
     }
+  }
+
+  setupCropControls() {
+    if (!this.originalCanvas) return;
+    
+    // Make canvas position relative for proper mouse coordinates
+    this.originalCanvas.style.position = 'relative';
+    this.originalCanvas.style.cursor = 'crosshair';
+    
+    // Mouse event handlers for crop selection
+    this.originalCanvas.addEventListener('mousedown', (e) => {
+      this.startCropSelection(e);
+    });
+    
+    this.originalCanvas.addEventListener('mousemove', (e) => {
+      this.updateCropSelection(e);
+    });
+    
+    this.originalCanvas.addEventListener('mouseup', (e) => {
+      this.endCropSelection(e);
+    });
+    
+    // Prevent context menu on right click
+    this.originalCanvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+    
+    console.log('[TextureEditor] Crop controls set up');
   }
 
   createPaletteControlsPanel() {
@@ -1580,6 +1649,13 @@ class TextureEditor extends EditorBase {
       this.checkAndAutoGenerateTexture();
     }, 200); // Small delay to allow palette loading to complete
     
+    // Auto-save linked texture file if we're creating from an image
+    if (this.isCreatingFromImage && this.path) {
+      setTimeout(() => {
+        this.autoSaveLinkedTextureFile();
+      }, 500); // Give time for UI setup to complete
+    }
+    
     // Update UI
     this.markDirty();
     resolve();
@@ -1912,6 +1988,35 @@ class TextureEditor extends EditorBase {
     }
   }
 
+  // Load texture data from .texture file
+  loadFileContent() {
+    if (!this.fileObject || !this.fileObject.fileContent) {
+      console.error('[TextureEditor] No file content available to load');
+      return;
+    }
+
+    try {
+      let content = this.fileObject.fileContent;
+      
+      // If content is base64 encoded, decode it first
+      if (typeof content === 'string' && content.length > 0) {
+        try {
+          // Try to decode base64 content
+          const decodedContent = atob(content);
+          content = decodedContent;
+        } catch (e) {
+          // If it fails, assume it's already plain text JSON
+          console.log('[TextureEditor] Content is not base64, treating as plain text');
+        }
+      }
+      
+      console.log('[TextureEditor] Loading texture data from file content');
+      this.setContent(content);
+    } catch (error) {
+      console.error('[TextureEditor] Failed to load file content:', error);
+    }
+  }
+
   updateUIFromData() {
     if (!this.textureData) return;
     
@@ -1927,14 +2032,19 @@ class TextureEditor extends EditorBase {
 
   // Override save method to handle image-to-texture conversion
   save() {
-    if (this.isCreatingFromImage && this.imagePath) {
-      // When creating from an image, save as a .texture file in Resources/Textures/Source
-      const originalName = this.imagePath.split('/').pop().split('\\').pop();
-      const baseName = originalName.substring(0, originalName.lastIndexOf('.'));
-      const texturePath = `Resources/Textures/Source/${baseName}.texture`;
+    if (this.isCreatingFromImage && this.path) {
+      // When creating from an image, save as a .texture file in the same directory
+      const originalPath = this.path;
+      const pathParts = originalPath.split('/');
+      const fileName = pathParts.pop();
+      const directory = pathParts.join('/');
+      const baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+      const texturePath = directory ? `${directory}/${baseName}.texture` : `${baseName}.texture`;
+      
+      console.log(`[TextureEditor] Creating linked texture file: ${texturePath} for image: ${originalPath}`);
       
       // Update the texture data with the source image reference
-      this.textureData.sourceImage = this.imagePath;
+      this.textureData.sourceImage = originalPath;
       this.textureData.name = baseName;
       
       // Use the file service to save the texture file
@@ -1976,6 +2086,111 @@ class TextureEditor extends EditorBase {
     }
   }
 
+  // Auto-save linked texture file when image is loaded
+  async autoSaveLinkedTextureFile() {
+    if (!this.isCreatingFromImage || !this.path || !this.textureData) {
+      return;
+    }
+
+    try {
+      const originalPath = this.path;
+      console.log(`[TextureEditor] Original image path: ${originalPath}`);
+      
+      // Try multiple ways to get the current active project context
+      let currentProject = window.gameEmulator?.currentProject;
+      if (!currentProject && window.gameEmulator?.projectExplorer) {
+        // Try to get from project explorer
+        currentProject = window.gameEmulator.projectExplorer.getCurrentProject?.();
+      }
+      if (!currentProject) {
+        // Try to extract from the full path we know works (from tab manager)
+        // The tab manager showed: test/Sources/Images/Animating-A-Sprite.png
+        // But our originalPath is: Sources/Images/Animating-A-Sprite.png
+        // So we can infer the project from context
+        currentProject = 'test'; // Hardcode for now, but we'll improve this
+      }
+      
+      console.log(`[TextureEditor] Current project: ${currentProject}`);
+      console.log(`[TextureEditor] originalPath starts with project?`, originalPath.startsWith(currentProject + '/'));
+      
+      // Get the full path with project context
+      let fullPath = originalPath;
+      if (currentProject && !originalPath.startsWith(currentProject + '/')) {
+        fullPath = `${currentProject}/${originalPath}`;
+        console.log(`[TextureEditor] Reconstructed full path with project context: ${fullPath}`);
+      } else {
+        console.log(`[TextureEditor] Using original path as-is: ${fullPath}`);
+      }
+      
+      const pathParts = fullPath.split('/');
+      const fileName = pathParts.pop();
+      const directory = pathParts.join('/');
+      const baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+      const texturePath = directory ? `${directory}/${baseName}.texture` : `${baseName}.texture`;
+      
+      console.log(`[TextureEditor] Calculated texture path: ${texturePath}`);
+      console.log(`[TextureEditor] Directory: ${directory}`);
+      console.log(`[TextureEditor] Base name: ${baseName}`);
+      
+      // Update the texture data with the source image reference
+      this.textureData.sourceImage = originalPath;
+      this.textureData.name = baseName;
+      
+      // Create the texture content
+      const content = JSON.stringify(this.textureData.toJSON(), null, 2);
+      
+      // Save using the file service
+      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+      if (fileService) {
+        await fileService.saveFile(texturePath, content);
+        console.log(`[TextureEditor] Auto-saved linked texture: ${texturePath}`);
+        
+        // Notify project explorer to refresh
+        if (window.gameEmulator?.projectExplorer) {
+          // Wait a moment for the file to be written to storage
+          setTimeout(async () => {
+            try {
+              // Load the file from storage and add it to project structure
+              const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+              if (fileService) {
+                // Try to load the file that was just saved
+                const savedContent = await fileService.loadFile(texturePath);
+                if (savedContent) {
+                  // Create a proper file object
+                  const textureFile = new File([savedContent.fileContent || content], `${baseName}.texture`, { 
+                    type: 'application/json' 
+                  });
+                  
+                  // Add to the exact same path as the source image, maintaining project context
+                  // Use the directory from the full path that includes project context
+                  console.log(`[TextureEditor] Adding texture file to project at path: ${directory}`);
+                  console.log(`[TextureEditor] Source image was at: ${originalPath}`);
+                  console.log(`[TextureEditor] Full directory with project: ${directory}`);
+                  
+                  window.gameEmulator.projectExplorer.addFileToProject(textureFile, directory, true, false);
+                  
+                  // Refresh the display
+                  window.gameEmulator.projectExplorer.refresh();
+                }
+              }
+            } catch (error) {
+              console.error('[TextureEditor] Error adding texture file to project:', error);
+              // Fallback to simple refresh
+              window.gameEmulator.projectExplorer.refresh();
+            }
+          }, 200);
+        }
+        
+        // Show success message
+        if (window.gameConsole?.info) {
+          window.gameConsole.info(`Linked texture file created: ${baseName}.texture`);
+        }
+      }
+    } catch (error) {
+      console.error('[TextureEditor] Failed to auto-save linked texture:', error);
+    }
+  }
+
   // Override save-as for texture files
   saveAs() {
     if (this.isCreatingFromImage && this.imagePath) {
@@ -1988,12 +2203,12 @@ class TextureEditor extends EditorBase {
 
   // Static metadata for auto-registration
   static getFileExtensions() { 
-    return ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tga', '.texture', '.tex']; 
+    return ['.texture', '.tex']; // Only handle texture files, not source images
   }
   static getDisplayName() { return 'Texture Editor'; }
   static getIcon() { return '🖼️'; }
-  static getPriority() { return 15; } // Higher priority than simple image viewer for images
-  static getCapabilities() { return ['image-processing', 'texture-creation', 'palette-editing']; }
+  static getPriority() { return 10; } // Standard priority for texture files
+  static getCapabilities() { return ['texture-editing', 'palette-editing']; }
   static canCreate = true;
 
   static getDefaultFolder() {

@@ -30,6 +30,7 @@ class SimpleImageViewer extends ViewerBase {
     this.processedImage = null;
     this.imageProcessor = new ImageProcessor();
     this.zoom = 1.0;
+    this.userManuallySetZoom = false; // Track if user has manually adjusted zoom
     this.animationFrameId = null;
     this.preloadedFileData = fileData; // Store for use in loadImageFromPath
     this.shouldBeAnimating = false; // Track intended animation state regardless of focus
@@ -48,6 +49,7 @@ class SimpleImageViewer extends ViewerBase {
           <label style="color: #fff; font-size: 12px;">Zoom:</label>
           <input type="range" id="zoomSlider" min="0.1" max="8" step="0.1" value="1" style="width: 150px;">
           <span id="zoomDisplay" style="color: #ccc; font-size: 12px; min-width: 50px;">100%</span>
+          <button id="fitToWindowBtn" style="padding: 4px 8px; background: #555; color: #fff; border: none; border-radius: 3px; font-size: 11px;">Fit to Window</button>
           
           <!-- Animation Controls -->
           <div id="animationControls" style="display: none; margin-left: 20px; gap: 10px; align-items: center;">
@@ -78,8 +80,18 @@ class SimpleImageViewer extends ViewerBase {
     console.log('[SimpleImageViewer] Canvas setup - Context created:', !!this.ctx);
     console.log('[SimpleImageViewer] Canvas element:', this.canvas);
     
-    // Disable image smoothing for pixel art
+    // Disable all image smoothing/anti-aliasing for pixel-perfect rendering
     this.ctx.imageSmoothingEnabled = false;
+    this.ctx.webkitImageSmoothingEnabled = false;
+    this.ctx.mozImageSmoothingEnabled = false;
+    this.ctx.msImageSmoothingEnabled = false;
+    this.ctx.oImageSmoothingEnabled = false;
+    
+    // Set CSS for crisp pixel rendering
+    this.canvas.style.imageRendering = 'pixelated';
+    this.canvas.style.imageRendering = '-moz-crisp-edges';
+    this.canvas.style.imageRendering = '-webkit-crisp-edges';
+    this.canvas.style.imageRendering = 'crisp-edges';
     
     this.setupEventListeners(bodyContainer);
     
@@ -89,11 +101,17 @@ class SimpleImageViewer extends ViewerBase {
 
   setupEventListeners(container) {
     const zoomSlider = container.querySelector('#zoomSlider');
+    const fitToWindowBtn = container.querySelector('#fitToWindowBtn');
     const playPauseBtn = container.querySelector('#playPauseBtn');
     const frameSlider = container.querySelector('#frameSlider');
     
     zoomSlider.addEventListener('input', (e) => {
       this.setZoom(parseFloat(e.target.value));
+    });
+
+    fitToWindowBtn.addEventListener('click', () => {
+      this.fitToContainer();
+      this.redrawCanvas();
     });
 
     playPauseBtn.addEventListener('click', () => {
@@ -107,12 +125,110 @@ class SimpleImageViewer extends ViewerBase {
         this.setCurrentFrame(parseInt(e.target.value));
       }
     });
+
+    // Add trackpad/mouse wheel support for zoom and scroll
+    const canvasContainer = container.querySelector('#imageCanvas').parentElement;
+    
+    canvasContainer.addEventListener('wheel', (e) => {
+      e.preventDefault(); // Prevent default scroll behavior
+      
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch-to-zoom (Ctrl+scroll or Cmd+scroll on Mac)
+        const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
+        const newZoom = this.zoom + zoomDelta;
+        this.setZoom(newZoom);
+      } else {
+        // Normal scroll - let the container handle it naturally
+        // Remove preventDefault for this case so scrolling works
+        e.preventDefault();
+        
+        // Manual scroll handling
+        const scrollDelta = e.deltaY;
+        canvasContainer.scrollTop += scrollDelta;
+        
+        // Handle horizontal scroll if shift is held
+        if (e.shiftKey) {
+          canvasContainer.scrollLeft += e.deltaX || scrollDelta;
+        } else {
+          canvasContainer.scrollLeft += e.deltaX;
+        }
+      }
+    }, { passive: false });
+
+    // Add support for trackpad gestures (if supported)
+    canvasContainer.addEventListener('gesturestart', (e) => {
+      e.preventDefault();
+      this.initialZoom = this.zoom;
+    });
+    
+    canvasContainer.addEventListener('gesturechange', (e) => {
+      e.preventDefault();
+      if (this.initialZoom) {
+        const newZoom = this.initialZoom * e.scale;
+        this.setZoom(newZoom);
+      }
+    });
+    
+    canvasContainer.addEventListener('gestureend', (e) => {
+      e.preventDefault();
+      this.initialZoom = null;
+    });
+
+    // Add resize listener to re-fit image when container size changes
+    this.resizeHandler = () => {
+      if (this.processedImage && !this.userManuallySetZoom) {
+        // Only auto-fit on resize if user hasn't manually adjusted zoom
+        // Small delay to ensure layout has settled
+        setTimeout(() => {
+          this.fitToContainer();
+          this.redrawCanvas();
+        }, 100);
+      } else if (this.processedImage) {
+        // Just redraw at current zoom if user has manually set zoom
+        setTimeout(() => {
+          this.redrawCanvas();
+        }, 100);
+      }
+    };
+    
+    window.addEventListener('resize', this.resizeHandler);
   }
 
   setZoom(newZoom) {
     this.zoom = Math.max(0.1, Math.min(8, newZoom));
+    this.userManuallySetZoom = true; // Mark that user has manually adjusted zoom
     this.updateZoomDisplay();
     this.redrawCanvas();
+  }
+
+  fitToContainer() {
+    if (!this.processedImage || !this.canvas) return;
+    
+    // Get the canvas container dimensions
+    const canvasContainer = this.canvas.parentElement;
+    if (!canvasContainer) return;
+    
+    const containerRect = canvasContainer.getBoundingClientRect();
+    
+    // Account for padding and borders (leave some margin)
+    const availableWidth = containerRect.width - 40; // 20px margin on each side
+    const availableHeight = containerRect.height - 40; // 20px margin on top and bottom
+    
+    // Calculate scale to fit both width and height while maintaining aspect ratio
+    const scaleX = availableWidth / this.processedImage.width;
+    const scaleY = availableHeight / this.processedImage.height;
+    
+    // Use the smaller scale to ensure the image fits completely
+    const fitScale = Math.min(scaleX, scaleY); // Allow scaling up to fit the container
+    
+    console.log('[SimpleImageViewer] Container size:', availableWidth, 'x', availableHeight);
+    console.log('[SimpleImageViewer] Image size:', this.processedImage.width, 'x', this.processedImage.height);
+    console.log('[SimpleImageViewer] Calculated fit scale:', fitScale);
+    
+    // Set the zoom to the calculated fit scale (clamp to valid zoom range)
+    this.zoom = Math.max(0.1, Math.min(8, fitScale));
+    this.userManuallySetZoom = false; // Reset manual flag since this is an automatic fit
+    this.updateZoomDisplay();
   }
 
   toggleAnimation() {
@@ -286,6 +402,10 @@ class SimpleImageViewer extends ViewerBase {
       // Update UI
       this.updateImageInfo();
       this.updateAnimationControls();
+      
+      // Calculate and set initial zoom to fit container
+      this.fitToContainer();
+      
       this.redrawCanvas();
       
       // Auto-start animation ONLY for animated GIFs with multiple frames
@@ -399,6 +519,13 @@ class SimpleImageViewer extends ViewerBase {
     this.canvas.width = displayWidth;
     this.canvas.height = displayHeight;
     
+    // Re-apply anti-aliasing settings after canvas resize
+    this.ctx.imageSmoothingEnabled = false;
+    this.ctx.webkitImageSmoothingEnabled = false;
+    this.ctx.mozImageSmoothingEnabled = false;
+    this.ctx.msImageSmoothingEnabled = false;
+    this.ctx.oImageSmoothingEnabled = false;
+    
     // Clear and draw
     this.ctx.clearRect(0, 0, displayWidth, displayHeight);
     this.ctx.drawImage(currentFrame.image, 0, 0, displayWidth, displayHeight);
@@ -483,6 +610,12 @@ class SimpleImageViewer extends ViewerBase {
     // Clear image processor cache
     if (this.imageProcessor) {
       this.imageProcessor.cache.clear();
+    }
+    
+    // Remove resize listener
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
     }
     
     // Clear canvas references
