@@ -699,6 +699,9 @@ class TextureEditor extends EditorBase {
     
     originalSection.appendChild(this.originalCanvas);
     
+    // Add mouse controls for the original canvas
+    this.setupCanvasMouseControls(this.originalCanvas, 'original');
+    
     // Settings section (between images) - simplified structure
     const settingsSection = document.createElement('div');
     settingsSection.className = 'between-images-settings';
@@ -895,6 +898,9 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Texture output canvas created:', !!this.outputCanvas);
     processedSection.appendChild(this.outputCanvas);
     
+    // Add mouse controls for the output canvas
+    this.setupCanvasMouseControls(this.outputCanvas, 'output');
+    
     previewContainer.appendChild(originalSection);
     previewContainer.appendChild(settingsSection);
     previewContainer.appendChild(processedSection);
@@ -976,6 +982,85 @@ class TextureEditor extends EditorBase {
     }
     
     console.log('[TextureEditor] Applied native resolution scaling - scroll bars will appear if needed');
+  }
+
+  setupCanvasMouseControls(canvas, canvasType) {
+    console.log(`[TextureEditor] Setting up mouse controls for ${canvasType} canvas`);
+    
+    if (!canvas) {
+      console.warn(`[TextureEditor] No canvas provided for ${canvasType} mouse controls`);
+      return;
+    }
+
+    // Get the canvas container (parent element)
+    const canvasContainer = canvas.parentElement;
+    if (!canvasContainer) {
+      console.warn(`[TextureEditor] No container found for ${canvasType} canvas`);
+      return;
+    }
+
+    // Add wheel event for zoom and scroll
+    canvasContainer.addEventListener('wheel', (e) => {
+      e.preventDefault(); // Prevent default scroll behavior
+      
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch-to-zoom (Ctrl+scroll or Cmd+scroll on Mac)
+        const zoomDelta = e.deltaY > 0 ? -0.1 : 0.1;
+        
+        // Get the appropriate zoom slider
+        const scaleSlider = canvasType === 'original' ? this.originalScaleSlider : this.processedScaleSlider;
+        if (scaleSlider) {
+          const currentZoom = parseFloat(scaleSlider.value);
+          const newZoom = Math.max(0.1, Math.min(8.0, currentZoom + zoomDelta));
+          scaleSlider.value = newZoom;
+          
+          // Trigger the scale update
+          this.updatePreviewScale();
+          
+          console.log(`[TextureEditor] ${canvasType} canvas zoom changed to ${newZoom}x via wheel`);
+        }
+      } else {
+        // Normal scroll - handle manually for better control
+        const scrollDelta = e.deltaY;
+        canvasContainer.scrollTop += scrollDelta;
+        
+        // Handle horizontal scroll if shift is held or if there's deltaX
+        if (e.shiftKey) {
+          canvasContainer.scrollLeft += e.deltaX || scrollDelta;
+        } else {
+          canvasContainer.scrollLeft += e.deltaX;
+        }
+      }
+    }, { passive: false });
+
+    // Add trackpad gesture support (for macOS and some Windows trackpads)
+    let initialZoom = 1.0;
+    
+    canvasContainer.addEventListener('gesturestart', (e) => {
+      e.preventDefault();
+      const scaleSlider = canvasType === 'original' ? this.originalScaleSlider : this.processedScaleSlider;
+      if (scaleSlider) {
+        initialZoom = parseFloat(scaleSlider.value);
+      }
+    });
+    
+    canvasContainer.addEventListener('gesturechange', (e) => {
+      e.preventDefault();
+      const scaleSlider = canvasType === 'original' ? this.originalScaleSlider : this.processedScaleSlider;
+      if (scaleSlider && initialZoom) {
+        const newZoom = Math.max(0.1, Math.min(8.0, initialZoom * e.scale));
+        scaleSlider.value = newZoom;
+        this.updatePreviewScale();
+        
+        console.log(`[TextureEditor] ${canvasType} canvas zoom changed to ${newZoom}x via gesture`);
+      }
+    });
+
+    // Make sure the container can scroll
+    canvasContainer.style.overflow = 'auto';
+    canvasContainer.style.cursor = 'default';
+    
+    console.log(`[TextureEditor] Mouse controls added to ${canvasType} canvas`);
   }
 
   toggleSettingsPanel() {
