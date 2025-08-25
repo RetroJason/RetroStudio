@@ -484,12 +484,10 @@ class ProjectExplorer {
     if (['.wav'].includes(ext)) return '🔊';
     if (['.lua'].includes(ext)) return '📜';
     if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
-      // Check if this image has a linked texture file
-      return this.isLinkedFile(name) ? '🖼️🔗' : '🖼️';
+      return '🖼️';
     }
     if (['.texture'].includes(ext)) {
-      // Check if this texture has a linked image file
-      return this.isLinkedFile(name) ? '🎨🔗' : '🎨';
+      return '⚙️';
     }
     
     return '📄';
