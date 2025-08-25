@@ -20,6 +20,24 @@ class ImageData {
     this.format = 'rgba';
     this.filename = '';
     this.metadata = {};
+    
+    // Texture processing cache
+    this.textureCache = {
+      // Source data cache (invalidated by source image changes)
+      sourceData: null,
+      sourceDataHash: null,
+      
+      // Binary data cache (invalidated by format/palette changes)
+      binaryData: null,
+      binaryDataFormat: null,
+      binaryDataPalette: null,
+      binaryDataPaletteHash: null,
+      
+      // Rendered data cache (invalidated by binary data or palette offset changes)
+      renderedData: null,
+      renderedDataPaletteOffset: 0,
+      renderedDataHash: null
+    };
   }
 
   // Static factory methods
@@ -1193,6 +1211,563 @@ class ImageData {
       colors: colors,
       timestamp: Date.now()
     };
+  }
+
+  // ===== TEXTURE PROCESSING METHODS =====
+  
+  /**
+   * Get or generate binary data for a specific texture format
+   * @param {string} format - The texture format (e.g., 'd2_mode_i8', 'd2_mode_i4')
+   * @param {Array} palette - Array of color strings (e.g., ['#FF0000', '#00FF00'])
+   * @returns {Uint8Array} Binary data in the specified format
+   */
+  getBinaryData(format, palette = null) {
+    // Generate cache key
+    const paletteHash = palette ? this.hashArray(palette) : null;
+    const sourceHash = this.getSourceDataHash();
+    
+    // Check if cached binary data is still valid
+    if (this.textureCache.binaryData &&
+        this.textureCache.binaryDataFormat === format &&
+        this.textureCache.binaryDataPaletteHash === paletteHash &&
+        this.textureCache.sourceDataHash === sourceHash) {
+      console.log(`[Image] Using cached binary data for format ${format}`);
+      return this.textureCache.binaryData;
+    }
+    
+    console.log(`[Image] Generating binary data for format ${format}`);
+    
+    // Get source RGBA data
+    const sourceData = this.getSourceRGBAData();
+    if (!sourceData) {
+      console.error('[Image] No source data available for binary conversion');
+      return null;
+    }
+    
+    // Generate binary data based on format
+    let binaryData;
+    if (format.includes('_i8')) {
+      binaryData = this.generateIndexed8Data(sourceData, palette);
+    } else if (format.includes('_i4')) {
+      binaryData = this.generateIndexed4Data(sourceData, palette);
+    } else if (format.includes('_i2')) {
+      binaryData = this.generateIndexed2Data(sourceData, palette);
+    } else if (format.includes('_i1')) {
+      binaryData = this.generateIndexed1Data(sourceData, palette);
+    } else if (format.includes('_rgb565')) {
+      binaryData = this.generateRGB565Data(sourceData);
+    } else if (format.includes('_argb1555')) {
+      binaryData = this.generateARGB1555Data(sourceData);
+    } else if (format.includes('_rgba8888')) {
+      binaryData = this.generateRGBA8888Data(sourceData);
+    } else {
+      console.warn(`[Image] Unsupported format: ${format}, using RGBA8888`);
+      binaryData = this.generateRGBA8888Data(sourceData);
+    }
+    
+    // Cache the result
+    this.textureCache.binaryData = binaryData;
+    this.textureCache.binaryDataFormat = format;
+    this.textureCache.binaryDataPalette = palette;
+    this.textureCache.binaryDataPaletteHash = paletteHash;
+    this.textureCache.sourceDataHash = sourceHash;
+    
+    console.log(`[Image] Generated ${binaryData.length} bytes for format ${format}`);
+    return binaryData;
+  }
+
+  /**
+   * Get rendered 32-bit RGBA data for display
+   * @param {string} format - The texture format
+   * @param {Array} palette - Array of color strings
+   * @param {number} paletteOffset - Offset into the palette (0-255)
+   * @returns {Uint8ClampedArray} 32-bit RGBA data ready for canvas
+   */
+  getRenderedData(format, palette = null, paletteOffset = 0) {
+    // Get binary data first (this handles its own caching)
+    const binaryData = this.getBinaryData(format, palette);
+    if (!binaryData) return null;
+    
+    // Generate cache key for rendered data
+    const binaryHash = this.hashArray(binaryData);
+    
+    // Check if cached rendered data is still valid
+    if (this.textureCache.renderedData &&
+        this.textureCache.renderedDataHash === binaryHash &&
+        this.textureCache.renderedDataPaletteOffset === paletteOffset) {
+      console.log(`[Image] Using cached rendered data`);
+      return this.textureCache.renderedData;
+    }
+    
+    console.log(`[Image] Generating rendered RGBA data from binary format ${format}`);
+    
+    // Convert binary data back to RGBA based on format
+    let rgbaData;
+    if (format.includes('_i8')) {
+      rgbaData = this.renderIndexed8Data(binaryData, palette, paletteOffset);
+    } else if (format.includes('_i4')) {
+      rgbaData = this.renderIndexed4Data(binaryData, palette, paletteOffset);
+    } else if (format.includes('_i2')) {
+      rgbaData = this.renderIndexed2Data(binaryData, palette, paletteOffset);
+    } else if (format.includes('_i1')) {
+      rgbaData = this.renderIndexed1Data(binaryData, palette, paletteOffset);
+    } else if (format.includes('_rgb565')) {
+      rgbaData = this.renderRGB565Data(binaryData);
+    } else if (format.includes('_argb1555')) {
+      rgbaData = this.renderARGB1555Data(binaryData);
+    } else if (format.includes('_rgba8888')) {
+      rgbaData = new Uint8ClampedArray(binaryData);
+    } else {
+      // Fallback to source data
+      rgbaData = this.getSourceRGBAData();
+    }
+    
+    // Cache the result
+    this.textureCache.renderedData = rgbaData;
+    this.textureCache.renderedDataHash = binaryHash;
+    this.textureCache.renderedDataPaletteOffset = paletteOffset;
+    
+    console.log(`[Image] Generated ${rgbaData.length} bytes of RGBA data`);
+    return rgbaData;
+  }
+
+  /**
+   * Clear texture cache (call when source image changes)
+   */
+  clearTextureCache() {
+    console.log('[Image] Clearing texture cache');
+    this.textureCache.sourceData = null;
+    this.textureCache.sourceDataHash = null;
+    this.textureCache.binaryData = null;
+    this.textureCache.binaryDataFormat = null;
+    this.textureCache.binaryDataPalette = null;
+    this.textureCache.binaryDataPaletteHash = null;
+    this.textureCache.renderedData = null;
+    this.textureCache.renderedDataPaletteOffset = 0;
+    this.textureCache.renderedDataHash = null;
+  }
+
+  /**
+   * Get source RGBA data from current frame
+   */
+  getSourceRGBAData() {
+    const sourceHash = this.getSourceDataHash();
+    
+    // Check cache
+    if (this.textureCache.sourceData && this.textureCache.sourceDataHash === sourceHash) {
+      return this.textureCache.sourceData;
+    }
+    
+    console.log('[Image] Generating source RGBA data');
+    
+    const frame = this.getCurrentFrame();
+    if (!frame || !frame.colors) {
+      console.error('[Image] No frame data available');
+      return null;
+    }
+    
+    const rgbaData = new Uint8ClampedArray(this.width * this.height * 4);
+    
+    for (let i = 0; i < frame.colors.length; i++) {
+      const color = frame.colors[i];
+      const offset = i * 4;
+      
+      rgbaData[offset] = color.r;     // R
+      rgbaData[offset + 1] = color.g; // G
+      rgbaData[offset + 2] = color.b; // B
+      rgbaData[offset + 3] = color.a; // A
+    }
+    
+    // Cache the result
+    this.textureCache.sourceData = rgbaData;
+    this.textureCache.sourceDataHash = sourceHash;
+    
+    return rgbaData;
+  }
+
+  /**
+   * Generate hash for source data to detect changes
+   */
+  getSourceDataHash() {
+    const frame = this.getCurrentFrame();
+    if (!frame || !frame.colors) return null;
+    
+    // Create a simple hash based on image dimensions and a sampling of pixels
+    let hash = `${this.width}x${this.height}`;
+    const sampleSize = Math.min(100, frame.colors.length);
+    const step = Math.max(1, Math.floor(frame.colors.length / sampleSize));
+    
+    for (let i = 0; i < frame.colors.length; i += step) {
+      const color = frame.colors[i];
+      hash += `${color.r},${color.g},${color.b},${color.a};`;
+    }
+    
+    return hash;
+  }
+
+  /**
+   * Generate hash for an array
+   */
+  hashArray(arr) {
+    if (!arr) return null;
+    return arr.join(',');
+  }
+
+  // ===== FORMAT-SPECIFIC GENERATION METHODS =====
+
+  /**
+   * Generate 8-bit indexed data
+   */
+  generateIndexed8Data(sourceData, palette) {
+    const pixelCount = this.width * this.height;
+    const indexData = new Uint8Array(pixelCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest palette color
+      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette);
+      indexData[i] = paletteIndex;
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 4-bit indexed data (packed as nibbles)
+   */
+  generateIndexed4Data(sourceData, palette) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 2);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest palette color (limited to 16 colors)
+      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x0F;
+      
+      const byteIndex = Math.floor(i / 2);
+      if (i % 2 === 0) {
+        // Even pixel (lower nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0xF0) | paletteIndex;
+      } else {
+        // Odd pixel (upper nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0x0F) | (paletteIndex << 4);
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 2-bit indexed data
+   */
+  generateIndexed2Data(sourceData, palette) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 4);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest palette color (limited to 4 colors)
+      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x03;
+      
+      const byteIndex = Math.floor(i / 4);
+      const bitShift = (i % 4) * 2;
+      indexData[byteIndex] |= paletteIndex << bitShift;
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 1-bit indexed data
+   */
+  generateIndexed1Data(sourceData, palette) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 8);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest palette color (limited to 2 colors)
+      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x01;
+      
+      const byteIndex = Math.floor(i / 8);
+      const bitShift = i % 8;
+      if (paletteIndex) {
+        indexData[byteIndex] |= 1 << bitShift;
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate RGB565 data (16-bit)
+   */
+  generateRGB565Data(sourceData) {
+    const pixelCount = this.width * this.height;
+    const rgb565Data = new Uint16Array(pixelCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset] >> 3;     // 5 bits
+      const g = sourceData[offset + 1] >> 2; // 6 bits  
+      const b = sourceData[offset + 2] >> 3; // 5 bits
+      
+      rgb565Data[i] = (r << 11) | (g << 5) | b;
+    }
+    
+    return new Uint8Array(rgb565Data.buffer);
+  }
+
+  /**
+   * Generate ARGB1555 data (16-bit)
+   */
+  generateARGB1555Data(sourceData) {
+    const pixelCount = this.width * this.height;
+    const argb1555Data = new Uint16Array(pixelCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset] >> 3;     // 5 bits
+      const g = sourceData[offset + 1] >> 3; // 5 bits
+      const b = sourceData[offset + 2] >> 3; // 5 bits
+      const a = sourceData[offset + 3] > 127 ? 1 : 0; // 1 bit
+      
+      argb1555Data[i] = (a << 15) | (r << 10) | (g << 5) | b;
+    }
+    
+    return new Uint8Array(argb1555Data.buffer);
+  }
+
+  /**
+   * Generate RGBA8888 data (32-bit)
+   */
+  generateRGBA8888Data(sourceData) {
+    return new Uint8Array(sourceData);
+  }
+
+  /**
+   * Find closest color in palette
+   */
+  findClosestPaletteColor(r, g, b, a, palette) {
+    if (!palette || palette.length === 0) return 0;
+    
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+    
+    for (let i = 0; i < palette.length; i++) {
+      const paletteColor = this.parseColor(palette[i]);
+      if (!paletteColor) continue;
+      
+      // Calculate color distance (simple RGB distance)
+      const dr = r - paletteColor.r;
+      const dg = g - paletteColor.g;
+      const db = b - paletteColor.b;
+      const distance = dr * dr + dg * dg + db * db;
+      
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+    
+    return closestIndex;
+  }
+
+  /**
+   * Parse color string to RGB values
+   */
+  parseColor(colorStr) {
+    if (!colorStr) return null;
+    
+    if (colorStr.startsWith('#')) {
+      const hex = colorStr.slice(1);
+      if (hex.length === 6) {
+        return {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16),
+          a: 255
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  // ===== FORMAT-SPECIFIC RENDERING METHODS =====
+
+  /**
+   * Render 8-bit indexed data to RGBA
+   */
+  renderIndexed8Data(indexData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const paletteIndex = (indexData[i] + paletteOffset) % (palette?.length || 256);
+      const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
+      
+      const offset = i * 4;
+      rgbaData[offset] = color.r;
+      rgbaData[offset + 1] = color.g;
+      rgbaData[offset + 2] = color.b;
+      rgbaData[offset + 3] = color.a;
+    }
+    
+    return rgbaData;
+  }
+
+  /**
+   * Render 4-bit indexed data to RGBA
+   */
+  renderIndexed4Data(indexData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const byteIndex = Math.floor(i / 2);
+      const isOddPixel = i % 2 === 1;
+      
+      let paletteIndex;
+      if (isOddPixel) {
+        paletteIndex = (indexData[byteIndex] >> 4) & 0x0F;
+      } else {
+        paletteIndex = indexData[byteIndex] & 0x0F;
+      }
+      
+      paletteIndex = (paletteIndex + paletteOffset) % (palette?.length || 16);
+      const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
+      
+      const offset = i * 4;
+      rgbaData[offset] = color.r;
+      rgbaData[offset + 1] = color.g;
+      rgbaData[offset + 2] = color.b;
+      rgbaData[offset + 3] = color.a;
+    }
+    
+    return rgbaData;
+  }
+
+  /**
+   * Render 2-bit indexed data to RGBA
+   */
+  renderIndexed2Data(indexData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const byteIndex = Math.floor(i / 4);
+      const bitShift = (i % 4) * 2;
+      const paletteIndex = (((indexData[byteIndex] >> bitShift) & 0x03) + paletteOffset) % (palette?.length || 4);
+      
+      const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
+      
+      const offset = i * 4;
+      rgbaData[offset] = color.r;
+      rgbaData[offset + 1] = color.g;
+      rgbaData[offset + 2] = color.b;
+      rgbaData[offset + 3] = color.a;
+    }
+    
+    return rgbaData;
+  }
+
+  /**
+   * Render 1-bit indexed data to RGBA
+   */
+  renderIndexed1Data(indexData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const byteIndex = Math.floor(i / 8);
+      const bitShift = i % 8;
+      const paletteIndex = (((indexData[byteIndex] >> bitShift) & 0x01) + paletteOffset) % (palette?.length || 2);
+      
+      const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
+      
+      const offset = i * 4;
+      rgbaData[offset] = color.r;
+      rgbaData[offset + 1] = color.g;
+      rgbaData[offset + 2] = color.b;
+      rgbaData[offset + 3] = color.a;
+    }
+    
+    return rgbaData;
+  }
+
+  /**
+   * Render RGB565 data to RGBA
+   */
+  renderRGB565Data(binaryData) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    const rgb565Data = new Uint16Array(binaryData.buffer);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const rgb565 = rgb565Data[i];
+      
+      const r = ((rgb565 >> 11) & 0x1F) << 3; // 5 bits to 8 bits
+      const g = ((rgb565 >> 5) & 0x3F) << 2;  // 6 bits to 8 bits
+      const b = (rgb565 & 0x1F) << 3;         // 5 bits to 8 bits
+      
+      const offset = i * 4;
+      rgbaData[offset] = r;
+      rgbaData[offset + 1] = g;
+      rgbaData[offset + 2] = b;
+      rgbaData[offset + 3] = 255; // Full alpha
+    }
+    
+    return rgbaData;
+  }
+
+  /**
+   * Render ARGB1555 data to RGBA
+   */
+  renderARGB1555Data(binaryData) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    const argb1555Data = new Uint16Array(binaryData.buffer);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const argb1555 = argb1555Data[i];
+      
+      const a = (argb1555 >> 15) & 0x01 ? 255 : 0; // 1 bit to 8 bits
+      const r = ((argb1555 >> 10) & 0x1F) << 3;    // 5 bits to 8 bits
+      const g = ((argb1555 >> 5) & 0x1F) << 3;     // 5 bits to 8 bits
+      const b = (argb1555 & 0x1F) << 3;            // 5 bits to 8 bits
+      
+      const offset = i * 4;
+      rgbaData[offset] = r;
+      rgbaData[offset + 1] = g;
+      rgbaData[offset + 2] = b;
+      rgbaData[offset + 3] = a;
+    }
+    
+    return rgbaData;
   }
 
   // Texture format options - moved from TextureEditor for better organization
