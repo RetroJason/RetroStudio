@@ -709,8 +709,9 @@ class TextureEditor extends EditorBase {
       display: flex;
       flex-direction: row;
       transition: width 0.3s ease;
-      overflow: hidden;
+      overflow: visible;
       min-height: 400px;
+      max-height: calc(100vh - 200px);
       width: 20px;
       min-width: 20px;
       margin: 0 10px;
@@ -749,7 +750,9 @@ class TextureEditor extends EditorBase {
     settingsContent.className = 'settings-content';
     settingsContent.style.cssText = `
       transition: all 0.3s ease;
-      overflow: hidden;
+      overflow-y: auto;
+      overflow-x: hidden;
+      max-height: calc(100vh - 200px);
       background: transparent;
       border: none;
       width: 0px;
@@ -1090,7 +1093,9 @@ class TextureEditor extends EditorBase {
       this.settingsContent.style.opacity = '1';
       this.settingsContent.style.padding = '5px';
       this.settingsContent.style.minWidth = '250px';
-      this.settingsContent.style.overflow = 'hidden';
+      this.settingsContent.style.overflowY = 'auto';
+      this.settingsContent.style.overflowX = 'hidden';
+      this.settingsContent.style.maxHeight = 'calc(100vh - 200px)'; // Allow scrolling but limit height
       this.settingsContent.style.display = 'block';
       
       // Update toggle bar text only
