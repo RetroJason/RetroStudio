@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>D2 Export Test Suite</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #2d2d2d;
+            color: #ffffff;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #555;
+            background: #3d3d3d;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #1e1e1e;
+            white-space: pre-wrap;
+            font-size: 12px;
+        }
+        .error {
+            color: #ff6b6b;
+        }
+        .success {
+            color: #51cf66;
+        }
+        .info {
+            color: #74c0fc;
+        }
+        canvas {
+            border: 1px solid #666;
+            margin: 10px 0;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #495057;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #6c757d;
+        }
+    </style>
+</head>
+<body>
+    <h1>D2 Export Test Suite</h1>
+    
+    <div class="test-section">
+        <h2>Auto Test</h2>
+        <button onclick="runFullAutoTest()" style="background: #0078d4; color: white; padding: 15px 30px; font-size: 16px; margin-right: 10px;">🚀 Run Full Auto Test (test.png + test.act)</button>
+        <button onclick="clearAllLogs()">Clear All Logs</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Manual Tests</h2>
+        <input type="file" id="imageInput" accept="image/*">
+        <button onclick="loadTestImage()">Load Image</button>
+        <input type="file" id="paletteInput" accept=".act,.pal">
+        <button onclick="loadTestPalette()">Load Palette</button>
+        <button onclick="testD2Export()">Run D2 Export Test</button>
+        <canvas id="sourceCanvas" width="200" height="200"></canvas>
+    </div>
+
+    <div class="test-section">
+        <h2>Results</h2>
+        <div id="autoTestInfo" class="test-result"></div>
+        <div id="imageInfo" class="test-result"></div>
+        <div id="paletteInfo" class="test-result"></div>
+        <div id="exportInfo" class="test-result"></div>
+        <div id="vectorInfo" class="test-result"></div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="scripts/graphics/palette.js"></script>
+    <script src="scripts/graphics/image.js"></script>
+
+    <script>
+        // Test state
+        let testImage = null;
+        let testPalette = null;
+        let testMetadata = null;
+        let testImageData = null;
+
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            console.log(`[D2Test][${type.toUpperCase()}] ${message}`);
+        }
+
+        function clearLog(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        async function loadTestImage() {
+            clearLog('imageInfo');
+            const input = document.getElementById('imageInput');
+            
+            if (!input.files || input.files.length === 0) {
+                log('imageInfo', 'Please select an image file first', 'error');
+                return;
+            }
+
+            try {
+                const file = input.files[0];
+                log('imageInfo', `Loading image: ${file.name} (${file.size} bytes)`);
+
+                const canvas = document.getElementById('sourceCanvas');
+                const ctx = canvas.getContext('2d');
+                
+                testImage = new Image();
+                testImage.onload = () => {
+                    // Draw to canvas for visualization
+                    canvas.width = Math.min(testImage.width, 400);
+                    canvas.height = Math.min(testImage.height, 300);
+                    ctx.drawImage(testImage, 0, 0, canvas.width, canvas.height);
+                    
+                    log('imageInfo', `Image loaded successfully: ${testImage.width}x${testImage.height}`, 'success');
+                    log('imageInfo', `Display size: ${canvas.width}x${canvas.height}`);
+                };
+                
+                testImage.onerror = () => {
+                    log('imageInfo', 'Failed to load image', 'error');
+                };
+                
+                testImage.src = URL.createObjectURL(file);
+                
+            } catch (error) {
+                log('imageInfo', `Error loading image: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadTestPalette() {
+            clearLog('paletteInfo');
+            const input = document.getElementById('paletteInput');
+            
+            if (!input.files || input.files.length === 0) {
+                log('paletteInfo', 'Please select a palette file first', 'error');
+                return;
+            }
+
+            try {
+                const file = input.files[0];
+                log('paletteInfo', `Loading palette: ${file.name} (${file.size} bytes)`);
+
+                const arrayBuffer = await file.arrayBuffer();
+                testPalette = new Palette();
+                
+                // Use the correct API - loadFromContent with filename
+                await testPalette.loadFromContent(arrayBuffer, file.name);
+                log('paletteInfo', `Palette loaded: ${testPalette.colors.length} colors`, 'success');
+
+                // Show first few colors for verification
+                const colorSample = testPalette.colors.slice(0, 8).map((color, i) => {
+                    if (typeof color === 'string') {
+                        return `[${i}] ${color}`;
+                    } else {
+                        return `[${i}] RGB(${color.r}, ${color.g}, ${color.b})`;
+                    }
+                }).join(', ');
+                log('paletteInfo', `Sample colors: ${colorSample}`);
+                
+            } catch (error) {
+                log('paletteInfo', `Error loading palette: ${error.message}`, 'error');
+            }
+        }
+
+        function createTestPalette() {
+            clearLog('paletteInfo');
+            log('paletteInfo', 'Creating test palette...');
+
+            try {
+                testPalette = new Palette();
+                
+                // Create a simple 16-color test palette
+                const testColors = [
+                    {r: 0, g: 0, b: 0},       // Black
+                    {r: 255, g: 255, b: 255}, // White
+                    {r: 255, g: 0, b: 0},     // Red
+                    {r: 0, g: 255, b: 0},     // Green
+                    {r: 0, g: 0, b: 255},     // Blue
+                    {r: 255, g: 255, b: 0},   // Yellow
+                    {r: 255, g: 0, b: 255},   // Magenta
+                    {r: 0, g: 255, b: 255},   // Cyan
+                    {r: 128, g: 128, b: 128}, // Gray
+                    {r: 128, g: 0, b: 0},     // Dark Red
+                    {r: 0, g: 128, b: 0},     // Dark Green
+                    {r: 0, g: 0, b: 128},     // Dark Blue
+                    {r: 255, g: 128, b: 0},   // Orange
+                    {r: 128, g: 0, b: 128},   // Purple
+                    {r: 0, g: 128, b: 128},   // Teal
+                    {r: 192, g: 192, b: 192}  // Light Gray
+                ];
+
+                testPalette.colors = testColors;
+                
+                log('paletteInfo', `Test palette created: ${testPalette.colors.length} colors`, 'success');
+                
+                // Show all colors
+                const colorList = testPalette.colors.map((c, i) => 
+                    `[${i.toString().padStart(2)}] RGB(${c.r.toString().padStart(3)}, ${c.g.toString().padStart(3)}, ${c.b.toString().padStart(3)})`
+                ).join('\n');
+                log('paletteInfo', `Test palette colors:\n${colorList}`);
+                
+            } catch (error) {
+                log('paletteInfo', `Error creating test palette: ${error.message}`, 'error');
+            }
+        }
+
+        function createTestMetadata() {
+            clearLog('metadataInfo');
+            log('metadataInfo', 'Creating test metadata...');
+
+            try {
+                if (!testImage) {
+                    throw new Error('Please load a test image first');
+                }
+
+                testMetadata = {
+                    width: testImage.width,
+                    height: testImage.height,
+                    colorDepth: 8,
+                    palette: testPalette ? "test_palette" : null,
+                    transparentColor: "#FF00FF",
+                    useRLE: false,
+                    meta: {
+                        createdAt: new Date().toISOString(),
+                        autoGenerated: false
+                    }
+                };
+
+                log('metadataInfo', `Test metadata created:`, 'success');
+                log('metadataInfo', `Dimensions: ${testMetadata.width} × ${testMetadata.height}`);
+                log('metadataInfo', `Color Depth: ${testMetadata.colorDepth}-bit`);
+                log('metadataInfo', `Palette: ${testMetadata.palette || 'none'}`);
+                log('metadataInfo', `Transparent Color: ${testMetadata.transparentColor}`);
+                log('metadataInfo', `RLE Compression: ${testMetadata.useRLE ? 'enabled' : 'disabled'}`);
+
+            } catch (error) {
+                log('metadataInfo', `Error creating metadata: ${error.message}`, 'error');
+            }
+        }
+
+        async function testD2Export() {
+            clearLog('exportInfo');
+            log('exportInfo', 'Starting D2 export test...');
+
+            try {
+                if (!testImage) {
+                    throw new Error('Please load a test image first');
+                }
+                if (!testMetadata) {
+                    throw new Error('Please create test metadata first');
+                }
+
+                log('exportInfo', 'Step 1: Creating ImageData instance...');
+                testImageData = new ImageData();
+
+                log('exportInfo', 'Step 2: Loading from image element...');
+                testImageData.loadFromImageElement(testImage);
+                log('exportInfo', `Image loaded: ${testImageData.width}x${testImageData.height}, ${testImageData.frames.length} frames`, 'success');
+
+                if (testPalette) {
+                    log('exportInfo', 'Step 3: Setting palette...');
+                    testImageData.palette = testPalette;
+                    log('exportInfo', `Palette set: ${testPalette.colors.length} colors`, 'success');
+                }
+
+                log('exportInfo', 'Step 4: Exporting to D2 binary...');
+                log('exportInfo', 'Using format: ALPHA8 (' + ImageData.D2_FORMAT.ALPHA8 + ')');
+                log('exportInfo', 'Source RGBA data length: ' + testImageData.frames[0].data.length + ' bytes');
+                log('exportInfo', 'Expected ALPHA8 data length: ' + (testImageData.width * testImageData.height) + ' bytes');
+                
+                const d2Buffer = testImageData.exportToD2Binary({
+                    format: ImageData.D2_FORMAT.ALPHA8,
+                    useRLE: false,
+                    flags: 0
+                });
+                log('exportInfo', `D2 export completed: ${d2Buffer.byteLength} bytes`, 'success');
+
+                // Analyze the D2 buffer
+                const view = new DataView(d2Buffer);
+                const header = {
+                    magic: view.getUint16(0, true),
+                    width: view.getUint16(2, true),
+                    height: view.getUint16(4, true),
+                    format: view.getUint8(6),
+                    flags: view.getUint8(7),
+                    prerotation: view.getUint8(8),
+                    paletteNameLength: view.getUint8(9)
+                };
+
+                log('exportInfo', 'D2 Header Analysis:');
+                log('exportInfo', `Magic: 0x${header.magic.toString(16).toUpperCase()} ${header.magic === 0x3244 ? '✓' : '✗'}`);
+                log('exportInfo', `Dimensions: ${header.width} × ${header.height}`);
+                log('exportInfo', `Format: ${header.format} (${getFormatName(header.format)})`);
+                log('exportInfo', `Flags: ${header.flags}`);
+                log('exportInfo', `Prerotation: ${header.prerotation}`);
+                log('exportInfo', `Palette Name Length: ${header.paletteNameLength}`);
+
+                const headerSize = 10 + header.paletteNameLength;
+                const dataSize = d2Buffer.byteLength - headerSize;
+                log('exportInfo', `Header Size: ${headerSize} bytes`);
+                log('exportInfo', `Data Size: ${dataSize} bytes`);
+
+                if (dataSize === 0) {
+                    log('exportInfo', 'WARNING: No pixel data in D2 file!', 'error');
+                } else {
+                    log('exportInfo', `Expected pixel data size: ${header.width * header.height} bytes`);
+                    log('exportInfo', `Actual pixel data size: ${dataSize} bytes`);
+                    
+                    if (dataSize === header.width * header.height) {
+                        log('exportInfo', 'Pixel data size matches expected uncompressed size ✓', 'success');
+                    } else {
+                        log('exportInfo', 'Pixel data size mismatch - may be compressed or have issue', 'error');
+                    }
+                }
+
+                // Save test vector for analysis
+                window.testD2Buffer = d2Buffer;
+                window.testImageData = testImageData;
+
+            } catch (error) {
+                log('exportInfo', `Error during D2 export: ${error.message}`, 'error');
+                console.error('D2 Export Error:', error);
+            }
+        }
+
+        function getFormatName(format) {
+            const formats = {
+                0: 'ALPHA8',
+                1: 'RGB565',
+                2: 'RGBA4444',
+                3: 'RGBA8888',
+                4: 'INDEXED'
+            };
+            return formats[format] || 'Unknown';
+        }
+
+        function analyzeTestVectors() {
+            clearLog('vectorInfo');
+            log('vectorInfo', 'Analyzing test vectors...');
+
+            try {
+                if (!window.testD2Buffer) {
+                    throw new Error('No test D2 buffer available. Run D2 export test first.');
+                }
+
+                const buffer = window.testD2Buffer;
+                const imageData = window.testImageData;
+
+                log('vectorInfo', '=== TEST VECTOR ANALYSIS ===');
+                log('vectorInfo', `Source Image: ${imageData.width}x${imageData.height}`);
+                log('vectorInfo', `Source Frames: ${imageData.frames.length}`);
+                log('vectorInfo', `Source Palette: ${imageData.palette ? imageData.palette.colors.length + ' colors' : 'none'}`);
+
+                // Hex dump of first 64 bytes
+                const hexDump = [];
+                const uint8View = new Uint8Array(buffer);
+                for (let i = 0; i < Math.min(64, buffer.byteLength); i += 16) {
+                    const row = [];
+                    const ascii = [];
+                    for (let j = 0; j < 16 && (i + j) < buffer.byteLength; j++) {
+                        const byte = uint8View[i + j];
+                        row.push(byte.toString(16).padStart(2, '0').toUpperCase());
+                        ascii.push(byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.');
+                    }
+                    const offset = i.toString(16).padStart(8, '0').toUpperCase();
+                    hexDump.push(`${offset}: ${row.join(' ').padEnd(47)} | ${ascii.join('')}`);
+                }
+
+                log('vectorInfo', 'D2 Binary Hex Dump (first 64 bytes):');
+                log('vectorInfo', hexDump.join('\n'));
+
+                // Debug intermediate processing steps
+                if (imageData.frames && imageData.frames.length > 0) {
+                    const frame = imageData.frames[0];
+                    log('vectorInfo', `First frame canvas: ${frame.canvas.width}x${frame.canvas.height}`);
+                    
+                    // Get a small sample of pixel data
+                    const ctx = frame.canvas.getContext('2d');
+                    const imageDataSample = ctx.getImageData(0, 0, Math.min(4, frame.canvas.width), 1);
+                    const pixels = [];
+                    for (let i = 0; i < imageDataSample.data.length; i += 4) {
+                        const r = imageDataSample.data[i];
+                        const g = imageDataSample.data[i + 1];
+                        const b = imageDataSample.data[i + 2];
+                        const a = imageDataSample.data[i + 3];
+                        pixels.push(`RGBA(${r},${g},${b},${a})`);
+                    }
+                    log('vectorInfo', `Sample pixels: ${pixels.join(', ')}`);
+                }
+
+                log('vectorInfo', '=== END TEST VECTOR ANALYSIS ===', 'success');
+
+            } catch (error) {
+                log('vectorInfo', `Error analyzing test vectors: ${error.message}`, 'error');
+            }
+        }
+
+        // Clear all logs
+        function clearAllLogs() {
+            clearLog('autoTestInfo');
+            clearLog('imageInfo');
+            clearLog('paletteInfo');
+            clearLog('exportInfo');
+            clearLog('vectorInfo');
+        }
+
+        // Auto test function that loads test.png and test.act automatically
+        async function runFullAutoTest() {
+            clearAllLogs();
+            log('autoTestInfo', '=== STARTING FULL AUTO TEST ===');
+            log('autoTestInfo', 'Loading test.png and test.act automatically...');
+
+            try {
+                // Step 1: Load test.png
+                log('autoTestInfo', 'Step 1: Loading test.png...');
+                const imageResponse = await fetch('test.png');
+                if (!imageResponse.ok) {
+                    throw new Error('test.png not found. Please ensure test.png is in the root directory.');
+                }
+                const imageBlob = await imageResponse.blob();
+                
+                // Create image element
+                testImage = new Image();
+                await new Promise((resolve, reject) => {
+                    testImage.onload = resolve;
+                    testImage.onerror = reject;
+                    testImage.src = URL.createObjectURL(imageBlob);
+                });
+                
+                // Draw to canvas
+                const canvas = document.getElementById('sourceCanvas');
+                const ctx = canvas.getContext('2d');
+                canvas.width = Math.min(testImage.width, 400);
+                canvas.height = Math.min(testImage.height, 300);
+                ctx.drawImage(testImage, 0, 0, canvas.width, canvas.height);
+                
+                log('autoTestInfo', `✓ Image loaded: ${testImage.width}x${testImage.height}`, 'success');
+
+                // Step 2: Load test.act
+                log('autoTestInfo', 'Step 2: Loading test.act...');
+                const paletteResponse = await fetch('test.act');
+                if (!paletteResponse.ok) {
+                    log('autoTestInfo', 'test.act not found, creating test palette instead...');
+                    testPalette = createBasicTestPalette();
+                } else {
+                    const paletteArrayBuffer = await paletteResponse.arrayBuffer();
+                    testPalette = new Palette();
+                    await testPalette.loadFromContent(paletteArrayBuffer, 'test.act');
+                }
+                log('autoTestInfo', `✓ Palette loaded: ${testPalette.colors.length} colors`, 'success');
+
+                // Step 3: Create ImageData and export D2
+                log('autoTestInfo', 'Step 3: Creating ImageData and exporting to D2...');
+                testImageData = new ImageData();
+                testImageData.loadFromImageElement(testImage);
+                testImageData.palette = testPalette;
+                
+                log('autoTestInfo', `ImageData created: ${testImageData.width}x${testImageData.height}`);
+                log('autoTestInfo', 'Using format: I8 (Indexed 8-bit) (' + ImageData.D2_FORMAT.I8 + ')');
+                log('autoTestInfo', 'Frames available: ' + testImageData.frames.length);
+                
+                // Debug frame structure
+                if (testImageData.frames.length > 0) {
+                    const frame = testImageData.frames[0];
+                    log('autoTestInfo', 'Frame keys: ' + Object.keys(frame).join(', '));
+                    if (frame.colors) {
+                        log('autoTestInfo', 'Colors array length: ' + frame.colors.length);
+                        log('autoTestInfo', 'First color: ' + JSON.stringify(frame.colors[0]));
+                    }
+                }
+                
+                log('autoTestInfo', 'Expected I8 data length: ' + (testImageData.width * testImageData.height) + ' bytes (1 byte per pixel)');
+                
+                const d2Buffer = testImageData.exportToD2Binary({
+                    format: ImageData.D2_FORMAT.I8,  // Use I8 (indexed) instead of ALPHA8
+                    useRLE: false,
+                    flags: 0,
+                    palette: testPalette.colors  // Include the palette
+                });
+                
+                log('autoTestInfo', `✓ D2 export completed: ${d2Buffer.byteLength} bytes`, 'success');
+
+                // Step 4: Analyze the result
+                const view = new DataView(d2Buffer);
+                const formatByte = view.getUint8(8);
+                const header = {
+                    magic: view.getUint16(0, true),
+                    width: view.getUint16(2, true),
+                    height: view.getUint16(4, true),
+                    prerotation: view.getUint8(6),
+                    flags: view.getUint8(7),
+                    formatByte: formatByte,
+                    format: formatByte & 0x0F,  // Extract just the format bits
+                    isRLE: (formatByte & 0x20) !== 0,
+                    isIndexed: (formatByte & 0x40) !== 0
+                };
+
+                log('autoTestInfo', 'D2 Header Analysis:');
+                log('autoTestInfo', `Magic: 0x${header.magic.toString(16)} ${header.magic === 0x3244 ? '✓' : '✗'}`);
+                log('autoTestInfo', `Dimensions: ${header.width} × ${header.height}`);
+                log('autoTestInfo', `Format Byte: 0x${header.formatByte.toString(16).padStart(2, '0')} (${header.formatByte})`);
+                log('autoTestInfo', `Format: ${header.format} (${Object.keys(ImageData.D2_FORMAT).find(k => ImageData.D2_FORMAT[k] === header.format) || 'Unknown'})`);
+                log('autoTestInfo', `Is Indexed: ${header.isIndexed ? 'Yes' : 'No'}`);
+                log('autoTestInfo', `Is RLE: ${header.isRLE ? 'Yes' : 'No'}`);
+                log('autoTestInfo', `Header Size: 25 bytes`);
+                log('autoTestInfo', `Total Size: ${d2Buffer.byteLength} bytes`);
+                
+                // For I8 format, calculate palette size
+                const expectedPaletteSize = header.isIndexed ? 256 * 4 : 0; // 256 colors × 4 bytes per color
+                const actualDataSize = d2Buffer.byteLength - 25 - expectedPaletteSize;
+                log('autoTestInfo', `Expected Palette Size: ${expectedPaletteSize} bytes`);
+                log('autoTestInfo', `Actual Pixel Data Size: ${actualDataSize} bytes`);
+                log('autoTestInfo', `Expected Pixel Data Size: ${header.width * header.height} bytes (for I8: 1 byte per pixel)`);
+                
+                const sizeMatch = actualDataSize === (header.width * header.height);
+                log('autoTestInfo', `Size Match: ${sizeMatch ? '✓ CORRECT' : '✗ INCORRECT'}`, sizeMatch ? 'success' : 'error');
+
+                // Show hex dump of first 32 bytes
+                const hexDump = [];
+                for (let i = 0; i < Math.min(32, d2Buffer.byteLength); i += 16) {
+                    const row = [];
+                    const ascii = [];
+                    for (let j = 0; j < 16 && i + j < d2Buffer.byteLength; j++) {
+                        const byte = view.getUint8(i + j);
+                        row.push(byte.toString(16).padStart(2, '0').toUpperCase());
+                        ascii.push(byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : '.');
+                    }
+                    const offset = i.toString(16).padStart(8, '0').toUpperCase();
+                    hexDump.push(`${offset}: ${row.join(' ').padEnd(47)} | ${ascii.join('')}`);
+                }
+                log('autoTestInfo', 'Hex dump (first 32 bytes):');
+                log('autoTestInfo', hexDump.join('\n'));
+
+                log('autoTestInfo', '=== AUTO TEST COMPLETE ===', 'success');
+
+            } catch (error) {
+                log('autoTestInfo', `Auto test failed: ${error.message}`, 'error');
+                console.error('Auto test error:', error);
+            }
+        }
+
+        // Helper function to create a basic test palette
+        function createBasicTestPalette() {
+            const palette = new Palette();
+            palette.colors = [
+                '#000000', '#800000', '#008000', '#808000',
+                '#000080', '#800080', '#008080', '#c0c0c0',
+                '#808080', '#ff0000', '#00ff00', '#ffff00',
+                '#0000ff', '#ff00ff', '#00ffff', '#ffffff'
+            ];
+            return palette;
+        }
+
+        // Auto-run some tests when page loads
+        window.addEventListener('load', () => {
+            log('autoTestInfo', '🚀 D2 Export Test Suite Ready');
+            log('autoTestInfo', 'Click "Run Full Auto Test" to automatically test with test.png and test.act');
+        });
+    </script>
+</body>
+</html>

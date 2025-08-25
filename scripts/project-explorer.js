@@ -1043,7 +1043,7 @@ class ProjectExplorer {
       console.log('[ProjectExplorer] Image file detected, will create texture file:', finalFileName);
       persistDone.then(() => {
         console.log('[ProjectExplorer] Persistence done, creating texture file for:', finalFileName);
-        this.createTextureFileForImage(uiFullPath, path, finalFileName);
+        this.openTextureEditorForImage(uiFullPath, path, finalFileName);
       });
     }
     
@@ -2110,21 +2110,35 @@ class ProjectExplorer {
     }
     
     if (!component) {
-      // Get all compatible components (editors and viewers)
-      const allComponents = componentRegistry.getComponentsForExtension(extension);
-      console.log(`[ProjectExplorer] Found ${allComponents.length} total components for ${extension}:`, allComponents.map(c => c.name));
-      
-      // Prefer editors over viewers for double-click
-      const editors = allComponents.filter(c => c.type === 'editor');
-      const viewers = allComponents.filter(c => c.type === 'viewer');
-      
-      if (preferEditor && editors.length > 0) {
-        component = editors[0];
-      } else if (editors.length > 0) {
-        // Always prefer editors if available
-        component = editors[0];
-      } else if (viewers.length > 0) {
-        component = viewers[0];
+      if (preferEditor) {
+        // For editor preference, use the old logic
+        const allComponents = componentRegistry.getComponentsForExtension(extension);
+        console.log(`[ProjectExplorer] Found ${allComponents.length} total components for ${extension}:`, allComponents.map(c => c.name));
+        
+        const editors = allComponents.filter(c => c.type === 'editor');
+        if (editors.length > 0) {
+          component = editors[0];
+        }
+      } else {
+        // For viewer selection, use the component registry's path-aware logic
+        const viewerInfo = componentRegistry.getViewerForFile(filePath);
+        if (viewerInfo) {
+          component = viewerInfo;
+          console.log(`[ProjectExplorer] ComponentRegistry selected viewer: ${component.name}`);
+        } else {
+          // Fallback to old logic if no viewer found
+          const allComponents = componentRegistry.getComponentsForExtension(extension);
+          console.log(`[ProjectExplorer] Found ${allComponents.length} total components for ${extension}:`, allComponents.map(c => c.name));
+          
+          const editors = allComponents.filter(c => c.type === 'editor');
+          const viewers = allComponents.filter(c => c.type === 'viewer');
+          
+          if (editors.length > 0) {
+            component = editors[0];
+          } else if (viewers.length > 0) {
+            component = viewers[0];
+          }
+        }
       }
     }
 
@@ -2157,8 +2171,8 @@ class ProjectExplorer {
       // Ensure we pass full path including filename
       const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
       
-      // Get the appropriate component for this file type
-      const componentInfo = this._getComponentForFile(file.name, false); // preferEditor = false for auto-open
+      // Get the appropriate component for this file type - use full path for path-aware routing
+      const componentInfo = this._getComponentForFile(fullPath, false); // preferEditor = false for auto-open
       console.log('[ProjectExplorer] Using component for auto-open:', componentInfo?.name);
       
       await tabManager.openInTab(fullPath, componentInfo);
@@ -2582,23 +2596,15 @@ class ProjectExplorer {
       return null;
     }
 
-    // Convert storage path to full UI path
-    const focusedProject = this.getFocusedProjectName();
-    if (!focusedProject) return defaultPalette;
-
     // Ensure we have a string (ProjectConfigManager should return string path)
     if (typeof defaultPalette !== 'string') {
       console.error('[ProjectExplorer] Expected string path from ProjectConfigManager, got:', typeof defaultPalette, defaultPalette);
       return null;
     }
 
-    // If it already has the project prefix, return as-is
-    if (defaultPalette.startsWith(focusedProject + '/')) {
-      return defaultPalette;
-    }
-
-    // Add project prefix to create full UI path
-    return `${focusedProject}/${defaultPalette}`;
+    // Return the storage path (no project prefix) for consistency with sourceImage paths
+    // This makes texture files more portable between projects
+    return defaultPalette;
   }
 
   // Initialize project configuration when project is loaded/created
@@ -3063,115 +3069,70 @@ class ProjectExplorer {
     return isImage;
   }
 
-  // Auto-create texture file for image files
-  async createTextureFileForImage(imageUIPath, imagePath, imageFileName) {
+  // Open texture editor for new image files by creating a .texture file and opening it
+  async openTextureEditorForImage(imageUIPath, imagePath, imageFileName) {
     try {
+      console.log('[ProjectExplorer] Creating texture file for new image:', imageFileName);
       
-      // Calculate texture file paths
+      // Calculate texture file path
       const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
       const textureFileName = baseName + '.texture';
-      
-      // Convert UI path to storage path for both image and texture
-      const imageStoragePath = window.ProjectPaths?.normalizeStoragePath ? 
-        window.ProjectPaths.normalizeStoragePath(imageUIPath) : imageUIPath;
-      const textureStoragePath = imageStoragePath.replace(imageFileName, textureFileName);
       const textureUIPath = imagePath + '/' + textureFileName;
+      
+      // Convert UI path to storage path
+      const textureStoragePath = window.ProjectPaths?.normalizeStoragePath ? 
+        window.ProjectPaths.normalizeStoragePath(textureUIPath) : textureUIPath;
       
       // Check if texture file already exists
       if (window.fileIOService) {
         try {
           const existingTexture = await window.fileIOService.loadFile(textureStoragePath);
           if (existingTexture) {
-            console.log('[ProjectExplorer] Texture file already exists, skipping creation:', textureFileName);
+            console.log('[ProjectExplorer] Texture file already exists, opening existing:', textureFileName);
+            // Open existing texture file - let component registry determine the editor
+            if (window.TabManager) {
+              window.TabManager.openFile(textureStoragePath);
+            }
             return;
           }
         } catch (e) {
-          // File doesn't exist, proceed with creation
+          // File doesn't exist, proceed with creating new texture file
         }
       }
       
-      // Load the image to get its actual dimensions
-      let imageWidth = 32;
-      let imageHeight = 32;
-      
-      try {
-        console.log('[ProjectExplorer] Loading image to get dimensions:', imageStoragePath);
-        const imageFile = await window.fileIOService.loadFile(imageStoragePath);
-        if (imageFile && imageFile.fileContent) {
-          // Create an image element to get dimensions
-          const img = new Image();
-          const imageDimensions = await new Promise((resolve, reject) => {
-            img.onload = () => {
-              console.log('[ProjectExplorer] Image loaded, dimensions:', img.width, 'x', img.height);
-              resolve({ width: img.width, height: img.height });
-            };
-            img.onerror = (error) => {
-              console.warn('[ProjectExplorer] Failed to load image for dimensions:', error);
-              resolve({ width: 32, height: 32 }); // Use defaults on error
-            };
-            
-            // Set image source based on content type
-            if (imageFile.binaryData || imageFile.fileContent.startsWith('data:')) {
-              img.src = imageFile.fileContent.startsWith('data:') ? 
-                         imageFile.fileContent : 
-                         `data:image/png;base64,${imageFile.fileContent}`;
-            } else {
-              img.src = `data:image/png;base64,${imageFile.fileContent}`;
-            }
-          });
-          
-          imageWidth = imageDimensions.width;
-          imageHeight = imageDimensions.height;
-        }
-      } catch (error) {
-        console.warn('[ProjectExplorer] Could not load image for dimensions, using defaults:', error);
-      }
-      
-      // Create texture data with actual image dimensions
-      const defaultTextureData = {
-        width: imageWidth,
-        height: imageHeight,
-        colorDepth: 8,
-        palette: null,
-        transparentColor: '#FF00FF',
-        compression: 'none',
-        rotation: 0,
-        scale: 1,
-        paletteSize: 256,
-        paletteOffset: 0,
+      // Create a minimal .texture file that the texture editor can populate
+      const newTextureData = {
         sourceImagePath: imageFileName,
-        palettePath: '',
         metadata: {
           created: new Date().toISOString(),
-          autoGenerated: true
+          sourceImagePath: imageUIPath
         }
       };
       
-      console.log('[ProjectExplorer] Creating texture file with dimensions:', imageWidth, 'x', imageHeight);
-      const textureContent = JSON.stringify(defaultTextureData, null, 2);
+      const textureContent = JSON.stringify(newTextureData, null, 2);
       
-      // Save texture file to storage
+      // Save the new texture file
       if (window.fileIOService) {
         await window.fileIOService.saveFile(textureStoragePath, textureContent);
-        console.log('[ProjectExplorer] Auto-created texture file:', textureStoragePath);
+        console.log('[ProjectExplorer] Created new texture file:', textureStoragePath);
         
-        // Add texture file to project structure
+        // Add to project structure
         this.addFileToProject({ 
           name: textureFileName, 
           size: textureContent.length,
           lastModified: Date.now(),
-          originalPath: textureUIPath  // Preserve the actual file path for operations
-        }, imagePath, true, true); // Skip auto-open and skip render to avoid duplicate refreshes
+          originalPath: textureUIPath
+        }, imagePath, true, true);
         
-        console.log('[ProjectExplorer] Added texture file to project structure:', textureUIPath);
+        // Don't auto-open the texture file since the source image is already being opened in texture editor
+        // The texture editor will handle the creation and linking of the texture file
+        console.log('[ProjectExplorer] Texture file created, letting texture editor handle it:', textureStoragePath);
         
-        // Manually refresh the UI to show the new texture file
         this.renderTree();
-        console.log('[ProjectExplorer] Refreshed UI after texture file creation');
       }
       
     } catch (error) {
-      console.error('[ProjectExplorer] Failed to auto-create texture file:', error);
+      console.error('[ProjectExplorer] Error creating texture file for image:', error);
     }
   }
 

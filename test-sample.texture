@@ -1,0 +1,13 @@
+{
+  "sourceImage": "test-sample.png",
+  "format": "RGBA8888",
+  "paletteName": "default-palette",
+  "useRLE": false,
+  "flags": ["WRAPU", "WRAPV"],
+  "prerotation": 0,
+  "metadata": {
+    "author": "Test User",
+    "created": "2024-01-01",
+    "description": "Sample texture for testing D2 conversion"
+  }
+}

@@ -277,6 +277,22 @@ class ComponentRegistry {
   // Get best viewer for file
   getViewerForFile(filePath) {
     const extension = this.getFileExtension(filePath);
+    
+    // Special case: Route images in source directory to texture editor
+    const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga'];
+    if (imageExtensions.includes(extension)) {
+      // Check if this is in a source directory (Resources/Sources/ or similar)
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      if (normalizedPath.includes('/Sources/') || normalizedPath.includes('\\Sources\\')) {
+        // Return texture editor as viewer for source images
+        const textureEditor = this.editors.get('texture-editor');
+        if (textureEditor) {
+          console.log('[ComponentRegistry] Routing source image to texture editor:', filePath);
+          return textureEditor;
+        }
+      }
+    }
+    
     const associations = this.fileAssociations.get(extension);
     
     if (associations && associations.viewers.length > 0) {

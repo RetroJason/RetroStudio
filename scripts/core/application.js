@@ -179,7 +179,11 @@ class RetroStudioApplication {
       'scripts/viewers/hex-viewer.js',
       'scripts/viewers/simple-image-viewer.js',
       'scripts/viewers/simple-text-viewer.js',
-      'scripts/viewers/viewer-plugins.js'
+      'scripts/viewers/d2-image-viewer.js',
+      'scripts/viewers/viewer-plugins.js',
+      
+      // Builders
+      'scripts/builders/palette-builder.js'
     ];
 
     // Load scripts sequentially to maintain dependency order

@@ -3,8 +3,9 @@
  * Uses shared PaletteUtils for parsing and conversion
  */
 
-class PaletteBuilder {
+class PaletteBuilder extends window.BaseBuilder {
   constructor() {
+    super();
     this.name = 'Palette Builder';
     this.version = '1.0.0';
   }
@@ -13,7 +14,7 @@ class PaletteBuilder {
    * Get supported input file extensions
    * @returns {Array} Array of supported extensions
    */
-  static getSupportedExtensions() {
+  getSupportedExtensions() {
     return ['.pal', '.aco']; // Convert these to .act, but don't convert .act files
   }
 
@@ -21,7 +22,7 @@ class PaletteBuilder {
    * Get the output extension for built files
    * @returns {string} Output extension
    */
-  static getOutputExtension() {
+  getOutputExtension() {
     return '.act';
   }
 
@@ -30,7 +31,7 @@ class PaletteBuilder {
    * @param {string} filePath - Input file path
    * @returns {boolean} True if this builder can handle the file
    */
-  static canBuild(filePath) {
+  canBuild(filePath) {
     const extension = this.getFileExtension(filePath);
     return this.getSupportedExtensions().includes(extension.toLowerCase());
   }
@@ -40,7 +41,7 @@ class PaletteBuilder {
    * @param {Object} buildContext - Build context with file information
    * @returns {Promise<Object>} Build result with output file data
    */
-  static async build(buildContext) {
+  async build(buildContext) {
     const { inputPath, outputPath, fileContent } = buildContext;
     
     console.log(`[PaletteBuilder] Building palette: ${inputPath} -> ${outputPath}`);
@@ -103,7 +104,7 @@ class PaletteBuilder {
    * @param {string} filePath - File path
    * @returns {string} File extension (including dot)
    */
-  static getFileExtension(filePath) {
+  getFileExtension(filePath) {
     const lastDot = filePath.lastIndexOf('.');
     return lastDot >= 0 ? filePath.substring(lastDot) : '';
   }
@@ -114,7 +115,7 @@ class PaletteBuilder {
    * @param {string} newExtension - New extension (including dot)
    * @returns {string} Path with new extension
    */
-  static changeExtension(filePath, newExtension) {
+  changeExtension(filePath, newExtension) {
     const lastDot = filePath.lastIndexOf('.');
     if (lastDot >= 0) {
       return filePath.substring(0, lastDot) + newExtension;
@@ -126,7 +127,7 @@ class PaletteBuilder {
    * Get build priority (lower = higher priority)
    * @returns {number} Priority value
    */
-  static getPriority() {
+  getPriority() {
     return 10;
   }
 
@@ -134,7 +135,7 @@ class PaletteBuilder {
    * Get builder capabilities
    * @returns {Array} Array of capability strings
    */
-  static getCapabilities() {
+  getCapabilities() {
     return ['palette-conversion', 'format-standardization'];
   }
 
@@ -142,7 +143,7 @@ class PaletteBuilder {
    * Get builder metadata for registration
    * @returns {Object} Builder metadata
    */
-  static getMetadata() {
+  getMetadata() {
     return {
       name: 'Palette Builder',
       description: 'Converts palette files to Adobe Color Table (.act) format',
@@ -159,18 +160,13 @@ class PaletteBuilder {
 window.PaletteBuilder = PaletteBuilder;
 console.log('[PaletteBuilder] Builder class loaded');
 
-// Auto-register with build system if available
-if (typeof window.BuildSystem !== 'undefined') {
-  window.BuildSystem.registerBuilder('PaletteBuilder', PaletteBuilder);
-  console.log('[PaletteBuilder] Registered with BuildSystem');
-} else {
-  // Try to register when BuildSystem becomes available
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-      if (typeof window.BuildSystem !== 'undefined') {
-        window.BuildSystem.registerBuilder('PaletteBuilder', PaletteBuilder);
-        console.log('[PaletteBuilder] Late-registered with BuildSystem');
-      }
-    }, 100);
-  });
-}
+// Register with BuildSystem through the proper service container
+// This will be called after the BuildSystem service is available
+document.addEventListener('retrostudio-ready', () => {
+  if (window.buildSystem && typeof window.buildSystem.registerBuilder === 'function') {
+    window.buildSystem.registerBuilder('PaletteBuilder', new PaletteBuilder());
+    console.log('[PaletteBuilder] Registered with BuildSystem');
+  } else {
+    console.error('[PaletteBuilder] BuildSystem not available during application ready');
+  }
+});

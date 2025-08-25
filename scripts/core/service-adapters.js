@@ -83,14 +83,14 @@ class TabManagerAdapter {
 
   async openWithEditor(filePath, content, editorInfo) {
     // Use TabManager's public API; it will load from storage and pick the right editor via registry
-    const tabId = await this.tabManager.openInTab(filePath, null, { isReadOnly: false });
+    const tabId = await this.tabManager.openInTab(filePath, editorInfo, { isReadOnly: false });
     this.events.emit('file.opened', { path: filePath, type: 'editor', tabId, preferred: editorInfo?.name });
     return tabId;
   }
 
   async openWithViewer(filePath, content, viewerInfo) {
     // Use preview for viewers by default
-    const tabId = await this.tabManager.openInPreview(filePath, null, { isReadOnly: true });
+    const tabId = await this.tabManager.openInPreview(filePath, viewerInfo, { isReadOnly: true });
     this.events.emit('file.opened', { path: filePath, type: 'viewer', tabId, preferred: viewerInfo?.name });
     return tabId;
   }
@@ -220,12 +220,13 @@ class ProjectExplorerAdapter {
   }
 
   setupIntegration() {
-    // Set up context menu handling directly on project explorer
+    // Set up context menu handling directly on project explorer using event delegation
+    // This ensures it works for dynamically added files (from build, drop, etc.)
     if (this.projectExplorer.treeContainer) {
       this.projectExplorer.treeContainer.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         
-        // Find the closest tree item
+        // Find the closest tree item using event delegation
         const treeItem = e.target.closest('[data-path]');
         if (treeItem) {
           // Select the node
@@ -278,13 +279,25 @@ class ProjectExplorerAdapter {
     }
 
     // Get component info for file
-    let editor = null, viewer = null;
-    try { editor = this.componentRegistry.getEditorForFile(filePath); } catch (_) { editor = null; }
-    try { viewer = this.componentRegistry.getViewerForFile(filePath); } catch (_) { viewer = null; }
+    let allComponents = [];
+    if (!isFolder) {
+      try { 
+        allComponents = this.componentRegistry.getComponentsForExtension(
+          this.componentRegistry.getFileExtension(filePath)
+        ); 
+      } catch (_) { 
+        allComponents = []; 
+      }
+    }
 
     // Add component-specific menu items only for files
-    if (!isFolder) {
-      if (editor) {
+    if (!isFolder && allComponents.length > 0) {
+      // Group by type and add all available components
+      const editors = allComponents.filter(c => c.type === 'editor');
+      const viewers = allComponents.filter(c => c.type === 'viewer');
+
+      // Add editors
+      for (const editor of editors) {
         menuItems.push({
           label: `Edit with ${editor.displayName}`,
           icon: editor.icon,
@@ -292,7 +305,8 @@ class ProjectExplorerAdapter {
         });
       }
 
-      if (viewer) {
+      // Add viewers
+      for (const viewer of viewers) {
         menuItems.push({
           label: `View with ${viewer.displayName}`,
           icon: viewer.icon,

@@ -12,7 +12,7 @@
 console.log('[Image] Class definition loading');
 
 class ImageData {
-  constructor() {
+  constructor(textureFile = null) {
     this.frames = [];
     this.currentFrame = 0;
     this.width = 0;
@@ -20,6 +20,9 @@ class ImageData {
     this.format = 'rgba';
     this.filename = '';
     this.metadata = {};
+    
+    // Texture configuration (from .texture file)
+    this.textureConfig = null;
     
     // Texture processing cache
     this.textureCache = {
@@ -38,6 +41,18 @@ class ImageData {
       renderedDataPaletteOffset: 0,
       renderedDataHash: null
     };
+    
+    // If texture file is provided, initialize from it
+    if (textureFile) {
+      // Parse texture configuration immediately (synchronously)
+      try {
+        this.textureConfig = typeof textureFile === 'string' ? JSON.parse(textureFile) : textureFile;
+        console.log('[Image] Texture config loaded in constructor:', this.textureConfig);
+      } catch (error) {
+        console.error('[Image] Failed to parse texture config:', error);
+        throw error;
+      }
+    }
   }
 
   // Static factory methods
@@ -53,6 +68,131 @@ class ImageData {
     return image;
   }
 
+  /**
+   * Initialize the image from a texture file configuration
+   * @param {Object} textureFile - Texture file content with sourceImage, colorFormat, palette, etc.
+   */
+  async initializeFromTexture(textureFile) {
+    try {
+      // If texture config wasn't already loaded, parse it now
+      if (!this.textureConfig) {
+        this.textureConfig = typeof textureFile === 'string' ? JSON.parse(textureFile) : textureFile;
+        console.log('[Image] Texture config loaded in initializeFromTexture:', this.textureConfig);
+      }
+      
+      // Load the source image
+      await this.loadSourceImageFromTexture();
+      
+      console.log('[Image] Initialized from texture file:', this.textureConfig);
+    } catch (error) {
+      console.error('[Image] Failed to initialize from texture file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load the source image specified in the texture configuration
+   */
+  async loadSourceImageFromTexture() {
+    if (!this.textureConfig?.sourceImage) {
+      throw new Error('No source image specified in texture configuration');
+    }
+
+    // Get file manager for loading
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager) {
+      throw new Error('FileManager not available');
+    }
+
+    // Load source image
+    const sourceImageFile = await fileManager.loadFile(this.textureConfig.sourceImage);
+    if (!sourceImageFile) {
+      throw new Error(`Source image not found: ${this.textureConfig.sourceImage}`);
+    }
+
+    // Load the image content
+    await this.loadFromContent(sourceImageFile.content, sourceImageFile.filename);
+  }
+
+  /**
+   * Get D2 binary data for this texture
+   * @returns {ArrayBuffer} D2 binary data
+   */
+  async getD2() {
+    if (!this.textureConfig) {
+      throw new Error('No texture configuration available. Initialize with texture file first.');
+    }
+
+    // Load palette if specified
+    let palette = null;
+    if (this.textureConfig.palette) {
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (fileManager && window.Palette) {
+        try {
+          const paletteFile = await fileManager.loadFile(this.textureConfig.palette);
+          if (paletteFile) {
+            palette = new window.Palette();
+            await palette.loadFromContent(paletteFile.content, paletteFile.filename);
+          }
+        } catch (error) {
+          console.warn('[Image] Failed to load palette:', error);
+        }
+      }
+    }
+
+    console.log('[Image] getD2() - texture config:', this.textureConfig);
+    console.log('[Image] getD2() - color format:', this.textureConfig.colorFormat);
+
+    // Map color format to D2 format
+    const d2Format = this.mapColorFormatToD2(this.textureConfig.colorFormat || 'd2_mode_rgba8888');
+    console.log('[Image] getD2() - mapped D2 format:', d2Format, 'from colorFormat:', this.textureConfig.colorFormat);
+
+    // Export to D2 binary
+    return this.exportToD2Binary({
+      format: d2Format,
+      palette: palette,
+      paletteName: this.textureConfig.paletteName || '',
+      useRLE: this.textureConfig.RLE || false,
+      flags: this.textureConfig.flags || 0,
+      prerotation: this.textureConfig.rotation || 0
+    });
+  }
+
+  /**
+   * Map colorFormat string to D2 format constant
+   * @param {string} colorFormat - Color format from texture file
+   * @returns {number} D2 format constant
+   */
+  mapColorFormatToD2(colorFormat) {
+    const formatMap = {
+      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
+      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
+      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
+      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
+      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
+      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
+      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
+      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
+      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
+      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
+      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
+      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
+      'd2_mode_i8': ImageData.D2_FORMAT.I8,
+      'd2_mode_i4': ImageData.D2_FORMAT.I4,
+      'd2_mode_i2': ImageData.D2_FORMAT.I2,
+      'd2_mode_i1': ImageData.D2_FORMAT.I1,
+      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
+      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
+      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
+    };
+
+    const format = formatMap[colorFormat];
+    if (format === undefined) {
+      throw new Error(`Unsupported color format: ${colorFormat}`);
+    }
+    return format;
+  }
+
   static fromImageElement(imgElement, filename = '') {
     const image = new ImageData();
     image.loadFromImageElement(imgElement, filename);
@@ -64,6 +204,13 @@ class ImageData {
     this.filename = this.getBaseName(filename);
     
     try {
+      // Check if this is a D2 texture format
+      if (content instanceof ArrayBuffer && this.isD2Format(content)) {
+        console.log('[Image] Detected D2 texture format');
+        this.loadFromD2Binary(content);
+        return;
+      }
+      
       // Convert content to image element
       const imgElement = await this.contentToImageElement(content);
       this.loadFromImageElement(imgElement, filename);
@@ -73,6 +220,17 @@ class ImageData {
       console.error('[Image] Error loading image:', error);
       throw error;
     }
+  }
+
+  /**
+   * Check if ArrayBuffer contains D2 texture format
+   */
+  isD2Format(arrayBuffer) {
+    if (arrayBuffer.byteLength < 9) return false;
+    
+    const view = new DataView(arrayBuffer);
+    const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1));
+    return magic === 'D2';
   }
 
   async contentToImageElement(content) {
@@ -1361,11 +1519,15 @@ class ImageData {
     console.log('[Image] Generating source RGBA data');
     
     const frame = this.getCurrentFrame();
+    console.log('[Image] getCurrentFrame() returned:', frame ? 'valid frame' : 'null');
     if (!frame || !frame.colors) {
       console.error('[Image] No frame data available');
+      console.error('[Image] Frame:', frame);
+      console.error('[Image] Frame colors:', frame ? frame.colors : 'no frame');
       return null;
     }
     
+    console.log(`[Image] Frame has ${frame.colors.length} colors`);
     const rgbaData = new Uint8ClampedArray(this.width * this.height * 4);
     
     for (let i = 0; i < frame.colors.length; i++) {
@@ -1566,6 +1728,21 @@ class ImageData {
    */
   generateRGBA8888Data(sourceData) {
     return new Uint8Array(sourceData);
+  }
+
+  /**
+   * Generate ALPHA8 data (8-bit alpha only)
+   */
+  generateAlpha8Data(sourceData) {
+    const pixelCount = this.width * this.height;
+    const alpha8Data = new Uint8Array(pixelCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      // Extract alpha channel (every 4th byte starting from index 3)
+      alpha8Data[i] = sourceData[i * 4 + 3];
+    }
+    
+    return alpha8Data;
   }
 
   /**
@@ -1981,6 +2158,606 @@ class ImageData {
     };
     
     return formatMap[formatValue] || 256; // Default to 256 if format not found
+  }
+
+  // ===== D2 TEXTURE FORMAT SUPPORT =====
+
+  /**
+   * D2 Texture Format Constants
+   */
+  static get D2_FORMAT() {
+    return {
+      ALPHA8: 0b0000,
+      RGB565: 0b0001,
+      ARGB8888: 0b0010,
+      RGB888: 0b0010,
+      ARGB4444: 0b0011,
+      RGB444: 0b0011,
+      ARGB1555: 0b0100,
+      RGB555: 0b0100,
+      AI44: 0b0101,
+      RGBA8888: 0b0110,
+      RGBA4444: 0b0111,
+      RGBA5551: 0b1000,
+      I8: 0b1001,
+      I4: 0b1010,
+      I2: 0b1011,
+      I1: 0b1100,
+      ALPHA4: 0b1101,
+      ALPHA2: 0b1110,
+      ALPHA1: 0b1111
+    };
+  }
+
+  static get D2_FLAGS() {
+    return {
+      WRAPU: 0x01,
+      WRAPV: 0x02,
+      FILTERU: 0x04,
+      FILTERV: 0x08,
+      FILTER: 0x0C,
+      RLE_COMPRESSED: 0x20,
+      INDEXED_COLOR: 0x40
+    };
+  }
+
+  static get D2_HEADER_SIZE() {
+    return 25; // 2 (magic) + 2 (width) + 2 (height) + 1 (prerotation) + 1 (flags) + 1 (format) + 16 (palette name)
+  }
+
+  /**
+   * Load from D2 texture format binary data
+   */
+  loadFromD2Binary(arrayBuffer) {
+    console.log('[ImageData] Loading D2 texture format');
+    
+    const view = new DataView(arrayBuffer);
+    let offset = 0;
+    
+    // Check magic identifier "D2"
+    const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1));
+    if (magic !== 'D2') {
+      throw new Error('Invalid D2 texture format: Missing D2 magic identifier');
+    }
+    offset += 2;
+    
+    // Read header
+    this.width = view.getUint16(offset, true); // little endian
+    offset += 2;
+    this.height = view.getUint16(offset, true);
+    offset += 2;
+    
+    const prerotation = view.getUint8(offset++);
+    const flags = view.getUint8(offset++);
+    const formatByte = view.getUint8(offset++);
+    
+    // Read palette name (16 bytes)
+    let paletteName = '';
+    const paletteNameBytes = new Uint8Array(arrayBuffer, offset, 16);
+    for (let i = 0; i < 16; i++) {
+      const byte = paletteNameBytes[i];
+      if (byte === 0) break; // null terminator
+      paletteName += String.fromCharCode(byte);
+    }
+    offset += 16;
+    
+    // Decode format byte
+    const baseFormat = formatByte & 0x0F;
+    const isRLE = (formatByte & 0x20) !== 0;
+    const isIndexed = (formatByte & 0x40) !== 0;
+    
+    console.log(`[ImageData] D2 Header: ${this.width}x${this.height}, format: ${baseFormat}, RLE: ${isRLE}, indexed: ${isIndexed}, palette: "${paletteName}"`);
+    
+    // Store metadata
+    this.metadata = {
+      format: 'd2',
+      prerotation,
+      flags,
+      baseFormat,
+      isRLE,
+      isIndexed,
+      formatByte,
+      paletteName
+    };
+    
+    // Read palette data if indexed
+    let palette = null;
+    if (isIndexed) {
+      const paletteSize = this.getD2PaletteSize(baseFormat);
+      palette = new Array(paletteSize);
+      
+      for (let i = 0; i < paletteSize; i++) {
+        const r = view.getUint8(offset++);
+        const g = view.getUint8(offset++);
+        const b = view.getUint8(offset++);
+        const a = view.getUint8(offset++);
+        palette[i] = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+      }
+      
+      this.metadata.palette = palette;
+      console.log(`[ImageData] Loaded palette with ${paletteSize} colors`);
+    }
+    
+    // Read pixel data
+    const remainingBytes = arrayBuffer.byteLength - offset;
+    const pixelData = new Uint8Array(arrayBuffer, offset, remainingBytes);
+    
+    // Decompress if RLE
+    let decompressedData = pixelData;
+    if (isRLE) {
+      decompressedData = this.decompressRLE(pixelData);
+      console.log(`[ImageData] RLE decompressed ${pixelData.length} -> ${decompressedData.length} bytes`);
+    }
+    
+    // Convert to RGBA based on format
+    const rgbaData = this.convertD2ToRGBA(decompressedData, baseFormat, palette);
+    
+    // Create frame
+    this.frames = [{
+      data: rgbaData,
+      width: this.width,
+      height: this.height,
+      delay: 0
+    }];
+    
+    this.currentFrame = 0;
+    this.format = 'rgba';
+    
+    // Clear texture cache since we loaded new data
+    this.clearTextureCache();
+    
+    console.log(`[ImageData] Successfully loaded D2 texture: ${this.width}x${this.height}`);
+  }
+
+  /**
+   * Export to D2 texture format binary data
+   */
+  exportToD2Binary(options = {}) {
+    const {
+      format = ImageData.D2_FORMAT.RGBA8888,
+      useRLE = false,
+      flags = 0,
+      prerotation = 0,
+      palette = null,
+      paletteName = ''
+    } = options;
+    
+    console.log('[ImageData] Exporting to D2 texture format');
+    console.log('[ImageData] Export options:', options);
+    console.log('[ImageData] Final format being used:', format);
+    
+    if (!this.frames.length) {
+      throw new Error('No image data to export');
+    }
+
+    const sourceRGBA = this.getSourceRGBAData();
+    if (!sourceRGBA) {
+      throw new Error('Unable to get source RGBA data for export');
+    }    // Determine if format is indexed
+    const isIndexed = [
+      ImageData.D2_FORMAT.I8,
+      ImageData.D2_FORMAT.I4,
+      ImageData.D2_FORMAT.I2,
+      ImageData.D2_FORMAT.I1
+    ].includes(format);
+    
+    // Convert RGBA to target format
+    let pixelData, exportPalette;
+    if (isIndexed) {
+      const result = this.convertRGBAToD2Indexed(sourceRGBA, format, palette);
+      pixelData = result.indexData;
+      exportPalette = result.palette;
+    } else {
+      pixelData = this.convertRGBAToD2Direct(sourceRGBA, format);
+      exportPalette = null;
+    }
+    
+    // Apply RLE compression if requested
+    let finalPixelData = pixelData;
+    if (useRLE) {
+      finalPixelData = this.compressRLE(pixelData);
+      console.log(`[ImageData] RLE compressed ${pixelData.length} -> ${finalPixelData.length} bytes`);
+    }
+    
+    // Calculate total size
+    const headerSize = ImageData.D2_HEADER_SIZE;
+    const paletteSize = exportPalette ? exportPalette.length * 4 : 0;
+    const totalSize = headerSize + paletteSize + finalPixelData.length;
+    
+    // Create binary data
+    const buffer = new ArrayBuffer(totalSize);
+    const view = new DataView(buffer);
+    let offset = 0;
+    
+    // Write header
+    view.setUint8(offset++, 0x44); // 'D'
+    view.setUint8(offset++, 0x32); // '2'
+    view.setUint16(offset, this.width, true); offset += 2;
+    view.setUint16(offset, this.height, true); offset += 2;
+    view.setUint8(offset++, prerotation);
+    view.setUint8(offset++, flags);
+    
+    // Write format byte
+    let formatByte = format & 0x0F;
+    if (useRLE) formatByte |= 0x20;
+    if (isIndexed) formatByte |= 0x40;
+    view.setUint8(offset++, formatByte);
+    
+    // Write palette name (16 bytes)
+    const paletteNameTruncated = (paletteName || '').substring(0, 15); // Max 15 chars to leave room for null terminator
+    const paletteNameBytes = new Uint8Array(16);
+    for (let i = 0; i < paletteNameTruncated.length; i++) {
+      paletteNameBytes[i] = paletteNameTruncated.charCodeAt(i);
+    }
+    // Remaining bytes are already 0 (null terminator)
+    const targetBytes = new Uint8Array(buffer, offset, 16);
+    targetBytes.set(paletteNameBytes);
+    offset += 16;
+    
+    // Write palette if indexed
+    if (exportPalette) {
+      for (const colorStr of exportPalette) {
+        const color = this.parseColor(colorStr) || { r: 0, g: 0, b: 0, a: 255 };
+        view.setUint8(offset++, color.r);
+        view.setUint8(offset++, color.g);
+        view.setUint8(offset++, color.b);
+        view.setUint8(offset++, color.a);
+      }
+    }
+    
+    // Write pixel data
+    const pixelArray = new Uint8Array(buffer, offset);
+    pixelArray.set(finalPixelData);
+    
+    console.log(`[ImageData] Exported D2 texture: ${totalSize} bytes total`);
+    return buffer;
+  }
+
+  /**
+   * Get palette size for D2 indexed format
+   */
+  getD2PaletteSize(format) {
+    switch (format) {
+      case ImageData.D2_FORMAT.I8: return 256;
+      case ImageData.D2_FORMAT.I4: return 16;
+      case ImageData.D2_FORMAT.I2: return 4;
+      case ImageData.D2_FORMAT.I1: return 2;
+      default: return 0;
+    }
+  }
+
+  /**
+   * Convert D2 format pixel data to RGBA
+   */
+  convertD2ToRGBA(pixelData, format, palette = null) {
+    const pixelCount = this.width * this.height;
+    const rgbaData = new Uint8ClampedArray(pixelCount * 4);
+    
+    switch (format) {
+      case ImageData.D2_FORMAT.I8:
+        return this.renderIndexed8Data(pixelData, palette, 0);
+      case ImageData.D2_FORMAT.I4:
+        return this.renderIndexed4Data(pixelData, palette, 0);
+      case ImageData.D2_FORMAT.I2:
+        return this.renderIndexed2Data(pixelData, palette, 0);
+      case ImageData.D2_FORMAT.I1:
+        return this.renderIndexed1Data(pixelData, palette, 0);
+      case ImageData.D2_FORMAT.RGB565:
+        return this.renderRGB565Data(pixelData);
+      case ImageData.D2_FORMAT.ARGB1555:
+        return this.renderARGB1555Data(pixelData);
+      case ImageData.D2_FORMAT.RGBA8888:
+      case ImageData.D2_FORMAT.ARGB8888:
+      case ImageData.D2_FORMAT.RGB888:
+        // Direct RGBA data
+        return new Uint8ClampedArray(pixelData);
+      default:
+        console.warn(`[ImageData] Unsupported D2 format: ${format}, using raw data`);
+        return new Uint8ClampedArray(pixelData);
+    }
+  }
+
+  /**
+   * Convert RGBA to D2 indexed format
+   */
+  convertRGBAToD2Indexed(rgbaData, format, palette = null) {
+    // Use existing palette or generate one
+    let usePalette = palette;
+    if (!usePalette) {
+      const paletteSize = this.getD2PaletteSize(format);
+      usePalette = this.generatePalette(rgbaData, paletteSize);
+    }
+    
+    // Generate index data using existing methods
+    let indexData;
+    switch (format) {
+      case ImageData.D2_FORMAT.I8:
+        indexData = this.generateIndexed8Data(rgbaData, usePalette);
+        break;
+      case ImageData.D2_FORMAT.I4:
+        indexData = this.generateIndexed4Data(rgbaData, usePalette);
+        break;
+      case ImageData.D2_FORMAT.I2:
+        indexData = this.generateIndexed2Data(rgbaData, usePalette);
+        break;
+      case ImageData.D2_FORMAT.I1:
+        indexData = this.generateIndexed1Data(rgbaData, usePalette);
+        break;
+      default:
+        throw new Error(`Unsupported indexed format: ${format}`);
+    }
+    
+    return { indexData, palette: usePalette };
+  }
+
+  /**
+   * Convert RGBA to D2 direct color format
+   */
+  convertRGBAToD2Direct(rgbaData, format) {
+    switch (format) {
+      case ImageData.D2_FORMAT.ALPHA8:
+        // Extract alpha channel only (every 4th byte starting from index 3)
+        return this.generateAlpha8Data(rgbaData);
+      case ImageData.D2_FORMAT.RGB565:
+        return this.generateRGB565Data(rgbaData);
+      case ImageData.D2_FORMAT.ARGB1555:
+        return this.generateARGB1555Data(rgbaData);
+      case ImageData.D2_FORMAT.RGBA8888:
+      case ImageData.D2_FORMAT.ARGB8888:
+      case ImageData.D2_FORMAT.RGB888:
+        // Direct RGBA data
+        return new Uint8Array(rgbaData);
+      default:
+        console.warn(`[ImageData] Unsupported direct format: ${format}, using RGBA`);
+        return new Uint8Array(rgbaData);
+    }
+  }
+
+  /**
+   * RLE compression
+   */
+  compressRLE(data) {
+    const compressed = [];
+    let i = 0;
+    
+    while (i < data.length) {
+      const currentByte = data[i];
+      let runLength = 1;
+      
+      // Count consecutive identical bytes
+      while (i + runLength < data.length && 
+             data[i + runLength] === currentByte && 
+             runLength < 255) {
+        runLength++;
+      }
+      
+      if (runLength > 1) {
+        // RLE run: length followed by value
+        compressed.push(runLength);
+        compressed.push(currentByte);
+      } else {
+        // Single byte: just the value
+        compressed.push(currentByte);
+      }
+      
+      i += runLength;
+    }
+    
+    return new Uint8Array(compressed);
+  }
+
+  /**
+   * RLE decompression
+   */
+  decompressRLE(compressedData) {
+    const decompressed = [];
+    let i = 0;
+    
+    while (i < compressedData.length) {
+      const byte = compressedData[i];
+      
+      // Check if this looks like a run length (followed by another byte)
+      if (i + 1 < compressedData.length && byte > 1) {
+        const runLength = byte;
+        const value = compressedData[i + 1];
+        
+        // Add run of identical bytes
+        for (let j = 0; j < runLength; j++) {
+          decompressed.push(value);
+        }
+        
+        i += 2;
+      } else {
+        // Single byte
+        decompressed.push(byte);
+        i++;
+      }
+    }
+    
+    return new Uint8Array(decompressed);
+  }
+
+  /**
+   * Generate palette from RGBA data using quantization
+   */
+  generatePalette(rgbaData, maxColors) {
+    const colorMap = new Map();
+    const pixelCount = rgbaData.length / 4;
+    
+    // Count color frequencies
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = rgbaData[offset];
+      const g = rgbaData[offset + 1];
+      const b = rgbaData[offset + 2];
+      const colorKey = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+      
+      colorMap.set(colorKey, (colorMap.get(colorKey) || 0) + 1);
+    }
+    
+    // Sort by frequency and take top colors
+    const sortedColors = Array.from(colorMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, maxColors)
+      .map(entry => entry[0]);
+    
+    // Pad with black if needed
+    while (sortedColors.length < maxColors) {
+      sortedColors.push('#000000');
+    }
+    
+    return sortedColors;
+  }
+
+  /**
+   * Get D2 format constant from internal format name
+   */
+  static getD2FormatFromInternal(internalFormat) {
+    const formatMap = {
+      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
+      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
+      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
+      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
+      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
+      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
+      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
+      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
+      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
+      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
+      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
+      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
+      'd2_mode_i8': ImageData.D2_FORMAT.I8,
+      'd2_mode_i4': ImageData.D2_FORMAT.I4,
+      'd2_mode_i2': ImageData.D2_FORMAT.I2,
+      'd2_mode_i1': ImageData.D2_FORMAT.I1,
+      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
+      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
+      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
+    };
+    
+    return formatMap[internalFormat];
+  }
+
+  /**
+   * Get internal format name from D2 format constant
+   */
+  static getInternalFromD2Format(d2Format) {
+    const formatMap = {
+      [ImageData.D2_FORMAT.ALPHA8]: 'd2_mode_alpha8',
+      [ImageData.D2_FORMAT.RGB565]: 'd2_mode_rgb565',
+      [ImageData.D2_FORMAT.ARGB8888]: 'd2_mode_argb8888',
+      [ImageData.D2_FORMAT.RGB888]: 'd2_mode_rgb888',
+      [ImageData.D2_FORMAT.ARGB4444]: 'd2_mode_argb4444',
+      [ImageData.D2_FORMAT.RGB444]: 'd2_mode_rgb444',
+      [ImageData.D2_FORMAT.ARGB1555]: 'd2_mode_argb1555',
+      [ImageData.D2_FORMAT.RGB555]: 'd2_mode_rgb555',
+      [ImageData.D2_FORMAT.AI44]: 'd2_mode_ai44',
+      [ImageData.D2_FORMAT.RGBA8888]: 'd2_mode_rgba8888',
+      [ImageData.D2_FORMAT.RGBA4444]: 'd2_mode_rgba4444',
+      [ImageData.D2_FORMAT.RGBA5551]: 'd2_mode_rgba5551',
+      [ImageData.D2_FORMAT.I8]: 'd2_mode_i8',
+      [ImageData.D2_FORMAT.I4]: 'd2_mode_i4',
+      [ImageData.D2_FORMAT.I2]: 'd2_mode_i2',
+      [ImageData.D2_FORMAT.I1]: 'd2_mode_i1',
+      [ImageData.D2_FORMAT.ALPHA4]: 'd2_mode_alpha4',
+      [ImageData.D2_FORMAT.ALPHA2]: 'd2_mode_alpha2',
+      [ImageData.D2_FORMAT.ALPHA1]: 'd2_mode_alpha1'
+    };
+    
+    return formatMap[d2Format] || 'd2_mode_rgba8888';
+  }
+
+  /**
+   * Get D2 format constant from internal format name
+   */
+  static getD2FormatFromInternal(internalFormat) {
+    const formatMap = {
+      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
+      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
+      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
+      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
+      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
+      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
+      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
+      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
+      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
+      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
+      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
+      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
+      'd2_mode_i8': ImageData.D2_FORMAT.I8,
+      'd2_mode_i4': ImageData.D2_FORMAT.I4,
+      'd2_mode_i2': ImageData.D2_FORMAT.I2,
+      'd2_mode_i1': ImageData.D2_FORMAT.I1,
+      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
+      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
+      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
+    };
+    
+    return formatMap[internalFormat];
+  }
+
+  /**
+   * Get internal format name from D2 format constant
+   */
+  static getInternalFromD2Format(d2Format) {
+    const formatMap = {
+      [ImageData.D2_FORMAT.ALPHA8]: 'd2_mode_alpha8',
+      [ImageData.D2_FORMAT.RGB565]: 'd2_mode_rgb565',
+      [ImageData.D2_FORMAT.ARGB8888]: 'd2_mode_argb8888',
+      [ImageData.D2_FORMAT.RGB888]: 'd2_mode_rgb888',
+      [ImageData.D2_FORMAT.ARGB4444]: 'd2_mode_argb4444',
+      [ImageData.D2_FORMAT.RGB444]: 'd2_mode_rgb444',
+      [ImageData.D2_FORMAT.ARGB1555]: 'd2_mode_argb1555',
+      [ImageData.D2_FORMAT.RGB555]: 'd2_mode_rgb555',
+      [ImageData.D2_FORMAT.AI44]: 'd2_mode_ai44',
+      [ImageData.D2_FORMAT.RGBA8888]: 'd2_mode_rgba8888',
+      [ImageData.D2_FORMAT.RGBA4444]: 'd2_mode_rgba4444',
+      [ImageData.D2_FORMAT.RGBA5551]: 'd2_mode_rgba5551',
+      [ImageData.D2_FORMAT.I8]: 'd2_mode_i8',
+      [ImageData.D2_FORMAT.I4]: 'd2_mode_i4',
+      [ImageData.D2_FORMAT.I2]: 'd2_mode_i2',
+      [ImageData.D2_FORMAT.I1]: 'd2_mode_i1',
+      [ImageData.D2_FORMAT.ALPHA4]: 'd2_mode_alpha4',
+      [ImageData.D2_FORMAT.ALPHA2]: 'd2_mode_alpha2',
+      [ImageData.D2_FORMAT.ALPHA1]: 'd2_mode_alpha1'
+    };
+    
+    return formatMap[d2Format] || 'd2_mode_rgba8888';
+  }
+
+  /**
+   * Test helper: Create a simple test texture with palette name
+   * For testing the D2 format palette name functionality
+   */
+  static createTestTextureWithPalette(width = 8, height = 8, paletteName = 'test_palette') {
+    const imageData = new ImageData();
+    imageData.createEmpty(width, height);
+    
+    // Create a simple gradient pattern
+    const frame = imageData.frames[0];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4;
+        frame.data[idx] = (x / width) * 255;     // R
+        frame.data[idx + 1] = (y / height) * 255; // G
+        frame.data[idx + 2] = 128;               // B
+        frame.data[idx + 3] = 255;               // A
+      }
+    }
+    
+    // Export to D2 with palette name, then reload to test round-trip
+    const d2Binary = imageData.exportToD2Binary({
+      format: ImageData.D2_FORMAT.RGBA8888,
+      paletteName: paletteName,
+      useRLE: false,
+      flags: 0
+    });
+    
+    // Create new instance and load the binary data
+    const testImage = new ImageData();
+    testImage.loadFromD2Binary(d2Binary);
+    
+    return testImage;
   }
 }
 

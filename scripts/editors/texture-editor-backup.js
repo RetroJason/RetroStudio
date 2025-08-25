@@ -1,16 +1,14 @@
 // texture-editor.js
-// Editor for creating and editing texture files with compression, palettes, and processing options
+// Clean, simplified texture editor implementation
 
 console.log('[TextureEditor] Class definition loading');
 
-/**
- * TextureData - Data structure for texture information with event support
- */
+// TextureData class - simplified data structure
 class TextureData extends EventTarget {
   constructor(options = {}) {
-    super(); // Call EventTarget constructor
+    super();
     
-    // Basic texture properties - clean format
+    // Basic properties
     this.name = options.name || 'texture';
     this.sourceImage = options.sourceImage || null;
     this.width = options.width || 32;
@@ -18,160 +16,382 @@ class TextureData extends EventTarget {
     this.colorKey = options.colorKey || '#FF00FF';
     this.RLE = options.RLE !== undefined ? options.RLE : false;
     this.rotation = options.rotation || 0;
-    
-    // Flattened structure - no nested metadata
     this.colorFormat = options.colorFormat || 'd2_mode_i8';
-    this.palette = options.palette || ''; // Path to palette file
-    this.paletteObject = null; // Actual loaded Palette instance
+    this.colorDepth = options.colorDepth || 8;
+    this.palette = options.palette || '';
+    this.paletteObject = null;
     this.scale = options.scale || 1.0;
     this.paletteOffset = options.paletteOffset || 0;
     
-    // Auto-populate default palette path if not provided
-    this.populateDefaultPalette();
+    // Image data
+    this.sourceImageData = null;
+    this.processedImageData = null;
+  }
+}
+
+// Main TextureEditor class
+class TextureEditor extends EditorBase {
+  constructor(fileObject, isNewResource = false) {
+    console.log('[TextureEditor] Constructor called:', fileObject, isNewResource);
+    
+    // Initialize basic properties
+    this.textureData = new TextureData();
+    this.originalCanvas = null;
+    this.originalCtx = null;
+    this.outputCanvas = null;
+    this.outputCtx = null;
+    this.isCreatingFromImage = false;
+    
+    // Call parent constructor
+    super(fileObject, isNewResource);
+    
+    console.log('[TextureEditor] Constructor completed');
   }
 
-  // Direct property accessors for flattened structure
-  get sourceImagePath() { return this.sourceImage; }
-  set sourceImagePath(value) { 
-    this.sourceImage = value;
-    this.dispatchEvent(new CustomEvent('metadataChanged', {
-      detail: { property: 'sourceImage', oldValue: this.sourceImage, newValue: value }
-    }));
+  createBody(bodyContainer) {
+    console.log('[TextureEditor] createBody called');
+    
+    // Initialize texture data based on file type
+    this.initializeTextureData();
+    
+    // Create the main layout
+    const mainContainer = document.createElement('div');
+    mainContainer.className = 'texture-editor';
+    mainContainer.style.cssText = 'display: flex; flex-direction: column; height: 100%; gap: 10px; padding: 10px;';
+    
+    // Create preview panel
+    this.createPreviewPanel(mainContainer);
+    
+    bodyContainer.appendChild(mainContainer);
+    
+    // Initialize content after DOM is ready
+    setTimeout(() => this.initializeContent(), 0);
   }
-
-  get palettePath() { return this.palette; }
-  set palettePath(value) { 
-    this.palette = value;
-    this.dispatchEvent(new CustomEvent('metadataChanged', {
-      detail: { property: 'palette', oldValue: this.palette, newValue: value }
-    }));
-  }
-
-  get outputPixelFormat() { return this.colorFormat; }
-  set outputPixelFormat(value) { 
-    this.colorFormat = value;
-    this.dispatchEvent(new CustomEvent('metadataChanged', {
-      detail: { property: 'colorFormat', oldValue: this.colorFormat, newValue: value }
-    }));
-  }
-
-  get transparentColor() { return this.colorKey; }
-  set transparentColor(value) { 
-    this.colorKey = value;
-    this.dispatchEvent(new CustomEvent('metadataChanged', {
-      detail: { property: 'colorKey', oldValue: this.colorKey, newValue: value }
-    }));
-  }
-
-  // Async method to populate default palette path if not set
-  async populateDefaultPalette() {
-    if (this.palette && this.palette !== '') {
-      return; // Already has a palette path
+  
+  initializeTextureData() {
+    console.log('[TextureEditor] initializeTextureData called');
+    
+    if (!this.file) {
+      console.log('[TextureEditor] No file object, using defaults');
+      return;
     }
-
-    try {
-      const projectExplorer = window.gameEmulator?.projectExplorer;
-      if (projectExplorer && typeof projectExplorer.getDefaultPalettePath === 'function') {
-        const defaultPalettePath = await projectExplorer.getDefaultPalettePath();
-        if (defaultPalettePath) {
-          this.palette = defaultPalettePath;
-          console.log('[TextureData] Auto-populated default palette path:', defaultPalettePath);
-        }
+    
+    const fileExt = this.file.filename ? this.file.filename.toLowerCase().split('.').pop() : '';
+    console.log('[TextureEditor] File extension:', fileExt);
+    
+    if (fileExt === 'png' || fileExt === 'jpg' || fileExt === 'jpeg' || fileExt === 'gif' || fileExt === 'bmp') {
+      // Creating texture from image file
+      this.isCreatingFromImage = true;
+      const baseName = this.file.filename.split('.').slice(0, -1).join('.');
+      this.textureData.name = baseName;
+      this.textureData.sourceImage = this.file.path;
+      console.log('[TextureEditor] Created texture data for image file:', baseName);
+    } else if (fileExt === 'texture' || fileExt === 'tex') {
+      // Loading existing texture file
+      this.isCreatingFromImage = false;
+      try {
+        const textureContent = JSON.parse(this.file.fileContent);
+        Object.assign(this.textureData, textureContent);
+        console.log('[TextureEditor] Loaded texture data from file');
+      } catch (error) {
+        console.error('[TextureEditor] Failed to parse texture file:', error);
       }
-    } catch (error) {
-      console.log('[TextureData] Could not populate default palette path:', error);
     }
   }
-
-  // Check if format uses a palette
-  static isIndexedFormat(formatValue) {
-    return formatValue.startsWith('d2_mode_i') || formatValue === 'd2_mode_ai44';
+  
+  createPreviewPanel(container) {
+    console.log('[TextureEditor] createPreviewPanel called');
+    
+    // Source image section
+    const sourceSection = document.createElement('div');
+    sourceSection.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
+    
+    const sourceLabel = document.createElement('label');
+    sourceLabel.textContent = 'Source Image:';
+    sourceSection.appendChild(sourceLabel);
+    
+    this.originalCanvas = document.createElement('canvas');
+    this.originalCanvas.style.cssText = 'border: 1px solid #444; max-width: 100%; max-height: 200px;';
+    this.originalCtx = this.originalCanvas.getContext('2d');
+    sourceSection.appendChild(this.originalCanvas);
+    
+    // Palette section
+    const paletteSection = document.createElement('div');
+    paletteSection.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
+    
+    const paletteLabel = document.createElement('label');
+    paletteLabel.textContent = 'Palette:';
+    paletteSection.appendChild(paletteLabel);
+    
+    this.paletteSelect = document.createElement('select');
+    this.paletteSelect.style.cssText = 'padding: 5px;';
+    paletteSection.appendChild(paletteSelect);
+    
+    // Apply button
+    this.applyButton = document.createElement('button');
+    this.applyButton.textContent = 'Apply';
+    this.applyButton.style.cssText = 'padding: 8px 16px; background: #0078d4; color: white; border: none; cursor: pointer;';
+    this.applyButton.onclick = () => this.processTexture();
+    paletteSection.appendChild(this.applyButton);
+    
+    // Output section
+    const outputSection = document.createElement('div');
+    outputSection.style.cssText = 'display: flex; flex-direction: column; gap: 5px;';
+    
+    const outputLabel = document.createElement('label');
+    outputLabel.textContent = 'Texture Output:';
+    outputSection.appendChild(outputLabel);
+    
+    this.outputCanvas = document.createElement('canvas');
+    this.outputCanvas.style.cssText = 'border: 1px solid #444; max-width: 100%; max-height: 200px;';
+    this.outputCtx = this.outputCanvas.getContext('2d');
+    outputSection.appendChild(this.outputCanvas);
+    
+    // Add sections to container
+    container.appendChild(sourceSection);
+    container.appendChild(paletteSection);
+    container.appendChild(outputSection);
+    
+    console.log('[TextureEditor] Preview panel created');
   }
-
-  // Delegate to ImageData for format color count (for backward compatibility)
-  static getFormatColorCount(formatValue) {
-    return ImageData.getTextureFormatColorCount(formatValue);
+  
+  async initializeContent() {
+    console.log('[TextureEditor] initializeContent called');
+    
+    if (this.isCreatingFromImage && this.file) {
+      await this.loadSourceImage();
+    }
+    
+    this.updatePaletteOptions();
   }
-
-  // Serialize to JSON
-  toJSON() {
-    return {
-      name: this.name,
-      sourceImage: this.sourceImage,
-      colorKey: this.colorKey,
-      RLE: this.RLE,
-      colorFormat: this.colorFormat,
-      palette: this.palette,
-      scale: this.scale,
-      paletteOffset: this.paletteOffset,
+  
+  async loadSourceImage() {
+    console.log('[TextureEditor] loadSourceImage called');
+    
+    if (!this.file || !this.file.fileContent) {
+      console.error('[TextureEditor] No file content to load');
+      return;
+    }
+    
+    try {
+      // Create image from base64 data
+      const img = new Image();
+      img.onload = () => {
+        console.log('[TextureEditor] Image loaded:', img.width, 'x', img.height);
+        
+        // Set canvas size and draw image
+        this.originalCanvas.width = img.width;
+        this.originalCanvas.height = img.height;
+        this.originalCtx.drawImage(img, 0, 0);
+        
+        // Store image data
+        this.textureData.sourceImageData = this.originalCtx.getImageData(0, 0, img.width, img.height);
+        this.textureData.width = img.width;
+        this.textureData.height = img.height;
+        
+        console.log('[TextureEditor] Source image loaded and processed');
+        
+        // Auto-process if palette is available
+        if (this.textureData.paletteObject) {
+          this.processTexture();
+        }
+      };
       
-      // Legacy fields for backward compatibility
-      width: this.width,
-      height: this.height,
-      colorDepth: this.colorDepth,
-      compressionType: this.compressionType,
-      mipmaps: this.mipmaps,
-      format: this.format,
-      rotation: this.rotation
+      img.onerror = (error) => {
+        console.error('[TextureEditor] Failed to load image:', error);
+      };
+      
+      // Convert file content to data URL
+      const dataUrl = `data:image/png;base64,${this.file.fileContent}`;
+      img.src = dataUrl;
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error loading source image:', error);
+    }
+  }
+  
+  updatePaletteOptions() {
+    console.log('[TextureEditor] updatePaletteOptions called');
+    
+    // Clear existing options
+    this.paletteSelect.innerHTML = '<option value="">Select palette...</option>';
+    
+    // Get project explorer instance to find palette files
+    const projectExplorer = window.ServiceContainer?.get('projectExplorer');
+    if (projectExplorer) {
+      const paletteFiles = projectExplorer.getSourceFiles('Palettes') || [];
+      paletteFiles.forEach(palette => {
+        const option = document.createElement('option');
+        option.value = palette;
+        option.textContent = palette.split('/').pop();
+        this.paletteSelect.appendChild(option);
+      });
+    }
+    
+    // Set up change handler
+    this.paletteSelect.onchange = () => {
+      const selectedPalette = this.paletteSelect.value;
+      if (selectedPalette) {
+        this.loadPalette(selectedPalette);
+      }
     };
   }
-
-  // Load from JSON
-  static fromJSON(data) {
-    return new TextureData({
-      name: data.name || data.sourceImage,
-      sourceImage: data.sourceImage || data.sourceImagePath,
-      colorKey: data.colorKey || data.transparentColor,
-      RLE: data.RLE,
-      colorFormat: data.colorFormat || data.metadata?.outputPixelFormat || data.outputPixelFormat,
-      palette: data.palette || data.palettePath,
-      scale: data.scale || data.metadata?.scale || 1,
-      paletteOffset: data.paletteOffset || data.metadata?.paletteOffset || 0,
+  
+  async loadPalette(palettePath) {
+    console.log('[TextureEditor] loadPalette called:', palettePath);
+    
+    try {
+      const fileManager = window.ServiceContainer?.get('fileManager');
+      if (!fileManager) {
+        console.error('[TextureEditor] FileManager not available');
+        return;
+      }
       
-      // Legacy fields for backward compatibility  
-      width: data.width,
-      height: data.height,
-      colorDepth: data.colorDepth,
-      compressionType: data.compressionType,
-      mipmaps: data.mipmaps,
-      format: data.format,
-      rotation: data.rotation
-    });
+      const paletteFile = await fileManager.loadFile(palettePath);
+      if (!paletteFile) {
+        console.error('[TextureEditor] Failed to load palette file');
+        return;
+      }
+      
+      // Create palette object
+      this.textureData.paletteObject = new Palette();
+      await this.textureData.paletteObject.loadFromContent(paletteFile.fileContent, paletteFile.filename);
+      this.textureData.palette = palettePath;
+      
+      console.log('[TextureEditor] Palette loaded successfully:', this.textureData.paletteObject.colors.length, 'colors');
+      
+      // Auto-process if source image is available
+      if (this.textureData.sourceImageData) {
+        this.processTexture();
+      }
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error loading palette:', error);
+    }
+  }
+  
+  processTexture() {
+    console.log('[TextureEditor] processTexture called');
+    
+    if (!this.textureData.sourceImageData) {
+      console.warn('[TextureEditor] No source image data');
+      return;
+    }
+    
+    if (!this.textureData.paletteObject) {
+      console.warn('[TextureEditor] No palette loaded');
+      return;
+    }
+    
+    try {
+      // Create a copy of the source image data
+      const sourceData = this.textureData.sourceImageData;
+      const processedData = new ImageData(
+        new Uint8ClampedArray(sourceData.data),
+        sourceData.width,
+        sourceData.height
+      );
+      
+      // Apply basic palette quantization
+      this.applyPaletteQuantization(processedData);
+      
+      // Store processed data
+      this.textureData.processedImageData = processedData;
+      
+      // Update output canvas
+      this.updateOutput();
+      
+      console.log('[TextureEditor] Texture processing completed');
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error processing texture:', error);
+    }
+  }
+  
+  applyPaletteQuantization(imageData) {
+    const data = imageData.data;
+    const palette = this.textureData.paletteObject.colors;
+    
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      
+      // Find closest palette color (simple distance)
+      let closestIndex = 0;
+      let closestDistance = Infinity;
+      
+      for (let j = 0; j < palette.length; j++) {
+        const pr = palette[j].r;
+        const pg = palette[j].g;
+        const pb = palette[j].b;
+        
+        const distance = Math.sqrt(
+          Math.pow(r - pr, 2) +
+          Math.pow(g - pg, 2) +
+          Math.pow(b - pb, 2)
+        );
+        
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestIndex = j;
+        }
+      }
+      
+      // Apply closest palette color
+      data[i] = palette[closestIndex].r;
+      data[i + 1] = palette[closestIndex].g;
+      data[i + 2] = palette[closestIndex].b;
+      // Keep original alpha
+    }
+  }
+  
+  updateOutput() {
+    console.log('[TextureEditor] updateOutput called');
+    
+    if (!this.textureData.processedImageData) {
+      console.warn('[TextureEditor] No processed image data');
+      return;
+    }
+    
+    const processed = this.textureData.processedImageData;
+    
+    // Set output canvas size
+    this.outputCanvas.width = processed.width;
+    this.outputCanvas.height = processed.height;
+    
+    // Draw processed image
+    this.outputCtx.putImageData(processed, 0, 0);
+    
+    console.log('[TextureEditor] Output updated');
+  }
+  
+  // EditorBase required methods
+  getContent() {
+    return JSON.stringify(this.textureData, null, 2);
+  }
+  
+  setContent(content) {
+    try {
+      const data = JSON.parse(content);
+      Object.assign(this.textureData, data);
+    } catch (error) {
+      console.error('[TextureEditor] Failed to set content:', error);
+    }
+  }
+  
+  isDirty() {
+    return this.textureData.sourceImageData !== null;
+  }
+  
+  canSave() {
+    return true;
   }
 }
 
 console.log('[TextureEditor] TextureData class defined:', typeof TextureData);
+console.log('[TextureEditor] Class definition loaded');
 
-class TextureEditor extends EditorBase {
-  constructor(fileObject = null, readOnly = false) {
-    console.log('[TextureEditor] Constructor called:', fileObject, readOnly);
-    
-    // Initialize properties BEFORE calling super() to prevent them from being reset
-    const tempTextureData = new TextureData();
-    
-    super(fileObject, readOnly);
-    console.log('[TextureEditor] After super()');
-    console.log('[TextureEditor] this.file after super():', this.file);
-    
-    // Now set properties after super() but preserve canvas reference
-    this.textureData = tempTextureData;
-    console.log('[TextureEditor] this.file after textureData assignment:', this.file);
-    
-    // Don't reset canvas if it was already created
-    if (!this.originalCanvas) {
-      this.originalCanvas = null;
-    }
-    this.originalCtx = this.originalCtx || null;
-    console.log('[TextureEditor] this.file after canvas assignments:', this.file);
-    
-    // Don't reset outputCanvas - it was created in createPreviewPanel()
-    if (!this.outputCanvas) {
-      this.outputCanvas = null;
-    }
-    if (!this.outputCtx) {
-      this.outputCtx = null;
-    }
-    this.sourceImage = null;
     this.processedImageData = null;
     console.log('[TextureEditor] this.file after image assignments:', this.file);
     
@@ -272,7 +492,7 @@ class TextureEditor extends EditorBase {
         }
         
         // Reset palette offset when format changes
-        this.textureData.metadata.paletteOffset = 0;
+        this.textureData.paletteOffset = 0;
       }
       
       // Auto-load palette when palettePath changes
@@ -302,7 +522,14 @@ class TextureEditor extends EditorBase {
       if (this.colorDepthSelect) {
         this.colorDepthSelect.addEventListener('change', () => {
           console.log('[TextureEditor] Color depth select changed:', this.colorDepthSelect.value);
-          // Color depth changes can suggest format changes but format select takes precedence
+          // Update textureData with new color depth
+          if (this.textureData) {
+            this.textureData.colorDepth = parseInt(this.colorDepthSelect.value);
+            // Trigger reprocessing if we have both image and palette
+            if (this.textureData.sourceImageData && this.currentPalette) {
+              this.processTexture();
+            }
+          }
         });
       }
     }, 100);
@@ -311,7 +538,7 @@ class TextureEditor extends EditorBase {
   // Check if texture is ready for auto-generation and trigger it
   checkAndAutoGenerateTexture() {
     // Only auto-generate if we have both source image and palette
-    const hasSourceImage = this.masterImageData || (this.originalCanvas && this.originalCanvas.width > 0);
+    const hasSourceImage = this.textureData?.masterImageData || this.masterImageData || (this.originalCanvas && this.originalCanvas.width > 0);
     const hasPalette = this.textureData?.paletteObject && this.textureData.paletteObject.colors?.length > 0;
     
     console.log('[TextureEditor] Auto-generation check - Source Image:', hasSourceImage, 'Palette:', hasPalette);
@@ -719,7 +946,7 @@ class TextureEditor extends EditorBase {
     this.originalCanvas = document.createElement('canvas');
     console.log('[TextureEditor] Canvas created:', !!this.originalCanvas);
     this.originalCanvas.className = 'preview-canvas';
-    this.originalCtx = this.originalCanvas.getContext('2d', { willReadFrequently: true });
+    this.originalCtx = this.originalCanvas.getContext('2d');
     console.log('[TextureEditor] Canvas context created:', !!this.originalCtx);
     
     originalSection.appendChild(this.originalCanvas);
@@ -922,7 +1149,7 @@ class TextureEditor extends EditorBase {
     
     this.outputCanvas = document.createElement('canvas');
     this.outputCanvas.className = 'preview-canvas';
-    this.outputCtx = this.outputCanvas.getContext('2d', { willReadFrequently: true });
+    this.outputCtx = this.outputCanvas.getContext('2d');
     console.log('[TextureEditor] Texture output canvas created:', !!this.outputCanvas);
     processedSection.appendChild(this.outputCanvas);
     
@@ -1286,6 +1513,11 @@ class TextureEditor extends EditorBase {
       this.colorDepthSelect.appendChild(option);
     });
     this.colorDepthSelect.value = 8; // Default to 256 colors
+    
+    // Sync textureData with the initial UI value
+    if (this.textureData) {
+      this.textureData.colorDepth = parseInt(this.colorDepthSelect.value);
+    }
 
     colorDepthSection.appendChild(colorDepthLabel);
     colorDepthSection.appendChild(arrow);
@@ -1357,41 +1589,6 @@ class TextureEditor extends EditorBase {
     // Store the format label for updates
     this.formatLabel = formatLabel;
 
-    // Palette Selection Section
-    const paletteSection = document.createElement('div');
-    paletteSection.className = 'palette-section';
-    paletteSection.style.cssText = `
-      margin-bottom: 8px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid #444;
-    `;
-
-    const paletteLabel = document.createElement('label');
-    paletteLabel.textContent = 'Palette:';
-    paletteLabel.style.cssText = `
-      color: #ddd;
-      font-weight: 500;
-      display: block;
-      margin-bottom: 5px;
-    `;
-
-    this.paletteSelect = document.createElement('select');
-    this.paletteSelect.className = 'palette-select';
-    this.paletteSelect.style.cssText = `
-      width: 100%;
-      padding: 8px 12px;
-      background: #333;
-      color: #ddd;
-      border: 1px solid #555;
-      border-radius: 4px;
-      margin-bottom: 8px;
-    `;
-
-    this.paletteSelect.addEventListener('change', () => this.handlePaletteSelection());
-
-    paletteSection.appendChild(paletteLabel);
-    paletteSection.appendChild(this.paletteSelect);
-
     // Action Buttons Section
     const actionSection = document.createElement('div');
     actionSection.className = 'action-section';
@@ -1401,12 +1598,28 @@ class TextureEditor extends EditorBase {
       margin-bottom: 8px;
     `;
 
-    // Extract Palette Button (removed Load Palette since dropdown handles that)
+    // Load Palette Button
+    this.loadPaletteBtn = document.createElement('button');
+    this.loadPaletteBtn.textContent = 'Load Palette';
+    this.loadPaletteBtn.className = 'load-palette-btn';
+    this.loadPaletteBtn.style.cssText = `
+      flex: 1;
+      padding: 10px 15px;
+      background: #4a9eff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    `;
+
+    // Extract Palette Button
     this.extractPaletteBtn = document.createElement('button');
-    this.extractPaletteBtn.textContent = 'Extract Palette from Image';
+    this.extractPaletteBtn.textContent = 'Extract Palette';
     this.extractPaletteBtn.className = 'extract-palette-btn';
     this.extractPaletteBtn.style.cssText = `
-      width: 100%;
+      flex: 1;
       padding: 10px 15px;
       background: #333;
       color: #ddd;
@@ -1418,6 +1631,15 @@ class TextureEditor extends EditorBase {
     `;
 
     // Button hover effects and click handlers
+    this.loadPaletteBtn.addEventListener('mouseenter', () => {
+      if (this.loadPaletteBtn.classList.contains('active')) return;
+      this.loadPaletteBtn.style.background = '#3a8eef';
+    });
+    
+    this.loadPaletteBtn.addEventListener('mouseleave', () => {
+      if (this.loadPaletteBtn.classList.contains('active')) return;
+      this.loadPaletteBtn.style.background = '#4a9eff';
+    });
 
     this.extractPaletteBtn.addEventListener('mouseenter', () => {
       if (this.extractPaletteBtn.classList.contains('active')) return;
@@ -1429,9 +1651,11 @@ class TextureEditor extends EditorBase {
       this.extractPaletteBtn.style.background = '#333';
     });
 
-    // Button click handler
+    // Button click handlers
+    this.loadPaletteBtn.addEventListener('click', () => this.showLoadPaletteModal());
     this.extractPaletteBtn.addEventListener('click', () => this.showExtractPaletteModal());
 
+    actionSection.appendChild(this.loadPaletteBtn);
     actionSection.appendChild(this.extractPaletteBtn);
 
     // Palette Display Area
@@ -1523,7 +1747,6 @@ class TextureEditor extends EditorBase {
 
     // Assemble the panel
     panel.appendChild(formatSection);
-    panel.appendChild(paletteSection);
     panel.appendChild(actionSection);
     panel.appendChild(this.paletteDisplay);
     panel.appendChild(metadataSection);
@@ -1532,11 +1755,6 @@ class TextureEditor extends EditorBase {
     // Initialize state
     this.currentPaletteMode = null; // 'load' or 'extract'
     this.currentPalette = null;
-
-    // Populate palette options after creating the dropdown
-    setTimeout(() => {
-      this.populatePaletteOptions();
-    }, 0);
 
     return panel;
   }
@@ -1664,7 +1882,7 @@ class TextureEditor extends EditorBase {
     const tempCanvas = document.createElement('canvas');
     tempCanvas.width = img.width;
     tempCanvas.height = img.height;
-    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    const tempCtx = tempCanvas.getContext('2d');
     tempCtx.drawImage(img, 0, 0);
     
     // Load into our custom ImageData class - this becomes our master source
@@ -1766,6 +1984,12 @@ class TextureEditor extends EditorBase {
 
   // Auto-load default palette if configured
   async autoLoadDefaultPalette() {
+    // Safety check - ensure textureData exists
+    if (!this.textureData) {
+      console.warn('[TextureEditor] Cannot auto-load palette: textureData is not initialized');
+      return;
+    }
+    
     // Use the palette path from textureData if available, otherwise fall back to ProjectConfigManager
     let defaultPalettePath = this.textureData?.palette;
     
@@ -1792,9 +2016,16 @@ class TextureEditor extends EditorBase {
       // Try to load the palette file - if it fails, the file doesn't exist
       let paletteData;
       try {
-        paletteData = await fileService.loadFile(defaultPalettePath);
+        // Ensure we use storage path (remove project prefix if it exists)
+        let palettePath = defaultPalettePath;
+        const currentProject = window.gameEmulator?.currentProject || window.gameEmulator?.projectExplorer?.getFocusedProjectName?.() || 'test';
+        if (palettePath.startsWith(currentProject + '/')) {
+          palettePath = palettePath.substring(currentProject.length + 1);
+        }
+        
+        paletteData = await fileService.loadFile(palettePath);
         if (!paletteData) {
-          console.warn(`[TextureEditor] Default palette file not found: ${defaultPalettePath}`);
+          console.warn(`[TextureEditor] Default palette file not found: ${palettePath}`);
           return;
         }
       } catch (error) {
@@ -1810,14 +2041,17 @@ class TextureEditor extends EditorBase {
       await palette.loadFromContent(paletteData.fileContent || paletteData, defaultPalettePath);
 
       // If we got here, loading succeeded
-      this.textureData.paletteObject = palette;
-      this.currentPalette = palette; // Also set as current palette for UI
-      this.updatePaletteDisplay();
-      console.log(`[TextureEditor] Default palette loaded successfully: ${palette.colors.length} colors`);
-      
-      // Reprocess texture if we're in an indexed color mode
-      if (this.textureData.colorDepth <= 8) {
+      if (this.textureData) {
+        this.textureData.paletteObject = palette;
+        this.currentPalette = palette; // Also set as current palette for UI
+        this.updatePaletteDisplay();
+        this.enableApplyButton(); // Enable apply button when default palette loads
+        console.log(`[TextureEditor] Default palette loaded successfully: ${palette.colors.length} colors`);
+        
+        // Always reprocess texture when palette is loaded
         this.processTexture();
+      } else {
+        console.warn('[TextureEditor] Cannot apply palette: textureData is undefined');
       }
     } catch (error) {
       console.error(`[TextureEditor] Error auto-loading default palette:`, error);
@@ -1826,148 +2060,71 @@ class TextureEditor extends EditorBase {
 
   processTexture() {
     console.log('[TextureEditor] processTexture() called');
+    console.log('[TextureEditor] textureData exists:', !!this.textureData);
+    console.log('[TextureEditor] sourceImageData exists:', !!this.textureData?.sourceImageData);
+    console.log('[TextureEditor] outputCanvas exists:', !!this.outputCanvas);
+    console.log('[TextureEditor] outputCtx exists:', !!this.outputCtx);
     
-    // Check if we have both source data and palette
-    if (!this.textureData?.masterImageData) {
-      console.log('[TextureEditor] No master image data available');
+    if (!this.textureData || !this.textureData.sourceImageData) {
+      console.warn('[TextureEditor] processTexture() - missing textureData or sourceImageData');
       return;
     }
     
-    if (!this.textureData?.paletteObject?.colors) {
-      console.log('[TextureEditor] No palette available');
-      return;
-    }
+    // Start with source image data - use the native browser ImageData constructor
+    const sourceData = this.textureData.sourceImageData;
+    console.log('[TextureEditor] Source image data dimensions:', sourceData.width, 'x', sourceData.height);
+    console.log('[TextureEditor] Source image data type:', typeof sourceData, sourceData.constructor.name);
+    console.log('[TextureEditor] Source image data has data property:', !!sourceData.data);
+    console.log('[TextureEditor] Source image data.data length:', sourceData.data?.length);
+    console.log('[TextureEditor] Expected data length (width * height * 4):', sourceData.width * sourceData.height * 4);
     
-    console.log('[TextureEditor] Processing texture with palette:', this.textureData.paletteObject.colors.length, 'colors');
-    
+    // Create a copy of the ImageData for processing
+    let imageData;
     try {
-      // Get the source frame data from the master ImageData
-      const sourceFrame = this.textureData.masterImageData.getCurrentFrame();
-      console.log('[TextureEditor] Source frame:', sourceFrame);
-      if (!sourceFrame || !sourceFrame.colors) {
-        console.error('[TextureEditor] No source frame data available. Frame:', sourceFrame);
+      // Verify the source data is valid
+      if (!sourceData.data || sourceData.data.length !== sourceData.width * sourceData.height * 4) {
+        console.error('[TextureEditor] Invalid source data - data length mismatch');
         return;
       }
       
-      console.log('[TextureEditor] Source frame colors length:', sourceFrame.colors.length);
-      console.log('[TextureEditor] Master image dimensions:', this.textureData.masterImageData.width, 'x', this.textureData.masterImageData.height);
-      
-      // Validate that the color array length matches the expected pixel count
-      const expectedPixelCount = this.textureData.masterImageData.width * this.textureData.masterImageData.height;
-      if (sourceFrame.colors.length !== expectedPixelCount) {
-        console.error('[TextureEditor] Color array length mismatch:', sourceFrame.colors.length, 'vs expected:', expectedPixelCount);
-        return;
-      }
-      
-      // Convert color objects to flat RGBA array
-      const pixelCount = sourceFrame.colors.length;
-      const rgbaData = new Uint8ClampedArray(pixelCount * 4);
-      for (let i = 0; i < pixelCount; i++) {
-        const color = sourceFrame.colors[i];
-        const offset = i * 4;
-        rgbaData[offset] = color.r;
-        rgbaData[offset + 1] = color.g;
-        rgbaData[offset + 2] = color.b;
-        rgbaData[offset + 3] = color.a;
-      }
-      
-      console.log('[TextureEditor] Created RGBA data array with length:', rgbaData.length);
-      console.log('[TextureEditor] About to create ImageData with:', rgbaData.length, 'bytes,', this.textureData.masterImageData.width, 'x', this.textureData.masterImageData.height);
-      console.log('[TextureEditor] Expected data length:', this.textureData.masterImageData.width * this.textureData.masterImageData.height * 4);
-      
-      // Convert the ImageData frame to a standard ImageData object for processing
-      let sourceImageData;
-      try {
-        // Validate parameters before creating ImageData
-        const expectedLength = this.textureData.masterImageData.width * this.textureData.masterImageData.height * 4;
-        if (rgbaData.length !== expectedLength) {
-          console.error('[TextureEditor] RGBA data length mismatch:', rgbaData.length, 'vs expected:', expectedLength);
-          return;
-        }
-        
-        // Create native ImageData using Canvas context to avoid conflict with our custom class
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = this.textureData.masterImageData.width;
-        tempCanvas.height = this.textureData.masterImageData.height;
-        const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
-        sourceImageData = tempCtx.createImageData(this.textureData.masterImageData.width, this.textureData.masterImageData.height);
-        sourceImageData.data.set(rgbaData);
-        
-        // Additional validation
-        if (!sourceImageData || sourceImageData.width === 0 || sourceImageData.height === 0) {
-          console.error('[TextureEditor] ImageData creation failed:', sourceImageData);
-          return;
-        }
-        
-      } catch (error) {
-        console.error('[TextureEditor] Failed to create ImageData:', error);
-        console.error('[TextureEditor] Parameters were:', rgbaData.constructor.name, rgbaData.length, this.textureData.masterImageData.width, this.textureData.masterImageData.height);
-        return;
-      }
-      
-      console.log('[TextureEditor] Created sourceImageData:', sourceImageData.width, 'x', sourceImageData.height, 'data length:', sourceImageData.data ? sourceImageData.data.length : 'no data');
-      
-      // Get palette colors array
-      const paletteColors = this.textureData.paletteObject.colors;
-      console.log('[TextureEditor] Palette colors:', paletteColors ? paletteColors.length : 'null');
-      
-      // Use the ImageData class methods for proper texture processing
-      const imageProcessor = this.textureData.masterImageData;
-      
-      // Generate indexed data using the palette - pass the raw data array
-      const indexedData = imageProcessor.generateIndexed8Data(sourceImageData.data, paletteColors);
-      console.log('[TextureEditor] Generated indexed data:', indexedData.length, 'bytes');
-      
-      // Render the indexed data back to RGB using the palette
-      const paletteOffset = this.textureData.paletteOffset || 0;
-      const renderedRGBA = imageProcessor.renderIndexed8Data(indexedData, paletteColors, paletteOffset);
-      console.log('[TextureEditor] Rendered RGBA data:', renderedRGBA.length, 'bytes');
-      
-      // Create a new ImageData object for the processed result using Canvas API
-      const tempCanvas2 = document.createElement('canvas');
-      tempCanvas2.width = this.textureData.masterImageData.width;
-      tempCanvas2.height = this.textureData.masterImageData.height;
-      const tempCtx2 = tempCanvas2.getContext('2d', { willReadFrequently: true });
-      const processedImageData = tempCtx2.createImageData(this.textureData.masterImageData.width, this.textureData.masterImageData.height);
-      processedImageData.data.set(new Uint8ClampedArray(renderedRGBA));
-      
-      // Store the processed data
-      this.processedImageData = processedImageData;
-      
-      // Update the output canvas display
-      this.updateOutputCanvas();
-      
-      console.log('[TextureEditor] Texture processing completed successfully');
-      
+      imageData = new ImageData(
+        new Uint8ClampedArray(sourceData.data),
+        sourceData.width,
+        sourceData.height
+      );
     } catch (error) {
-      console.error('[TextureEditor] Error processing texture:', error);
-    }
-  }
-
-  updateOutputCanvas() {
-    if (!this.outputCanvas || !this.processedImageData) {
-      console.log('[TextureEditor] Cannot update output canvas - missing components');
+      console.error('[TextureEditor] Failed to create ImageData copy:', error);
       return;
     }
     
-    console.log('[TextureEditor] Updating output canvas with processed image');
+    console.log('[TextureEditor] Created ImageData for processing:', imageData.width, 'x', imageData.height);
+    console.log('[TextureEditor] Created ImageData type:', typeof imageData, imageData.constructor.name);
+    console.log('[TextureEditor] Created ImageData has data property:', !!imageData.data, 'length:', imageData.data?.length);
     
-    // Set canvas size to match processed image
-    this.outputCanvas.width = this.processedImageData.width;
-    this.outputCanvas.height = this.processedImageData.height;
+    // Apply rotation
+    if (this.textureData.rotation !== 0) {
+      console.log('[TextureEditor] Applying rotation:', this.textureData.rotation);
+      imageData = this.rotateImageData(imageData, this.textureData.rotation);
+    }
     
-    // Draw the processed image data to the output canvas
-    this.outputCtx.putImageData(this.processedImageData, 0, 0);
+    // Apply color depth processing
+    console.log('[TextureEditor] Processing color depth...');
+    console.log('[TextureEditor] Before color depth processing:', imageData.width, 'x', imageData.height);
+    imageData = this.processColorDepth(imageData);
+    console.log('[TextureEditor] After color depth processing:', imageData.width, 'x', imageData.height);
     
-    // Update scale and preview if needed
-    this.updatePreviewScale();
+    // Store processed data
+    this.textureData.processedImageData = imageData;
+    console.log('[TextureEditor] Stored processed image data');
     
-    console.log('[TextureEditor] Output canvas updated');
+    // Update preview
+    console.log('[TextureEditor] Calling updatePreview()');
+    this.updatePreview();
   }
 
   rotateImageData(imageData, degrees) {
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const ctx = canvas.getContext('2d');
     
     if (degrees === 90 || degrees === 270) {
       canvas.width = imageData.height;
@@ -1979,7 +2136,7 @@ class TextureEditor extends EditorBase {
     
     // Create temporary canvas for source
     const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    const tempCtx = tempCanvas.getContext('2d');
     tempCanvas.width = imageData.width;
     tempCanvas.height = imageData.height;
     tempCtx.putImageData(imageData, 0, 0);
@@ -2041,7 +2198,7 @@ class TextureEditor extends EditorBase {
       data[i + 3] = a;
     }
     
-    return new window.ImageData(data, imageData.width, imageData.height);
+    return new ImageData(data, imageData.width, imageData.height);
   }
 
   convertTo4Bit(imageData) {
@@ -2056,7 +2213,7 @@ class TextureEditor extends EditorBase {
       // Alpha unchanged
     }
     
-    return new window.ImageData(data, imageData.width, imageData.height);
+    return new ImageData(data, imageData.width, imageData.height);
   }
 
   convertTo8Bit(imageData) {
@@ -2101,19 +2258,35 @@ class TextureEditor extends EditorBase {
   }
 
   updatePreview() {
-    if (!this.textureData.processedImageData) return;
-    if (!this.outputCanvas || !this.outputCtx) return;
+    console.log('[TextureEditor] updatePreview() called');
+    console.log('[TextureEditor] processedImageData exists:', !!this.textureData?.processedImageData);
+    console.log('[TextureEditor] outputCanvas exists:', !!this.outputCanvas);
+    console.log('[TextureEditor] outputCtx exists:', !!this.outputCtx);
+    
+    if (!this.textureData.processedImageData) {
+      console.warn('[TextureEditor] updatePreview() - no processedImageData');
+      return;
+    }
+    if (!this.outputCanvas || !this.outputCtx) {
+      console.warn('[TextureEditor] updatePreview() - no output canvas or context');
+      return;
+    }
     
     const processed = this.textureData.processedImageData;
+    console.log('[TextureEditor] Setting output canvas size to:', processed.width, 'x', processed.height);
     this.outputCanvas.width = processed.width;
     this.outputCanvas.height = processed.height;
     
     // Convert our custom ImageData to native ImageData for putImageData
     const tempCanvas = processed.toCanvas();
     if (tempCanvas) {
-      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+      console.log('[TextureEditor] Converting processed data to canvas');
+      const tempCtx = tempCanvas.getContext('2d');
       const nativeImageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
       this.outputCtx.putImageData(nativeImageData, 0, 0);
+      console.log('[TextureEditor] Output texture rendered to canvas');
+    } else {
+      console.warn('[TextureEditor] Failed to convert processed data to canvas');
     }
   }
 
@@ -2257,7 +2430,7 @@ class TextureEditor extends EditorBase {
       
       console.log('[TextureEditor] Texture data before save:', this.textureData);
       console.log('[TextureEditor] Metadata:', this.textureData.metadata);
-      console.log('[TextureEditor] Output pixel format:', this.textureData.outputPixelFormat);
+      console.log('[TextureEditor] Output pixel format:', this.textureData.colorFormat);
       
       // Use the file service to save the texture file
       const content = JSON.stringify(this.textureData.toJSON(), null, 2);
@@ -2344,21 +2517,6 @@ class TextureEditor extends EditorBase {
       console.log(`[TextureEditor] Directory: ${directory}`);
       console.log(`[TextureEditor] Base name: ${baseName}`);
       
-      // Check if texture file already exists to prevent duplicates
-      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
-      if (fileService) {
-        try {
-          const existingFile = await fileService.loadFile(texturePath);
-          if (existingFile) {
-            console.log(`[TextureEditor] Texture file already exists: ${texturePath}, skipping auto-save`);
-            return;
-          }
-        } catch (error) {
-          // File doesn't exist, which is fine - we'll create it
-          console.log(`[TextureEditor] No existing texture file found, will create: ${texturePath}`);
-        }
-      }
-      
       // Update the texture data with the source image reference
       this.textureData.sourceImage = originalPath;
       this.textureData.name = baseName;
@@ -2367,11 +2525,12 @@ class TextureEditor extends EditorBase {
       const content = JSON.stringify(this.textureData.toJSON(), null, 2);
       
       // Save using the file service
+      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
       if (fileService) {
         await fileService.saveFile(texturePath, content);
         console.log(`[TextureEditor] Auto-saved linked texture: ${texturePath}`);
         
-        // Notify project explorer to refresh WITHOUT auto-opening
+        // Notify project explorer to refresh
         if (window.gameEmulator?.projectExplorer) {
           // Wait a moment for the file to be written to storage
           setTimeout(async () => {
@@ -2389,10 +2548,10 @@ class TextureEditor extends EditorBase {
                 fileContent: content
               };
               
-              // Add the texture file to project WITHOUT auto-opening (skipAutoOpen = true)
-              window.gameEmulator.projectExplorer.addFileToProject(fileObject, directory, true, false);
+              // Add the texture file to project with proper file object
+              window.gameEmulator.projectExplorer.addFileToProject(fileObject, directory, false, false);
               
-              // Just refresh the display quietly
+              // Refresh the display
               window.gameEmulator.projectExplorer.refresh();
             } catch (error) {
               console.error('[TextureEditor] Error adding texture file to project:', error);
@@ -2438,62 +2597,6 @@ class TextureEditor extends EditorBase {
 
   static createNew() {
     return JSON.stringify(new TextureData().toJSON(), null, 2);
-  }
-
-  handlePaletteSelection() {
-    console.log('[TextureEditor] handlePaletteSelection called');
-    if (!this.paletteSelect) {
-      console.warn('[TextureEditor] paletteSelect not available');
-      return;
-    }
-    
-    const selectedPalette = this.paletteSelect.value;
-    console.log('[TextureEditor] Selected palette:', selectedPalette);
-    
-    if (selectedPalette === 'reduce') {
-      // Custom palette - clear current palette
-      this.currentPalette = null;
-      this.updatePaletteDisplay();
-    } else {
-      // Load selected palette file
-      this.loadPaletteFromFile(selectedPalette);
-    }
-  }
-
-  async loadPaletteFromFile(palettePath) {
-    console.log('[TextureEditor] loadPaletteFromFile called with:', palettePath);
-    if (!palettePath || palettePath === 'reduce') {
-      return;
-    }
-
-    try {
-      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
-      if (!fileService) {
-        console.warn('[TextureEditor] No file service available for palette loading');
-        return;
-      }
-
-      const fileData = await fileService.loadFile(palettePath);
-      if (!fileData || !fileData.fileContent) {
-        console.warn('[TextureEditor] No palette data found at:', palettePath);
-        return;
-      }
-
-      const palette = new Palette();
-      await palette.loadFromContent(fileData.fileContent, palettePath);
-      
-      this.currentPalette = palette;
-      this.textureData.paletteObject = palette;
-      this.textureData.palette = palettePath;
-      
-      // Update UI
-      this.updatePaletteDisplay();
-      this.checkAndAutoGenerateTexture();
-      
-      console.log('[TextureEditor] Successfully loaded palette from:', palettePath);
-    } catch (error) {
-      console.error('[TextureEditor] Error loading palette from file:', error);
-    }
   }
 
   populatePaletteOptions() {
@@ -2601,7 +2704,7 @@ class TextureEditor extends EditorBase {
       
       // Convert ImageData to canvas for processing
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const ctx = canvas.getContext('2d');
       canvas.width = this.textureData.sourceImageData.width;
       canvas.height = this.textureData.sourceImageData.height;
       ctx.putImageData(this.textureData.sourceImageData, 0, 0);
@@ -2746,7 +2849,7 @@ class TextureEditor extends EditorBase {
         
         // Convert ImageData to canvas for processing
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const ctx = canvas.getContext('2d');
         canvas.width = this.textureData.sourceImageData.width;
         canvas.height = this.textureData.sourceImageData.height;
         ctx.putImageData(this.textureData.sourceImageData, 0, 0);
@@ -2857,8 +2960,10 @@ class TextureEditor extends EditorBase {
 
   updatePaletteDisplay() {
     // Update the palette display based on current palette and settings
-    if (this.currentPalette) {
-      this.displayPalette(this.currentPalette);
+    if (this.currentPalette && this.textureData) {
+      // Ensure we pass the colors array, not the palette object
+      const colors = this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette.colors || this.currentPalette;
+      this.displayPalette(colors);
     }
 
     // Update default palette indicator if available
@@ -3205,7 +3310,7 @@ class TextureEditor extends EditorBase {
 
       if (result) {
         // Update the format in texture data
-        this.textureData.outputPixelFormat = result;
+        this.textureData.colorFormat = result;
         
         // Update the UI label
         const format = formats.find(f => f.value === result);
@@ -3388,16 +3493,19 @@ class TextureEditor extends EditorBase {
   }
 
   setButtonState(mode) {
-    // Update button visual state (only extract mode now)
-    if (mode === 'extract') {
-      this.extractPaletteBtn.style.background = '#4a9eff';
-      this.extractPaletteBtn.classList.add('active');
-      this.currentPaletteMode = 'extract';
-    } else {
-      // Default state
+    // Update button visual states
+    if (mode === 'load') {
+      this.loadPaletteBtn.style.background = '#4a9eff';
+      this.loadPaletteBtn.classList.add('active');
       this.extractPaletteBtn.style.background = '#333';
       this.extractPaletteBtn.classList.remove('active');
-      this.currentPaletteMode = null;
+      this.currentPaletteMode = 'load';
+    } else if (mode === 'extract') {
+      this.extractPaletteBtn.style.background = '#4a9eff';
+      this.extractPaletteBtn.classList.add('active');
+      this.loadPaletteBtn.style.background = '#333';
+      this.loadPaletteBtn.classList.remove('active');
+      this.currentPaletteMode = 'extract';
     }
   }
 
@@ -3420,7 +3528,7 @@ class TextureEditor extends EditorBase {
     }
 
     // Get current format and its color limit
-    const currentFormat = this.textureData.outputPixelFormat;
+    const currentFormat = this.textureData.colorFormat;
     const isIndexed = TextureData.isIndexedFormat(currentFormat);
     const formatColorCount = ImageData.getTextureFormatColorCount(currentFormat);
     const currentOffset = this.textureData.paletteOffset || 0;
@@ -3445,7 +3553,7 @@ class TextureEditor extends EditorBase {
       margin-bottom: 10px;
       text-align: center;
     `;
-    infoHeader.textContent = `${this.textureData.outputPixelFormat} - ${colorsPerChunk} colors per block. Click a block to select it.`;
+    infoHeader.textContent = `${this.textureData.colorFormat} - ${colorsPerChunk} colors per block. Click a block to select it.`;
     this.paletteDisplay.appendChild(infoHeader);
 
     // Create container for all palette chunks
@@ -3514,7 +3622,7 @@ class TextureEditor extends EditorBase {
       // Add click handler to select this chunk
       chunkContainer.addEventListener('click', () => {
         // Update palette offset in metadata
-        this.textureData.metadata.paletteOffset = startIndex;
+        this.textureData.paletteOffset = startIndex;
         
         // Refresh display to show new selection
         this.displayPalette(palette);
@@ -3567,14 +3675,7 @@ class TextureEditor extends EditorBase {
       margin-bottom: 10px;
     `;
     
-    // Handle both Palette objects and color arrays
-    const colors = palette.colors || palette;
-    if (!Array.isArray(colors)) {
-      console.error('[TextureEditor] displayFullPalette expects an array or Palette object with colors array');
-      return;
-    }
-    
-    colors.forEach((color, index) => {
+    palette.forEach((color, index) => {
       const colorSwatch = document.createElement('div');
       colorSwatch.style.cssText = `
         width: 20px;
@@ -3686,7 +3787,7 @@ class TextureEditor extends EditorBase {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const ctx = canvas.getContext('2d');
     
     // Create ImageData for the canvas
     const imageData = ctx.createImageData(canvas.width, canvas.height);
@@ -3784,7 +3885,7 @@ class TextureEditor extends EditorBase {
     }
     
     // Clear and resize the processed output canvas
-    const ctx = this.outputCanvas.getContext('2d', { willReadFrequently: true });
+    const ctx = this.outputCanvas.getContext('2d');
     this.outputCanvas.width = sourceCanvas.width;
     this.outputCanvas.height = sourceCanvas.height;
     ctx.clearRect(0, 0, this.outputCanvas.width, this.outputCanvas.height);

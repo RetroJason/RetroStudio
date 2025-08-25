@@ -1165,7 +1165,7 @@ class TabManager {
 
         console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
 
-        // Create viewer instance with just the fullPath (viewers expect constructor(path))
+        // Create viewer instance with path (standard viewer pattern)
         const viewer = new Component(fullPath);
 
         return {

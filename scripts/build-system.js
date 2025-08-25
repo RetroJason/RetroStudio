@@ -17,6 +17,9 @@ class BuildSystem {
     
     // SFX builder for .sfx files
     this.registerBuilder('.sfx', new SfxBuilder());
+    
+    // Texture builder will be loaded from scripts/builders/texture-builder.js
+    // this.registerBuilder('.texture', new TextureBuilder());  // REMOVED - using separate file
 
   // Palette builder for palette-like text formats
   this.registerBuilder('.pal', new PalBuilder());
@@ -26,6 +29,7 @@ class BuildSystem {
   // Also index by IDs for explicit selection
   this.builderById.set('copy', new CopyBuilder());
   this.builderById.set('sfx', new SfxBuilder());
+  // this.builderById.set('texture', new TextureBuilder());  // REMOVED - using separate file
   this.builderById.set('pal', new PalBuilder());
   }
   
@@ -48,6 +52,7 @@ class BuildSystem {
   getBuilderIdForExtension(extension) {
     switch ((extension || '').toLowerCase()) {
       case '.sfx': return 'sfx';
+      case '.texture': return 'texture';
       case '.pal':
       case '.act':
       case '.aco':
@@ -957,9 +962,12 @@ class PalBuilder extends BaseBuilder {
   }
 }
 
+// End of BuildSystem class and support classes
+
 // Export for global use
 window.BuildSystem = BuildSystem;
 window.BaseBuilder = BaseBuilder;
 window.CopyBuilder = CopyBuilder;
 window.SfxBuilder = SfxBuilder;
 window.PalBuilder = PalBuilder;
+// TextureBuilder will be loaded from scripts/builders/texture-builder.js
