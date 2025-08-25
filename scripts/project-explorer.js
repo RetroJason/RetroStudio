@@ -188,11 +188,93 @@ class ProjectExplorer {
     const rootList = document.createElement('ul');
     rootList.className = 'tree-node';
     
-    this.renderNode(this.projectData.structure, rootList, '');
+    // Reorganize structure to show linked files as children
+    const reorganizedStructure = this.reorganizeLinkedFiles(this.projectData.structure);
+    
+    this.renderNode(reorganizedStructure, rootList, '');
     this.treeContainer.appendChild(rootList);
     
     // Only update visual indicators - no logic here
     this.updatePaletteFileVisuals();
+  }
+
+  // Reorganize project structure to show linked texture files as children of image files
+  reorganizeLinkedFiles(structure) {
+    const reorganized = JSON.parse(JSON.stringify(structure)); // Deep clone
+    
+    // Function to recursively process folders
+    const processFolder = (folderData, currentPath = '') => {
+      if (!folderData.children) return folderData;
+      
+      const imageFiles = {};
+      const textureFiles = {};
+      const otherFiles = {};
+      
+      // First pass: categorize files
+      for (const [name, data] of Object.entries(folderData.children)) {
+        if (data.type === 'file') {
+          const ext = this.getFileExtension(name).toLowerCase();
+          if (['.png', '.jpg', '.jpeg', '.gif', '.bmp'].includes(ext)) {
+            imageFiles[name] = data;
+          } else if (ext === '.texture') {
+            textureFiles[name] = data;
+          } else {
+            otherFiles[name] = data;
+          }
+        } else if (data.type === 'folder') {
+          // Recursively process subfolders
+          const folderPath = currentPath ? `${currentPath}/${name}` : name;
+          otherFiles[name] = processFolder(data, folderPath);
+        }
+      }
+      
+      // Second pass: create hierarchy with linked files
+      const newChildren = {};
+      
+      // Add non-image files first
+      Object.assign(newChildren, otherFiles);
+      
+      // Process image files and their linked textures
+      for (const [imageName, imageData] of Object.entries(imageFiles)) {
+        const baseName = imageName.substring(0, imageName.lastIndexOf('.'));
+        const linkedTextureName = baseName + '.texture';
+        
+        if (textureFiles[linkedTextureName]) {
+          // Create image with texture as child
+          const imageWithChild = JSON.parse(JSON.stringify(imageData));
+          const textureData = JSON.parse(JSON.stringify(textureFiles[linkedTextureName]));
+          // Preserve the original path for file operations
+          const originalTexturePath = currentPath ? `${currentPath}/${linkedTextureName}` : linkedTextureName;
+          textureData.originalPath = originalTexturePath;
+          imageWithChild.children = {
+            [linkedTextureName]: textureData
+          };
+          newChildren[imageName] = imageWithChild;
+          // Remove texture from main level (it's now a child)
+          delete textureFiles[linkedTextureName];
+        } else {
+          // No linked texture, add image normally
+          newChildren[imageName] = imageData;
+        }
+      }
+      
+      // Add any remaining unlinked texture files
+      Object.assign(newChildren, textureFiles);
+      
+      return {
+        ...folderData,
+        children: newChildren
+      };
+    };
+    
+    // Process each top-level item
+    for (const [name, data] of Object.entries(reorganized)) {
+      if (data.type === 'folder') {
+        reorganized[name] = processFolder(data, name);
+      }
+    }
+    
+    return reorganized;
   }
   
   renderNode(nodeData, container, path) {
@@ -203,13 +285,15 @@ class ProjectExplorer {
       
       const item = document.createElement('div');
       item.className = 'tree-item';
-      item.dataset.path = currentPath;
+      // Use originalPath for linked files (like texture files), otherwise use currentPath
+      item.dataset.path = data.originalPath || currentPath;
       item.dataset.type = data.type;
       
       // Expand button
       const expand = document.createElement('span');
       expand.className = 'tree-expand';
-      if (data.type === 'folder' && Object.keys(data.children || {}).length > 0) {
+      const hasChildren = Object.keys(data.children || {}).length > 0;
+      if ((data.type === 'folder' || data.type === 'file') && hasChildren) {
         // Default expanded unless explicitly collapsed
         const shouldExpand = !this.collapsedPaths.has(currentPath);
         expand.textContent = shouldExpand ? '▼' : '▶';
@@ -261,14 +345,15 @@ class ProjectExplorer {
           // Show in preview if it's a file (only if not double-clicked)
           if (data.type === 'file' && window.tabManager) {
             const isReadOnly = data.isReadOnly || data.isBuildFile;
-            let fullPath = currentPath;
+            // Use original path if available (for linked files), otherwise use current path
+            let fullPath = data.originalPath || currentPath;
             // Only normalize build artifacts to storage path; keep project prefix for sources
-            if (window.ProjectPaths?.isBuildArtifact?.(currentPath)) {
-              fullPath = window.ProjectPaths.normalizeStoragePath(currentPath);
-            } else if (currentPath.startsWith('Build/')) {
-              fullPath = currentPath.replace(/^Build\//, 'build/');
+            if (window.ProjectPaths?.isBuildArtifact?.(fullPath)) {
+              fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
+            } else if (fullPath.startsWith('Build/')) {
+              fullPath = fullPath.replace(/^Build\//, 'build/');
             }
-            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", openPath="${fullPath}"`);
+            console.log(`[ProjectExplorer] Single-clicking file: currentPath="${currentPath}", openPath="${fullPath}", originalPath="${data.originalPath || 'none'}"`);
             
             // Get appropriate component for preview (prefer viewer for single-click)
             const componentInfo = this._getComponentForFile(fullPath, false);
@@ -291,17 +376,17 @@ class ProjectExplorer {
         // Open in new tab if it's a file
         if (data.type === 'file' && window.tabManager) {
           const isReadOnly = data.isReadOnly || data.isBuildFile;
-          // For files, currentPath already includes the full path, don't append filename again
-          let fullPath = currentPath;
+          // Use original path if available (for linked files), otherwise use current path
+          let fullPath = data.originalPath || currentPath;
           
           // Only normalize build artifacts to storage path; keep project prefix for sources
-          if (window.ProjectPaths?.isBuildArtifact?.(currentPath)) {
+          if (window.ProjectPaths?.isBuildArtifact?.(fullPath)) {
             fullPath = window.ProjectPaths.normalizeStoragePath(fullPath);
           } else if (fullPath.startsWith('Build/')) {
             fullPath = fullPath.replace(/^Build\//, 'build/');
           }
           
-          console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fullPath="${fullPath}"`);
+          console.log(`[ProjectExplorer] Double-clicking file: currentPath="${currentPath}", fullPath="${fullPath}", originalPath="${data.originalPath || 'none'}"`);
           
           // Get appropriate component for tab (prefer editor for double-click)
           const componentInfo = this._getComponentForFile(fullPath, true);
@@ -345,7 +430,7 @@ class ProjectExplorer {
       li.appendChild(item);
       
       // Children container
-      if (data.type === 'folder' && data.children) {
+      if ((data.type === 'folder' || data.type === 'file') && data.children) {
         const childrenUl = document.createElement('ul');
         childrenUl.className = 'tree-children';
         this.renderNode(data.children, childrenUl, currentPath);
@@ -398,6 +483,14 @@ class ProjectExplorer {
     if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return '🎵';
     if (['.wav'].includes(ext)) return '🔊';
     if (['.lua'].includes(ext)) return '📜';
+    if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
+      // Check if this image has a linked texture file
+      return this.isLinkedFile(name) ? '🖼️🔗' : '🖼️';
+    }
+    if (['.texture'].includes(ext)) {
+      // Check if this texture has a linked image file
+      return this.isLinkedFile(name) ? '🎨🔗' : '🎨';
+    }
     
     return '📄';
   }
@@ -763,6 +856,8 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/SFX` };
     } else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
+    } else if (['.texture'].includes(ext)) {
+      return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
     } else if (luaExts.includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Lua` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
@@ -873,7 +968,9 @@ class ProjectExplorer {
       size: fileSize,
       lastModified: lastModified,
       isNewFile: file.isNewFile || false,
-      builderId
+      builderId,
+      // Preserve any additional properties from the file object (like originalPath)
+      ...(file.originalPath && { originalPath: file.originalPath })
     };
     
     console.log(`[ProjectExplorer] Added file reference: ${finalFileName} to ${path}`);
@@ -942,6 +1039,15 @@ class ProjectExplorer {
     
     // Emit file addition event for other components to listen to
     this.emitFileAddedEvent({ ...file, name: finalFileName }, path);
+    
+    // Auto-create texture file for image files (after file is added to project)
+    if (this.isImageFile(finalFileName)) {
+      console.log('[ProjectExplorer] Image file detected, will create texture file:', finalFileName);
+      persistDone.then(() => {
+        console.log('[ProjectExplorer] Persistence done, creating texture file for:', finalFileName);
+        this.createTextureFileForImage(uiFullPath, path, finalFileName);
+      });
+    }
     
     // Auto-open file in tab if not skipping
     if (!skipAutoOpen) {
@@ -1432,6 +1538,32 @@ class ProjectExplorer {
       return;
     }
     
+    // Handle linked files - check for and rename linked texture/image pairs
+    let linkedOldPath = null;
+    let linkedNewPath = null;
+    if (type === 'file') {
+      const linkedFileName = this.getLinkedFileName(currentName);
+      if (linkedFileName) {
+        linkedOldPath = parentPath ? `${parentPath}/${linkedFileName}` : linkedFileName;
+        const linkedNode = this.getNodeByPath(linkedOldPath);
+        if (linkedNode) {
+          // Calculate new name for linked file
+          const newBaseName = newName.substring(0, newName.lastIndexOf('.'));
+          const linkedExt = this.getFileExtension(linkedFileName);
+          const linkedNewName = newBaseName + linkedExt;
+          linkedNewPath = parentPath ? `${parentPath}/${linkedNewName}` : linkedNewName;
+          
+          // Check if linked new name would conflict
+          if (this.getNodeByPath(linkedNewPath)) {
+            alert(`Cannot rename: linked file "${linkedNewName}" would conflict with existing file.`);
+            return;
+          }
+          
+          console.log(`[ProjectExplorer] Will also rename linked file: ${linkedOldPath} → ${linkedNewPath}`);
+        }
+      }
+    }
+    
     try {
       // Get the node data before renaming
       console.log(`[ProjectExplorer] Looking for node at path: ${path}`);
@@ -1447,10 +1579,37 @@ class ProjectExplorer {
       // Handle file renaming (update storage) regardless of in-memory file presence
       if (type === 'file') {
         await this.renameFileInStorage(path, newPath, nodeData.file);
+        
+        // Also rename linked file if it exists
+        if (linkedOldPath && linkedNewPath) {
+          const linkedNodeData = this.getNodeByPath(linkedOldPath);
+          if (linkedNodeData) {
+            try {
+              await this.renameFileInStorage(linkedOldPath, linkedNewPath, linkedNodeData.file);
+              console.log(`[ProjectExplorer] Successfully renamed linked file: ${linkedOldPath} → ${linkedNewPath}`);
+            } catch (error) {
+              console.error(`[ProjectExplorer] Failed to rename linked file:`, error);
+              // Continue with main file rename even if linked file fails
+            }
+          }
+        }
       }
       
       // Update the project structure
       this.updateNodePath(path, newPath, nodeData);
+      
+      // Update linked file in project structure too
+      if (linkedOldPath && linkedNewPath) {
+        const linkedNodeData = this.getNodeByPath(linkedOldPath);
+        if (linkedNodeData) {
+          try {
+            this.updateNodePath(linkedOldPath, linkedNewPath, linkedNodeData);
+            console.log(`[ProjectExplorer] Updated linked file structure: ${linkedOldPath} → ${linkedNewPath}`);
+          } catch (error) {
+            console.error(`[ProjectExplorer] Failed to update linked file structure:`, error);
+          }
+        }
+      }
       
       // Re-render the tree
       this.renderTree();
@@ -1468,6 +1627,12 @@ class ProjectExplorer {
         
         if (tabManager && typeof tabManager.updateFileReference === 'function') {
           tabManager.updateFileReference(path, newPath, newName);
+          
+          // Update linked file tab reference too
+          if (linkedOldPath && linkedNewPath) {
+            const linkedNewName = linkedNewPath.split('/').pop();
+            tabManager.updateFileReference(linkedOldPath, linkedNewPath, linkedNewName);
+          }
         }
       }
       
@@ -2839,6 +3004,145 @@ class ProjectExplorer {
       }
     }
     return false;
+  }
+
+  // Linked file functionality for image/texture pairs
+  getLinkedFileName(filename) {
+    const baseName = filename.substring(0, filename.lastIndexOf('.'));
+    const ext = this.getFileExtension(filename).toLowerCase();
+    
+    // Return the linked file extension
+    if (['.png', '.jpg', '.jpeg', '.gif', '.bmp'].includes(ext)) {
+      return baseName + '.texture';
+    } else if (ext === '.texture') {
+      return baseName + '.png'; // Default to PNG for linked image
+    }
+    
+    return null;
+  }
+
+  findLinkedFile(filename) {
+    const linkedName = this.getLinkedFileName(filename);
+    if (!linkedName) return null;
+    
+    try {
+      // Check if linked file exists in project structure
+      if (!this.projectData?.structure) return null;
+      
+      // Search for linked file in project structure
+      const searchInNode = (node, path = '') => {
+        if (!node) return null;
+        
+        for (const [name, data] of Object.entries(node)) {
+          const currentPath = path ? `${path}/${name}` : name;
+          
+          if (data.type === 'file' && name === linkedName) {
+            return linkedName;
+          } else if (data.type === 'folder' && data.children) {
+            const found = searchInNode(data.children, currentPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      
+      return searchInNode(this.projectData.structure);
+    } catch (error) {
+      console.warn('[ProjectExplorer] Error finding linked file:', error);
+    }
+    
+    return null;
+  }
+
+  isLinkedFile(filename) {
+    return this.findLinkedFile(filename) !== null;
+  }
+
+  // Helper method to check if a file is an image
+  isImageFile(filename) {
+    const ext = this.getFileExtension(filename).toLowerCase();
+    const isImage = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tga'].includes(ext);
+    return isImage;
+  }
+
+  // Auto-create texture file for image files
+  async createTextureFileForImage(imageUIPath, imagePath, imageFileName) {
+    try {
+      
+      // Calculate texture file paths
+      const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
+      const textureFileName = baseName + '.texture';
+      
+      // Convert UI path to storage path for both image and texture
+      const imageStoragePath = window.ProjectPaths?.normalizeStoragePath ? 
+        window.ProjectPaths.normalizeStoragePath(imageUIPath) : imageUIPath;
+      const textureStoragePath = imageStoragePath.replace(imageFileName, textureFileName);
+      const textureUIPath = imagePath + '/' + textureFileName;
+      
+      // Check if texture file already exists
+      if (window.fileIOService) {
+        try {
+          const existingTexture = await window.fileIOService.loadFile(textureStoragePath);
+          if (existingTexture) {
+            console.log('[ProjectExplorer] Texture file already exists, skipping creation:', textureFileName);
+            return;
+          }
+        } catch (e) {
+          // File doesn't exist, proceed with creation
+        }
+      }
+      
+      // Create default texture data
+      const defaultTextureData = {
+        width: 32,
+        height: 32,
+        colorDepth: 8,
+        palette: null,
+        transparentColor: '#FF00FF',
+        compression: 'none',
+        rotation: 0,
+        scale: 1,
+        paletteSize: 256,
+        paletteOffset: 0,
+        sourceImagePath: imageFileName,
+        palettePath: '',
+        metadata: {
+          created: new Date().toISOString(),
+          autoGenerated: true
+        }
+      };
+      
+      const textureContent = JSON.stringify(defaultTextureData, null, 2);
+      
+      // Save texture file to storage
+      if (window.fileIOService) {
+        await window.fileIOService.saveFile(textureStoragePath, textureContent);
+        console.log('[ProjectExplorer] Auto-created texture file:', textureStoragePath);
+        
+        // Add texture file to project structure
+        this.addFileToProject({ 
+          name: textureFileName, 
+          size: textureContent.length,
+          lastModified: Date.now(),
+          originalPath: textureUIPath  // Preserve the actual file path for operations
+        }, imagePath, true, true); // Skip auto-open and skip render to avoid duplicate refreshes
+        
+        console.log('[ProjectExplorer] Added texture file to project structure:', textureUIPath);
+        
+        // Manually refresh the UI to show the new texture file
+        this.renderTree();
+        console.log('[ProjectExplorer] Refreshed UI after texture file creation');
+      }
+      
+    } catch (error) {
+      console.error('[ProjectExplorer] Failed to auto-create texture file:', error);
+    }
+  }
+
+  // Public method to refresh the project explorer display
+  refresh() {
+    console.log('[ProjectExplorer] Refreshing display...');
+    this.renderTree();
   }
 }
 
