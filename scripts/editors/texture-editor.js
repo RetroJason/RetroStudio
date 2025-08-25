@@ -337,8 +337,8 @@ class TextureData extends EventTarget {
       name: data.name,
       sourceImage: data.sourceImage,
       rotation: data.rotation,
-      sourceImagePath: data.metadata?.sourceImagePath,
-      palettePath: data.metadata?.palettePath,
+      sourceImagePath: data.sourceImagePath,
+      palettePath: data.palettePath,
       outputPixelFormat: data.metadata?.outputPixelFormat,
       scale: data.metadata?.scale,
       paletteOffset: data.metadata?.paletteOffset
@@ -357,14 +357,19 @@ class TextureEditor extends EditorBase {
     
     super(fileObject, readOnly);
     console.log('[TextureEditor] After super()');
+    console.log('[TextureEditor] this.file after super():', this.file);
     
     // Now set properties after super() but preserve canvas reference
     this.textureData = tempTextureData;
+    console.log('[TextureEditor] this.file after textureData assignment:', this.file);
+    
     // Don't reset canvas if it was already created
     if (!this.originalCanvas) {
       this.originalCanvas = null;
     }
     this.originalCtx = this.originalCtx || null;
+    console.log('[TextureEditor] this.file after canvas assignments:', this.file);
+    
     // Don't reset outputCanvas - it was created in createPreviewPanel()
     if (!this.outputCanvas) {
       this.outputCanvas = null;
@@ -374,6 +379,7 @@ class TextureEditor extends EditorBase {
     }
     this.sourceImage = null;
     this.processedImageData = null;
+    console.log('[TextureEditor] this.file after image assignments:', this.file);
     
     // UI elements - only initialize if not already created
     this.colorDepthSelect = this.colorDepthSelect || null;
@@ -403,6 +409,10 @@ class TextureEditor extends EditorBase {
     }, 500); // Give some time for project explorer to be ready
     
     console.log('[TextureEditor] Constructor completed, textureData:', this.textureData);
+    console.log('[TextureEditor] Constructor completed, this.file:', this.file);
+    
+    // Initialize content now that constructor is complete
+    this.initializeContent();
   }
 
   setupFileSystemEventListeners() {
@@ -530,15 +540,27 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] createElement() called, canvas before super:', !!this.originalCanvas);
     const element = super.createElement();
     console.log('[TextureEditor] createElement() after super, canvas:', !!this.originalCanvas);
+    console.log('[TextureEditor] createElement() this.file:', this.file);
+    console.log('[TextureEditor] createElement() this.isNewResource:', this.isNewResource);
     
-    // After element is created, load content if needed
+    // Content loading will be handled by initializeContent() called after constructor
+    return element;
+  }
+
+  // Called after constructor completes to initialize content
+  initializeContent() {
+    console.log('[TextureEditor] initializeContent() called');
+    console.log('[TextureEditor] initializeContent() this.file:', this.file);
+    console.log('[TextureEditor] initializeContent() this.isNewResource:', this.isNewResource);
+    console.log('[TextureEditor] initializeContent() this.isCreatingFromImage:', this.isCreatingFromImage);
+    
     if (this.isCreatingFromImage) {
       console.log('[TextureEditor] About to load source image, canvas exists:', !!this.originalCanvas);
-      // Simple: just load after the element is returned and attached
       this.loadSourceImageFromPath();
+    } else if (!this.isNewResource && this.file) {
+      console.log('[TextureEditor] About to load texture file content');
+      this.loadFileContent();
     }
-    
-    return element;
   }
 
   initializeTextureData() {
@@ -620,13 +642,84 @@ class TextureEditor extends EditorBase {
     // Load content based on what type of file we're editing
     console.log('[TextureEditor] createBody - isCreatingFromImage:', this.isCreatingFromImage, 'isNewResource:', this.isNewResource);
     
-    // Note: Image loading is handled in createElement() when DOM is ready
-    if (!this.isCreatingFromImage && !this.isNewResource) {
-      // Loading an existing texture file
-      this.loadFileContent();
-    }
+    // Note: File content loading is now handled in createElement() after constructor completes
     
     return bodyContainer;
+  }
+
+  /**
+   * Load source image from texture data sourceImagePath
+   */
+  async loadSourceImageFromTexture() {
+    if (!this.textureData?.sourceImagePath) {
+      console.log('[TextureEditor] No source image path in texture data');
+      return;
+    }
+
+    try {
+      // Construct the full path to the source image
+      // The texture file is in the same directory as the source image
+      const texturePath = this.file?.path || this.path;
+      const textureDirectory = texturePath.substring(0, texturePath.lastIndexOf('/'));
+      const sourceImagePath = `${textureDirectory}/${this.textureData.sourceImagePath}`;
+      
+      console.log('[TextureEditor] Loading source image from path:', sourceImagePath);
+      console.log('[TextureEditor] Texture directory:', textureDirectory);
+      console.log('[TextureEditor] Source image filename:', this.textureData.sourceImagePath);
+      
+      // Load the image file from storage
+      const fileManager = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      if (!fileManager) {
+        console.error('[TextureEditor] FileManager not available');
+        return;
+      }
+      
+      // Remove the 'test/' prefix if it exists for storage path
+      const storageImagePath = sourceImagePath.replace(/^test\//, '');
+      console.log('[TextureEditor] Storage path for image:', storageImagePath);
+      
+      const imageFile = await fileManager.loadFile(storageImagePath);
+      if (!imageFile || !imageFile.fileContent) {
+        console.error('[TextureEditor] Failed to load source image file:', storageImagePath);
+        return;
+      }
+      
+      console.log('[TextureEditor] Source image file loaded:', imageFile.filename);
+      
+      // Create image element and load the image data
+      const img = new Image();
+      img.onload = () => {
+        console.log('[TextureEditor] Source image loaded successfully:', img.width, 'x', img.height);
+        
+        // Use the existing setImageToCanvas method to process the image
+        this.setImageToCanvas(img, () => {
+          console.log('[TextureEditor] Image processed and loaded into texture data');
+          
+          // Update the original image canvas display
+          this.updateOriginalImageCanvas();
+          
+          // Trigger auto-generation check
+          this.checkAutoGeneration();
+        });
+      };
+      
+      img.onerror = (error) => {
+        console.error('[TextureEditor] Failed to load source image:', error);
+      };
+      
+      // Convert file content to data URL for the image
+      if (imageFile.binaryData || imageFile.fileContent.startsWith('data:')) {
+        img.src = imageFile.fileContent.startsWith('data:') ? 
+                   imageFile.fileContent : 
+                   `data:image/png;base64,${imageFile.fileContent}`;
+      } else {
+        // Handle base64 content
+        img.src = `data:image/png;base64,${imageFile.fileContent}`;
+      }
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error loading source image from texture:', error);
+    }
   }
 
   async loadSourceImageFromPath() {
@@ -1126,6 +1219,66 @@ class TextureEditor extends EditorBase {
       this.settingsToggleBar.title = 'Click to collapse settings panel';
       
       console.log('[TextureEditor] Settings panel expanded');
+    }
+  }
+
+  /**
+   * Update the original image canvas with the loaded source image
+   */
+  updateOriginalImageCanvas() {
+    console.log('[TextureEditor] updateOriginalImageCanvas() called');
+    
+    if (!this.originalCanvas || !this.originalCtx) {
+      console.log('[TextureEditor] Original canvas or context not available');
+      return;
+    }
+    
+    if (!this.sourceImage && !this.textureData?.sourceImageData) {
+      console.log('[TextureEditor] No source image data available');
+      return;
+    }
+    
+    try {
+      let imageToDisplay = this.sourceImage;
+      let width, height;
+      
+      if (imageToDisplay) {
+        // Use the loaded Image element
+        width = imageToDisplay.width;
+        height = imageToDisplay.height;
+      } else if (this.textureData.sourceImageData) {
+        // Use the ImageData from texture data
+        width = this.textureData.width;
+        height = this.textureData.height;
+      } else {
+        console.log('[TextureEditor] No valid image source found');
+        return;
+      }
+      
+      console.log('[TextureEditor] Updating original canvas with image:', width, 'x', height);
+      
+      // Set canvas native resolution to match image
+      this.originalCanvas.width = width;
+      this.originalCanvas.height = height;
+      
+      // Clear the canvas
+      this.originalCtx.clearRect(0, 0, width, height);
+      
+      if (imageToDisplay) {
+        // Draw the Image element
+        this.originalCtx.drawImage(imageToDisplay, 0, 0);
+      } else if (this.textureData.sourceImageData) {
+        // Draw the ImageData
+        this.originalCtx.putImageData(this.textureData.sourceImageData, 0, 0);
+      }
+      
+      console.log('[TextureEditor] Original canvas updated successfully');
+      
+      // Update the display scaling
+      this.updatePreviewScale();
+      
+    } catch (error) {
+      console.error('[TextureEditor] Error updating original image canvas:', error);
     }
   }
 
@@ -1983,6 +2136,12 @@ class TextureEditor extends EditorBase {
       const data = JSON.parse(content);
       this.textureData = TextureData.fromJSON(data);
       this.updateUIFromData();
+      
+      // If there's a source image path, load the source image
+      if (this.textureData.sourceImagePath) {
+        console.log('[TextureEditor] Found source image path in texture data:', this.textureData.sourceImagePath);
+        this.loadSourceImageFromTexture();
+      }
     } catch (error) {
       console.error('[TextureEditor] Failed to parse content:', error);
     }
@@ -1990,13 +2149,22 @@ class TextureEditor extends EditorBase {
 
   // Load texture data from .texture file
   loadFileContent() {
-    if (!this.fileObject || !this.fileObject.fileContent) {
+    console.log('[TextureEditor] loadFileContent() called');
+    console.log('[TextureEditor] this.file:', this.file);
+    console.log('[TextureEditor] this.file?.fileContent:', this.file?.fileContent);
+    
+    if (!this.file || !this.file.fileContent) {
       console.error('[TextureEditor] No file content available to load');
+      console.error('[TextureEditor] file exists:', !!this.file);
+      console.error('[TextureEditor] fileContent exists:', !!this.file?.fileContent);
       return;
     }
 
     try {
-      let content = this.fileObject.fileContent;
+      let content = this.file.fileContent;
+      console.log('[TextureEditor] Raw file content:', content);
+      console.log('[TextureEditor] Content type:', typeof content);
+      console.log('[TextureEditor] Content length:', content.length);
       
       // If content is base64 encoded, decode it first
       if (typeof content === 'string' && content.length > 0) {
@@ -2004,6 +2172,7 @@ class TextureEditor extends EditorBase {
           // Try to decode base64 content
           const decodedContent = atob(content);
           content = decodedContent;
+          console.log('[TextureEditor] Decoded base64 content:', content);
         } catch (e) {
           // If it fails, assume it's already plain text JSON
           console.log('[TextureEditor] Content is not base64, treating as plain text');

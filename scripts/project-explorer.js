@@ -3092,10 +3092,47 @@ class ProjectExplorer {
         }
       }
       
-      // Create default texture data
+      // Load the image to get its actual dimensions
+      let imageWidth = 32;
+      let imageHeight = 32;
+      
+      try {
+        console.log('[ProjectExplorer] Loading image to get dimensions:', imageStoragePath);
+        const imageFile = await window.fileIOService.loadFile(imageStoragePath);
+        if (imageFile && imageFile.fileContent) {
+          // Create an image element to get dimensions
+          const img = new Image();
+          const imageDimensions = await new Promise((resolve, reject) => {
+            img.onload = () => {
+              console.log('[ProjectExplorer] Image loaded, dimensions:', img.width, 'x', img.height);
+              resolve({ width: img.width, height: img.height });
+            };
+            img.onerror = (error) => {
+              console.warn('[ProjectExplorer] Failed to load image for dimensions:', error);
+              resolve({ width: 32, height: 32 }); // Use defaults on error
+            };
+            
+            // Set image source based on content type
+            if (imageFile.binaryData || imageFile.fileContent.startsWith('data:')) {
+              img.src = imageFile.fileContent.startsWith('data:') ? 
+                         imageFile.fileContent : 
+                         `data:image/png;base64,${imageFile.fileContent}`;
+            } else {
+              img.src = `data:image/png;base64,${imageFile.fileContent}`;
+            }
+          });
+          
+          imageWidth = imageDimensions.width;
+          imageHeight = imageDimensions.height;
+        }
+      } catch (error) {
+        console.warn('[ProjectExplorer] Could not load image for dimensions, using defaults:', error);
+      }
+      
+      // Create texture data with actual image dimensions
       const defaultTextureData = {
-        width: 32,
-        height: 32,
+        width: imageWidth,
+        height: imageHeight,
         colorDepth: 8,
         palette: null,
         transparentColor: '#FF00FF',
@@ -3112,6 +3149,7 @@ class ProjectExplorer {
         }
       };
       
+      console.log('[ProjectExplorer] Creating texture file with dimensions:', imageWidth, 'x', imageHeight);
       const textureContent = JSON.stringify(defaultTextureData, null, 2);
       
       // Save texture file to storage
