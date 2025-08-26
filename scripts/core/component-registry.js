@@ -339,7 +339,22 @@ class ComponentRegistry {
       return this.viewers.get(viewerName);
     }
     
-    // Fallback: find any viewer registered for '*' (wildcard), prefer lowest priority
+    // No specific associations found, look for best component (editors and viewers)
+    const allComponents = this.getComponentsForExtension(extension);
+    if (allComponents.length > 0) {
+      // Return the highest priority component (already sorted by priority)
+      const bestComponent = allComponents[0];
+      console.log(`[ComponentRegistry] Selected best component for ${extension}: ${bestComponent.name} (priority: ${bestComponent.priority})`);
+      
+      // Return the appropriate registered component
+      if (bestComponent.type === 'editor') {
+        return this.editors.get(bestComponent.name);
+      } else {
+        return this.viewers.get(bestComponent.name);
+      }
+    }
+    
+    // Final fallback: find any viewer registered for '*' (wildcard), prefer lowest priority
     let fallback = null;
     for (const v of this.viewers.values()) {
       if (Array.isArray(v.extensions) && v.extensions.includes('*')) {

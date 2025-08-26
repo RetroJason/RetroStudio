@@ -389,10 +389,10 @@ class TextureEditor extends EditorBase {
         const nameWithoutExt = filename.replace(/\.[^/.]+$/, ''); // Remove extension
         this.textureData = new TextureData({
           name: nameWithoutExt || 'new_texture',
-          sourceImage: this.path
+          sourceImage: filename  // Just the filename, not full path
         });
         this.isCreatingFromImage = true;
-        this.markDirty(); // Mark as needing save since we're creating a new texture
+        // Don't mark as dirty immediately - only when user makes actual changes
         console.log('[TextureEditor] Created texture data for image file:', nameWithoutExt);
       } else {
         // Opening a texture file - will be loaded from file content
@@ -473,7 +473,16 @@ class TextureEditor extends EditorBase {
       // The texture file is in the same directory as the source image
       const texturePath = this.file?.path || this.path;
       const textureDirectory = texturePath.substring(0, texturePath.lastIndexOf('/'));
-      const sourceImagePath = `${textureDirectory}/${this.textureData.sourceImage}`;
+      
+      // Handle both relative filenames and full paths in sourceImage
+      let sourceImagePath;
+      if (this.textureData.sourceImage.includes('/')) {
+        // sourceImage is already a full path, use as-is
+        sourceImagePath = this.textureData.sourceImage;
+      } else {
+        // sourceImage is just a filename, combine with texture directory
+        sourceImagePath = `${textureDirectory}/${this.textureData.sourceImage}`;
+      }
       
       console.log('[TextureEditor] Loading source image from path:', sourceImagePath);
       console.log('[TextureEditor] Texture directory:', textureDirectory);
@@ -1752,8 +1761,7 @@ class TextureEditor extends EditorBase {
       }, 500); // Give time for UI setup to complete
     }
     
-    // Update UI
-    this.markDirty();
+    // Image loaded successfully - no need to mark as dirty since this is just loading
     resolve();
   }
 
@@ -2296,61 +2304,68 @@ class TextureEditor extends EditorBase {
 
   // Override save method to handle image-to-texture conversion
   save() {
-    if (this.isCreatingFromImage && this.path) {
-      // When creating from an image, save as a .texture file in the same directory
-      const originalPath = this.path;
-      const pathParts = originalPath.split('/');
-      const fileName = pathParts.pop();
-      const directory = pathParts.join('/');
-      const baseName = fileName.substring(0, fileName.lastIndexOf('.'));
-      const texturePath = directory ? `${directory}/${baseName}.texture` : `${baseName}.texture`;
-      
-      console.log(`[TextureEditor] Creating linked texture file: ${texturePath} for image: ${originalPath}`);
-      
-      // Update the texture data with the source image reference
-      this.textureData.sourceImage = originalPath;
-      this.textureData.name = baseName;
-      
-      console.log('[TextureEditor] Texture data before save:', this.textureData);
-      console.log('[TextureEditor] Metadata:', this.textureData.metadata);
-      console.log('[TextureEditor] Output pixel format:', this.textureData.outputPixelFormat);
-      
-      // Use the file service to save the texture file
-      const content = JSON.stringify(this.textureData.toJSON(), null, 2);
-      console.log('[TextureEditor] Content to save:', content);
-      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
-      
-      if (fileService) {
-        return fileService.saveFile(texturePath, content).then(() => {
-          console.log(`Texture saved: ${texturePath}`);
-          
-          // Update the tab to reflect the new file
-          if (this.tabElement) {
-            this.tabElement.setAttribute('data-path', texturePath);
-            this.tabElement.setAttribute('data-is-dirty', 'false');
-            this.tabElement.querySelector('.tab-name').textContent = `${baseName}.texture`;
-          }
-          
-          this.isCreatingFromImage = false; // Mark as saved
-          
-          // Show success message
-          if (window.gameConsole?.info) {
-            window.gameConsole.info(`Texture created: ${texturePath}`);
-          }
-        }).catch(error => {
-          console.error(`Failed to save texture: ${texturePath}`, error);
-          if (window.gameConsole?.error) {
-            window.gameConsole.error(`Failed to save texture: ${error.message}`);
-          }
-          throw error; // Re-throw to maintain promise chain
-        });
-      } else {
-        console.error('FileIOService not available');
-        return Promise.reject(new Error('FileIOService not available'));
-      }
+    // Always save as a .texture file, regardless of how the editor was opened
+    if (!this.path) {
+      console.error('[TextureEditor] No path available for save');
+      return Promise.reject(new Error('No path available for save'));
+    }
+    
+    const originalPath = this.path;
+    const pathParts = originalPath.split('/');
+    const fileName = pathParts.pop();
+    const directory = pathParts.join('/');
+    const baseName = fileName.substring(0, fileName.lastIndexOf('.')) || fileName;
+    const texturePath = directory ? `${directory}/${baseName}.texture` : `${baseName}.texture`;
+    
+    console.log(`[TextureEditor] Saving texture file: ${texturePath}`);
+    
+    // Update the texture data with the source image reference (just filename for images)
+    const isImageFile = this.getFileExtension().match(/\.(png|gif|jpg|jpeg|bmp|webp|tga)$/i);
+    if (isImageFile) {
+      this.textureData.sourceImage = fileName;
+    }
+    this.textureData.name = baseName;
+    
+    console.log('[TextureEditor] Texture data before save:', this.textureData);
+    console.log('[TextureEditor] Metadata:', this.textureData.metadata);
+    console.log('[TextureEditor] Output pixel format:', this.textureData.outputPixelFormat);
+    
+    // Use the file service to save the texture file
+    const content = JSON.stringify(this.textureData.toJSON(), null, 2);
+    console.log('[TextureEditor] Content to save:', content);
+    const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+    
+    if (fileService) {
+      return fileService.saveFile(texturePath, content).then(() => {
+        console.log(`Texture saved: ${texturePath}`);
+        
+        // Update internal path to the texture file for consistency
+        this.path = texturePath;
+        this.isCreatingFromImage = false;
+        
+        // Update the tab to reflect the texture file path
+        if (this.tabElement) {
+          this.tabElement.setAttribute('data-path', texturePath);
+          this.tabElement.querySelector('.tab-name').textContent = `${baseName}.texture`;
+        }
+        
+        // Properly mark the editor as clean
+        this.markClean();
+        
+        // Show success message
+        if (window.gameConsole?.info) {
+          window.gameConsole.info(`Texture saved: ${texturePath}`);
+        }
+      }).catch(error => {
+        console.error(`Failed to save texture: ${texturePath}`, error);
+        if (window.gameConsole?.error) {
+          window.gameConsole.error(`Failed to save texture: ${error.message}`);
+        }
+        throw error; // Re-throw to maintain promise chain
+      });
     } else {
-      // Standard save for existing texture files
-      return super.save();
+      console.error('FileIOService not available');
+      return Promise.reject(new Error('FileIOService not available'));
     }
   }
 
@@ -2462,30 +2477,29 @@ class TextureEditor extends EditorBase {
         if (window.gameConsole?.info) {
           window.gameConsole.info(`Linked texture file created: ${baseName}.texture`);
         }
+        
+        // Mark as clean since we just auto-saved the generated content
+        this.markClean();
       }
     } catch (error) {
       console.error('[TextureEditor] Failed to auto-save linked texture:', error);
     }
   }
 
-  // Override save-as for texture files
+  // Override save-as for texture files - always save as .texture
   saveAs() {
-    if (this.isCreatingFromImage && this.imagePath) {
-      // When creating from image, always save to texture format first
-      return this.save();
-    } else {
-      return super.saveAs();
-    }
+    // Always use the texture editor's save logic which creates .texture files
+    return this.save();
   }
 
   // Static metadata for auto-registration
   static getFileExtensions() { 
-    return ['.texture', '.tex']; // Only handle texture files, not source images
+    return ['.texture', '.tex', '.png', '.gif', '.jpg', '.jpeg', '.bmp', '.webp', '.tga']; // Handle both texture files and image files
   }
   static getDisplayName() { return 'Texture Editor'; }
   static getIcon() { return '🖼️'; }
-  static getPriority() { return 10; } // Standard priority for texture files
-  static getCapabilities() { return ['texture-editing', 'palette-editing']; }
+  static getPriority() { return 5; } // Higher priority than simple viewers (lower number = higher priority)
+  static getCapabilities() { return ['texture-editing', 'palette-editing', 'image-editing']; }
   static canCreate = true;
 
   static getDefaultFolder() {

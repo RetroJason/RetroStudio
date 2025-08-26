@@ -2172,7 +2172,7 @@ class ProjectExplorer {
       const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
       
       // Get the appropriate component for this file type - use full path for path-aware routing
-      const componentInfo = this._getComponentForFile(fullPath, false); // preferEditor = false for auto-open
+      const componentInfo = this._getComponentForFile(fullPath, true); // preferEditor = true for auto-open (edit intent)
       console.log('[ProjectExplorer] Using component for auto-open:', componentInfo?.name);
       
       await tabManager.openInTab(fullPath, componentInfo);
