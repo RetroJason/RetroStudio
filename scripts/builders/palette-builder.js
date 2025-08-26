@@ -3,7 +3,7 @@
  * Uses shared PaletteUtils for parsing and conversion
  */
 
-class PaletteBuilder extends window.BaseBuilder {
+class PaletteBuilder extends window.BuilderBase {
   constructor() {
     super();
     this.name = 'Palette Builder';
@@ -11,10 +11,31 @@ class PaletteBuilder extends window.BaseBuilder {
   }
 
   /**
+   * Get the builder's unique identifier
+   */
+  static getId() {
+    return 'palette';
+  }
+
+  /**
+   * Get the builder's display name
+   */
+  static getName() {
+    return 'Palette Builder';
+  }
+
+  /**
+   * Get the builder's description
+   */
+  static getDescription() {
+    return 'Converts palette files to Adobe Color Table (.act) format';
+  }
+
+  /**
    * Get supported input file extensions
    * @returns {Array} Array of supported extensions
    */
-  getSupportedExtensions() {
+  static getSupportedExtensions() {
     return ['.pal', '.aco']; // Convert these to .act, but don't convert .act files
   }
 
@@ -22,8 +43,24 @@ class PaletteBuilder extends window.BaseBuilder {
    * Get the output extension for built files
    * @returns {string} Output extension
    */
-  getOutputExtension() {
+  static getOutputExtension() {
     return '.act';
+  }
+
+  /**
+   * Get supported input file extensions (instance method for compatibility)
+   * @returns {Array} Array of supported extensions
+   */
+  getSupportedExtensions() {
+    return PaletteBuilder.getSupportedExtensions();
+  }
+
+  /**
+   * Get the output extension for built files (instance method for compatibility)
+   * @returns {string} Output extension
+   */
+  getOutputExtension() {
+    return PaletteBuilder.getOutputExtension();
   }
 
   /**
@@ -160,13 +197,16 @@ class PaletteBuilder extends window.BaseBuilder {
 window.PaletteBuilder = PaletteBuilder;
 console.log('[PaletteBuilder] Builder class loaded');
 
-// Register with BuildSystem through the proper service container
-// This will be called after the BuildSystem service is available
-document.addEventListener('retrostudio-ready', () => {
-  if (window.buildSystem && typeof window.buildSystem.registerBuilder === 'function') {
-    window.buildSystem.registerBuilder('PaletteBuilder', new PaletteBuilder());
-    console.log('[PaletteBuilder] Registered with BuildSystem');
-  } else {
-    console.error('[PaletteBuilder] BuildSystem not available during application ready');
-  }
-});
+// Auto-register with ComponentRegistry when available
+if (window.componentRegistry) {
+  window.componentRegistry.registerBuilder(PaletteBuilder);
+  console.log('[PaletteBuilder] Registered with ComponentRegistry');
+} else {
+  // Wait for component registry to be available
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.componentRegistry) {
+      window.componentRegistry.registerBuilder(PaletteBuilder);
+      console.log('[PaletteBuilder] Registered with ComponentRegistry (deferred)');
+    }
+  });
+}

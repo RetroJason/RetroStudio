@@ -93,10 +93,48 @@ class ImageData {
   /**
    * Load the source image specified in the texture configuration
    */
+  /**
+   * Load texture from a .texture file path
+   * @param {string} texturePath - Path to the .texture file
+   */
+  async loadFromTexturePath(texturePath) {
+    // Get file manager for loading
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager) {
+      throw new Error('FileManager not available');
+    }
+
+    // Store the texture file path for relative path resolution
+    this.textureFilePath = texturePath;
+
+    // Load texture configuration file
+    const textureFile = await fileManager.loadFile(texturePath);
+    if (!textureFile) {
+      throw new Error(`Texture file not found: ${texturePath}`);
+    }
+
+    // Parse texture configuration
+    try {
+      this.textureConfig = typeof textureFile.content === 'string' 
+        ? JSON.parse(textureFile.content) 
+        : textureFile.content;
+      console.log('[ImageData] Loaded texture config from path:', texturePath, this.textureConfig);
+    } catch (error) {
+      console.error('[ImageData] Failed to parse texture config:', error);
+      throw new Error(`Failed to parse texture configuration: ${error.message}`);
+    }
+
+    // Load the source image
+    await this.loadSourceImageFromTexture();
+  }
+
   async loadSourceImageFromTexture() {
     if (!this.textureConfig?.sourceImage) {
+      console.error('[Image] loadSourceImageFromTexture - textureConfig:', this.textureConfig);
       throw new Error('No source image specified in texture configuration');
     }
+
+    console.log('[Image] loadSourceImageFromTexture - sourceImage:', this.textureConfig.sourceImage);
 
     // Get file manager for loading
     const fileManager = window.serviceContainer?.get('fileManager');
@@ -104,10 +142,22 @@ class ImageData {
       throw new Error('FileManager not available');
     }
 
+    // Resolve source image path relative to texture file
+    let sourceImagePath = this.textureConfig.sourceImage;
+    
+    // If we have a texture file path and the source image is a relative path
+    if (this.textureFilePath && !sourceImagePath.includes('/')) {
+      // Get the directory of the texture file
+      const textureDir = this.textureFilePath.substring(0, this.textureFilePath.lastIndexOf('/'));
+      sourceImagePath = `${textureDir}/${sourceImagePath}`;
+      console.log('[Image] Resolved source image path:', sourceImagePath);
+    }
+
     // Load source image
-    const sourceImageFile = await fileManager.loadFile(this.textureConfig.sourceImage);
+    const sourceImageFile = await fileManager.loadFile(sourceImagePath);
     if (!sourceImageFile) {
-      throw new Error(`Source image not found: ${this.textureConfig.sourceImage}`);
+      console.error('[Image] Failed to load source image file:', sourceImagePath);
+      throw new Error(`Source image not found: ${sourceImagePath}`);
     }
 
     // Load the image content
@@ -513,7 +563,9 @@ class ImageData {
   // Export methods
   toCanvas(frameIndex = null) {
     const frame = frameIndex !== null ? this.getFrame(frameIndex) : this.getCurrentFrame();
-    if (!frame) return null;
+    if (!frame) {
+      return null;
+    }
     
     const canvas = document.createElement('canvas');
     canvas.width = frame.width;
@@ -524,14 +576,24 @@ class ImageData {
     const imageData = ctx.createImageData(frame.width, frame.height);
     const data = imageData.data;
     
-    // Fill with color data
-    frame.colors.forEach((colorObj, index) => {
-      const i = index * 4;
-      data[i] = colorObj.r;
-      data[i + 1] = colorObj.g;
-      data[i + 2] = colorObj.b;
-      data[i + 3] = colorObj.a;
-    });
+    // Handle different frame formats
+    if (frame.data && frame.data instanceof Uint8ClampedArray) {
+      // D2 format: frame has RGBA data directly
+      for (let i = 0; i < frame.data.length; i++) {
+        data[i] = frame.data[i];
+      }
+    } else if (frame.colors && Array.isArray(frame.colors)) {
+      // Original format: frame has colors array
+      frame.colors.forEach((colorObj, index) => {
+        const i = index * 4;
+        data[i] = colorObj.r;
+        data[i + 1] = colorObj.g;
+        data[i + 2] = colorObj.b;
+        data[i + 3] = colorObj.a;
+      });
+    } else {
+      return null;
+    }
     
     // Put image data to canvas
     ctx.putImageData(imageData, 0, 0);
@@ -2322,9 +2384,17 @@ class ImageData {
       paletteName = ''
     } = options;
     
+    // Auto-extract palette name if palette object has one and paletteName wasn't explicitly provided
+    let finalPaletteName = paletteName;
+    if (!finalPaletteName && palette && palette.name) {
+      finalPaletteName = palette.name;
+      console.log(`[ImageData] Auto-extracted palette name from palette object: "${finalPaletteName}"`);
+    }
+    
     console.log('[ImageData] Exporting to D2 texture format');
     console.log('[ImageData] Export options:', options);
     console.log('[ImageData] Final format being used:', format);
+    console.log('[ImageData] Final palette name being used:', finalPaletteName);
     
     if (!this.frames.length) {
       throw new Error('No image data to export');
@@ -2344,30 +2414,59 @@ class ImageData {
     // Convert RGBA to target format
     let pixelData, exportPalette;
     if (isIndexed) {
+      console.log(`[ImageData] Converting to indexed format with palette:`, !!palette);
+      if (palette) {
+        console.log(`[ImageData] Palette has ${palette.colors ? palette.colors.length : 'no'} colors`);
+      }
       const result = this.convertRGBAToD2Indexed(sourceRGBA, format, palette);
       pixelData = result.indexData;
       exportPalette = result.palette;
+      console.log(`[ImageData] Indexed conversion complete - pixelData.length: ${pixelData ? pixelData.length : 'null'}, palette entries: ${exportPalette ? exportPalette.length : 'none'}`);
+      console.log(`[ImageData] exportPalette type:`, typeof exportPalette, 'isArray:', Array.isArray(exportPalette));
     } else {
       pixelData = this.convertRGBAToD2Direct(sourceRGBA, format);
       exportPalette = null;
+      console.log(`[ImageData] Using direct conversion - pixelData.length: ${pixelData.length}`);
     }
     
     // Apply RLE compression if requested
     let finalPixelData = pixelData;
+    console.log(`[ImageData] Before RLE - pixelData.length: ${pixelData.length}, useRLE: ${useRLE}`);
     if (useRLE) {
       finalPixelData = this.compressRLE(pixelData);
       console.log(`[ImageData] RLE compressed ${pixelData.length} -> ${finalPixelData.length} bytes`);
     }
+    console.log(`[ImageData] Final pixel data length: ${finalPixelData.length}`);
     
     // Calculate total size
     const headerSize = ImageData.D2_HEADER_SIZE;
-    const paletteSize = exportPalette ? exportPalette.length * 4 : 0;
+    let paletteLength = 0;
+    if (exportPalette) {
+      // Handle both Palette objects and arrays
+      if (exportPalette.colors && Array.isArray(exportPalette.colors)) {
+        paletteLength = exportPalette.colors.length;
+      } else if (Array.isArray(exportPalette)) {
+        paletteLength = exportPalette.length;
+      } else if (typeof exportPalette.length === 'number') {
+        paletteLength = exportPalette.length;
+      }
+    }
+    const paletteSize = paletteLength * 4;
     const totalSize = headerSize + paletteSize + finalPixelData.length;
+    
+    console.log(`[ImageData] D2 export size calculation:`);
+    console.log(`  - headerSize: ${headerSize}`);
+    console.log(`  - paletteSize: ${paletteSize} (palette length: ${paletteLength})`);
+    console.log(`  - finalPixelData.length: ${finalPixelData.length}`);
+    console.log(`  - totalSize: ${totalSize}`);
+    console.log(`  - this.width: ${this.width}, this.height: ${this.height}`);
     
     // Create binary data
     const buffer = new ArrayBuffer(totalSize);
     const view = new DataView(buffer);
     let offset = 0;
+    
+    console.log(`[ImageData] Starting D2 header write at offset: ${offset}`);
     
     // Write header
     view.setUint8(offset++, 0x44); // 'D'
@@ -2384,11 +2483,12 @@ class ImageData {
     view.setUint8(offset++, formatByte);
     
     // Write palette name (16 bytes)
-    const paletteNameTruncated = (paletteName || '').substring(0, 15); // Max 15 chars to leave room for null terminator
+    const paletteNameTruncated = (finalPaletteName || '').substring(0, 15); // Max 15 chars to leave room for null terminator
     const paletteNameBytes = new Uint8Array(16);
     for (let i = 0; i < paletteNameTruncated.length; i++) {
       paletteNameBytes[i] = paletteNameTruncated.charCodeAt(i);
     }
+    console.log(`[ImageData] Writing palette name to D2 header: "${paletteNameTruncated}" (${paletteNameTruncated.length} chars)`);
     // Remaining bytes are already 0 (null terminator)
     const targetBytes = new Uint8Array(buffer, offset, 16);
     targetBytes.set(paletteNameBytes);
@@ -2396,7 +2496,16 @@ class ImageData {
     
     // Write palette if indexed
     if (exportPalette) {
-      for (const colorStr of exportPalette) {
+      let colorsToWrite = [];
+      
+      // Handle both Palette objects and arrays
+      if (exportPalette.colors && Array.isArray(exportPalette.colors)) {
+        colorsToWrite = exportPalette.colors;
+      } else if (Array.isArray(exportPalette)) {
+        colorsToWrite = exportPalette;
+      }
+      
+      for (const colorStr of colorsToWrite) {
         const color = this.parseColor(colorStr) || { r: 0, g: 0, b: 0, a: 255 };
         view.setUint8(offset++, color.r);
         view.setUint8(offset++, color.g);
@@ -2472,7 +2581,7 @@ class ImageData {
     let indexData;
     switch (format) {
       case ImageData.D2_FORMAT.I8:
-        indexData = this.generateIndexed8Data(rgbaData, usePalette);
+        indexData = this.generateIndexed8Data(rgbaData, usePalette.colors || usePalette);
         break;
       case ImageData.D2_FORMAT.I4:
         indexData = this.generateIndexed4Data(rgbaData, usePalette);

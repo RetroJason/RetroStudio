@@ -1,19 +1,14 @@
 /**
  * D2 Image Viewer
- * 
- * A simple viewer for D2 texture format files.
+ * Displays D2 texture files with metadata and image preview
  * Uses the ImageData class to load and display D2 textures.
  */
 
 class D2ImageViewer extends ViewerBase {
   constructor(path) {
-    super(path);  // Pass path to ViewerBase like HexViewer does
+    super(path);
     this.className = 'D2ImageViewer';
     this.supportedExtensions = ['.d2'];
-    this.file = null;
-    this.imageData = null;
-    this.canvas = null;
-    this.ctx = null;
     this.scale = 1;
     this.panX = 0;
     this.panY = 0;
@@ -21,7 +16,11 @@ class D2ImageViewer extends ViewerBase {
     this.lastMouseX = 0;
     this.lastMouseY = 0;
 
-    console.log('[D2ImageViewer] Constructor completed for path:', path);
+    console.log('[D2ImageViewer] Constructor completed for path:', this.path);
+    console.log('[D2ImageViewer] Canvas state in constructor:', this.canvas);
+    
+    // Load file data after initialization is complete
+    this.loadFileData();
   }
 
   createBody(bodyContainer) {
@@ -42,7 +41,15 @@ class D2ImageViewer extends ViewerBase {
     // Create toolbar
     this.createToolbar();
 
-    // Create canvas container
+    // Create main content area with image and info side by side
+    const mainContent = document.createElement('div');
+    mainContent.style.cssText = `
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    `;
+
+    // Create canvas container (left side)
     const canvasContainer = document.createElement('div');
     canvasContainer.style.cssText = `
       flex: 1;
@@ -59,6 +66,7 @@ class D2ImageViewer extends ViewerBase {
 
     // Create canvas
     this.canvas = document.createElement('canvas');
+    console.log('[D2ImageViewer] Canvas created in createBody:', this.canvas);
     this.canvas.style.cssText = `
       position: absolute;
       top: 50%;
@@ -75,16 +83,19 @@ class D2ImageViewer extends ViewerBase {
     this.ctx.imageSmoothingEnabled = false;
 
     canvasContainer.appendChild(this.canvas);
-    bodyContainer.appendChild(canvasContainer);
 
     // Setup canvas interactions
     this.setupCanvasInteractions();
 
-    // Create info panel
+    // Create info panel (right side)
     this.createInfoPanel();
 
-    // Load the D2 file - either from preloaded data or by loading from path
-    this.loadFileData();
+    // Add both to main content
+    mainContent.appendChild(canvasContainer);
+    mainContent.appendChild(this.infoPanel);
+    
+    // Add main content to container
+    bodyContainer.appendChild(mainContent);
   }
 
   async loadFileData() {
@@ -104,85 +115,106 @@ class D2ImageViewer extends ViewerBase {
       if (!fileManager || typeof fileManager.loadFile !== 'function') {
         throw new Error('FileManager not available');
       }
-
-      // Normalize to storage path for loading
-      const storagePath = window.ProjectPaths?.normalizeStoragePath ? 
-        window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
       
-      this.file = await fileManager.loadFile(storagePath);
-      if (!this.file) {
-        throw new Error(`File not found: ${this.path}`);
-      }
+      const file = await fileManager.loadFile(this.path);
+      console.log('[D2ImageViewer] File data loaded from storage, size:', file.content?.byteLength || file.content?.length || 'unknown');
       
-      console.log('[D2ImageViewer] File data loaded from storage, size:', this.file.size || 'unknown');
-      this.loadD2File();
+      this.file = file;
+      
+      // Process the D2 file
+      await this.loadD2File();
+      
     } catch (error) {
       console.error('[D2ImageViewer] Error loading file data:', error);
-      this.showError(`Error loading file: ${error.message}`);
-      this.updateInfoPanel();
+      this.showError(`Failed to load file: ${error.message}`);
     }
   }
 
   createToolbar() {
     const toolbar = document.createElement('div');
     toolbar.style.cssText = `
+      padding: 8px 12px;
+      background: var(--bg-secondary, #3d3d3d);
+      border-bottom: 1px solid var(--border-color, #555);
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px;
-      background: var(--bg-secondary, #3d3d3d);
-      border-bottom: 1px solid var(--border-color, #555);
+      font-size: 12px;
     `;
 
+    // File info
+    const fileInfo = document.createElement('span');
+    fileInfo.textContent = this.path ? this.path.split('/').pop() : 'Unknown file';
+    fileInfo.style.cssText = `
+      color: var(--text-primary, #fff);
+      font-weight: 500;
+    `;
+
+    // Spacer
+    const spacer = document.createElement('div');
+    spacer.style.flex = '1';
+
     // Zoom controls
-    const zoomOut = document.createElement('button');
-    zoomOut.textContent = '−';
-    zoomOut.title = 'Zoom Out';
-    zoomOut.onclick = () => this.setScale(this.scale / 1.5);
+    const zoomControls = document.createElement('div');
+    zoomControls.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
 
-    const zoomReset = document.createElement('button');
-    zoomReset.textContent = '1:1';
-    zoomReset.title = 'Reset Zoom';
-    zoomReset.onclick = () => this.setScale(1);
-
-    const zoomIn = document.createElement('button');
-    zoomIn.textContent = '+';
-    zoomIn.title = 'Zoom In';
-    zoomIn.onclick = () => this.setScale(this.scale * 1.5);
-
-    const zoomFit = document.createElement('button');
-    zoomFit.textContent = 'Fit';
-    zoomFit.title = 'Fit to Window';
-    zoomFit.onclick = () => this.fitToWindow();
-
-    // Style buttons
-    [zoomOut, zoomReset, zoomIn, zoomFit].forEach(btn => {
-      btn.style.cssText = `
-        padding: 5px 10px;
-        background: var(--accent-color, #555);
-        color: var(--text-on-accent, #fff);
-        border: none;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 12px;
-      `;
-    });
+    // Zoom out button
+    const zoomOutBtn = document.createElement('button');
+    zoomOutBtn.textContent = '−';
+    zoomOutBtn.style.cssText = `
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--border-color, #555);
+      background: var(--bg-primary, #2d2d2d);
+      color: var(--text-primary, #fff);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+    `;
+    zoomOutBtn.onclick = () => this.setScale(this.scale * 0.8);
 
     // Scale display
     this.scaleDisplay = document.createElement('span');
     this.scaleDisplay.style.cssText = `
-      font-family: monospace;
-      font-size: 12px;
-      min-width: 60px;
-      color: var(--text-primary, #fff);
+      min-width: 40px;
+      text-align: center;
+      color: var(--text-secondary, #ccc);
     `;
-    this.updateScaleDisplay();
 
-    toolbar.appendChild(zoomOut);
-    toolbar.appendChild(zoomReset);
-    toolbar.appendChild(zoomIn);
-    toolbar.appendChild(zoomFit);
-    toolbar.appendChild(this.scaleDisplay);
+    // Zoom in button
+    const zoomInBtn = document.createElement('button');
+    zoomInBtn.textContent = '+';
+    zoomInBtn.style.cssText = zoomOutBtn.style.cssText;
+    zoomInBtn.onclick = () => this.setScale(this.scale * 1.25);
+
+    // Fit to view button
+    const fitBtn = document.createElement('button');
+    fitBtn.textContent = 'Fit';
+    fitBtn.style.cssText = `
+      padding: 2px 8px;
+      border: 1px solid var(--border-color, #555);
+      background: var(--bg-primary, #2d2d2d);
+      color: var(--text-primary, #fff);
+      cursor: pointer;
+      font-size: 11px;
+    `;
+    fitBtn.onclick = () => this.fitToView();
+
+    zoomControls.appendChild(zoomOutBtn);
+    zoomControls.appendChild(this.scaleDisplay);
+    zoomControls.appendChild(zoomInBtn);
+    zoomControls.appendChild(fitBtn);
+
+    toolbar.appendChild(fileInfo);
+    toolbar.appendChild(spacer);
+    toolbar.appendChild(zoomControls);
 
     this.container.appendChild(toolbar);
   }
@@ -190,16 +222,18 @@ class D2ImageViewer extends ViewerBase {
   createInfoPanel() {
     this.infoPanel = document.createElement('div');
     this.infoPanel.style.cssText = `
-      padding: 10px;
+      width: 300px;
+      padding: 15px;
       background: var(--bg-secondary, #3d3d3d);
-      border-top: 1px solid var(--border-color, #555);
-      font-family: monospace;
-      font-size: 12px;
+      border-left: 1px solid var(--border-color, #555);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
       line-height: 1.4;
       color: var(--text-primary, #fff);
+      overflow-y: auto;
+      box-sizing: border-box;
     `;
 
-    this.container.appendChild(this.infoPanel);
     this.updateInfoPanel();
   }
 
@@ -211,7 +245,7 @@ class D2ImageViewer extends ViewerBase {
       this.setScale(this.scale * scaleFactor);
     });
 
-    // Mouse drag pan
+    // Mouse drag panning
     this.canvas.addEventListener('mousedown', (e) => {
       this.isDragging = true;
       this.lastMouseX = e.clientX;
@@ -219,7 +253,7 @@ class D2ImageViewer extends ViewerBase {
       this.canvas.style.cursor = 'grabbing';
     });
 
-    this.canvas.addEventListener('mousemove', (e) => {
+    document.addEventListener('mousemove', (e) => {
       if (this.isDragging) {
         const deltaX = e.clientX - this.lastMouseX;
         const deltaY = e.clientY - this.lastMouseY;
@@ -231,101 +265,180 @@ class D2ImageViewer extends ViewerBase {
       }
     });
 
-    this.canvas.addEventListener('mouseup', () => {
-      this.isDragging = false;
-      this.canvas.style.cursor = 'grab';
-    });
-
-    this.canvas.addEventListener('mouseleave', () => {
-      this.isDragging = false;
-      this.canvas.style.cursor = 'grab';
+    document.addEventListener('mouseup', () => {
+      if (this.isDragging) {
+        this.isDragging = false;
+        this.canvas.style.cursor = 'grab';
+      }
     });
   }
 
-  loadD2File() {
+  async loadD2File() {
     try {
+      if (!this.file || !this.file.content) {
+        console.log('[D2ImageViewer] No file content to load');
+        return;
+      }
+
       console.log('[D2ImageViewer] Loading D2 file');
       console.log('[D2ImageViewer] File info:', {
         name: this.file.name,
         contentType: typeof this.file.content,
-        contentLength: this.file.content ? this.file.content.length : 'undefined',
+        contentLength: this.file.content?.length,
         binaryData: this.file.binaryData
       });
-      
-      if (!this.file.content) {
-        throw new Error('No file content provided');
-      }
 
-      // Create ImageData instance and load the D2 file
-      this.imageData = new ImageData();
-      
-      // Convert base64 content to ArrayBuffer if needed
+      // Convert content to ArrayBuffer if needed
       let content = this.file.content;
       if (typeof content === 'string' && this.file.binaryData) {
-        // Convert base64 to ArrayBuffer
+        console.log('[D2ImageViewer] Converting base64 string to ArrayBuffer');
         const binaryString = atob(content);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
         content = bytes.buffer;
-        console.log('[D2ImageViewer] Converted base64 to ArrayBuffer:', content.byteLength, 'bytes');
       }
-      
-      this.imageData.loadFromContent(content, this.file.name);
-      
+
+      console.log('[D2ImageViewer] Loading ImageData from D2 binary data');
+      this.imageData = new ImageData();
+      await this.imageData.loadFromD2Binary(content);
+
       console.log('[D2ImageViewer] ImageData loaded:', {
-        width: this.imageData.width,
-        height: this.imageData.height,
-        format: this.imageData.format,
-        frames: this.imageData.frames.length
+        width: this.imageData?.width,
+        height: this.imageData?.height,
+        format: this.imageData?.format,
+        frames: this.imageData?.frames?.length
       });
-      
+
       // Always update info panel first to show header data
       this.updateInfoPanel();
+
+      // Check if we have valid image data for rendering
+      const canRender = this.imageData?.width > 0 && this.imageData?.height > 0 && this.imageData?.frames?.length > 0;
       
-      // Only set up canvas if we have valid image data
-      if (this.imageData.width > 0 && this.imageData.height > 0 && this.canvas) {
-        // Set canvas size
-        this.canvas.width = this.imageData.width;
-        this.canvas.height = this.imageData.height;
+      console.log('[D2ImageViewer] Condition check:', {
+        width: this.imageData?.width,
+        height: this.imageData?.height,
+        canvas: this.canvas ? 'present' : 'missing',
+        canvasElement: this.canvas ? 'present' : 'missing',
+        condition: canRender
+      });
+
+      if (canRender && this.canvas) {
+        if (!this.canvas.parentElement) {
+          console.log('[D2ImageViewer] Canvas missing, attempting to re-acquire...');
+          // Canvas was removed, try to re-acquire it
+          const canvasElements = this.container.querySelectorAll('canvas');
+          if (canvasElements.length > 0) {
+            this.canvas = canvasElements[0];
+            this.ctx = this.canvas.getContext('2d');
+            this.ctx.imageSmoothingEnabled = false;
+            console.log('[D2ImageViewer] Successfully re-acquired canvas');
+          } else {
+            console.log('[D2ImageViewer] Could not re-acquire canvas');
+            return;
+          }
+        }
         
-        // Draw the image
+        console.log('[D2ImageViewer] Starting image render process');
         this.renderImage();
-        
-        // Fit to window initially
-        this.fitToWindow();
       } else {
         console.log('[D2ImageViewer] No valid image data to display, showing header info only');
       }
-      
-      console.log('[D2ImageViewer] D2 file processed successfully');
-      
+
     } catch (error) {
       console.error('[D2ImageViewer] Error loading D2 file:', error);
-      this.showError(`Error loading D2 file: ${error.message}`);
-      
-      // Still try to show whatever info we can get
-      this.updateInfoPanel();
+      this.showError(`Failed to load D2 image: ${error.message}`);
     }
+
+    // D2 file processed successfully
+    console.log('[D2ImageViewer] D2 file processed successfully');
+    
+    // Still try to show whatever info we can get
+    this.updateInfoPanel();
   }
 
   renderImage() {
-    if (!this.imageData || !this.imageData.frames.length) return;
-    
-    // Clear canvas
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    
-    // Get current frame data
-    const frame = this.imageData.frames[this.imageData.currentFrame];
-    const imageData = new window.ImageData(frame.data, frame.width, frame.height);
-    
-    // Draw the image
-    this.ctx.putImageData(imageData, 0, 0);
+    try {
+      if (!this.imageData || !this.canvas) {
+        console.log('[D2ImageViewer] Missing imageData or canvas for rendering');
+        return;
+      }
+
+      console.log('[D2ImageViewer] Rendering D2 image using Image.toCanvas()');
+      const renderedCanvas = this.imageData.toCanvas();
+      
+      if (!renderedCanvas) {
+        console.error('[D2ImageViewer] toCanvas() returned null');
+        return;
+      }
+
+      console.log('[D2ImageViewer] Successfully rendered image from toCanvas()');
+
+      // Set canvas size and draw the image
+      this.canvas.width = renderedCanvas.width;
+      this.canvas.height = renderedCanvas.height;
+      
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.drawImage(renderedCanvas, 0, 0);
+
+      // Fit to view on first load
+      this.fitToView();
+
+    } catch (error) {
+      console.error('[D2ImageViewer] Error rendering image:', error);
+      this.showError(`Failed to render image: ${error.message}`);
+    }
   }
 
-  setScale(newScale) {
-    this.scale = Math.max(0.1, Math.min(20, newScale));
+  updateInfoPanel() {
+    if (!this.infoPanel) return;
+
+    let html = '<h3 style="margin: 0 0 15px 0; color: var(--text-primary, #fff); font-size: 14px; border-bottom: 1px solid var(--border-color, #555); padding-bottom: 8px;">D2 Texture Info</h3>';
+
+    if (this.imageData) {
+      const metadata = this.imageData.getD2Metadata ? this.imageData.getD2Metadata() : {};
+      
+      html += '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
+      
+      // Essential information in clean table format
+      const rows = [
+        ['Palette', metadata.paletteName || 'None'],
+        ['Format', `D2 (${metadata.baseFormat || 'Unknown'})`],
+        ['Dimensions', `${this.imageData.width || 0} × ${this.imageData.height || 0}`],
+        ['Size', this.formatFileSize(this.file?.content?.byteLength || this.file?.content?.length || 0)],
+        ['Compression', metadata.isRLE ? 'RLE' : 'None'],
+        ['Flags', metadata.flags || 0]
+      ];
+
+      rows.forEach(([label, value]) => {
+        html += `
+          <tr>
+            <td style="padding: 4px 8px 4px 0; color: var(--text-secondary, #ccc); vertical-align: top; width: 35%;">${label}:</td>
+            <td style="padding: 4px 0; color: var(--text-primary, #fff); word-break: break-word;">${value}</td>
+          </tr>
+        `;
+      });
+
+      html += '</table>';
+    } else {
+      html += '<p style="color: var(--text-secondary, #ccc); font-style: italic;">Loading...</p>';
+    }
+
+    this.infoPanel.innerHTML = html;
+  }
+
+  formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  setScale(scale) {
+    this.scale = Math.max(0.1, Math.min(10, scale));
     this.updateCanvasTransform();
     this.updateScaleDisplay();
   }
@@ -342,229 +455,65 @@ class D2ImageViewer extends ViewerBase {
     }
   }
 
-  fitToWindow() {
-    if (!this.imageData || !this.canvas) return;
+  fitToView() {
+    if (!this.canvas || !this.canvas.parentElement) return;
     
     const container = this.canvas.parentElement;
-    if (!container) return;
-    
     const containerRect = container.getBoundingClientRect();
-    const padding = 40; // Padding around the image
+    const padding = 40;
     
-    const scaleX = (containerRect.width - padding) / this.imageData.width;
-    const scaleY = (containerRect.height - padding) / this.imageData.height;
-    const scale = Math.min(scaleX, scaleY, 1); // Don't scale up beyond 100%
+    const scaleX = (containerRect.width - padding) / this.canvas.width;
+    const scaleY = (containerRect.height - padding) / this.canvas.height;
+    const fitScale = Math.min(scaleX, scaleY, 1);
     
-    this.setScale(scale);
+    this.setScale(fitScale);
     this.panX = 0;
     this.panY = 0;
     this.updateCanvasTransform();
   }
 
-  updateInfoPanel() {
-    if (!this.infoPanel) return;
-    
-    let infoHtml = '';
-    
-    // Try to show D2 header info even if ImageData failed to parse
-    if (this.file && this.file.content) {
-      try {
-        // Parse raw D2 header manually for debug info
-        let content = this.file.content;
-        if (typeof content === 'string' && this.file.binaryData) {
-          const binaryString = atob(content);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          content = bytes.buffer;
-        }
-        
-        if (content.byteLength >= 25) {
-          const view = new DataView(content);
-          const magic = view.getUint16(0, true);
-          const width = view.getUint16(2, true);
-          const height = view.getUint16(4, true);
-          const prerotation = view.getUint8(6);
-          const flags = view.getUint8(7);
-          const formatByte = view.getUint8(8);
-          
-          // Decode format byte properly
-          const baseFormat = formatByte & 0x0F;
-          const isRLE = (formatByte & 0x20) !== 0;
-          const isIndexed = (formatByte & 0x40) !== 0;
-          
-          // Read palette name (16 bytes starting at offset 9)
-          let paletteName = '';
-          for (let i = 0; i < 16; i++) {
-            const byte = view.getUint8(9 + i);
-            if (byte === 0) break;
-            paletteName += String.fromCharCode(byte);
-          }
-          
-          const formatNames = {
-            0: 'ALPHA8', 1: 'RGB565', 2: 'ARGB8888/RGB888', 3: 'ARGB4444/RGB444',
-            4: 'ARGB1555/RGB555', 5: 'AI44', 6: 'RGBA8888', 7: 'RGBA4444',
-            8: 'RGBA5551', 9: 'I8', 10: 'I4', 11: 'I2', 12: 'I1',
-            13: 'ALPHA4', 14: 'ALPHA2', 15: 'ALPHA1'
-          };
-          
-          const formatName = formatNames[baseFormat] || `Unknown (${baseFormat})`;
-          const flagsText = [];
-          if (flags & 0x01) flagsText.push('WRAPU');
-          if (flags & 0x02) flagsText.push('WRAPV');
-          if (flags & 0x04) flagsText.push('FILTERU');
-          if (flags & 0x08) flagsText.push('FILTERV');
-          
-          infoHtml = `
-            <strong>D2 Texture Header (Raw):</strong><br>
-            Magic: 0x${magic.toString(16).toUpperCase().padStart(4, '0')} ${magic === 0x3244 ? '✓' : '✗'}<br>
-            Dimensions: ${width} × ${height}<br>
-            Format: ${formatName}<br>
-            Flags: ${flags} (${flagsText.length ? flagsText.join(', ') : 'None'})<br>
-            Prerotation: ${prerotation}<br>
-            Palette Name: "${paletteName}"<br>
-            File Size: ${content.byteLength} bytes<br>
-            Header Size: 25 bytes<br>
-            Data Size: ${content.byteLength - 25} bytes<br>
-            <br>
-            <strong>Format Details:</strong><br>
-            Format Byte: 0x${formatByte.toString(16).padStart(2, '0')} (${formatByte})<br>
-            Base Format: ${baseFormat} (${formatName})<br>
-            RLE Compressed: ${isRLE ? 'Yes' : 'No'}<br>
-            Indexed Color: ${isIndexed ? 'Yes' : 'No'}
-          `;
-        } else {
-          infoHtml = `
-            <strong>D2 File Info:</strong><br>
-            File Size: ${content.byteLength} bytes<br>
-            <span style="color: #ff6b6b;">⚠️ File too small for D2 header (need 25 bytes minimum)</span>
-          `;
-        }
-      } catch (headerError) {
-        console.error('[D2ImageViewer] Error parsing raw header:', headerError);
-        infoHtml = `
-          <strong>D2 File Info:</strong><br>
-          File: ${this.file.name}<br>
-          Content Type: ${typeof this.file.content}<br>
-          Content Length: ${this.file.content ? this.file.content.length : 'undefined'}<br>
-          <span style="color: #ff6b6b;">⚠️ Error parsing header: ${headerError.message}</span>
-        `;
-      }
-    }
-    
-    // Add ImageData info if available
-    if (this.imageData && this.imageData.metadata && this.imageData.metadata.format === 'd2') {
-      const meta = this.imageData.metadata;
-      const formatNames = {
-        0: 'ALPHA8', 1: 'RGB565', 2: 'ARGB8888/RGB888', 3: 'ARGB4444/RGB444',
-        4: 'ARGB1555/RGB555', 5: 'AI44', 6: 'RGBA8888', 7: 'RGBA4444',
-        8: 'RGBA5551', 9: 'I8', 10: 'I4', 11: 'I2', 12: 'I1',
-        13: 'ALPHA4', 14: 'ALPHA2', 15: 'ALPHA1'
-      };
-      
-      const formatName = formatNames[meta.baseFormat] || `Unknown (${meta.baseFormat})`;
-      const flagsText = [];
-      if (meta.flags & 0x01) flagsText.push('WRAPU');
-      if (meta.flags & 0x02) flagsText.push('WRAPV');
-      if (meta.flags & 0x04) flagsText.push('FILTERU');
-      if (meta.flags & 0x08) flagsText.push('FILTERV');
-      
-      infoHtml += `
-        <br><strong>ImageData Parsed Info:</strong><br>
-        Dimensions: ${this.imageData.width} × ${this.imageData.height}<br>
-        Format: ${formatName}<br>
-        RLE Compressed: ${meta.isRLE ? 'Yes' : 'No'}<br>
-        Indexed Color: ${meta.isIndexed ? 'Yes' : 'No'}<br>
-        Palette Name: ${meta.paletteName || '(none)'}<br>
-        Flags: ${flagsText.length ? flagsText.join(', ') : 'None'}<br>
-        Prerotation: ${meta.prerotation}<br>
-        ${meta.palette ? `Palette Colors: ${meta.palette.length}` : ''}
-      `;
-    } else if (this.imageData) {
-      infoHtml += `
-        <br><strong>ImageData Info:</strong><br>
-        Dimensions: ${this.imageData.width} × ${this.imageData.height}<br>
-        Format: ${this.imageData.format}<br>
-        Frames: ${this.imageData.frames.length}
-      `;
-    }
-    
-    if (!infoHtml) {
-      infoHtml = 'No file loaded';
-    }
-    
-    this.infoPanel.innerHTML = infoHtml;
-  }
-
   showError(message) {
-    if (this.container) {
-      this.container.innerHTML = `
-        <div style="
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 100%;
-          color: var(--text-error, #ff6b6b);
-          text-align: center;
-          padding: 20px;
-        ">
-          <div>
-            <h3>Error</h3>
-            <p>${message}</p>
-          </div>
+    if (this.infoPanel) {
+      this.infoPanel.innerHTML = `
+        <h3 style="margin: 0 0 15px 0; color: var(--text-primary, #fff); font-size: 14px; border-bottom: 1px solid var(--border-color, #555); padding-bottom: 8px;">Error</h3>
+        <div style="color: #ff6b6b; background: rgba(255, 107, 107, 0.1); padding: 10px; border-radius: 4px; border-left: 3px solid #ff6b6b;">
+          ${message}
         </div>
       `;
     }
   }
 
   // ViewerBase interface methods
-  getElement() {
-    // Create a temporary container if we don't have one yet
-    if (!this.container) {
-      this.container = document.createElement('div');
-      this.createBody(this.container);
+  cleanup() {
+    // Clean up any resources
+    if (this.canvas) {
+      this.canvas.removeEventListener('wheel', this.wheelHandler);
+      this.canvas.removeEventListener('mousedown', this.mouseDownHandler);
     }
-    return this.container;
+  }
+
+  getElement() {
+    return this.element;
   }
 
   supportsFile(file) {
-    return this.supportedExtensions.some(ext => 
-      file.name.toLowerCase().endsWith(ext.toLowerCase())
-    );
+    if (!file || !file.name) return false;
+    const extension = file.name.toLowerCase().split('.').pop();
+    return this.supportedExtensions.includes('.' + extension);
   }
 
   async setFile(file) {
     this.file = file;
     if (this.container) {
-      this.loadD2File();
+      await this.loadD2File();
     }
   }
-
-  getTitle() {
-    return this.file ? `D2 Image: ${this.file.name}` : 'D2 Image Viewer';
-  }
-
-  static getFileExtensions() {
-    return ['.d2'];
-  }
 }
 
-// Register the viewer
-if (typeof window !== 'undefined') {
-  window.D2ImageViewer = D2ImageViewer;
-  
-  // Auto-register with the component registry when available
-  if (window.ComponentRegistry) {
-    ComponentRegistry.register('viewer', D2ImageViewer);
-  } else {
-    // Wait for component registry to be available
-    window.addEventListener('DOMContentLoaded', () => {
-      if (window.ComponentRegistry) {
-        ComponentRegistry.register('viewer', D2ImageViewer);
-      }
-    });
-  }
-}
+// Static method to define supported file extensions
+D2ImageViewer.getFileExtensions = () => ['.d2'];
 
-console.log('[D2ImageViewer] Class definition loaded');
+// Auto-register the viewer
+if (typeof ComponentRegistry !== 'undefined') {
+  D2ImageViewer.registerComponent();
+}

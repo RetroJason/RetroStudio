@@ -73,6 +73,15 @@
 
   console.log('[Core] Configuration manager initialized');
 
+  // Initialize plugin system
+  window.pluginSystem = new PluginSystem();
+  console.log('[Core] Plugin system initialized');
+
+  // Initialize component registry
+  window.componentRegistry = new ComponentRegistry(window.pluginSystem);
+  window.serviceContainer.registerSingleton('componentRegistry', window.componentRegistry);
+  console.log('[Core] Component registry initialized and registered');
+
   // Set up default configurations
   window.configManager.set('application.theme', 'dark');
   window.configManager.set('application.debugMode', false);

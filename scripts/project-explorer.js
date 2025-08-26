@@ -2596,15 +2596,23 @@ class ProjectExplorer {
       return null;
     }
 
+    // Convert storage path to full UI path
+    const focusedProject = this.getFocusedProjectName();
+    if (!focusedProject) return defaultPalette;
+
     // Ensure we have a string (ProjectConfigManager should return string path)
     if (typeof defaultPalette !== 'string') {
       console.error('[ProjectExplorer] Expected string path from ProjectConfigManager, got:', typeof defaultPalette, defaultPalette);
       return null;
     }
 
-    // Return the storage path (no project prefix) for consistency with sourceImage paths
-    // This makes texture files more portable between projects
-    return defaultPalette;
+    // If it already has the project prefix, return as-is
+    if (defaultPalette.startsWith(focusedProject + '/')) {
+      return defaultPalette;
+    }
+
+    // Add project prefix to create full UI path
+    return `${focusedProject}/${defaultPalette}`;
   }
 
   // Initialize project configuration when project is loaded/created
@@ -3100,13 +3108,19 @@ class ProjectExplorer {
         }
       }
       
-      // Create a minimal .texture file that the texture editor can populate
+      // Create a proper .texture file using TextureData structure
       const newTextureData = {
-        sourceImagePath: imageFileName,
-        metadata: {
-          created: new Date().toISOString(),
-          sourceImagePath: imageUIPath
-        }
+        name: baseName,
+        sourceImage: imageFileName,
+        colorKey: '#FF00FF',
+        RLE: false,
+        colorFormat: 'd2_mode_i8',
+        palette: '',
+        scale: 1.0,
+        paletteOffset: 0,
+        width: 32,
+        height: 32,
+        rotation: 0
       };
       
       const textureContent = JSON.stringify(newTextureData, null, 2);

@@ -183,7 +183,8 @@ class RetroStudioApplication {
       'scripts/viewers/viewer-plugins.js',
       
       // Builders
-      'scripts/builders/palette-builder.js'
+      'scripts/builders/palette-builder.js',
+      'scripts/builders/sfx-builder.js'
     ];
 
     // Load scripts sequentially to maintain dependency order

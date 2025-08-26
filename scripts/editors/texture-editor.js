@@ -1650,8 +1650,26 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] setImageToCanvas - loading image into custom ImageData class');
     
     this.sourceImage = img;
-    this.textureData.sourceImage = this.filename || 'unknown';
-    this.textureData.sourceImagePath = this.filePath || this.filename || 'unknown';
+    
+    // Preserve the existing sourceImage from texture configuration - don't overwrite it
+    // The sourceImage should be set from the texture file content, not from the editor's filename
+    console.log('[TextureEditor] Current textureData.sourceImage:', this.textureData.sourceImage);
+    console.log('[TextureEditor] this.filename:', this.filename);
+    console.log('[TextureEditor] this.isCreatingFromImage:', this.isCreatingFromImage);
+    console.log('[TextureEditor] this.isNewResource:', this.isNewResource);
+    
+    // Only set sourceImage if we're creating a brand new texture from an image
+    // If we're loading an existing texture file, never overwrite the sourceImage field
+    if (this.isCreatingFromImage && this.isNewResource && (!this.textureData.sourceImage || this.textureData.sourceImage === 'unknown' || this.textureData.sourceImage === null)) {
+      console.log('[TextureEditor] Setting sourceImage for new texture creation');
+      this.textureData.sourceImage = this.filename || 'unknown';
+    } else {
+      console.log('[TextureEditor] Preserving existing sourceImage (not creating new):', this.textureData.sourceImage);
+    }
+    
+    // Don't set sourceImagePath as it will overwrite sourceImage via the setter
+    // Instead, store the file path separately if needed for internal tracking
+    // this.textureData.sourceImagePath = this.filePath || this.filename || 'unknown';
     this.textureData.width = img.width;
     this.textureData.height = img.height;
     
@@ -1766,12 +1784,32 @@ class TextureEditor extends EditorBase {
 
   // Auto-load default palette if configured
   async autoLoadDefaultPalette() {
-    // Use the palette path from textureData if available, otherwise fall back to ProjectConfigManager
+    // Use the palette path from textureData if available, otherwise fall back to ProjectExplorer
     let defaultPalettePath = this.textureData?.palette;
     
     if (!defaultPalettePath) {
-      if (!window.ProjectConfigManager) return;
-      defaultPalettePath = await window.ProjectConfigManager.getDefaultPalette();
+      // Use ProjectExplorer's getDefaultPalettePath() which properly handles path conversion
+      const projectExplorer = window.serviceContainer?.get('projectExplorer') || window.gameEditor?.projectExplorer;
+      console.log(`[TextureEditor] ProjectExplorer reference:`, !!projectExplorer);
+      
+      if (projectExplorer && typeof projectExplorer.getDefaultPalettePath === 'function') {
+        console.log(`[TextureEditor] Calling ProjectExplorer.getDefaultPalettePath()`);
+        defaultPalettePath = await projectExplorer.getDefaultPalettePath();
+        console.log(`[TextureEditor] Got default palette path from ProjectExplorer: ${defaultPalettePath}`);
+      } else {
+        console.log(`[TextureEditor] ProjectExplorer.getDefaultPalettePath not available, using fallback`);
+        // Fallback: try to construct path manually using ProjectConfigManager
+        if (window.ProjectConfigManager) {
+          const storagePath = await window.ProjectConfigManager.getDefaultPalette();
+          console.log(`[TextureEditor] Got storage path from ProjectConfigManager: ${storagePath}`);
+          if (storagePath && projectExplorer) {
+            const focusedProject = projectExplorer.getFocusedProjectName?.();
+            console.log(`[TextureEditor] Focused project: ${focusedProject}`);
+            defaultPalettePath = focusedProject ? `${focusedProject}/${storagePath}` : storagePath;
+            console.log(`[TextureEditor] Converted to UI path: ${defaultPalettePath}`);
+          }
+        }
+      }
     }
     
     if (!defaultPalettePath) {
@@ -1783,7 +1821,7 @@ class TextureEditor extends EditorBase {
       console.log(`[TextureEditor] Auto-loading default palette: ${defaultPalettePath}`);
       
       // Check if file exists by attempting to load it
-      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+      const fileService = window.serviceContainer?.get('fileManager') || window.fileManager;
       if (!fileService) {
         console.warn('[TextureEditor] No file service available for palette loading');
         return;
@@ -1792,9 +1830,20 @@ class TextureEditor extends EditorBase {
       // Try to load the palette file - if it fails, the file doesn't exist
       let paletteData;
       try {
-        paletteData = await fileService.loadFile(defaultPalettePath);
-        if (!paletteData) {
-          console.warn(`[TextureEditor] Default palette file not found: ${defaultPalettePath}`);
+      console.log(`[TextureEditor] Attempting to load palette file: ${defaultPalettePath}`);
+      console.log(`[TextureEditor] FileService available:`, !!fileService);
+      console.log(`[TextureEditor] FileService type:`, fileService?.constructor?.name);
+      
+      // Debug: check if this is a FileManager vs direct FileIOService
+      if (fileService && typeof fileService._normalizePath === 'function') {
+        const normalizedPath = fileService._normalizePath(defaultPalettePath);
+        console.log(`[TextureEditor] FileManager would normalize ${defaultPalettePath} to ${normalizedPath}`);
+      }
+      
+      paletteData = await fileService.loadFile(defaultPalettePath);
+      console.log(`[TextureEditor] FileService.loadFile() returned:`, !!paletteData, typeof paletteData);        if (!paletteData) {
+          console.warn(`[TextureEditor] Default palette file not found in IndexedDB: ${defaultPalettePath}`);
+          console.warn(`[TextureEditor] This usually means the file exists on disk but hasn't been imported into the project`);
           return;
         }
       } catch (error) {
@@ -2164,8 +2213,15 @@ class TextureEditor extends EditorBase {
   }
 
   getContent() {
+    console.log('[TextureEditor] getContent() called');
+    console.log('[TextureEditor] this.textureData:', this.textureData);
+    console.log('[TextureEditor] this.textureData.sourceImage:', this.textureData?.sourceImage);
+    
     if (this.textureData) {
-      return JSON.stringify(this.textureData.toJSON(), null, 2);
+      const jsonData = this.textureData.toJSON();
+      console.log('[TextureEditor] JSON data before stringify:', jsonData);
+      console.log('[TextureEditor] JSON sourceImage field:', jsonData.sourceImage);
+      return JSON.stringify(jsonData, null, 2);
     }
     return '';
   }

@@ -7,6 +7,7 @@ class ComponentRegistry {
     this.editors = new Map();
     this.viewers = new Map();
     this.tools = new Map();
+    this.builders = new Map();
     this.fileAssociations = new Map();
   }
 
@@ -238,6 +239,50 @@ class ComponentRegistry {
     console.log(`[ComponentRegistry] Registered viewer: ${name} for ${extensionList.join(', ')}`);
   }
 
+  // Register a builder
+  registerBuilder(builderClass) {
+    // Auto-register pattern for builders
+    if (typeof builderClass.getId !== 'function' ||
+        typeof builderClass.getName !== 'function' ||
+        typeof builderClass.getSupportedExtensions !== 'function' ||
+        typeof builderClass.getOutputExtension !== 'function') {
+      throw new Error('Builder must implement static getId(), getName(), getSupportedExtensions(), and getOutputExtension() methods');
+    }
+
+    const builderId = builderClass.getId();
+    const name = builderClass.getName();
+    const extensions = builderClass.getSupportedExtensions();
+    const outputExtension = builderClass.getOutputExtension();
+    const priority = builderClass.getPriority ? builderClass.getPriority() : 50;
+    const capabilities = builderClass.getCapabilities ? builderClass.getCapabilities() : [];
+
+    // Store builder
+    this.builders.set(builderId, {
+      id: builderId,
+      name,
+      extensions,
+      outputExtension,
+      builderClass,
+      priority,
+      capabilities,
+      metadata: builderClass.getMetadata ? builderClass.getMetadata() : {}
+    });
+
+    // Register with BuildSystem if available
+    if (window.buildSystem && typeof window.buildSystem.registerBuilder === 'function') {
+      try {
+        extensions.forEach(ext => {
+          window.buildSystem.registerBuilder(ext, new builderClass());
+        });
+        console.log(`[ComponentRegistry] Registered builder ${name} with BuildSystem for ${extensions.join(', ')}`);
+      } catch (error) {
+        console.warn(`[ComponentRegistry] Failed to register builder ${name} with BuildSystem:`, error);
+      }
+    }
+
+    console.log(`[ComponentRegistry] Registered builder: ${name} (${builderId}) for ${extensions.join(', ')} → ${outputExtension}`);
+  }
+
   // Register a tool
   registerTool(toolInfo) {
     const { 
@@ -278,18 +323,12 @@ class ComponentRegistry {
   getViewerForFile(filePath) {
     const extension = this.getFileExtension(filePath);
     
-    // Special case: Route images in source directory to texture editor
-    const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga'];
-    if (imageExtensions.includes(extension)) {
-      // Check if this is in a source directory (Resources/Sources/ or similar)
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      if (normalizedPath.includes('/Sources/') || normalizedPath.includes('\\Sources\\')) {
-        // Return texture editor as viewer for source images
-        const textureEditor = this.editors.get('texture-editor');
-        if (textureEditor) {
-          console.log('[ComponentRegistry] Routing source image to texture editor:', filePath);
-          return textureEditor;
-        }
+    // Special case: Route .texture files to texture editor
+    if (extension === '.texture') {
+      const textureEditor = this.editors.get('texture-editor');
+      if (textureEditor) {
+        console.log('[ComponentRegistry] Routing texture file to texture editor:', filePath);
+        return textureEditor;
       }
     }
     
@@ -423,6 +462,34 @@ class ComponentRegistry {
     }
   }
 
+  // Get all builders
+  getAllBuilders() {
+    return Array.from(this.builders.values());
+  }
+
+  // Get builder by ID
+  getBuilderById(builderId) {
+    return this.builders.get(builderId);
+  }
+
+  // Get builders that can handle a file extension
+  getBuildersForExtension(extension) {
+    return Array.from(this.builders.values())
+      .filter(builder => builder.extensions.includes(extension))
+      .sort((a, b) => a.priority - b.priority);
+  }
+
+  // Get best builder for a file
+  getBuilderForFile(filePath) {
+    const extension = this.getFileExtension(filePath);
+    console.log(`[ComponentRegistry] getBuilderForFile called for: ${filePath}, extension: ${extension}`);
+    const builders = this.getBuildersForExtension(extension);
+    console.log(`[ComponentRegistry] Found ${builders.length} builders for ${extension}:`, builders.map(b => `${b.name}(${b.priority})`));
+    const selectedBuilder = builders.length > 0 ? builders[0] : null;
+    console.log(`[ComponentRegistry] Selected builder:`, selectedBuilder ? selectedBuilder.name : 'none');
+    return selectedBuilder;
+  }
+
   // Static convenience method for registration
   static register(type, componentClass) {
     const componentRegistry = window.serviceContainer.get('componentRegistry');
@@ -430,6 +497,8 @@ class ComponentRegistry {
       componentRegistry.autoRegisterViewer(componentClass);
     } else if (type.toLowerCase().includes('editor')) {
       componentRegistry.autoRegisterEditor(componentClass);
+    } else if (type.toLowerCase().includes('builder')) {
+      componentRegistry.registerBuilder(componentClass);
     } else {
       console.warn(`[ComponentRegistry] Unknown component type '${type}' for ${componentClass.name}`);
     }

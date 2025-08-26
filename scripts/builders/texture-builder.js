@@ -1,14 +1,40 @@
 /**
  * TextureBuilder - Converts texture files (.texture) to D2 format (.d2) during build
  * Uses ImageData class for parsing and D2 format conversion
- * Extends BaseBuilder for compatibility with BuildSystem
+ * Extends BuilderBase for compatibility with new dynamic builder system
  */
 
-class TextureBuilder extends window.BaseBuilder {
+console.log('[TextureBuilder] Loading builder...');
+
+// Prevent redeclaration if already loaded
+if (typeof window.TextureBuilder === 'undefined') {
+
+class TextureBuilder extends window.BuilderBase {
   constructor() {
     super();
     this.name = 'Texture Builder';
-    this.version = '1.0.0';
+    this.description = 'Converts .texture files to D2 texture format';
+  }
+
+  /**
+   * Get the builder's unique identifier
+   */
+  static getId() {
+    return 'texture';
+  }
+
+  /**
+   * Get the builder's display name
+   */
+  static getName() {
+    return 'Texture Builder';
+  }
+
+  /**
+   * Get the builder's description
+   */
+  static getDescription() {
+    return 'Converts .texture files to D2 texture format (.d2)';
   }
 
   /**
@@ -39,67 +65,78 @@ class TextureBuilder extends window.BaseBuilder {
 
   /**
    * Build a texture file by converting it to D2 format
-   * @param {Object} file - File object with path, content, etc.
-   * @returns {Promise<Object>} Build result with success/error info
    */
   async build(file) {
-    console.log(`[TextureBuilder] Building texture: ${file.path || file.name}`);
+    console.log(`[TextureBuilder] Building texture: ${file.path}`);
     
     try {
+      // Validate input
+      const validation = this.validateInput(file);
+      if (!validation.valid) {
+        return this.createBuildResult(false, file.path, null, validation.error);
+      }
+
       // Ensure ImageData class is available
       if (!window.ImageData) {
         throw new Error('ImageData class not available - required for texture building');
       }
 
-      // Parse the .texture file content to extract build parameters
-      const textureConfig = this.parseTextureFile(file.content, file.path);
-      console.log(`[TextureBuilder] Parsed texture config:`, textureConfig);
-
-      // Create ImageData instance with texture file content
-      const imageData = new window.ImageData(file.content);
+      // Create ImageData instance and load from texture file path
+      // This approach allows ImageData to resolve relative source image paths
+      console.log(`[TextureBuilder] Creating ImageData and loading from path: ${file.path}`);
+      const imageData = new window.ImageData();
       
-      // Get D2 binary data
-      const d2Buffer = await imageData.getD2();
+      // Extract the directory from the file path for proper path resolution
+      const texturePath = file.path.replace(/^[^\/]+\//, ''); // Remove project prefix like "test/"
+      console.log(`[TextureBuilder] Normalized texture path: ${texturePath}`);
+      
+      await imageData.loadFromTexturePath(texturePath);
+      console.log(`[TextureBuilder] After loadFromTexturePath - frames: ${imageData.frames ? imageData.frames.length : 0}, width: ${imageData.width}, height: ${imageData.height}`);
+      
+      console.log(`[TextureBuilder] ImageData created from texture file: ${file.path}`);
 
-      // Generate output path with .d2 extension
-      const outputFilename = this.changeExtension(file.path, '.d2');
-      const outputPath = (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
-        ? window.ProjectPaths.toBuildOutputPath(outputFilename)
-        : outputFilename.replace(/^Resources\//, 'build/');
-
-      // Save to build directory using FileManager
-      const fileManager = window.serviceContainer?.get('fileManager');
-      if (fileManager) {
-        await fileManager.saveFile(outputPath, d2Buffer, {
-          type: '.d2',
-          binaryData: true
-        });
+      // Debug: Check ImageData state before export
+      console.log('[TextureBuilder] ImageData state before getD2():');
+      console.log('  - frames:', imageData.frames ? imageData.frames.length : 'undefined');
+      console.log('  - width:', imageData.width);
+      console.log('  - height:', imageData.height);
+      console.log('  - currentFrame:', imageData.currentFrame);
+      console.log('  - textureConfig:', imageData.textureConfig);
+      if (imageData.frames && imageData.frames.length > 0) {
+        const frame = imageData.frames[imageData.currentFrame];
+        console.log('  - frame colors length:', frame && frame.colors ? frame.colors.length : 'undefined');
+        console.log('  - frame width:', frame ? frame.width : 'undefined');
+        console.log('  - frame height:', frame ? frame.height : 'undefined');
       }
 
-      console.log(`[TextureBuilder] Successfully built D2 texture: ${outputPath} (${d2Buffer.byteLength} bytes)`);
+      // Get D2 binary data - ImageData handles all the complexity
+      const d2Buffer = await imageData.getD2();
+
+      // Generate output path
+      const outputPath = this.generateOutputPath(file.path, '.d2');
+
+      // Save to build directory
+      await this.saveBuiltFile(outputPath, d2Buffer, {
+        type: '.d2',
+        binaryData: true
+      });
+
+      console.log(`[TextureBuilder] Successfully built: ${file.path} → ${outputPath} (${d2Buffer.byteLength} bytes)`);
       
-      return {
-        success: true,
-        inputPath: file.path,
-        outputPath: outputPath,
-        builder: 'texture',
-        metadata: {
-          width: imageData.width,
-          height: imageData.height,
-          targetFormat: '.d2',
-          fileSize: d2Buffer.byteLength
-        }
-      };
+      return this.createBuildResult(true, file.path, outputPath, null, {
+        operation: 'texture-to-d2',
+        width: imageData.width,
+        height: imageData.height,
+        format: 'd2',
+        fileSize: d2Buffer.byteLength
+      });
 
     } catch (error) {
-      console.error(`[TextureBuilder] Failed to build texture ${file.path}:`, error);
-      
-      return {
-        success: false,
-        inputPath: file.path,
-        error: error.message,
-        builder: 'texture'
-      };
+      console.error(`[TextureBuilder] Failed to build ${file.path}:`, error);
+      console.error(`[TextureBuilder] Error name: ${error.name}`);
+      console.error(`[TextureBuilder] Error message: ${error.message}`);
+      console.error(`[TextureBuilder] Error stack:`, error.stack);
+      return this.createBuildResult(false, file.path, null, error.message || error.toString());
     }
   }
 
@@ -233,16 +270,14 @@ class TextureBuilder extends window.BaseBuilder {
   }
 
   /**
-   * Get build priority (lower = higher priority)
-   * @returns {number} Priority value
+   * Get build priority - high priority for texture files
    */
   static getPriority() {
-    return 10;
+    return 20; // High priority
   }
 
   /**
    * Get builder capabilities
-   * @returns {Array} Array of capability strings
    */
   static getCapabilities() {
     return ['texture-conversion', 'd2-format', 'image-processing'];
@@ -265,25 +300,22 @@ class TextureBuilder extends window.BaseBuilder {
   }
 }
 
-// Export for use
+// Export to global scope
 window.TextureBuilder = TextureBuilder;
-console.log('[TextureBuilder] Builder class loaded');
+console.log('[TextureBuilder] Builder loaded');
 
-// Register with BuildSystem immediately when available
-// Since build-system.js loads before this file, window.buildSystem should be available
-if (window.buildSystem && typeof window.buildSystem.registerBuilder === 'function') {
-  window.buildSystem.registerBuilder('.texture', new TextureBuilder());
-  console.log('[TextureBuilder] Registered with BuildSystem for .texture files');
+// Auto-register with ComponentRegistry when available
+if (window.componentRegistry) {
+  window.componentRegistry.registerBuilder(TextureBuilder);
+  console.log('[TextureBuilder] Registered with ComponentRegistry');
 } else {
-  console.warn('[TextureBuilder] BuildSystem not available yet, will retry on window load');
-  
-  // Fallback: try again when window finishes loading
-  window.addEventListener('load', () => {
-    if (window.buildSystem && typeof window.buildSystem.registerBuilder === 'function') {
-      window.buildSystem.registerBuilder('.texture', new TextureBuilder());
-      console.log('[TextureBuilder] Registered with BuildSystem for .texture files (on window load)');
-    } else {
-      console.error('[TextureBuilder] BuildSystem still not available after window load');
+  // Wait for component registry to be available
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.componentRegistry) {
+      window.componentRegistry.registerBuilder(TextureBuilder);
+      console.log('[TextureBuilder] Registered with ComponentRegistry (deferred)');
     }
   });
 }
+
+} // End guard clause
