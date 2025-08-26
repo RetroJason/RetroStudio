@@ -67,8 +67,12 @@ class SimpleImageViewer extends ViewerBase {
         </div>
         
         <!-- Status Bar -->
-        <div style="background: #3d3d3d; padding: 4px 8px; border-top: 1px solid #555; color: #ccc; font-size: 11px;">
+        <div style="background: #3d3d3d; padding: 4px 8px; border-top: 1px solid #555; color: #ccc; font-size: 11px; display: flex; align-items: center; gap: 12px;">
           <span id="imageInfo">Loading image...</span>
+          <div id="palettePreview" style="display: none; align-items: center; gap: 4px;">
+            <span style="color: #999;">Palette:</span>
+            <div id="paletteColors" style="display: flex; gap: 1px; border: 1px solid #555; background: #222;"></div>
+          </div>
         </div>
       </div>
     `;
@@ -408,6 +412,9 @@ class SimpleImageViewer extends ViewerBase {
       
       this.redrawCanvas();
       
+      // Update UI again after redrawCanvas (which may re-find canvas)
+      this.updateImageInfo();
+      
       // Auto-start animation ONLY for animated GIFs with multiple frames
       if (this.processedImage.isAnimated && this.processedImage.frameCount > 1) {
         this.shouldBeAnimating = true; // Mark that it should be animating
@@ -552,13 +559,154 @@ class SimpleImageViewer extends ViewerBase {
   }
 
   updateImageInfo() {
-    if (!this.element || !this.processedImage) return;
+    console.log('[SimpleImageViewer] updateImageInfo() called');
+    if (!this.element || !this.processedImage) {
+      console.log('[SimpleImageViewer] updateImageInfo: missing element or processedImage');
+      return;
+    }
     
     const imageInfo = this.element.querySelector('#imageInfo');
+    console.log('[SimpleImageViewer] updateImageInfo: imageInfo element found:', !!imageInfo);
+    
     if (imageInfo) {
       const frameText = this.processedImage.isAnimated ? 
         ` (${this.processedImage.frameCount} frames)` : '';
-      imageInfo.textContent = `${this.processedImage.width} × ${this.processedImage.height}${frameText}`;
+      
+      console.log('[SimpleImageViewer] updateImageInfo: starting color analysis');
+      
+      // Analyze image colors asynchronously
+      this.analyzeImageColors().then(colorInfo => {
+        console.log('[SimpleImageViewer] updateImageInfo: color analysis completed:', colorInfo);
+        const colorText = colorInfo ? ` • ${colorInfo}` : '';
+        imageInfo.textContent = `${this.processedImage.width} × ${this.processedImage.height}${frameText}${colorText}`;
+        
+        // Update palette preview
+        this.updatePalettePreview();
+      }).catch(error => {
+        console.warn('[SimpleImageViewer] Error analyzing image colors:', error);
+        imageInfo.textContent = `${this.processedImage.width} × ${this.processedImage.height}${frameText}`;
+        this.hidePalettePreview();
+      });
+    }
+  }
+
+  async analyzeImageColors() {
+    if (!this.processedImage) return null;
+    
+    try {
+      // Create a temporary canvas to analyze the current frame
+      const tempCanvas = document.createElement('canvas');
+      const tempCtx = tempCanvas.getContext('2d');
+      
+      // Get the current frame (handles both static and animated images)
+      const currentFrame = this.processedImage.getCurrentFrame();
+      if (!currentFrame || !currentFrame.image) return null;
+      
+      tempCanvas.width = currentFrame.image.width;
+      tempCanvas.height = currentFrame.image.height;
+      tempCtx.drawImage(currentFrame.image, 0, 0);
+      
+      // Get image data
+      const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imageData.data;
+      
+      // Extract unique colors
+      const colorSet = new Set();
+      const colors = [];
+      let hasAlpha = false;
+      
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        
+        // Check for alpha transparency
+        if (a < 255) {
+          hasAlpha = true;
+        }
+        
+        // Skip fully transparent pixels for color counting
+        if (a === 0) continue;
+        
+        // Create color key
+        const colorKey = `${r},${g},${b}`;
+        
+        if (!colorSet.has(colorKey)) {
+          colorSet.add(colorKey);
+          colors.push({ r, g, b, a });
+        }
+        
+        // Limit analysis to prevent performance issues
+        if (colors.length > 10000) {
+          break;
+        }
+      }
+      
+      // Determine color depth and format info
+      const uniqueColors = colors.length;
+      let colorInfo = '';
+      
+      if (uniqueColors <= 2) {
+        colorInfo = hasAlpha ? '1-bit + Alpha' : '1-bit (2 colors)';
+      } else if (uniqueColors <= 16) {
+        colorInfo = hasAlpha ? '4-bit + Alpha' : `4-bit (${uniqueColors} colors)`;
+      } else if (uniqueColors <= 256) {
+        colorInfo = hasAlpha ? `8-bit + Alpha (${uniqueColors} colors)` : `8-bit (${uniqueColors} colors)`;
+      } else if (uniqueColors <= 65536) {
+        colorInfo = hasAlpha ? '16-bit + Alpha' : '16-bit (High Color)';
+      } else {
+        colorInfo = hasAlpha ? '24-bit + Alpha (True Color)' : '24-bit (True Color)';
+      }
+      
+      // Store palette info for potential display
+      if (uniqueColors <= 256) {
+        this.extractedPalette = colors;
+      } else {
+        this.extractedPalette = null;
+      }
+      
+      return colorInfo;
+      
+    } catch (error) {
+      console.warn('[SimpleImageViewer] Error during color analysis:', error);
+      return null;
+    }
+  }
+
+  updatePalettePreview() {
+    const palettePreview = this.element.querySelector('#palettePreview');
+    const paletteColors = this.element.querySelector('#paletteColors');
+    
+    if (!palettePreview || !paletteColors) return;
+    
+    if (this.extractedPalette && this.extractedPalette.length <= 64) {
+      // Show palette preview for small palettes (≤64 colors for good visibility)
+      paletteColors.innerHTML = '';
+      
+      this.extractedPalette.forEach(color => {
+        const colorSwatch = document.createElement('div');
+        colorSwatch.style.cssText = `
+          width: 8px;
+          height: 8px;
+          background-color: rgb(${color.r}, ${color.g}, ${color.b});
+          display: inline-block;
+          border: 1px solid rgba(255,255,255,0.1);
+        `;
+        colorSwatch.title = `RGB(${color.r}, ${color.g}, ${color.b})`;
+        paletteColors.appendChild(colorSwatch);
+      });
+      
+      palettePreview.style.display = 'flex';
+    } else {
+      this.hidePalettePreview();
+    }
+  }
+
+  hidePalettePreview() {
+    const palettePreview = this.element.querySelector('#palettePreview');
+    if (palettePreview) {
+      palettePreview.style.display = 'none';
     }
   }
 
@@ -570,6 +718,9 @@ class SimpleImageViewer extends ViewerBase {
       imageInfo.textContent = message;
       imageInfo.style.color = '#ff6b6b';
     }
+    
+    // Hide palette preview on error
+    this.hidePalettePreview();
   }
 
   // Cleanup when viewer is destroyed or replaced
@@ -606,6 +757,10 @@ class SimpleImageViewer extends ViewerBase {
       this.processedImage.stopAnimation();
       this.processedImage = null;
     }
+    
+    // Clear palette data
+    this.extractedPalette = null;
+    this.hidePalettePreview();
     
     // Clear image processor cache
     if (this.imageProcessor) {

@@ -1041,6 +1041,8 @@ class ProjectExplorer {
     // Auto-create texture file for image files (after file is added to project)
     if (this.isImageFile(finalFileName)) {
       console.log('[ProjectExplorer] Image file detected, will create texture file:', finalFileName);
+      // Skip auto-open since we'll open the texture editor specifically
+      skipAutoOpen = true;
       persistDone.then(() => {
         console.log('[ProjectExplorer] Persistence done, creating texture file for:', finalFileName);
         this.openTextureEditorForImage(uiFullPath, path, finalFileName);
@@ -3080,73 +3082,18 @@ class ProjectExplorer {
   // Open texture editor for new image files by creating a .texture file and opening it
   async openTextureEditorForImage(imageUIPath, imagePath, imageFileName) {
     try {
-      console.log('[ProjectExplorer] Creating texture file for new image:', imageFileName);
+      console.log('[ProjectExplorer] Opening texture editor for new image:', imageFileName);
       
-      // Calculate texture file path
-      const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
-      const textureFileName = baseName + '.texture';
-      const textureUIPath = imagePath + '/' + textureFileName;
-      
-      // Convert UI path to storage path
-      const textureStoragePath = window.ProjectPaths?.normalizeStoragePath ? 
-        window.ProjectPaths.normalizeStoragePath(textureUIPath) : textureUIPath;
-      
-      // Check if texture file already exists
-      if (window.fileIOService) {
-        try {
-          const existingTexture = await window.fileIOService.loadFile(textureStoragePath);
-          if (existingTexture) {
-            console.log('[ProjectExplorer] Texture file already exists, opening existing:', textureFileName);
-            // Open existing texture file - let component registry determine the editor
-            if (window.TabManager) {
-              window.TabManager.openFile(textureStoragePath);
-            }
-            return;
-          }
-        } catch (e) {
-          // File doesn't exist, proceed with creating new texture file
-        }
-      }
-      
-      // Create a proper .texture file using TextureData structure
-      const newTextureData = {
-        name: baseName,
-        sourceImage: imageFileName,
-        colorKey: '#FF00FF',
-        RLE: false,
-        colorFormat: 'd2_mode_i8',
-        palette: '',
-        scale: 1.0,
-        paletteOffset: 0,
-        width: 32,
-        height: 32,
-        rotation: 0
-      };
-      
-      const textureContent = JSON.stringify(newTextureData, null, 2);
-      
-      // Save the new texture file
-      if (window.fileIOService) {
-        await window.fileIOService.saveFile(textureStoragePath, textureContent);
-        console.log('[ProjectExplorer] Created new texture file:', textureStoragePath);
-        
-        // Add to project structure
-        this.addFileToProject({ 
-          name: textureFileName, 
-          size: textureContent.length,
-          lastModified: Date.now(),
-          originalPath: textureUIPath
-        }, imagePath, true, true);
-        
-        // Don't auto-open the texture file since the source image is already being opened in texture editor
-        // The texture editor will handle the creation and linking of the texture file
-        console.log('[ProjectExplorer] Texture file created, letting texture editor handle it:', textureStoragePath);
-        
-        this.renderTree();
-      }
+      // Simply open the image file in the texture editor directly
+      // The texture editor will handle creating and saving the texture file
+      await this.openFileInTab({ 
+        name: imageFileName,
+        path: imageUIPath,
+        preferEditor: true 
+      }, imagePath);
       
     } catch (error) {
-      console.error('[ProjectExplorer] Error creating texture file for image:', error);
+      console.error('[ProjectExplorer] Error opening texture editor for image:', error);
     }
   }
 

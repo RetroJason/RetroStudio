@@ -513,7 +513,7 @@ class TextureEditor extends EditorBase {
         console.log('[TextureEditor] Source image loaded successfully:', img.width, 'x', img.height);
         
         // Use the existing setImageToCanvas method to process the image
-        this.setImageToCanvas(img, () => {
+        this.setImageToCanvas(img, async () => {
           console.log('[TextureEditor] Image processed and loaded into texture data');
           
           // Update the original image canvas display
@@ -1583,9 +1583,9 @@ class TextureEditor extends EditorBase {
         // Use stored reference instead of this.originalCanvas
         if (!canvas) {
           console.log('[TextureEditor] Canvas not ready, waiting...');
-          const checkCanvas = () => {
+          const checkCanvas = async () => {
             if (this.originalCanvas) {
-              this.setImageToCanvas(img, resolve);
+              await this.setImageToCanvas(img, resolve);
             } else {
               setTimeout(checkCanvas, 10);
             }
@@ -1655,7 +1655,7 @@ class TextureEditor extends EditorBase {
     }
   }
 
-  setImageToCanvas(img, resolve) {
+  async setImageToCanvas(img, resolve) {
     console.log('[TextureEditor] setImageToCanvas - loading image into custom ImageData class');
     
     this.sourceImage = img;
@@ -1667,10 +1667,10 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] this.isCreatingFromImage:', this.isCreatingFromImage);
     console.log('[TextureEditor] this.isNewResource:', this.isNewResource);
     
-    // Only set sourceImage if we're creating a brand new texture from an image
-    // If we're loading an existing texture file, never overwrite the sourceImage field
-    if (this.isCreatingFromImage && this.isNewResource && (!this.textureData.sourceImage || this.textureData.sourceImage === 'unknown' || this.textureData.sourceImage === null)) {
-      console.log('[TextureEditor] Setting sourceImage for new texture creation');
+    // Only set sourceImage if we're creating a texture from an image
+    // If we're loading an existing texture file, never overwrite the sourceImage field  
+    if (this.isCreatingFromImage && (!this.textureData.sourceImage || this.textureData.sourceImage === 'unknown' || this.textureData.sourceImage === null)) {
+      console.log('[TextureEditor] Setting sourceImage for texture creation from image');
       this.textureData.sourceImage = this.filename || 'unknown';
     } else {
       console.log('[TextureEditor] Preserving existing sourceImage (not creating new):', this.textureData.sourceImage);
@@ -1683,6 +1683,7 @@ class TextureEditor extends EditorBase {
     this.textureData.height = img.height;
     
     console.log('[TextureEditor] Image dimensions:', img.width, 'x', img.height);
+    console.log('[TextureEditor] TextureData dimensions updated to:', this.textureData.width, 'x', this.textureData.height);
     
     // Create our custom ImageData from the loaded image
     const masterImageData = new ImageData();
@@ -1697,16 +1698,19 @@ class TextureEditor extends EditorBase {
     // Load into our custom ImageData class - this becomes our master source
     masterImageData.loadFromCanvas(tempCanvas);
     this.textureData.masterImageData = masterImageData;
-    
+
     // Also keep the native ImageData for compatibility
     this.textureData.sourceImageData = tempCtx.getImageData(0, 0, img.width, img.height);
-    
+
+    // Extract palette if this is a paletted image (when creating from image)
+    if (this.isCreatingFromImage) {
+      await this.extractAndSaveImagePalette(tempCtx, img.width, img.height);
+    }
+
     // Set up the original canvas display
     this.originalCanvas.width = img.width;
     this.originalCanvas.height = img.height;
-    this.originalCtx.drawImage(img, 0, 0);
-    
-    console.log('[TextureEditor] Master image data created:', masterImageData);
+    this.originalCtx.drawImage(img, 0, 0);    console.log('[TextureEditor] Master image data created:', masterImageData);
     
     // Update color depth indicator to show actual image colors
     this.updateColorDepthIndicator();
@@ -1754,15 +1758,243 @@ class TextureEditor extends EditorBase {
       this.checkAndAutoGenerateTexture();
     }, 200); // Small delay to allow palette loading to complete
     
-    // Auto-save linked texture file if we're creating from an image
-    if (this.isCreatingFromImage && this.path) {
-      setTimeout(() => {
-        this.autoSaveLinkedTextureFile();
-      }, 500); // Give time for UI setup to complete
-    }
+    // Note: Auto-save of linked texture file is now handled after palette extraction
+    // in saveExtractedPalette() method to ensure palette information is included
     
     // Image loaded successfully - no need to mark as dirty since this is just loading
     resolve();
+  }
+
+  async extractAndSaveImagePalette(ctx, width, height) {
+    console.log('[TextureEditor] Extracting palette from loaded image');
+    
+    // Get the image data
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    
+    // Extract unique colors
+    const colorSet = new Set();
+    const colors = [];
+    
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+      
+      // Skip fully transparent pixels
+      if (a === 0) continue;
+      
+      // Create color key (ignore alpha for palette extraction)
+      const colorKey = `${r},${g},${b}`;
+      
+      if (!colorSet.has(colorKey)) {
+        colorSet.add(colorKey);
+        colors.push({ r, g, b, a: 255 }); // Force full opacity for palette
+      }
+      
+      // Stop if we exceed palette limit
+      if (colors.length > 256) {
+        console.log('[TextureEditor] Image has more than 256 colors, not extracting palette');
+        return;
+      }
+    }
+    
+    console.log(`[TextureEditor] Extracted ${colors.length} unique colors from image`);
+    
+    // Only proceed if it's a reasonable palette size
+    if (colors.length <= 256 && colors.length > 1) {
+      console.log(`[TextureEditor] Color count ${colors.length} is valid for palette extraction, proceeding...`);
+      try {
+        await this.saveExtractedPalette(colors);
+      } catch (error) {
+        console.error('[TextureEditor] Failed to save extracted palette:', error);
+        // Even if palette extraction fails, still save the texture file
+        this.fallbackSaveTextureFile();
+      }
+    } else {
+      console.log(`[TextureEditor] Color count ${colors.length} is not suitable for palette extraction (must be > 1 and <= 256)`);
+      // No palette extraction, but still save the texture file
+      this.fallbackSaveTextureFile();
+    }
+  }
+
+  async saveExtractedPalette(colors) {
+    console.log(`[TextureEditor] saveExtractedPalette() called with ${colors.length} colors`);
+    
+    // Create a palette name based on the current file path
+    let sourceName;
+    if (this.path) {
+      console.log(`[TextureEditor] Using this.path: ${this.path}`);
+      // Extract filename from full path (e.g., "test/Sources/Images/test.png" -> "test.png")
+      sourceName = this.path.split('/').pop();
+    } else if (this.textureData.sourceImage) {
+      console.log(`[TextureEditor] Using textureData.sourceImage: ${this.textureData.sourceImage}`);
+      sourceName = this.textureData.sourceImage;
+    } else {
+      console.log(`[TextureEditor] No source name available, using 'extracted'`);
+      sourceName = 'extracted';
+    }
+    
+    const baseName = sourceName.replace(/\.[^.]*$/, ''); // Remove extension
+    
+    // Get file service for palette operations
+    const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+    
+    // Find a unique palette name
+    const uniquePaletteName = await this.findUniquePaletteName(baseName, fileService);
+    
+    console.log(`[TextureEditor] Creating extracted palette for: ${sourceName} -> ${uniquePaletteName}.act`);
+    
+    // Pad colors to 256 if needed
+    while (colors.length < 256) {
+      colors.push({ r: 0, g: 0, b: 0, a: 255 });
+    }
+    
+    // Create ACT format data (Adobe Color Table)
+    const actData = new Uint8Array(768); // 256 colors * 3 bytes (RGB)
+    for (let i = 0; i < 256; i++) {
+      const color = colors[i];
+      actData[i * 3] = color.r;
+      actData[i * 3 + 1] = color.g;
+      actData[i * 3 + 2] = color.b;
+    }
+    
+    // Get the project directory for the palette
+    const gameEngine = window.gameEmulator || window.gameEditor;
+    const currentProject = gameEngine?.projectExplorer?.getFocusedProjectName?.() || 'test';
+    const palettePath = `Sources/Palettes/${uniquePaletteName}.act`;
+    const fullPalettePath = `${currentProject}/Sources/Palettes/${uniquePaletteName}.act`;
+    
+    // Save the palette file
+    if (fileService) {
+      await fileService.saveFile(palettePath, actData, { 
+        binaryData: true, 
+        builderId: 'palette' 
+      });
+      
+      console.log(`[TextureEditor] Saved extracted palette: ${palettePath}`);
+      
+      // Add to project explorer
+      if (gameEngine?.projectExplorer) {
+        const fileObject = {
+          name: `${uniquePaletteName}.act`,
+          size: actData.length,
+          lastModified: Date.now(),
+          fileContent: actData
+        };
+        
+        try {
+          gameEngine.projectExplorer.addFileToProject(
+            fileObject, 
+            `${currentProject}/Sources/Palettes`, 
+            true, // skipAutoOpen
+            false // don't emit events yet
+          );
+          
+          // Refresh the project explorer display
+          gameEngine.projectExplorer.refresh();
+          
+          console.log(`[TextureEditor] Added extracted palette to project: ${fullPalettePath}`);
+        } catch (error) {
+          console.error('[TextureEditor] Failed to add palette to project:', error);
+        }
+      }
+      
+      // Set this palette as the texture's palette
+      this.textureData.palette = fullPalettePath;
+      console.log(`[TextureEditor] Set texture palette to: ${fullPalettePath}`);
+      console.log(`[TextureEditor] textureData.palette is now: ${this.textureData.palette}`);
+      console.log(`[TextureEditor] Full textureData:`, this.textureData);
+      
+      // Save the texture file now that we have the palette information
+      console.log(`[TextureEditor] Checking conditions for texture file save:`);
+      console.log(`[TextureEditor] this.isCreatingFromImage: ${this.isCreatingFromImage}`);
+      console.log(`[TextureEditor] this.path: ${this.path}`);
+      
+      if (this.isCreatingFromImage && this.path) {
+        console.log('[TextureEditor] Conditions met, scheduling texture file save...');
+        setTimeout(async () => {
+          console.log('[TextureEditor] Saving texture file with extracted palette information');
+          console.log(`[TextureEditor] About to save textureData.palette: ${this.textureData.palette}`);
+          console.log(`[TextureEditor] Current textureData dimensions: ${this.textureData.width} x ${this.textureData.height}`);
+          console.log('[TextureEditor] Full textureData before save:', JSON.stringify(this.textureData.toJSON(), null, 2));
+          try {
+            await this.autoSaveLinkedTextureFile();
+            console.log('[TextureEditor] Texture file save completed successfully');
+            
+            // Force refresh of any open viewers for this texture file
+            const event = new CustomEvent('texture-file-updated', {
+              detail: { texturePath: this.getTextureFilePath() }
+            });
+            document.dispatchEvent(event);
+          } catch (error) {
+            console.error('[TextureEditor] Error saving texture file:', error);
+          }
+        }, 500); // Increased delay to ensure everything is fully processed
+      } else {
+        console.log('[TextureEditor] Conditions NOT met for texture file save');
+        console.log(`[TextureEditor] isCreatingFromImage: ${this.isCreatingFromImage}, path: ${this.path}`);
+      }
+      
+      // Trigger palette reload - wait a bit for file system operations to complete
+      setTimeout(() => {
+        console.log('[TextureEditor] Triggering palette reload for extracted palette');
+        this.autoLoadDefaultPalette();
+      }, 1000);
+      
+      if (window.gameConsole?.info) {
+        window.gameConsole.info(`Extracted ${colors.filter(c => c.r || c.g || c.b).length} colors and saved as ${uniquePaletteName}.act`);
+      }
+    }
+  }
+
+  async fallbackSaveTextureFile() {
+    // Save texture file without extracted palette information
+    if (this.isCreatingFromImage && this.path) {
+      setTimeout(async () => {
+        console.log('[TextureEditor] Fallback: saving texture file without extracted palette');
+        await this.autoSaveLinkedTextureFile();
+      }, 100);
+    }
+  }
+
+  async findUniquePaletteName(baseName, fileService) {
+    console.log(`[TextureEditor] findUniquePaletteName() called with baseName: ${baseName}`);
+    let uniqueName = baseName;
+    let counter = 1;
+    const maxAttempts = 100; // Prevent infinite loops
+    
+    // Keep checking until we find a name that doesn't exist
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const testPath = `Sources/Palettes/${uniqueName}.act`;
+      console.log(`[TextureEditor] Testing path: ${testPath} (attempt ${attempt + 1})`);
+      
+      try {
+        // Try to load the file to see if it exists
+        const result = await fileService.loadFile(testPath);
+        console.log(`[TextureEditor] File exists: ${testPath}, result:`, !!result);
+        
+        if (result && result.fileContent) {
+          // File exists, try next number
+          uniqueName = `${baseName}_${counter}`;
+          counter++;
+          console.log(`[TextureEditor] File exists, trying next: ${uniqueName}.act`);
+        } else {
+          // File doesn't exist or is invalid, this name is unique
+          console.log(`[TextureEditor] Unique palette name found: ${uniqueName}.act`);
+          return uniqueName;
+        }
+      } catch (error) {
+        // File doesn't exist, this name is unique
+        console.log(`[TextureEditor] File doesn't exist (error), unique name found: ${uniqueName}.act`, error.message);
+        return uniqueName;
+      }
+    }
+    
+    // Fallback if we hit max attempts
+    console.warn(`[TextureEditor] Hit max attempts (${maxAttempts}), using ${uniqueName}.act`);
+    return uniqueName;
   }
 
   onSettingsChanged() {
@@ -2371,7 +2603,13 @@ class TextureEditor extends EditorBase {
 
   // Auto-save linked texture file when image is loaded
   async autoSaveLinkedTextureFile() {
+    console.log('[TextureEditor] autoSaveLinkedTextureFile() called');
+    console.log(`[TextureEditor] isCreatingFromImage: ${this.isCreatingFromImage}`);
+    console.log(`[TextureEditor] path: ${this.path}`);
+    console.log(`[TextureEditor] textureData: ${this.textureData ? 'exists' : 'null'}`);
+    
     if (!this.isCreatingFromImage || !this.path || !this.textureData) {
+      console.log('[TextureEditor] Conditions not met for auto-save, returning early');
       return;
     }
 
@@ -2415,18 +2653,26 @@ class TextureEditor extends EditorBase {
       console.log(`[TextureEditor] Directory: ${directory}`);
       console.log(`[TextureEditor] Base name: ${baseName}`);
       
-      // Check if texture file already exists to prevent duplicates
+      // Normalize the storage path like project explorer does
+      const normalizedTexturePath = window.ProjectPaths?.normalizeStoragePath ? 
+        window.ProjectPaths.normalizeStoragePath(texturePath) : texturePath;
+      console.log(`[TextureEditor] Normalized texture path: ${normalizedTexturePath}`);
+      
+      // Get file service for texture operations
       const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+      
+      // Check if texture file already exists
+      let isUpdatingExisting = false;
       if (fileService) {
         try {
-          const existingFile = await fileService.loadFile(texturePath);
+          const existingFile = await fileService.loadFile(normalizedTexturePath);
           if (existingFile) {
-            console.log(`[TextureEditor] Texture file already exists: ${texturePath}, skipping auto-save`);
-            return;
+            console.log(`[TextureEditor] Texture file already exists: ${normalizedTexturePath}, will update with palette info`);
+            isUpdatingExisting = true;
           }
         } catch (error) {
           // File doesn't exist, which is fine - we'll create it
-          console.log(`[TextureEditor] No existing texture file found, will create: ${texturePath}`);
+          console.log(`[TextureEditor] No existing texture file found, will create: ${normalizedTexturePath}`);
         }
       }
       
@@ -2434,34 +2680,66 @@ class TextureEditor extends EditorBase {
       this.textureData.sourceImage = originalPath;
       this.textureData.name = baseName;
       
+      // Debug: Log the current texture data before saving
+      console.log(`[TextureEditor] About to save texture data:`, this.textureData);
+      console.log(`[TextureEditor] Palette field value: "${this.textureData.palette}"`);
+      console.log(`[TextureEditor] ${isUpdatingExisting ? 'Updating existing' : 'Creating new'} texture file`);
       // Create the texture content
       const content = JSON.stringify(this.textureData.toJSON(), null, 2);
+      console.log(`[TextureEditor] Generated texture file content:`, content);
       
       // Save using the file service
       if (fileService) {
-        await fileService.saveFile(texturePath, content);
-        console.log(`[TextureEditor] Auto-saved linked texture: ${texturePath}`);
+        await fileService.saveFile(normalizedTexturePath, content);
+        console.log(`[TextureEditor] Auto-saved linked texture: ${normalizedTexturePath}`);
+        
+        // Force clear any cached file content for this specific file
+        if (window.fileManager && window.fileManager.clearFileCache) {
+          window.fileManager.clearFileCache(normalizedTexturePath);
+        }
+        
+        // Emit a custom event to notify other components of the file update
+        setTimeout(() => {
+          console.log(`[TextureEditor] Broadcasting file update event for: ${normalizedTexturePath}`);
+          const updateEvent = new CustomEvent('file-content-updated', {
+            detail: { 
+              path: normalizedTexturePath,
+              content: content,
+              timestamp: Date.now()
+            }
+          });
+          document.dispatchEvent(updateEvent);
+          
+          // Also trigger project refresh
+          if (window.gameEmulator?.projectExplorer) {
+            window.gameEmulator.projectExplorer.refresh();
+          }
+        }, 200);
         
         // Notify project explorer to refresh WITHOUT auto-opening
         if (window.gameEmulator?.projectExplorer) {
           // Wait a moment for the file to be written to storage
           setTimeout(async () => {
             try {
-              // Add texture file directly to project structure using string content
-              console.log(`[TextureEditor] Adding texture file to project at path: ${directory}`);
-              console.log(`[TextureEditor] Source image was at: ${originalPath}`);
-              console.log(`[TextureEditor] Full directory with project: ${directory}`);
-              
-              // Create file object for addFileToProject
-              const fileObject = {
-                name: `${baseName}.texture`,
-                size: content.length,
-                lastModified: Date.now(),
-                fileContent: content
-              };
-              
-              // Add the texture file to project WITHOUT auto-opening (skipAutoOpen = true)
-              window.gameEmulator.projectExplorer.addFileToProject(fileObject, directory, true, false);
+              // Only add to project if it's a new file, not if updating existing
+              if (!isUpdatingExisting) {
+                console.log(`[TextureEditor] Adding new texture file to project at path: ${directory}`);
+                console.log(`[TextureEditor] Source image was at: ${originalPath}`);
+                console.log(`[TextureEditor] Full directory with project: ${directory}`);
+                
+                // Create file object for addFileToProject
+                const fileObject = {
+                  name: `${baseName}.texture`,
+                  size: content.length,
+                  lastModified: Date.now(),
+                  fileContent: content
+                };
+                
+                // Add the texture file to project WITHOUT auto-opening (skipAutoOpen = true)
+                window.gameEmulator.projectExplorer.addFileToProject(fileObject, directory, true, false);
+              } else {
+                console.log(`[TextureEditor] Updated existing texture file with palette information`);
+              }
               
               // Just refresh the display quietly
               window.gameEmulator.projectExplorer.refresh();
@@ -2484,6 +2762,18 @@ class TextureEditor extends EditorBase {
     } catch (error) {
       console.error('[TextureEditor] Failed to auto-save linked texture:', error);
     }
+  }
+
+  // Helper method to get the texture file path
+  getTextureFilePath() {
+    if (!this.path) return null;
+    
+    const fullPath = this.path;
+    const pathParts = fullPath.split('/');
+    const fileName = pathParts.pop();
+    const directory = pathParts.join('/');
+    const baseName = fileName.substring(0, fileName.lastIndexOf('.'));
+    return directory ? `${directory}/${baseName}.texture` : `${baseName}.texture`;
   }
 
   // Override save-as for texture files - always save as .texture

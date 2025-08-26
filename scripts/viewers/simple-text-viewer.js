@@ -38,6 +38,10 @@ class SimpleTextViewer extends ViewerBase {
       this.language = this.detectLanguage(actualPath);
     }
     
+    // Set up event listener for file content updates
+    this.boundUpdateHandler = this.handleFileUpdate.bind(this);
+    document.addEventListener('file-content-updated', this.boundUpdateHandler);
+    
     console.log('[SimpleTextViewer] Detected language:', this.language);
   }
 
@@ -317,10 +321,34 @@ class SimpleTextViewer extends ViewerBase {
   }
 
   /**
+   * Handle file content update events
+   */
+  handleFileUpdate(event) {
+    const { path, content, timestamp } = event.detail;
+    
+    // Check if this update is for our file
+    if (path && this.path && this.path.includes(path.split('/').pop())) {
+      console.log('[SimpleTextViewer] File update detected for:', path);
+      console.log('[SimpleTextViewer] Refreshing editor content');
+      
+      // Update the editor content
+      if (this.editor && content) {
+        this.editor.setValue(content);
+        console.log('[SimpleTextViewer] Editor content updated');
+      }
+    }
+  }
+
+  /**
    * Clean up resources
    */
   dispose() {
     console.log('[SimpleTextViewer] Disposing...');
+    
+    // Remove event listener
+    if (this.boundUpdateHandler) {
+      document.removeEventListener('file-content-updated', this.boundUpdateHandler);
+    }
     
     if (this.editor) {
       this.editor.dispose();
