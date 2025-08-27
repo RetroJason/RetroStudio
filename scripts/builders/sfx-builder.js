@@ -77,7 +77,7 @@ class SfxBuilder extends window.BuilderBase {
       }
 
       // Check if SFXR is available
-      if (!window.SFXR) {
+      if (!window.jsfxr || !window.jsfxr.sfxr) {
         console.warn('[SfxBuilder] SFXR library not available - skipping SFX file:', file.path);
         return this.createBuildResult(true, file.path, null, 'SFXR library not available - SFX file skipped');
       }
@@ -115,12 +115,32 @@ class SfxBuilder extends window.BuilderBase {
       const params = sfxData.parameters;
       console.log(`[SfxBuilder] SFXR parameters:`, params);
 
+      // Create a proper Params object and populate it
+      const sfxrParams = new window.jsfxr.Params();
+      sfxrParams.fromJSON(params);
+      console.log(`[SfxBuilder] Created SFXR Params object:`, sfxrParams);
+      
+      // Debug key parameters that affect audio generation
+      console.log(`[SfxBuilder] Key params - wave_type:`, sfxrParams.wave_type, 
+                  `p_base_freq:`, sfxrParams.p_base_freq,
+                  `p_env_attack:`, sfxrParams.p_env_attack,
+                  `p_env_sustain:`, sfxrParams.p_env_sustain,
+                  `p_env_decay:`, sfxrParams.p_env_decay,
+                  `sound_vol:`, sfxrParams.sound_vol);
+
       // Generate WAV data using SFXR
-      const wavData = window.SFXR.generateWAV(params);
-      if (!wavData || wavData.byteLength === 0) {
+      const waveObject = window.jsfxr.sfxr.toWave(sfxrParams);
+      console.log(`[SfxBuilder] SFXR waveObject:`, waveObject);
+      console.log(`[SfxBuilder] waveObject.wav length:`, waveObject?.wav?.length);
+      console.log(`[SfxBuilder] waveObject.buffer length:`, waveObject?.buffer?.length);
+      console.log(`[SfxBuilder] waveObject.data length:`, waveObject?.data?.length);
+      
+      if (!waveObject || !waveObject.wav || waveObject.wav.length === 0) {
         throw new Error('Failed to generate WAV data from SFX parameters');
       }
 
+      // Use the original SFXR WAV format (this works correctly for waveform display and game emulator)
+      const wavData = new Uint8Array(waveObject.wav);
       console.log(`[SfxBuilder] Generated WAV data: ${wavData.byteLength} bytes`);
 
       // Generate output path

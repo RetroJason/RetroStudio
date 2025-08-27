@@ -83,6 +83,11 @@ class MixerWorklet extends AudioWorkletProcessor {
         this.buffers = [];
         this.isPlaying = false;
         this.requestInFlight = false;
+      } else if (e.data.type === 'stop-oneshot-sounds') {
+        // Clear only one-shot buffers (WAV files), preserve streams (MOD files)
+        console.log('[MixerWorklet] Stopped one-shot sounds');
+        this.buffers = [];
+        // Don't change isPlaying state - let streams continue if they're running
       } else if (e.data.type === 'start-playing') {
         this.isPlaying = true;
         console.log('[MixerWorklet] Started playing');

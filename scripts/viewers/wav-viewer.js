@@ -194,13 +194,21 @@ class WavViewer extends ViewerBase {
 
   // Control event handlers
   handlePlayToggle(isPlaying) {
-    console.log('[WavViewer] Play toggle:', isPlaying);
+    console.log('[WavViewer] Play toggle:', isPlaying, 'current isPlaying:', this.isPlaying);
+    
+    // Prevent redundant calls
+    if (isPlaying === this.isPlaying) {
+      console.log('[WavViewer] State already matches, ignoring toggle');
+      return;
+    }
     
     if (isPlaying && !this.isPlaying) {
       // Starting playback
+      console.log('[WavViewer] Starting playback');
       this.playSound();
     } else if (!isPlaying && this.isPlaying) {
       // Stopping playback
+      console.log('[WavViewer] Stopping playback');
       this.stopAllPlayback();
     }
   }
@@ -611,6 +619,7 @@ class WavViewer extends ViewerBase {
     if (this.animationFrame) return; // Already tracking
     
     this.startTime = Date.now();
+    this.lastDrawnPosition = -1; // Track last drawn position to avoid unnecessary redraws
     
     const updatePosition = () => {
       if (this.isPlaying) {
@@ -618,8 +627,15 @@ class WavViewer extends ViewerBase {
         const elapsed = (Date.now() - this.startTime) / 1000;
         this.currentTime = elapsed % this.duration; // Use modulo for looping
         
-        // Redraw waveform with updated position
-        this.drawWaveform();
+        // Only redraw if position has changed significantly (pixel-level change)
+        const canvas = this.waveformCanvas;
+        if (canvas) {
+          const pixelPosition = Math.floor((this.currentTime / this.duration) * canvas.width);
+          if (pixelPosition !== this.lastDrawnPosition) {
+            this.drawWaveform();
+            this.lastDrawnPosition = pixelPosition;
+          }
+        }
         
         // Check if we've reached the end
         if (elapsed >= this.duration && !this.isLooping) {
@@ -649,6 +665,7 @@ class WavViewer extends ViewerBase {
     }
     this.isPlaying = false;
     this.currentTime = 0;
+    this.lastDrawnPosition = -1; // Reset position tracking
     this.drawWaveform(); // Redraw without position line
   }
 
@@ -723,14 +740,13 @@ class WavViewer extends ViewerBase {
         this.isPlaying = true;
         this.startPositionTracking();
         
-        // Update button to playing state (pause icon)
-        this.updatePlayPauseButton();
+        console.log('[WavViewer] playSound completed, isPlaying:', this.isPlaying);
         
         // Reset button after duration (only if not looping)
         if (this.audioResource.duration && !this.isLooping) {
           setTimeout(() => {
             this.stopPositionTracking();
-            this.updatePlayPauseButton();
+            // Don't call updatePlayPauseButton here to avoid conflicts
           }, this.audioResource.duration * 1000);
         }
       } else {
@@ -825,6 +841,9 @@ class WavViewer extends ViewerBase {
   stopAllPlayback() {
     console.log('[WavViewer] stopAllPlayback called');
     
+    // Set state to stopped first to prevent any race conditions
+    this.isPlaying = false;
+    
     // Stop position tracking
     this.stopPositionTracking();
     
@@ -851,8 +870,9 @@ class WavViewer extends ViewerBase {
       }
     }
     
-    // Reset button state
-    this.updatePlayPauseButton();
+    // Ensure state is properly set to stopped
+    this.isPlaying = false;
+    console.log('[WavViewer] stopAllPlayback completed, isPlaying:', this.isPlaying);
   }
 
   destroy() {

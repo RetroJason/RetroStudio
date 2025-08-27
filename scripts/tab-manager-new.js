@@ -200,7 +200,7 @@ class TabManager {
     const readOnlyIndicator = options.isReadOnly ? ' 🔒' : '';
     tabElement.innerHTML = `
       <span class="tab-title">${file.name}${readOnlyIndicator}</span>
-      <span class="tab-close" data-action="close">×</span>
+      <span class="tab-close" data-action="close">✖</span>
     `;
     
     // Create content pane

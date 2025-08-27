@@ -13,6 +13,9 @@ class BuilderBase {
     this.name = 'Base Builder';
     this.version = '1.0.0';
     this.description = 'Base class for builders';
+    
+    // Initialize progress reporting capability
+    this.progressReporter = null;
   }
 
   /**
@@ -244,6 +247,100 @@ class BuilderBase {
       console.error(`[${this.constructor.getName()}] Failed to load ${filePath}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Initialize progress reporting for this build operation
+   * @param {string} title - Progress dialog title
+   * @param {string} message - Initial message
+   * @returns {Promise<void>}
+   */
+  async initializeProgress(title = null, message = 'Starting build...') {
+    // Load progress reporter if needed
+    if (!this.progressReporter) {
+      await this.loadProgressReporter();
+    }
+
+    const progressTitle = title || `Building ${this.constructor.getName()}`;
+    if (this.progressReporter) {
+      await this.progressReporter.startProgress(progressTitle, message);
+    }
+  }
+
+  /**
+   * Update build progress
+   * @param {number} progress - Progress percentage (0-100)
+   * @param {string} message - Progress message
+   */
+  updateProgress(progress, message) {
+    if (this.progressReporter) {
+      this.progressReporter.updateProgress(progress, message);
+    }
+  }
+
+  /**
+   * Complete build progress
+   * @param {string} message - Completion message
+   */
+  completeProgress(message = 'Build complete') {
+    if (this.progressReporter) {
+      this.progressReporter.completeProgress(message);
+    }
+  }
+
+  /**
+   * Cancel build progress
+   * @param {string} reason - Cancellation reason
+   */
+  cancelProgress(reason = 'Build cancelled') {
+    if (this.progressReporter) {
+      this.progressReporter.cancelProgress(reason);
+    }
+  }
+
+  /**
+   * Load progress reporter interface
+   * @returns {Promise<void>}
+   */
+  async loadProgressReporter() {
+    if (window.IProgressReporter) {
+      this.progressReporter = new window.IProgressReporter();
+      return;
+    }
+
+    try {
+      const script = document.createElement('script');
+      script.src = 'scripts/interfaces/progress-reporter.js';
+      script.async = true;
+
+      return new Promise((resolve, reject) => {
+        script.onload = () => {
+          console.log(`[${this.constructor.getName()}] Progress reporter loaded`);
+          if (window.IProgressReporter) {
+            this.progressReporter = new window.IProgressReporter();
+          }
+          resolve();
+        };
+        script.onerror = () => {
+          console.error(`[${this.constructor.getName()}] Failed to load progress reporter`);
+          reject(new Error('Failed to load progress reporter'));
+        };
+        document.head.appendChild(script);
+      });
+    } catch (error) {
+      console.error(`[${this.constructor.getName()}] Error loading progress reporter:`, error);
+    }
+  }
+
+  /**
+   * Wrapper method for build with automatic progress reporting
+   * Subclasses can override buildWithProgress instead of build for automatic progress
+   * @param {Object} file - File to build
+   * @returns {Promise<Object>} Build result
+   */
+  async buildWithProgress(file) {
+    // Default implementation just calls build() - subclasses can override for custom progress
+    return await this.build(file);
   }
 }
 

@@ -302,6 +302,9 @@ class AudioEngine extends EventTarget {
         sampleRate: resource.audioBuffer.sampleRate
       });
       
+      // Ensure the worklet is in playing state for one-shot sounds
+      this.workletNode.port.postMessage({ type: 'start-playing' });
+      
       this.activeSounds.set(instanceId, {
         resourceId,
         instanceId,
@@ -348,6 +351,14 @@ class AudioEngine extends EventTarget {
     
     if (count > 0) {
       console.log(`[AudioEngine] Stopped ${count} sound instances for resource: ${resourceId}`);
+      
+      // For WAV files (one-shot sounds), we need to clear the worklet buffers
+      // since they continue playing until completion otherwise
+      const resource = this.resources.get(resourceId);
+      if (resource && resource.type === 'wav') {
+        // Clear only one-shot buffers, preserve streams
+        this.workletNode.port.postMessage({ type: 'stop-oneshot-sounds' });
+      }
     }
     return count;
   }
@@ -572,13 +583,35 @@ class AudioEngine extends EventTarget {
   }
   
   async _loadWavResource(data, name) {
-    const audioBuffer = await this.audioContext.decodeAudioData(data.slice());
-    return {
-      name,
-      data: data.slice(),
-      audioBuffer,
-      duration: audioBuffer.duration
-    };
+    try {
+      // Try standard decoding first
+      const audioBuffer = await this.audioContext.decodeAudioData(data.slice());
+      return {
+        name,
+        data: data.slice(),
+        audioBuffer,
+        duration: audioBuffer.duration
+      };
+    } catch (error) {
+      console.warn(`[AudioEngine] Standard WAV decode failed for ${name}, trying alternative approach:`, error);
+      
+      try {
+        // Alternative approach: try with a fresh copy and different parameters
+        const freshData = new ArrayBuffer(data.byteLength);
+        new Uint8Array(freshData).set(new Uint8Array(data));
+        
+        const audioBuffer = await this.audioContext.decodeAudioData(freshData);
+        return {
+          name,
+          data: data.slice(),
+          audioBuffer,
+          duration: audioBuffer.duration
+        };
+      } catch (secondError) {
+        console.error(`[AudioEngine] Failed to decode WAV file ${name} with both methods:`, secondError);
+        throw new Error(`Unable to decode audio data for ${name}: ${secondError.message}`);
+      }
+    }
   }
 
   /**

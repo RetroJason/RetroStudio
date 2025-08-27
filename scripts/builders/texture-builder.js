@@ -64,25 +64,33 @@ class TextureBuilder extends window.BuilderBase {
   }
 
   /**
-   * Build a texture file by converting it to D2 format
+   * Build a texture file by converting it to D2 format with progress reporting
    */
   async build(file) {
     console.log(`[TextureBuilder] Building texture: ${file.path}`);
     
     try {
+      // Initialize progress reporting for texture building
+      await this.initializeProgress(`Building Texture`, 'Validating texture file...');
+      
       // Validate input
+      this.updateProgress(10, 'Validating input file...');
       const validation = this.validateInput(file);
       if (!validation.valid) {
+        this.cancelProgress(`Validation failed: ${validation.error}`);
         return this.createBuildResult(false, file.path, null, validation.error);
       }
 
       // Ensure ImageData class is available
+      this.updateProgress(20, 'Checking dependencies...');
       if (!window.ImageData) {
-        throw new Error('ImageData class not available - required for texture building');
+        const error = 'ImageData class not available - required for texture building';
+        this.cancelProgress(error);
+        throw new Error(error);
       }
 
       // Create ImageData instance and load from texture file path
-      // This approach allows ImageData to resolve relative source image paths
+      this.updateProgress(30, 'Loading texture configuration...');
       console.log(`[TextureBuilder] Creating ImageData and loading from path: ${file.path}`);
       const imageData = new window.ImageData();
       
@@ -90,12 +98,14 @@ class TextureBuilder extends window.BuilderBase {
       const texturePath = file.path.replace(/^[^\/]+\//, ''); // Remove project prefix like "test/"
       console.log(`[TextureBuilder] Normalized texture path: ${texturePath}`);
       
+      this.updateProgress(50, 'Loading source image data...');
       await imageData.loadFromTexturePath(texturePath);
       console.log(`[TextureBuilder] After loadFromTexturePath - frames: ${imageData.frames ? imageData.frames.length : 0}, width: ${imageData.width}, height: ${imageData.height}`);
       
       console.log(`[TextureBuilder] ImageData created from texture file: ${file.path}`);
 
       // Debug: Check ImageData state before export
+      this.updateProgress(70, 'Processing image data...');
       console.log('[TextureBuilder] ImageData state before getD2():');
       console.log('  - frames:', imageData.frames ? imageData.frames.length : 'undefined');
       console.log('  - width:', imageData.width);
@@ -110,18 +120,23 @@ class TextureBuilder extends window.BuilderBase {
       }
 
       // Get D2 binary data - ImageData handles all the complexity
+      this.updateProgress(80, 'Converting to D2 format...');
       const d2Buffer = await imageData.getD2();
 
       // Generate output path
+      this.updateProgress(90, 'Preparing output file...');
       const outputPath = this.generateOutputPath(file.path, '.d2');
 
       // Save to build directory
+      this.updateProgress(95, 'Saving built texture...');
       await this.saveBuiltFile(outputPath, d2Buffer, {
         type: '.d2',
         binaryData: true
       });
 
       console.log(`[TextureBuilder] Successfully built: ${file.path} → ${outputPath} (${d2Buffer.byteLength} bytes)`);
+      
+      this.completeProgress(`Texture built successfully (${d2Buffer.byteLength} bytes)`);
       
       return this.createBuildResult(true, file.path, outputPath, null, {
         operation: 'texture-to-d2',
@@ -133,6 +148,7 @@ class TextureBuilder extends window.BuilderBase {
 
     } catch (error) {
       console.error(`[TextureBuilder] Failed to build ${file.path}:`, error);
+      this.cancelProgress(`Build failed: ${error.message}`);
       console.error(`[TextureBuilder] Error name: ${error.name}`);
       console.error(`[TextureBuilder] Error message: ${error.message}`);
       console.error(`[TextureBuilder] Error stack:`, error.stack);

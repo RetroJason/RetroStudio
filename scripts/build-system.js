@@ -4,6 +4,7 @@
 class BuildSystem {
   constructor() {
     this.isBuilding = false;
+    this.progressReporter = null;
   }
   
   getBuilderForFile(filename) {
@@ -37,27 +38,51 @@ class BuildSystem {
       const startTime = Date.now();
       console.log('[BuildSystem] Starting project build...');
       
+      // Initialize build progress reporting
+      await this.initializeBuildProgress();
+      this.updateBuildProgress(5, 'Preparing build...');
+      
       // Save all dirty files before building to ensure we get updated parameters
       if (window.gameEditor && window.gameEditor.tabManager) {
         console.log('[BuildSystem] Saving all dirty files before build...');
+        this.updateBuildProgress(10, 'Saving open files...');
         await window.gameEditor.tabManager.saveAllOpenTabs();
       }
       
       // Clear the build folder before starting
       if (window.gameEditor && window.gameEditor.projectExplorer) {
+        this.updateBuildProgress(15, 'Clearing build folder...');
         await window.gameEditor.projectExplorer.clearBuildFolder();
       }
       
       // Get all resource file paths from project explorer
+      this.updateBuildProgress(20, 'Scanning project files...');
       const resourceFilePaths = this.getAllResourceFilePaths();
       console.log(`[BuildSystem] Found ${resourceFilePaths.length} resource files to process`);
       
+      if (resourceFilePaths.length === 0) {
+        this.completeBuildProgress('No files to build');
+        return {
+          success: true,
+          results: [],
+          summary: { total: 0, success: 0, errors: 0, time: Date.now() - startTime }
+        };
+      }
       const buildResults = [];
       let successCount = 0;
       let errorCount = 0;
       
       // Process each file path by loading from storage
-      for (const filePath of resourceFilePaths) {
+      for (let i = 0; i < resourceFilePaths.length; i++) {
+        const filePath = resourceFilePaths[i];
+        const fileIndex = i + 1;
+        const baseProgress = 25 + (i / resourceFilePaths.length) * 65; // Progress from 25% to 90%
+        
+        this.updateBuildProgress(
+          Math.round(baseProgress), 
+          `Building ${fileIndex}/${resourceFilePaths.length}: ${this.getFilename(filePath)}`
+        );
+        
         try {
           const result = await this.buildFileFromPath(filePath);
           buildResults.push(result);
@@ -89,6 +114,8 @@ class BuildSystem {
         }
       }
       
+      this.updateBuildProgress(90, 'Finalizing build...');
+      
       const totalTime = Date.now() - startTime;
       console.log(`[BuildSystem] Build completed: ${successCount} success, ${errorCount} errors`);
       
@@ -98,6 +125,12 @@ class BuildSystem {
         console.log(`[BuildSystem] Invalidating all resource cache after build completion`);
         gameEmulator.invalidateAllResourceCache();
       }
+      
+      // Complete build progress
+      const successMessage = errorCount === 0 
+        ? `Build successful: ${successCount} files built` 
+        : `Build completed with ${errorCount} errors`;
+      this.completeBuildProgress(successMessage);
       
       return {
         success: errorCount === 0,
@@ -112,6 +145,7 @@ class BuildSystem {
       
     } catch (error) {
       console.error('[BuildSystem] Build failed:', error);
+      this.cancelBuildProgress(`Build failed: ${error.message}`);
       return {
         success: false,
         error: error.message
@@ -293,6 +327,95 @@ class BuildSystem {
     }
 
     return await builder.build(legacyFile);
+  }
+
+  /**
+   * Initialize build progress reporting
+   * @returns {Promise<void>}
+   */
+  async initializeBuildProgress() {
+    if (!this.progressReporter) {
+      await this.loadProgressReporter();
+    }
+
+    if (this.progressReporter) {
+      await this.progressReporter.startProgress('Building Project', 'Initializing build process...');
+    }
+  }
+
+  /**
+   * Update build progress
+   * @param {number} progress - Progress percentage (0-100)
+   * @param {string} message - Progress message
+   */
+  updateBuildProgress(progress, message) {
+    if (this.progressReporter) {
+      this.progressReporter.updateProgress(progress, message);
+    }
+  }
+
+  /**
+   * Complete build progress
+   * @param {string} message - Completion message
+   */
+  completeBuildProgress(message = 'Build complete') {
+    if (this.progressReporter) {
+      this.progressReporter.completeProgress(message);
+    }
+  }
+
+  /**
+   * Cancel build progress
+   * @param {string} reason - Cancellation reason
+   */
+  cancelBuildProgress(reason = 'Build cancelled') {
+    if (this.progressReporter) {
+      this.progressReporter.cancelProgress(reason);
+    }
+  }
+
+  /**
+   * Load progress reporter interface
+   * @returns {Promise<void>}
+   */
+  async loadProgressReporter() {
+    if (window.IProgressReporter) {
+      this.progressReporter = new window.IProgressReporter();
+      return;
+    }
+
+    try {
+      const script = document.createElement('script');
+      script.src = 'scripts/interfaces/progress-reporter.js';
+      script.async = true;
+
+      return new Promise((resolve, reject) => {
+        script.onload = () => {
+          console.log('[BuildSystem] Progress reporter loaded');
+          if (window.IProgressReporter) {
+            this.progressReporter = new window.IProgressReporter();
+          }
+          resolve();
+        };
+        script.onerror = () => {
+          console.error('[BuildSystem] Failed to load progress reporter');
+          reject(new Error('Failed to load progress reporter'));
+        };
+        document.head.appendChild(script);
+      });
+    } catch (error) {
+      console.error('[BuildSystem] Error loading progress reporter:', error);
+    }
+  }
+
+  /**
+   * Get filename from path for display
+   * @param {string} filePath - File path
+   * @returns {string} Filename
+   */
+  getFilename(filePath) {
+    const lastSlash = filePath.lastIndexOf('/');
+    return lastSlash >= 0 ? filePath.substring(lastSlash + 1) : filePath;
   }
 }
 

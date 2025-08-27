@@ -1658,6 +1658,35 @@ class TextureEditor extends EditorBase {
   async setImageToCanvas(img, resolve) {
     console.log('[TextureEditor] setImageToCanvas - loading image into custom ImageData class');
     
+    // Show progress modal for large images
+    let progressModal = null;
+    const totalPixels = img.width * img.height;
+    const shouldShowProgress = totalPixels > 100000; // Show progress for images > 100k pixels
+    
+    if (shouldShowProgress) {
+      if (window.ModalUtils) {
+        progressModal = window.ModalUtils.showProgress(
+          'Processing Image', 
+          `Loading ${img.width}x${img.height} image...`
+        );
+        progressModal.update(10, 'Analyzing image...');
+      } else {
+        // Fallback: try to load modal utils dynamically
+        try {
+          await this.loadModalUtils();
+          if (window.ModalUtils) {
+            progressModal = window.ModalUtils.showProgress(
+              'Processing Image', 
+              `Loading ${img.width}x${img.height} image...`
+            );
+            progressModal.update(10, 'Analyzing image...');
+          }
+        } catch (error) {
+          console.warn('[TextureEditor] Could not load modal utils, proceeding without progress bar');
+        }
+      }
+    }
+    
     this.sourceImage = img;
     
     // Preserve the existing sourceImage from texture configuration - don't overwrite it
@@ -1702,9 +1731,22 @@ class TextureEditor extends EditorBase {
     // Also keep the native ImageData for compatibility
     this.textureData.sourceImageData = tempCtx.getImageData(0, 0, img.width, img.height);
 
+    // Update progress
+    if (progressModal) {
+      progressModal.update(30, 'Setting up image data...');
+    }
+
     // Extract palette if this is a paletted image (when creating from image)
     if (this.isCreatingFromImage) {
-      await this.extractAndSaveImagePalette(tempCtx, img.width, img.height);
+      if (progressModal) {
+        progressModal.update(40, 'Extracting color palette...');
+      }
+      await this.extractAndSaveImagePalette(tempCtx, img.width, img.height, progressModal);
+    }
+
+    // Update progress
+    if (progressModal) {
+      progressModal.update(80, 'Setting up canvas display...');
     }
 
     // Set up the original canvas display
@@ -1761,11 +1803,19 @@ class TextureEditor extends EditorBase {
     // Note: Auto-save of linked texture file is now handled after palette extraction
     // in saveExtractedPalette() method to ensure palette information is included
     
+    // Complete progress and close modal
+    if (progressModal) {
+      progressModal.update(100, 'Image processing complete!');
+      setTimeout(() => {
+        progressModal.close();
+      }, 500); // Brief delay to show completion
+    }
+    
     // Image loaded successfully - no need to mark as dirty since this is just loading
     resolve();
   }
 
-  async extractAndSaveImagePalette(ctx, width, height) {
+  async extractAndSaveImagePalette(ctx, width, height, progressModal = null) {
     console.log('[TextureEditor] Extracting palette from loaded image');
     
     // Get the image data
@@ -1775,6 +1825,9 @@ class TextureEditor extends EditorBase {
     // Extract unique colors
     const colorSet = new Set();
     const colors = [];
+    
+    const totalPixels = data.length / 4;
+    let processedPixels = 0;
     
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
@@ -1793,9 +1846,21 @@ class TextureEditor extends EditorBase {
         colors.push({ r, g, b, a: 255 }); // Force full opacity for palette
       }
       
+      // Update progress every 10000 pixels for performance
+      processedPixels++;
+      if (progressModal && processedPixels % 10000 === 0) {
+        const progress = 40 + (processedPixels / totalPixels) * 30; // 40-70% range
+        progressModal.update(progress, `Analyzing colors... (${colors.length} unique colors found)`);
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      
       // Stop if we exceed palette limit
       if (colors.length > 256) {
         console.log('[TextureEditor] Image has more than 256 colors, not extracting palette');
+        if (progressModal) {
+          progressModal.update(70, 'Image has too many colors for palette extraction');
+        }
         return;
       }
     }
@@ -1805,15 +1870,27 @@ class TextureEditor extends EditorBase {
     // Only proceed if it's a reasonable palette size
     if (colors.length <= 256 && colors.length > 1) {
       console.log(`[TextureEditor] Color count ${colors.length} is valid for palette extraction, proceeding...`);
+      if (progressModal) {
+        progressModal.update(70, `Saving palette with ${colors.length} colors...`);
+      }
       try {
         await this.saveExtractedPalette(colors);
+        if (progressModal) {
+          progressModal.update(90, 'Palette saved successfully!');
+        }
       } catch (error) {
         console.error('[TextureEditor] Failed to save extracted palette:', error);
+        if (progressModal) {
+          progressModal.update(90, 'Palette extraction failed, proceeding without palette...');
+        }
         // Even if palette extraction fails, still save the texture file
         this.fallbackSaveTextureFile();
       }
     } else {
       console.log(`[TextureEditor] Color count ${colors.length} is not suitable for palette extraction (must be > 1 and <= 256)`);
+      if (progressModal) {
+        progressModal.update(90, 'Skipping palette extraction (image not suitable for palette)');
+      }
       // No palette extraction, but still save the texture file
       this.fallbackSaveTextureFile();
     }
@@ -4219,6 +4296,20 @@ class TextureEditor extends EditorBase {
     } catch (error) {
       console.error('[TextureEditor] Error analyzing image colors:', error);
     }
+  }
+  
+  // Helper method to load modal utils dynamically
+  async loadModalUtils() {
+    if (window.ModalUtils) return Promise.resolve();
+    
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      const cacheBust = Date.now();
+      script.src = `scripts/utils/modal-utils.js?v=${cacheBust}`;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load modal utils'));
+      document.head.appendChild(script);
+    });
   }
 }
 

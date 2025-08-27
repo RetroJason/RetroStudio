@@ -593,6 +593,119 @@ class ModalUtils {
       });
     });
   }
+
+  /**
+   * Show a progress dialog with a progress bar
+   * @param {string} title - Dialog title
+   * @param {string} message - Initial message
+   * @returns {Object} - Progress controller with update() and close() methods
+   */
+  static showProgress(title = 'Processing...', message = 'Please wait...') {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 10000;
+    `;
+
+    // Create modal dialog
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: #2d2d2d;
+      color: white;
+      padding: 30px;
+      border-radius: 10px;
+      min-width: 400px;
+      max-width: 500px;
+      font-family: Arial, sans-serif;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    `;
+
+    // Create title
+    const titleEl = document.createElement('h3');
+    titleEl.textContent = title;
+    titleEl.style.cssText = `
+      margin: 0 0 20px 0;
+      font-size: 18px;
+      color: #fff;
+    `;
+
+    // Create message
+    const messageEl = document.createElement('p');
+    messageEl.textContent = message;
+    messageEl.style.cssText = `
+      margin: 0 0 20px 0;
+      color: #ccc;
+      font-size: 14px;
+    `;
+
+    // Create progress bar container
+    const progressContainer = document.createElement('div');
+    progressContainer.style.cssText = `
+      width: 100%;
+      height: 20px;
+      background: #444;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 15px;
+    `;
+
+    // Create progress bar
+    const progressBar = document.createElement('div');
+    progressBar.style.cssText = `
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #4CAF50, #45a049);
+      transition: width 0.3s ease;
+      border-radius: 10px;
+    `;
+
+    // Create progress text
+    const progressText = document.createElement('div');
+    progressText.textContent = '0%';
+    progressText.style.cssText = `
+      font-size: 12px;
+      color: #999;
+      margin-top: 10px;
+    `;
+
+    // Assemble dialog
+    progressContainer.appendChild(progressBar);
+    dialog.appendChild(titleEl);
+    dialog.appendChild(messageEl);
+    dialog.appendChild(progressContainer);
+    dialog.appendChild(progressText);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    // Return controller object
+    return {
+      update(progress, newMessage) {
+        if (typeof progress === 'number' && progress >= 0 && progress <= 100) {
+          progressBar.style.width = `${progress}%`;
+          progressText.textContent = `${Math.round(progress)}%`;
+        }
+        if (newMessage) {
+          messageEl.textContent = newMessage;
+        }
+      },
+      
+      close() {
+        if (overlay.parentNode) {
+          document.body.removeChild(overlay);
+        }
+      }
+    };
+  }
 }
 
 // Export for use

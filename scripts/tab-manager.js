@@ -663,7 +663,7 @@ class TabManager {
     const readOnlyIndicator = options.isReadOnly ? ' 🔒' : '';
     tabElement.innerHTML = `
       <span class="tab-title">${fileName}${readOnlyIndicator}</span>
-      <span class="tab-close" data-action="close">×</span>
+      <span class="tab-close" data-action="close">🗙</span>
     `;
     
     // Create content pane
@@ -746,7 +746,7 @@ class TabManager {
       closeButton = document.createElement('span');
       closeButton.className = 'tab-close';
       closeButton.dataset.action = 'close';
-      closeButton.textContent = '×';
+      closeButton.textContent = '🗙';
       previewTab.appendChild(closeButton);
     }
 
@@ -2272,7 +2272,7 @@ class TabManager {
     tabElement.dataset.tabId = tabId;
     tabElement.innerHTML = `
       <span class="tab-title">Untitled</span>
-      <span class="tab-close" data-action="close">×</span>
+      <span class="tab-close" data-action="close">🗙</span>
     `;
     
     // Create content pane

@@ -1090,24 +1090,93 @@ class GameEmulator {
 
     const loadPromise = (async () => {
       // First try to find in pending files (regular project files)
+      // But only if this file was recently added and has proper file data
     if (this.pendingAudioFiles) {
       for (const [fileKey, fileData] of this.pendingAudioFiles.entries()) {
         if (fileKey.endsWith(filename)) {
-          try {
-            console.log(`[GameEditor] Loading ${filename} (${fileData.audioType})...`);
-            const resourceId = await this.resourceManager.loadFromFile(fileData.file, fileData.audioType);
-            
-            // Move from pending to loaded
-            this.loadedAudioResources.set(fileKey, resourceId);
+          // Check if fileData.file has proper file content/data
+          if (fileData.file && (
+            (fileData.file.arrayBuffer && typeof fileData.file.arrayBuffer === 'function') ||
+            fileData.file.fileContent ||
+            fileData.file.content
+          )) {
+            try {
+              console.log(`[GameEditor] Loading ${filename} (${fileData.audioType}) from pending files...`);
+              
+              let fileToLoad = fileData.file;
+              
+              // Check if file has arrayBuffer method, if not, convert it to a proper File object
+              if (!fileToLoad.arrayBuffer || typeof fileToLoad.arrayBuffer !== 'function') {
+                console.log(`[GameEditor] Converting storage file to File object for ${filename}`);
+                console.log(`[GameEditor] fileToLoad structure:`, {
+                  hasBinaryData: 'binaryData' in fileToLoad,
+                  binaryData: fileToLoad.binaryData,
+                  hasContent: 'content' in fileToLoad,
+                  contentType: typeof fileToLoad.content,
+                  hasFileContent: 'fileContent' in fileToLoad,
+                  fileContentType: typeof fileToLoad.fileContent,
+                  keys: Object.keys(fileToLoad)
+                });
+                
+                let buf;
+                if (fileToLoad.content instanceof ArrayBuffer) {
+                  console.log(`[GameEditor] Using ArrayBuffer content directly`);
+                  buf = fileToLoad.content;
+                } else if (fileToLoad.binaryData && fileToLoad.fileContent) {
+                  console.log(`[GameEditor] Converting base64 fileContent to ArrayBuffer`);
+                  const binaryString = atob(fileToLoad.fileContent);
+                  const bytes = new Uint8Array(binaryString.length);
+                  for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                  buf = bytes.buffer;
+                } else if (typeof fileToLoad.fileContent === 'string' && fileToLoad.fileContent.length > 0) {
+                  console.log(`[GameEditor] Treating fileContent as base64 binary data`);
+                  // Try to decode as base64 first (common for binary files from storage)
+                  try {
+                    const binaryString = atob(fileToLoad.fileContent);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                    buf = bytes.buffer;
+                  } catch (e) {
+                    console.log(`[GameEditor] Base64 decode failed, treating as text:`, e);
+                    buf = new TextEncoder().encode(fileToLoad.fileContent).buffer;
+                  }
+                } else {
+                  console.error(`[GameEditor] Cannot convert file - unknown format:`, fileToLoad);
+                  throw new Error('Unsupported file format for conversion');
+                }
+                
+                console.log(`[GameEditor] Created ArrayBuffer with ${buf.byteLength} bytes`);
+                
+                const isMod = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => filename.toLowerCase().endsWith(ext));
+                fileToLoad = new File([buf], filename, { 
+                  type: isMod ? 'application/octet-stream' : 'audio/wav' 
+                });
+                console.log(`[GameEditor] Created File object:`, {
+                  name: fileToLoad.name,
+                  size: fileToLoad.size,
+                  type: fileToLoad.type,
+                  hasArrayBuffer: typeof fileToLoad.arrayBuffer === 'function'
+                });
+              }
+              
+              const resourceId = await this.resourceManager.loadFromFile(fileToLoad, fileData.audioType);
+              
+              // Move from pending to loaded
+              this.loadedAudioResources.set(fileKey, resourceId);
+              this.pendingAudioFiles.delete(fileKey);
+              
+              console.log(`[GameEditor] Loaded audio resource: ${resourceId} (${filename})`);
+              this.updateStatus(`Loaded ${filename}`, 'success');
+              
+              return resourceId;
+            } catch (error) {
+              console.error(`[GameEditor] Failed to load audio file ${filename}:`, error);
+              throw error;
+            }
+          } else {
+            console.log(`[GameEditor] Found ${filename} in pending files but file data is incomplete, removing from pending and trying storage...`);
             this.pendingAudioFiles.delete(fileKey);
-            
-            console.log(`[GameEditor] Loaded audio resource: ${resourceId} (${filename})`);
-            this.updateStatus(`Loaded ${filename}`, 'success');
-            
-            return resourceId;
-          } catch (error) {
-            console.error(`[GameEditor] Failed to load audio file ${filename}:`, error);
-            throw error;
+            break; // Exit loop and try storage approach
           }
         }
       }

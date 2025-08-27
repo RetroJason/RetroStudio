@@ -31,6 +31,17 @@ class ModViewer extends ViewerBase {
     
   this.loadAudioResource();
   }
+
+  // Helper to get game emulator from service container
+  get gameEmulator() {
+    return window.serviceContainer ? window.serviceContainer.get('gameEmulator') : null;
+  }
+
+  // Helper to check if audio engine is available
+  get audioEngineAvailable() {
+    const gameEmulator = this.gameEmulator;
+    return gameEmulator && gameEmulator.audioEngine;
+  }
   
   createActions(actionsContainer) {
     // Volume control in actions bar
@@ -491,10 +502,10 @@ class ModViewer extends ViewerBase {
           volumeDisplay.textContent = e.target.value + '%';
         }
         
-        if (this.audioResource && window.gameEditor) {
-          const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+        if (this.audioResource && this.gameEmulator) {
+          const resourceId = this.gameEmulator.getLoadedResourceId(this.getFileName());
           if (resourceId) {
-            window.gameEditor.audioEngine.setSongVolume(resourceId, volume);
+            this.gameEmulator.audioEngine.setSongVolume(resourceId, volume);
           }
         }
       });
@@ -545,7 +556,8 @@ class ModViewer extends ViewerBase {
   }
   
   async loadAudioResource() {
-    if (!window.gameEditor) {
+    const gameEmulator = this.gameEmulator;
+    if (!gameEmulator) {
       this.updateStatus('Audio engine not available');
       return;
     }
@@ -555,11 +567,11 @@ class ModViewer extends ViewerBase {
       console.log('[ModViewer] Loading audio resource for:', name);
       
       // First try to get already loaded resource
-      let resourceId = window.gameEditor.getLoadedResourceId(name);
+      let resourceId = gameEmulator.getLoadedResourceId(name);
       
       if (resourceId) {
         // File already loaded
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+        this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
         console.log(`[ModViewer] File already loaded: ${name}`);
         
         // Get duration from the resource
@@ -579,10 +591,10 @@ class ModViewer extends ViewerBase {
       console.log('[ModViewer] File not loaded, loading on demand...');
       this.updateStatus('Loading...');
       
-      resourceId = await window.gameEditor.loadAudioFileOnDemand(name);
+      resourceId = await gameEmulator.loadAudioFileOnDemand(name);
       
       if (resourceId) {
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+        this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
         console.log(`[ModViewer] Loaded resource for: ${name}`);
         
         this.updateStatus('Loaded');
@@ -680,12 +692,13 @@ class ModViewer extends ViewerBase {
   }
   
   async togglePlayback() {
-    if (!window.gameEditor || !this.audioResource) {
+    const gameEmulator = this.gameEmulator;
+    if (!gameEmulator || !this.audioResource) {
       alert('Audio resource not available');
       return;
     }
 
-  const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+  const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -694,7 +707,7 @@ class ModViewer extends ViewerBase {
     try {
       if (this.isPlaying) {
         // Stop playback completely (since pause/resume might not work properly)
-        window.gameEditor.audioEngine.stopSong(resourceId);
+        gameEmulator.audioEngine.stopSong(resourceId);
         this.isPlaying = false;
         this.isPaused = false;
         this.updatePlayPauseButton();
@@ -706,16 +719,16 @@ class ModViewer extends ViewerBase {
         console.log('[ModViewer] Starting playback...');
         
         // Ensure clean state
-        window.gameEditor.audioEngine.stopSong(resourceId);
+        gameEmulator.audioEngine.stopSong(resourceId);
         
         const volume = this.volumeSlider ? this.volumeSlider.value / 100 : 0.7;
         
         // Check if AudioContext is suspended and needs to be resumed
-        if (window.gameEditor.audioEngine.audioContext.state === 'suspended') {
+        if (gameEmulator.audioEngine.audioContext.state === 'suspended') {
           console.log('[ModViewer] AudioContext suspended, resuming...');
           try {
-            await window.gameEditor.audioEngine.audioContext.resume();
-            console.log('[ModViewer] AudioContext resumed, new state:', window.gameEditor.audioEngine.audioContext.state);
+            await gameEmulator.audioEngine.audioContext.resume();
+            console.log('[ModViewer] AudioContext resumed, new state:', gameEmulator.audioEngine.audioContext.state);
           } catch (error) {
             console.warn('[ModViewer] Failed to resume AudioContext:', error);
             return;
@@ -725,7 +738,7 @@ class ModViewer extends ViewerBase {
         // Small delay to ensure clean state
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        const success = await window.gameEditor.audioEngine.startSong(resourceId, volume, true);
+        const success = await gameEmulator.audioEngine.startSong(resourceId, volume, true);
         console.log('[ModViewer] startSong result:', success);
         
         if (success) {

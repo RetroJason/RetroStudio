@@ -226,7 +226,7 @@ class TabManager {
     const readOnlyIndicator = isReadOnly ? ' 🔒' : '';
     tabElement.innerHTML = `
       <span class="tab-title">${file.name}${readOnlyIndicator}</span>
-      <span class="tab-close" data-action="close">×</span>
+      <span class="tab-close" data-action="close">✖</span>
     `;
     
     // Create tab content pane
@@ -367,7 +367,7 @@ class TabManager {
       tabElement.dataset.tabId = tabId;
       tabElement.innerHTML = `
         <span class="tab-title">${editor.file.name}</span>
-        <span class="tab-close" data-action="close">×</span>
+        <span class="tab-close" data-action="close">✖</span>
       `;
       
       // Create content pane
