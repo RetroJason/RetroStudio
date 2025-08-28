@@ -49,6 +49,8 @@ class CopyBuilder extends window.BuilderBase {
       '.lua', '.js', '.py',
       // Modules
       '.mod', '.xm', '.s3m', '.it',
+      // Palettes
+      '.act', '.pal',
       // Other
       '.dat', '.bin'
     ];

@@ -11,6 +11,12 @@
 
 console.log('[Image] Class definition loading');
 
+// Import TextureFormatUtils for format-related utilities
+// Import PaletteManager for palette-related functionality
+// Import D2FormatHandler for D2 texture format operations
+// Note: In browser environment, these will be loaded via script tags
+// These comments serve as documentation of the dependencies
+
 class ImageData {
   constructor(textureFile = null) {
     this.frames = [];
@@ -20,6 +26,15 @@ class ImageData {
     this.format = 'rgba';
     this.filename = '';
     this.metadata = {};
+    
+    // Initialize palette manager
+    this.paletteManager = new PaletteManager();
+    
+    // Initialize D2 format handler
+    this.d2Handler = new D2FormatHandler();
+    
+    // Color distance method for palette mapping
+    this.colorDistanceMethod = 'euclidean'; // Default method
     
     // Texture configuration (from .texture file)
     this.textureConfig = null;
@@ -197,8 +212,9 @@ class ImageData {
     const d2Format = this.mapColorFormatToD2(this.textureConfig.colorFormat || 'd2_mode_rgba8888');
     console.log('[Image] getD2() - mapped D2 format:', d2Format, 'from colorFormat:', this.textureConfig.colorFormat);
 
-    // Export to D2 binary
-    return this.exportToD2Binary({
+    // Export to D2 binary using D2FormatHandler
+    const sourceRGBA = this.getSourceRGBAData();
+    return this.d2Handler.exportToD2Binary(sourceRGBA, this.width, this.height, {
       format: d2Format,
       palette: palette,
       paletteName: this.textureConfig.paletteName || '',
@@ -215,25 +231,25 @@ class ImageData {
    */
   mapColorFormatToD2(colorFormat) {
     const formatMap = {
-      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
-      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
-      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
-      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
-      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
-      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
-      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
-      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
-      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
-      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
-      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
-      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
-      'd2_mode_i8': ImageData.D2_FORMAT.I8,
-      'd2_mode_i4': ImageData.D2_FORMAT.I4,
-      'd2_mode_i2': ImageData.D2_FORMAT.I2,
-      'd2_mode_i1': ImageData.D2_FORMAT.I1,
-      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
-      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
-      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
+      'd2_mode_alpha8': D2FormatHandler.D2_FORMAT.ALPHA8,
+      'd2_mode_rgb565': D2FormatHandler.D2_FORMAT.RGB565,
+      'd2_mode_argb8888': D2FormatHandler.D2_FORMAT.ARGB8888,
+      'd2_mode_rgb888': D2FormatHandler.D2_FORMAT.RGB888,
+      'd2_mode_argb4444': D2FormatHandler.D2_FORMAT.ARGB4444,
+      'd2_mode_rgb444': D2FormatHandler.D2_FORMAT.RGB444,
+      'd2_mode_argb1555': D2FormatHandler.D2_FORMAT.ARGB1555,
+      'd2_mode_rgb555': D2FormatHandler.D2_FORMAT.RGB555,
+      'd2_mode_ai44': D2FormatHandler.D2_FORMAT.AI44,
+      'd2_mode_rgba8888': D2FormatHandler.D2_FORMAT.RGBA8888,
+      'd2_mode_rgba4444': D2FormatHandler.D2_FORMAT.RGBA4444,
+      'd2_mode_rgba5551': D2FormatHandler.D2_FORMAT.RGBA5551,
+      'd2_mode_i8': D2FormatHandler.D2_FORMAT.I8,
+      'd2_mode_i4': D2FormatHandler.D2_FORMAT.I4,
+      'd2_mode_i2': D2FormatHandler.D2_FORMAT.I2,
+      'd2_mode_i1': D2FormatHandler.D2_FORMAT.I1,
+      'd2_mode_alpha4': D2FormatHandler.D2_FORMAT.ALPHA4,
+      'd2_mode_alpha2': D2FormatHandler.D2_FORMAT.ALPHA2,
+      'd2_mode_alpha1': D2FormatHandler.D2_FORMAT.ALPHA1
     };
 
     const format = formatMap[colorFormat];
@@ -257,7 +273,12 @@ class ImageData {
       // Check if this is a D2 texture format
       if (content instanceof ArrayBuffer && this.isD2Format(content)) {
         console.log('[Image] Detected D2 texture format');
-        this.loadFromD2Binary(content);
+        const d2Data = this.d2Handler.loadFromD2Binary(content);
+        this.width = d2Data.width;
+        this.height = d2Data.height;
+        this.frames = d2Data.frames;
+        this.metadata = d2Data.metadata;
+        this.format = d2Data.format;
         return;
       }
       
@@ -624,6 +645,96 @@ class ImageData {
     return imageData;
   }
 
+  /**
+   * Render this texture to a browser ImageData object using proper texture processing
+   * This handles indexed formats, palettes, and offsets automatically
+   * Returns a browser ImageData object ready for canvas.putImageData()
+   */
+  async render(paletteOffset = 0, palette = null) {
+    console.log('[ImageData] Rendering texture with palette offset:', paletteOffset);
+    
+    // For D2 files, use the already converted RGBA data
+    if (this.metadata && this.metadata.format === 'd2') {
+      const frame = this.getCurrentFrame();
+      if (!frame || !frame.data) {
+        throw new Error('No frame data available for D2 file');
+      }
+      
+      console.log('[ImageData] D2 file already converted to RGBA, creating browser ImageData object');
+      // Use the global window.ImageData constructor to ensure we get a browser ImageData object
+      return new window.ImageData(frame.data, frame.width, frame.height);
+    }
+    
+    // For other formats, extract format and palette information from metadata
+    if (!this.metadata) {
+      throw new Error('No metadata available for rendering');
+    }
+    
+    const { isIndexed, baseFormat, paletteName } = this.metadata;
+    
+    if (!isIndexed) {
+      throw new Error('Non-indexed textures are not yet supported');
+    }
+    
+    console.log('[ImageData] Rendering indexed texture:', { baseFormat, paletteName });
+    
+    // Determine color format based on base format using D2_FORMAT constants
+    let colorFormat;
+    if (baseFormat === ImageData.D2_FORMAT.I1) colorFormat = 'd2_mode_i1';
+    else if (baseFormat === ImageData.D2_FORMAT.I2) colorFormat = 'd2_mode_i2';
+    else if (baseFormat === ImageData.D2_FORMAT.I4) colorFormat = 'd2_mode_i4';
+    else if (baseFormat === ImageData.D2_FORMAT.I8) colorFormat = 'd2_mode_i8';
+    else throw new Error(`Unsupported indexed base format: ${baseFormat} (expected I1=${ImageData.D2_FORMAT.I1}, I2=${ImageData.D2_FORMAT.I2}, I4=${ImageData.D2_FORMAT.I4}, or I8=${ImageData.D2_FORMAT.I8})`);
+    
+    console.log('[ImageData] Using color format:', colorFormat, 'for base format:', baseFormat);
+    
+    // Use provided palette or try to load the embedded palette
+    let paletteColors = palette;
+    if (!paletteColors && paletteName) {
+      paletteColors = await this.paletteManager.loadPalette(paletteName);
+    }
+    
+    if (!paletteColors) {
+      throw new Error(`No palette available for rendering (paletteName: ${paletteName})`);
+    }
+    
+    console.log('[ImageData] Loaded palette with', paletteColors.length, 'colors');
+    
+    // For indexed textures, we need indexed data - render it directly instead of going through texture processing pipeline
+    const frame = this.getCurrentFrame();
+    if (!frame || !frame.data) {
+      throw new Error('No frame data available');
+    }
+    
+    console.log('[ImageData] Rendering indexed data directly, frame size:', frame.data.length);
+    
+    // Use the appropriate render method based on format
+    let rgbaData;
+    if (colorFormat === 'd2_mode_i4') {
+      rgbaData = this.renderIndexed8Data(frame.data, paletteColors, paletteOffset);
+    } else if (colorFormat === 'd2_mode_i2') {
+      rgbaData = this.renderIndexed2Data(frame.data, paletteColors, paletteOffset);
+    } else if (colorFormat === 'd2_mode_i1') {
+      rgbaData = this.renderIndexed1Data(frame.data, paletteColors, paletteOffset);
+    } else {
+      throw new Error(`Unsupported indexed color format: ${colorFormat}`);
+    }
+    
+    if (!rgbaData || rgbaData.length === 0) {
+      throw new Error('Failed to get rendered RGBA data from texture processing pipeline');
+    }
+    
+    // Create browser ImageData from RGBA data
+    const canvas = document.createElement('canvas');
+    canvas.width = this.width;
+    canvas.height = this.height;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(this.width, this.height);
+    imageData.data.set(new Uint8ClampedArray(rgbaData));
+    
+    return imageData;
+  }
+
   // Utility methods
   rgbToHex(r, g, b) {
     return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
@@ -964,9 +1075,12 @@ class ImageData {
    * @param {string[]|Object} palette - Palette object or array of hex colors
    * @param {number} offset - Starting index in palette (default: 0)
    * @param {number} colorCount - Number of colors to use from palette (default: all remaining)
+   * @param {Object} options - Options object
+   * @param {HTMLElement} options.container - Container element for progress UI
    * @returns {Object} Object containing indexed byte array and palette info
    */
-  matchToPalette(frameIndex = null, palette, offset = 0, colorCount = null) {
+  matchToPalette(frameIndex = null, palette, offset = 0, colorCount = null, options = {}) {
+    const { container } = options;
     const frame = frameIndex !== null ? this.getFrame(frameIndex) : this.getCurrentFrame();
     if (!frame) {
       console.error('ImageData: Invalid frame for palette matching');
@@ -998,6 +1112,13 @@ class ImageData {
 
     console.log(`ImageData: Matching frame to palette (${workingPalette.length} colors, offset: ${offset})`);
 
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      this._updateProgress(progressUI, 'Matching colors to palette...', 5);
+    }
+
     // Convert palette to RGB for distance calculations
     const rgbPalette = workingPalette.map(hex => this._hexToRgb(hex));
     
@@ -1027,6 +1148,18 @@ class ImageData {
       
       // Store the actual palette index (including offset)
       indexedData[i] = bestMatch + offset;
+
+      // Update progress every 1000 pixels
+      if (progressUI && (i % 1000 === 0 || i === frame.colors.length - 1)) {
+        const progress = 10 + (i / frame.colors.length) * 85;
+        const pixelCount = Math.floor(i / 1000) * 1000;
+        this._updateProgress(progressUI, `Matching pixel ${pixelCount.toLocaleString()} of ${frame.colors.length.toLocaleString()}...`, progress);
+      }
+    }
+
+    if (progressUI) {
+      this._updateProgress(progressUI, 'Complete!', 100);
+      setTimeout(() => this._destroyProgressUI(progressUI), 500);
     }
 
     return {
@@ -1272,6 +1405,7 @@ class ImageData {
   // Progress UI utility methods
   
   _createProgressUI(container) {
+    console.log('[Image] Creating progress UI in container:', !!container, container?.tagName);
     const progressContainer = document.createElement('div');
     progressContainer.className = 'image-progress-container';
     progressContainer.style.cssText = `
@@ -1341,6 +1475,7 @@ class ImageData {
     progressContainer.appendChild(percentText);
 
     container.appendChild(progressContainer);
+    console.log('[Image] Progress UI created and added to container');
 
     return {
       container: progressContainer,
@@ -1353,20 +1488,28 @@ class ImageData {
   _updateProgress(progressUI, status, percent) {
     if (!progressUI) return;
     
+    console.log('[Image] Updating progress (async):', status, percent + '%');
+    progressUI.statusText.textContent = status;
+    progressUI.progressFill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    progressUI.percentText.textContent = `${Math.round(percent)}%`;
+    
+    // Force immediate DOM update
+    progressUI.container.offsetHeight; // Force reflow
+  }
+
+  _updateProgressSync(progressUI, status, percent) {
+    if (!progressUI) return;
+    
+    console.log('[Image] Updating progress:', status, percent + '%');
     progressUI.statusText.textContent = status;
     progressUI.progressFill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
     progressUI.percentText.textContent = `${Math.round(percent)}%`;
   }
 
   async _updateProgressAsync(progressUI, status, percent) {
-    if (!progressUI) return;
-    
-    progressUI.statusText.textContent = status;
-    progressUI.progressFill.style.width = `${Math.min(100, Math.max(0, percent))}%`;
-    progressUI.percentText.textContent = `${Math.round(percent)}%`;
-    
-    // Yield control to browser to update UI
-    await new Promise(resolve => setTimeout(resolve, 0));
+    this._updateProgressSync(progressUI, status, percent);
+    // Use requestAnimationFrame for efficient UI updates
+    await new Promise(resolve => requestAnimationFrame(resolve));
   }
 
   _destroyProgressUI(progressUI) {
@@ -1439,17 +1582,22 @@ class ImageData {
    * Get or generate binary data for a specific texture format
    * @param {string} format - The texture format (e.g., 'd2_mode_i8', 'd2_mode_i4')
    * @param {Array} palette - Array of color strings (e.g., ['#FF0000', '#00FF00'])
+   * @param {number} paletteOffset - Offset into the palette for indexed formats
+   * @param {string} mappingStrategy - Mapping strategy for 4-bit formats ('fmap', 'fit', 'bestfit')
    * @returns {Uint8Array} Binary data in the specified format
    */
-  getBinaryData(format, palette = null) {
-    // Generate cache key
+  async getBinaryData(format, palette = null, paletteOffset = 0, mappingStrategy = 'bestfit', container = null) {
+    console.log('[Image] getBinaryData called with container:', !!container);
+    // Generate cache key including new parameters
     const paletteHash = palette ? this.hashArray(palette) : null;
     const sourceHash = this.getSourceDataHash();
+    const cacheKey = `${format}_${paletteHash}_${paletteOffset}_${mappingStrategy}`;
     
     // Check if cached binary data is still valid
     if (this.textureCache.binaryData &&
         this.textureCache.binaryDataFormat === format &&
         this.textureCache.binaryDataPaletteHash === paletteHash &&
+        this.textureCache.binaryDataCacheKey === cacheKey &&
         this.textureCache.sourceDataHash === sourceHash) {
       console.log(`[Image] Using cached binary data for format ${format}`);
       return this.textureCache.binaryData;
@@ -1469,11 +1617,56 @@ class ImageData {
     if (format.includes('_i8')) {
       binaryData = this.generateIndexed8Data(sourceData, palette);
     } else if (format.includes('_i4')) {
-      binaryData = this.generateIndexed4Data(sourceData, palette);
+      // Use the appropriate 4-bit generation strategy
+      switch (mappingStrategy) {
+        case 'fmap':
+          binaryData = this.generateIndexed4Data_FMap(sourceData, palette, paletteOffset);
+          break;
+        case 'fit':
+          binaryData = this.generateIndexed4Data_Fit(sourceData, palette, paletteOffset);
+          break;
+        case 'bestfit':
+          // Best fit automatically finds the best palette offset
+          binaryData = await this.generateIndexed4Data_BestFit(sourceData, palette, container);
+          break;
+        default:
+          console.warn(`[Image] Unknown mapping strategy: ${mappingStrategy}, using default`);
+          binaryData = this.generateIndexed4Data(sourceData, palette);
+      }
     } else if (format.includes('_i2')) {
-      binaryData = this.generateIndexed2Data(sourceData, palette);
+      // Use the appropriate 2-bit generation strategy
+      switch (mappingStrategy) {
+        case 'fmap':
+          binaryData = this.generateIndexed2Data_FMap(sourceData, palette, paletteOffset);
+          break;
+        case 'fit':
+          binaryData = this.generateIndexed2Data_Fit(sourceData, palette, paletteOffset);
+          break;
+        case 'bestfit':
+          // Best fit automatically finds the best palette offset
+          binaryData = this.generateIndexed2Data_BestFit(sourceData, palette, container);
+          break;
+        default:
+          console.warn(`[Image] Unknown mapping strategy: ${mappingStrategy}, using default`);
+          binaryData = this.generateIndexed2Data(sourceData, palette);
+      }
     } else if (format.includes('_i1')) {
-      binaryData = this.generateIndexed1Data(sourceData, palette);
+      // Use the appropriate 1-bit generation strategy
+      switch (mappingStrategy) {
+        case 'fmap':
+          binaryData = this.generateIndexed1Data_FMap(sourceData, palette, paletteOffset);
+          break;
+        case 'fit':
+          binaryData = this.generateIndexed1Data_Fit(sourceData, palette, paletteOffset);
+          break;
+        case 'bestfit':
+          // Best fit automatically finds the best palette offset
+          binaryData = this.generateIndexed1Data_BestFit(sourceData, palette, container);
+          break;
+        default:
+          console.warn(`[Image] Unknown mapping strategy: ${mappingStrategy}, using default`);
+          binaryData = this.generateIndexed1Data(sourceData, palette);
+      }
     } else if (format.includes('_rgb565')) {
       binaryData = this.generateRGB565Data(sourceData);
     } else if (format.includes('_argb1555')) {
@@ -1490,7 +1683,16 @@ class ImageData {
     this.textureCache.binaryDataFormat = format;
     this.textureCache.binaryDataPalette = palette;
     this.textureCache.binaryDataPaletteHash = paletteHash;
+    this.textureCache.binaryDataCacheKey = cacheKey;
     this.textureCache.sourceDataHash = sourceHash;
+    
+    // Store as master binary data for direct mapping (for indexed formats)
+    // This preserves the binary data so direct mapping can reuse the same indices
+    if (format === 'd2_mode_i4' || format === 'd2_mode_i2' || format === 'd2_mode_i1') {
+      this.textureCache.masterBinaryData = binaryData;
+      this.textureCache.masterFormat = format;
+      console.log(`[Image] Stored master binary data for direct mapping (${binaryData.length} bytes) with strategy: ${mappingStrategy}`);
+    }
     
     console.log(`[Image] Generated ${binaryData.length} bytes for format ${format}`);
     return binaryData;
@@ -1501,11 +1703,13 @@ class ImageData {
    * @param {string} format - The texture format
    * @param {Array} palette - Array of color strings
    * @param {number} paletteOffset - Offset into the palette (0-255)
+   * @param {string} mappingStrategy - Mapping strategy for 4-bit formats ('fmap', 'fit', 'bestfit')
    * @returns {Uint8ClampedArray} 32-bit RGBA data ready for canvas
    */
-  getRenderedData(format, palette = null, paletteOffset = 0) {
+  async getRenderedData(format, palette = null, paletteOffset = 0, mappingStrategy = 'bestfit', container = null) {
+    console.log('[Image] getRenderedData called with container:', !!container);
     // Get binary data first (this handles its own caching)
-    const binaryData = this.getBinaryData(format, palette);
+    const binaryData = await this.getBinaryData(format, palette, paletteOffset, mappingStrategy, container);
     if (!binaryData) return null;
     
     // Generate cache key for rendered data
@@ -1693,6 +1897,394 @@ class ImageData {
   }
 
   /**
+   * Generate 4-bit indexed data using force mapping strategy
+   * Uses existing color indices as-is, letting colors map directly
+   */
+  generateIndexed4Data_FMap(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 2);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find the closest palette color in the entire palette
+      let globalIndex = this.findClosestPaletteColor(r, g, b, a, palette);
+      
+      // Force map to the selected 16-color chunk by taking modulo and adding offset
+      const paletteIndex = (globalIndex % 16) + (paletteOffset & 0xF0);
+      const clampedIndex = Math.min(paletteIndex, palette.length - 1) & 0x0F;
+      
+      const byteIndex = Math.floor(i / 2);
+      if (i % 2 === 0) {
+        // Even pixel (lower nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0xF0) | clampedIndex;
+      } else {
+        // Odd pixel (upper nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0x0F) | (clampedIndex << 4);
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 4-bit indexed data using fit strategy
+   * Resamples image to find best color indices within the selected palette chunk
+   */
+  generateIndexed4Data_Fit(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 2);
+    const indexData = new Uint8Array(byteCount);
+    
+    // Extract the 16-color chunk from the palette starting at paletteOffset
+    const chunkStart = paletteOffset & 0xF0; // Align to 16-color boundary
+    const paletteChunk = palette.slice(chunkStart, chunkStart + 16);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest color within the selected 16-color chunk
+      const chunkIndex = this.findClosestPaletteColor(r, g, b, a, paletteChunk);
+      const paletteIndex = chunkIndex & 0x0F;
+      
+      const byteIndex = Math.floor(i / 2);
+      if (i % 2 === 0) {
+        // Even pixel (lower nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0xF0) | paletteIndex;
+      } else {
+        // Odd pixel (upper nibble)
+        indexData[byteIndex] = (indexData[byteIndex] & 0x0F) | (paletteIndex << 4);
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 4-bit indexed data using best fit strategy
+   * Tries all available palette chunks and picks the one with the best overall match
+   */
+  async generateIndexed4Data_BestFit(sourceData, palette, container = null) {
+    console.log('[Image] generateIndexed4Data_BestFit called with container:', !!container);
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 16);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      await this._updateProgressAsync(progressUI, 'Finding best 16-color palette chunk...', 5);
+    }
+
+    // Try each 16-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 16;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 16);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        await this._updateProgressAsync(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      await this._updateProgressAsync(progressUI, 'Generating indexed data...', 95);
+      setTimeout(() => this._destroyProgressUI(progressUI), 1000);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+
+    // Generate the indexed data using the best chunk
+    return this.generateIndexed4Data_Fit(sourceData, palette, bestChunkOffset);
+  }
+
+  /**
+   * Find the best palette offset for indexed formats without generating data
+   */
+  async findBestPaletteOffset(sourceData, palette, bitsPerPixel, container = null) {
+    console.log(`[Image] Finding best palette offset for ${bitsPerPixel}-bit format`);
+    
+    if (bitsPerPixel === 4) {
+      return await this._findBest4BitOffset(sourceData, palette, container);
+    } else if (bitsPerPixel === 2) {
+      return await this._findBest2BitOffset(sourceData, palette, container);
+    } else if (bitsPerPixel === 1) {
+      return await this._findBest1BitOffset(sourceData, palette, container);
+    }
+    
+    return 0; // Default offset for unsupported formats
+  }
+
+  async _findBest4BitOffset(sourceData, palette, container = null) {
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 16);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      await this._updateProgressAsync(progressUI, 'Finding best 16-color palette chunk...', 5);
+    }
+
+    // Try each 16-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 16;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 16);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        await this._updateProgressAsync(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      await this._updateProgressAsync(progressUI, 'Best offset found', 100);
+      setTimeout(() => this._destroyProgressUI(progressUI), 1000);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+    
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+    
+    return bestChunkOffset;
+  }
+
+  async _findBest2BitOffset(sourceData, palette, container = null) {
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 4);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      await this._updateProgressAsync(progressUI, 'Finding best 4-color palette chunk...', 5);
+    }
+
+    // Try each 4-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 4;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 4);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        await this._updateProgressAsync(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      await this._updateProgressAsync(progressUI, 'Best offset found', 100);
+      setTimeout(() => this._destroyProgressUI(progressUI), 1000);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+    
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+    
+    return bestChunkOffset;
+  }
+
+  async _findBest1BitOffset(sourceData, palette, container = null) {
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 2);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      await this._updateProgressAsync(progressUI, 'Finding best 2-color palette chunk...', 5);
+    }
+
+    // Try each 2-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 2;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 2);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        await this._updateProgressAsync(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      await this._updateProgressAsync(progressUI, 'Best offset found', 100);
+      setTimeout(() => this._destroyProgressUI(progressUI), 1000);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+    
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+    
+    return bestChunkOffset;
+  }
+
+  /**
    * Generate 2-bit indexed data
    */
   generateIndexed2Data(sourceData, palette) {
@@ -1716,6 +2308,147 @@ class ImageData {
     }
     
     return indexData;
+  }
+
+  /**
+   * Generate 2-bit indexed data using force mapping strategy
+   * Uses existing color indices as-is, letting colors map directly
+   */
+  generateIndexed2Data_FMap(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 4);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find the closest palette color in the entire palette
+      let globalIndex = this.findClosestPaletteColor(r, g, b, a, palette);
+      
+      // Force map to the selected 4-color chunk by taking modulo and adding offset
+      const paletteIndex = (globalIndex % 4) + (paletteOffset & 0xFC);
+      const clampedIndex = Math.min(paletteIndex, palette.length - 1) & 0x03;
+      
+      const byteIndex = Math.floor(i / 4);
+      const bitShift = (i % 4) * 2;
+      indexData[byteIndex] |= clampedIndex << bitShift;
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 2-bit indexed data using fit strategy
+   * Resamples image to find best color indices within the selected palette chunk
+   */
+  generateIndexed2Data_Fit(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 4);
+    const indexData = new Uint8Array(byteCount);
+    
+    // Extract the 4-color chunk from the palette starting at paletteOffset
+    const chunkStart = paletteOffset & 0xFC; // Align to 4-color boundary
+    const paletteChunk = palette.slice(chunkStart, chunkStart + 4);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest color within the selected 4-color chunk
+      const chunkIndex = this.findClosestPaletteColor(r, g, b, a, paletteChunk);
+      const paletteIndex = chunkIndex & 0x03;
+      
+      const byteIndex = Math.floor(i / 4);
+      const bitShift = (i % 4) * 2;
+      indexData[byteIndex] |= paletteIndex << bitShift;
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 2-bit indexed data using best fit strategy
+   * Tries all available palette chunks and picks the one with the best overall match
+   */
+  generateIndexed2Data_BestFit(sourceData, palette, container = null) {
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 4);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      this._updateProgress(progressUI, 'Finding best 4-color palette chunk...', 5);
+    }
+
+    // Try each 4-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 4;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 4);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        this._updateProgress(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error  
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      this._updateProgress(progressUI, 'Generating indexed data...', 95);
+      setTimeout(() => this._destroyProgressUI(progressUI), 500);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+
+    // Generate the indexed data using the best chunk
+    return this.generateIndexed2Data_Fit(sourceData, palette, bestChunkOffset);
   }
 
   /**
@@ -1744,6 +2477,151 @@ class ImageData {
     }
     
     return indexData;
+  }
+
+  /**
+   * Generate 1-bit indexed data using force mapping strategy
+   * Uses existing color indices as-is, letting colors map directly
+   */
+  generateIndexed1Data_FMap(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 8);
+    const indexData = new Uint8Array(byteCount);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find the closest palette color in the entire palette
+      let globalIndex = this.findClosestPaletteColor(r, g, b, a, palette);
+      
+      // Force map to the selected 2-color chunk by taking modulo and adding offset
+      const paletteIndex = (globalIndex % 2) + (paletteOffset & 0xFE);
+      const clampedIndex = Math.min(paletteIndex, palette.length - 1) & 0x01;
+      
+      const byteIndex = Math.floor(i / 8);
+      const bitShift = i % 8;
+      if (clampedIndex) {
+        indexData[byteIndex] |= 1 << bitShift;
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 1-bit indexed data using fit strategy
+   * Resamples image to find best color indices within the selected palette chunk
+   */
+  generateIndexed1Data_Fit(sourceData, palette, paletteOffset = 0) {
+    const pixelCount = this.width * this.height;
+    const byteCount = Math.ceil(pixelCount / 8);
+    const indexData = new Uint8Array(byteCount);
+    
+    // Extract the 2-color chunk from the palette starting at paletteOffset
+    const chunkStart = paletteOffset & 0xFE; // Align to 2-color boundary
+    const paletteChunk = palette.slice(chunkStart, chunkStart + 2);
+    
+    for (let i = 0; i < pixelCount; i++) {
+      const offset = i * 4;
+      const r = sourceData[offset];
+      const g = sourceData[offset + 1];
+      const b = sourceData[offset + 2];
+      const a = sourceData[offset + 3];
+      
+      // Find closest color within the selected 2-color chunk
+      const chunkIndex = this.findClosestPaletteColor(r, g, b, a, paletteChunk);
+      const paletteIndex = chunkIndex & 0x01;
+      
+      const byteIndex = Math.floor(i / 8);
+      const bitShift = i % 8;
+      if (paletteIndex) {
+        indexData[byteIndex] |= 1 << bitShift;
+      }
+    }
+    
+    return indexData;
+  }
+
+  /**
+   * Generate 1-bit indexed data using best fit strategy
+   * Tries all available palette chunks and picks the one with the best overall match
+   */
+  generateIndexed1Data_BestFit(sourceData, palette, container = null) {
+    const pixelCount = this.width * this.height;
+    const chunkCount = Math.floor(palette.length / 2);
+    let bestChunkOffset = 0;
+    let bestTotalError = Infinity;
+
+    // Create progress UI if container provided
+    let progressUI = null;
+    if (container) {
+      progressUI = this._createProgressUI(container);
+      this._updateProgress(progressUI, 'Finding best 2-color palette chunk...', 5);
+    }
+
+    // Try each 2-color chunk and find the one with minimum error
+    for (let chunk = 0; chunk < chunkCount; chunk++) {
+      const chunkOffset = chunk * 2;
+      const paletteChunk = palette.slice(chunkOffset, chunkOffset + 2);
+      let totalError = 0;
+
+      // Update progress for each chunk
+      if (progressUI) {
+        const chunkProgress = 10 + (chunk / chunkCount) * 80;
+        this._updateProgress(progressUI, `Testing palette chunk ${chunk + 1}/${chunkCount}...`, chunkProgress);
+      }
+
+      // Calculate total error for this chunk
+      for (let i = 0; i < pixelCount; i++) {
+        const offset = i * 4;
+        const r = sourceData[offset];
+        const g = sourceData[offset + 1];
+        const b = sourceData[offset + 2];
+        const a = sourceData[offset + 3];
+
+        // Find closest color in this chunk and calculate error
+        let minError = Infinity;
+        for (let j = 0; j < paletteChunk.length; j++) {
+          const paletteColor = this.parseColor(paletteChunk[j]);
+          if (!paletteColor) continue;
+
+          const error = this.calculateColorDistance(
+            r, g, b, a,
+            paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a
+          );
+
+          if (error < minError) {
+            minError = error;
+          }
+        }
+        totalError += minError;
+      }
+
+      // Log one summary per chunk with the error
+      console.log(`[Image] Palette chunk ${chunk + 1}/${chunkCount} - offset ${chunkOffset} - error: ${totalError}`);
+
+      if (totalError < bestTotalError) {
+        bestTotalError = totalError;
+        bestChunkOffset = chunkOffset;
+      }
+    }
+
+    if (progressUI) {
+      this._updateProgress(progressUI, 'Generating indexed data...', 95);
+      setTimeout(() => this._destroyProgressUI(progressUI), 500);
+    }
+
+    console.log(`[Image] Best fit found at palette offset ${bestChunkOffset} with error ${bestTotalError}`);
+
+    // Store the best offset for external use
+    this._lastBestFitOffset = bestChunkOffset;
+
+    // Generate the indexed data using the best chunk
+    return this.generateIndexed1Data_Fit(sourceData, palette, bestChunkOffset);
   }
 
   /**
@@ -1808,52 +2686,52 @@ class ImageData {
   }
 
   /**
+   * Calculate color distance using various methods
+   * @param {number} r1, g1, b1, a1 - First color components (0-255)
+   * @param {number} r2, g2, b2, a2 - Second color components (0-255)
+   * @param {string} method - Distance calculation method
+   * @returns {number} Color distance
+   */
+  calculateColorDistance(r1, g1, b1, a1, r2, g2, b2, a2, method = null) {
+    const distanceMethod = method || this.colorDistanceMethod || 'euclidean';
+    return Palette.calculateColorDistance(r1, g1, b1, a1, r2, g2, b2, a2, distanceMethod);
+  }
+
+  // REMOVED: Individual distance calculation methods
+  // Now delegated to Palette class:
+  // - euclideanDistance()
+  // - weightedRGBDistance() 
+  // - perceptualDistance()
+  // - manhattanDistance()
+  // - deltaEDistance()
+  // - rgbToLab()
+  // - getColorDistanceMethods()
+
+  /**
    * Find closest color in palette
+   * @deprecated Use palette.findClosestColor() directly instead
    */
   findClosestPaletteColor(r, g, b, a, palette) {
     if (!palette || palette.length === 0) return 0;
     
-    let closestIndex = 0;
-    let closestDistance = Infinity;
-    
-    for (let i = 0; i < palette.length; i++) {
-      const paletteColor = this.parseColor(palette[i]);
-      if (!paletteColor) continue;
-      
-      // Calculate color distance (simple RGB distance)
-      const dr = r - paletteColor.r;
-      const dg = g - paletteColor.g;
-      const db = b - paletteColor.b;
-      const distance = dr * dr + dg * dg + db * db;
-      
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestIndex = i;
-      }
+    // Create a temporary palette object if we have an array
+    if (Array.isArray(palette)) {
+      const tempPalette = { colors: palette };
+      return tempPalette.colors.length > 0 ? 
+        Palette.prototype.findClosestColor.call(tempPalette, r, g, b, a, this.colorDistanceMethod || 'euclidean') : 0;
     }
     
-    return closestIndex;
+    // If it's already a palette object, use it directly
+    return palette.findClosestColor ? 
+      palette.findClosestColor(r, g, b, a, this.colorDistanceMethod || 'euclidean') : 0;
   }
 
   /**
    * Parse color string to RGB values
+   * @deprecated Use Palette.parseColor() instead
    */
   parseColor(colorStr) {
-    if (!colorStr) return null;
-    
-    if (colorStr.startsWith('#')) {
-      const hex = colorStr.slice(1);
-      if (hex.length === 6) {
-        return {
-          r: parseInt(hex.slice(0, 2), 16),
-          g: parseInt(hex.slice(2, 4), 16),
-          b: parseInt(hex.slice(4, 6), 16),
-          a: 255
-        };
-      }
-    }
-    
-    return null;
+    return Palette.parseColor(colorStr);
   }
 
   // ===== FORMAT-SPECIFIC RENDERING METHODS =====
@@ -1886,7 +2764,37 @@ class ImageData {
     const pixelCount = this.width * this.height;
     const rgbaData = new Uint8ClampedArray(pixelCount * 4);
     
-    for (let i = 0; i < pixelCount; i++) {
+    console.log('[ImageData] renderIndexed4Data - pixelCount:', pixelCount, 'indexData length:', indexData.length, 'palette length:', palette.length);
+    console.log('[ImageData] First few bytes of indexData:', Array.from(indexData.slice(0, 10)));
+    console.log('[ImageData] First few palette colors:', palette.slice(0, 4));
+    
+    for (let i = 0; i < Math.min(pixelCount, 10); i++) {
+      const byteIndex = Math.floor(i / 2);
+      const isOddPixel = i % 2 === 1;
+      
+      let paletteIndex;
+      if (isOddPixel) {
+        paletteIndex = (indexData[byteIndex] >> 4) & 0x0F;
+      } else {
+        paletteIndex = indexData[byteIndex] & 0x0F;
+      }
+      
+      paletteIndex = (paletteIndex + paletteOffset) % (palette?.length || 16);
+      const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
+      
+      if (i < 5) {
+        console.log(`[ImageData] Pixel ${i}: byte=${indexData[byteIndex]}, isOdd=${isOddPixel}, palIdx=${paletteIndex - paletteOffset}->${paletteIndex}, color=`, color);
+      }
+      
+      const offset = i * 4;
+      rgbaData[offset] = color.r;
+      rgbaData[offset + 1] = color.g;
+      rgbaData[offset + 2] = color.b;
+      rgbaData[offset + 3] = color.a;
+    }
+    
+    // Continue with the rest without logging
+    for (let i = 10; i < pixelCount; i++) {
       const byteIndex = Math.floor(i / 2);
       const isOddPixel = i % 2 === 1;
       
@@ -2009,517 +2917,54 @@ class ImageData {
     return rgbaData;
   }
 
-  // Texture format options - moved from TextureEditor for better organization
-  static getColorDepthOptions() {
-    return [
-      { value: 1, label: '1-bit (Monochrome)', description: 'Black and white only' },
-      { value: 4, label: '4-bit (16 colors)', description: '16 color palette' },
-      { value: 8, label: '8-bit (256 colors)', description: '256 color palette' },
-      { value: 16, label: '16-bit (High Color)', description: '65,536 colors' },
-      { value: 24, label: '24-bit (True Color)', description: '16.7 million colors' },
-      { value: 32, label: '32-bit (True Color + Alpha)', description: '16.7 million colors with transparency' }
-    ];
-  }
-
-  static getCompressionOptions() {
-    return [
-      { value: 'none', label: 'None', description: 'No compression' },
-      { value: 'rle', label: 'RLE', description: 'Run-length encoding' },
-      { value: 'lz77', label: 'LZ77', description: 'LZ77 compression' }
-    ];
-  }
-
-  static getTextureFormatOptions() {
-    return [
-      // Most Common Formats First
-      { 
-        value: 'd2_mode_i8', 
-        label: 'Indexed 8-bit', 
-        description: '8 bits per pixel, 256 colors from palette',
-        bitsPerPixel: 8,
-        category: 'Common',
-        colorCount: '256 colors'
-      },
-      { 
-        value: 'd2_mode_i4', 
-        label: 'Indexed 4-bit', 
-        description: '4 bits per pixel, 16 colors from palette',
-        bitsPerPixel: 4,
-        category: 'Common',
-        colorCount: '16 colors'
-      },
-      { 
-        value: 'd2_mode_rgb565', 
-        label: 'RGB 16-bit (565)', 
-        description: '16 bits per pixel, 5R:6G:5B format, 65,536 colors',
-        bitsPerPixel: 16,
-        category: 'Common',
-        colorCount: '65,536 colors'
-      },
-      { 
-        value: 'd2_mode_argb1555', 
-        label: 'ARGB 16-bit (1555)', 
-        description: '16 bits per pixel, 1A:5R:5G:5B format, 32,768 colors + alpha',
-        bitsPerPixel: 16,
-        category: 'Common',
-        colorCount: '32,768 colors'
-      },
-      { 
-        value: 'd2_mode_ai44', 
-        label: 'Alpha+Index 8-bit', 
-        description: '8 bits per pixel, 4-bit alpha + 4-bit palette index, 16 colors',
-        bitsPerPixel: 8,
-        category: 'Common',
-        colorCount: '16 colors'
-      },
-
-      // True Color formats
-      { 
-        value: 'd2_mode_argb8888', 
-        label: 'ARGB 32-bit', 
-        description: '32 bits per pixel, 8A:8R:8G:8B format, 16.7M colors + alpha',
-        bitsPerPixel: 32,
-        category: 'True Color',
-        colorCount: '16.7M colors'
-      },
-      { 
-        value: 'd2_mode_rgba8888', 
-        label: 'RGBA 32-bit', 
-        description: '32 bits per pixel, 8R:8G:8B:8A format, 16.7M colors + alpha',
-        bitsPerPixel: 32,
-        category: 'True Color',
-        colorCount: '16.7M colors'
-      },
-      { 
-        value: 'd2_mode_rgb888', 
-        label: 'RGB 24-bit', 
-        description: '24 bits per pixel, 8R:8G:8B format, 16.7M colors',
-        bitsPerPixel: 24,
-        category: 'True Color',
-        colorCount: '16.7M colors'
-      },
-
-      // High Color formats
-      { 
-        value: 'd2_mode_rgba5551', 
-        label: 'RGBA 16-bit (5551)', 
-        description: '16 bits per pixel, 5R:5G:5B:1A format, 32,768 colors + alpha',
-        bitsPerPixel: 16,
-        category: 'High Color',
-        colorCount: '32,768 colors'
-      },
-      { 
-        value: 'd2_mode_rgb555', 
-        label: 'RGB 15-bit (555)', 
-        description: '15 bits per pixel, 5R:5G:5B format, 32,768 colors',
-        bitsPerPixel: 15,
-        category: 'High Color',
-        colorCount: '32,768 colors'
-      },
-      { 
-        value: 'd2_mode_argb4444', 
-        label: 'ARGB 16-bit (4444)', 
-        description: '16 bits per pixel, 4A:4R:4G:4B format, 4,096 colors + alpha',
-        bitsPerPixel: 16,
-        category: 'High Color',
-        colorCount: '4,096 colors'
-      },
-      { 
-        value: 'd2_mode_rgba4444', 
-        label: 'RGBA 16-bit (4444)', 
-        description: '16 bits per pixel, 4R:4G:4B:4A format, 4,096 colors + alpha',
-        bitsPerPixel: 16,
-        category: 'High Color',
-        colorCount: '4,096 colors'
-      },
-      { 
-        value: 'd2_mode_rgb444', 
-        label: 'RGB 12-bit (444)', 
-        description: '12 bits per pixel, 4R:4G:4B format, 4,096 colors',
-        bitsPerPixel: 12,
-        category: 'High Color',
-        colorCount: '4,096 colors'
-      },
-
-      // Indexed formats (remaining)
-      { 
-        value: 'd2_mode_i2', 
-        label: 'Indexed 2-bit', 
-        description: '2 bits per pixel, 4 colors from palette',
-        bitsPerPixel: 2,
-        category: 'Indexed',
-        colorCount: '4 colors'
-      },
-      { 
-        value: 'd2_mode_i1', 
-        label: 'Indexed 1-bit', 
-        description: '1 bit per pixel, 2 colors from palette',
-        bitsPerPixel: 1,
-        category: 'Indexed',
-        colorCount: '2 colors'
-      },
-
-      // Alpha/Monochrome formats
-      { 
-        value: 'd2_mode_alpha8', 
-        label: 'Alpha 8-bit', 
-        description: '8 bits per pixel, 256 alpha levels (monochrome)',
-        bitsPerPixel: 8,
-        category: 'Alpha',
-        colorCount: '256 levels'
-      },
-      { 
-        value: 'd2_mode_alpha4', 
-        label: 'Alpha 4-bit', 
-        description: '4 bits per pixel, 16 alpha levels (monochrome)',
-        bitsPerPixel: 4,
-        category: 'Alpha',
-        colorCount: '16 levels'
-      },
-      { 
-        value: 'd2_mode_alpha2', 
-        label: 'Alpha 2-bit', 
-        description: '2 bits per pixel, 4 alpha levels (monochrome)',
-        bitsPerPixel: 2,
-        category: 'Alpha',
-        colorCount: '4 levels'
-      },
-      { 
-        value: 'd2_mode_alpha1', 
-        label: 'Alpha 1-bit', 
-        description: '1 bit per pixel, 2 alpha levels (monochrome)',
-        bitsPerPixel: 1,
-        category: 'Alpha',
-        colorCount: '2 levels'
-      }
-    ];
-  }
-
-  // Get the number of colors supported by a texture format
-  static getTextureFormatColorCount(formatValue) {
-    const formatMap = {
-      'd2_mode_i1': 2,
-      'd2_mode_i2': 4,
-      'd2_mode_i4': 16,
-      'd2_mode_i8': 256,
-      'd2_mode_ai44': 16,
-      'd2_mode_alpha1': 2,
-      'd2_mode_alpha2': 4,
-      'd2_mode_alpha4': 16,
-      'd2_mode_alpha8': 256,
-      'd2_mode_rgb444': 4096,
-      'd2_mode_rgb555': 32768,
-      'd2_mode_rgb565': 65536,
-      'd2_mode_argb1555': 32768,
-      'd2_mode_rgba5551': 32768,
-      'd2_mode_argb4444': 4096,
-      'd2_mode_rgba4444': 4096,
-      'd2_mode_rgb888': 16777216,
-      'd2_mode_rgba8888': 16777216,
-      'd2_mode_argb8888': 16777216
-    };
-    
-    return formatMap[formatValue] || 256; // Default to 256 if format not found
-  }
-
   // ===== D2 TEXTURE FORMAT SUPPORT =====
+  // Note: D2 texture format support has been moved to D2FormatHandler class
+  // All D2 operations are now delegated to this.d2Handler
 
-  /**
-   * D2 Texture Format Constants
-   */
+  // Backward compatibility - delegate to D2FormatHandler
   static get D2_FORMAT() {
-    return {
-      ALPHA8: 0b0000,
-      RGB565: 0b0001,
-      ARGB8888: 0b0010,
-      RGB888: 0b0010,
-      ARGB4444: 0b0011,
-      RGB444: 0b0011,
-      ARGB1555: 0b0100,
-      RGB555: 0b0100,
-      AI44: 0b0101,
-      RGBA8888: 0b0110,
-      RGBA4444: 0b0111,
-      RGBA5551: 0b1000,
-      I8: 0b1001,
-      I4: 0b1010,
-      I2: 0b1011,
-      I1: 0b1100,
-      ALPHA4: 0b1101,
-      ALPHA2: 0b1110,
-      ALPHA1: 0b1111
-    };
+    return D2FormatHandler.D2_FORMAT;
   }
 
   static get D2_FLAGS() {
-    return {
-      WRAPU: 0x01,
-      WRAPV: 0x02,
-      FILTERU: 0x04,
-      FILTERV: 0x08,
-      FILTER: 0x0C,
-      RLE_COMPRESSED: 0x20,
-      INDEXED_COLOR: 0x40
-    };
+    return D2FormatHandler.D2_FLAGS;
   }
 
   static get D2_HEADER_SIZE() {
-    return 25; // 2 (magic) + 2 (width) + 2 (height) + 1 (prerotation) + 1 (flags) + 1 (format) + 16 (palette name)
+    return D2FormatHandler.D2_HEADER_SIZE;
   }
 
   /**
    * Load from D2 texture format binary data
+   * @deprecated Use d2Handler.loadFromD2Binary() instead
    */
   loadFromD2Binary(arrayBuffer) {
-    console.log('[ImageData] Loading D2 texture format');
-    
-    const view = new DataView(arrayBuffer);
-    let offset = 0;
-    
-    // Check magic identifier "D2"
-    const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1));
-    if (magic !== 'D2') {
-      throw new Error('Invalid D2 texture format: Missing D2 magic identifier');
-    }
-    offset += 2;
-    
-    // Read header
-    this.width = view.getUint16(offset, true); // little endian
-    offset += 2;
-    this.height = view.getUint16(offset, true);
-    offset += 2;
-    
-    const prerotation = view.getUint8(offset++);
-    const flags = view.getUint8(offset++);
-    const formatByte = view.getUint8(offset++);
-    
-    // Read palette name (16 bytes)
-    let paletteName = '';
-    const paletteNameBytes = new Uint8Array(arrayBuffer, offset, 16);
-    for (let i = 0; i < 16; i++) {
-      const byte = paletteNameBytes[i];
-      if (byte === 0) break; // null terminator
-      paletteName += String.fromCharCode(byte);
-    }
-    offset += 16;
-    
-    // Decode format byte
-    const baseFormat = formatByte & 0x0F;
-    const isRLE = (formatByte & 0x20) !== 0;
-    const isIndexed = (formatByte & 0x40) !== 0;
-    
-    console.log(`[ImageData] D2 Header: ${this.width}x${this.height}, format: ${baseFormat}, RLE: ${isRLE}, indexed: ${isIndexed}, palette: "${paletteName}"`);
-    
-    // Store metadata
-    this.metadata = {
-      format: 'd2',
-      prerotation,
-      flags,
-      baseFormat,
-      isRLE,
-      isIndexed,
-      formatByte,
-      paletteName
-    };
-    
-    // Read palette data if indexed
-    let palette = null;
-    if (isIndexed) {
-      const paletteSize = this.getD2PaletteSize(baseFormat);
-      palette = new Array(paletteSize);
-      
-      for (let i = 0; i < paletteSize; i++) {
-        const r = view.getUint8(offset++);
-        const g = view.getUint8(offset++);
-        const b = view.getUint8(offset++);
-        const a = view.getUint8(offset++);
-        palette[i] = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-      }
-      
-      this.metadata.palette = palette;
-      console.log(`[ImageData] Loaded palette with ${paletteSize} colors`);
-    }
-    
-    // Read pixel data
-    const remainingBytes = arrayBuffer.byteLength - offset;
-    const pixelData = new Uint8Array(arrayBuffer, offset, remainingBytes);
-    
-    // Decompress if RLE
-    let decompressedData = pixelData;
-    if (isRLE) {
-      decompressedData = this.decompressRLE(pixelData);
-      console.log(`[ImageData] RLE decompressed ${pixelData.length} -> ${decompressedData.length} bytes`);
-    }
-    
-    // Convert to RGBA based on format
-    const rgbaData = this.convertD2ToRGBA(decompressedData, baseFormat, palette);
-    
-    // Create frame
-    this.frames = [{
-      data: rgbaData,
-      width: this.width,
-      height: this.height,
-      delay: 0
-    }];
-    
-    this.currentFrame = 0;
-    this.format = 'rgba';
-    
-    // Clear texture cache since we loaded new data
-    this.clearTextureCache();
-    
-    console.log(`[ImageData] Successfully loaded D2 texture: ${this.width}x${this.height}`);
+    return this.d2Handler.loadFromD2Binary(arrayBuffer);
   }
 
   /**
    * Export to D2 texture format binary data
+   * @deprecated Use d2Handler.exportToD2Binary() instead
    */
   exportToD2Binary(options = {}) {
-    const {
-      format = ImageData.D2_FORMAT.RGBA8888,
-      useRLE = false,
-      flags = 0,
-      prerotation = 0,
-      palette = null,
-      paletteName = ''
-    } = options;
-    
-    // Auto-extract palette name if palette object has one and paletteName wasn't explicitly provided
-    let finalPaletteName = paletteName;
-    if (!finalPaletteName && palette && palette.name) {
-      finalPaletteName = palette.name;
-      console.log(`[ImageData] Auto-extracted palette name from palette object: "${finalPaletteName}"`);
-    }
-    
-    console.log('[ImageData] Exporting to D2 texture format');
-    console.log('[ImageData] Export options:', options);
-    console.log('[ImageData] Final format being used:', format);
-    console.log('[ImageData] Final palette name being used:', finalPaletteName);
-    
-    if (!this.frames.length) {
-      throw new Error('No image data to export');
-    }
-
     const sourceRGBA = this.getSourceRGBAData();
-    if (!sourceRGBA) {
-      throw new Error('Unable to get source RGBA data for export');
-    }    // Determine if format is indexed
-    const isIndexed = [
-      ImageData.D2_FORMAT.I8,
-      ImageData.D2_FORMAT.I4,
-      ImageData.D2_FORMAT.I2,
-      ImageData.D2_FORMAT.I1
-    ].includes(format);
-    
-    // Convert RGBA to target format
-    let pixelData, exportPalette;
-    if (isIndexed) {
-      console.log(`[ImageData] Converting to indexed format with palette:`, !!palette);
-      if (palette) {
-        console.log(`[ImageData] Palette has ${palette.colors ? palette.colors.length : 'no'} colors`);
-      }
-      const result = this.convertRGBAToD2Indexed(sourceRGBA, format, palette);
-      pixelData = result.indexData;
-      exportPalette = result.palette;
-      console.log(`[ImageData] Indexed conversion complete - pixelData.length: ${pixelData ? pixelData.length : 'null'}, palette entries: ${exportPalette ? exportPalette.length : 'none'}`);
-      console.log(`[ImageData] exportPalette type:`, typeof exportPalette, 'isArray:', Array.isArray(exportPalette));
-    } else {
-      pixelData = this.convertRGBAToD2Direct(sourceRGBA, format);
-      exportPalette = null;
-      console.log(`[ImageData] Using direct conversion - pixelData.length: ${pixelData.length}`);
-    }
-    
-    // Apply RLE compression if requested
-    let finalPixelData = pixelData;
-    console.log(`[ImageData] Before RLE - pixelData.length: ${pixelData.length}, useRLE: ${useRLE}`);
-    if (useRLE) {
-      finalPixelData = this.compressRLE(pixelData);
-      console.log(`[ImageData] RLE compressed ${pixelData.length} -> ${finalPixelData.length} bytes`);
-    }
-    console.log(`[ImageData] Final pixel data length: ${finalPixelData.length}`);
-    
-    // Calculate total size
-    const headerSize = ImageData.D2_HEADER_SIZE;
-    let paletteLength = 0;
-    if (exportPalette) {
-      // Handle both Palette objects and arrays
-      if (exportPalette.colors && Array.isArray(exportPalette.colors)) {
-        paletteLength = exportPalette.colors.length;
-      } else if (Array.isArray(exportPalette)) {
-        paletteLength = exportPalette.length;
-      } else if (typeof exportPalette.length === 'number') {
-        paletteLength = exportPalette.length;
-      }
-    }
-    const paletteSize = paletteLength * 4;
-    const totalSize = headerSize + paletteSize + finalPixelData.length;
-    
-    console.log(`[ImageData] D2 export size calculation:`);
-    console.log(`  - headerSize: ${headerSize}`);
-    console.log(`  - paletteSize: ${paletteSize} (palette length: ${paletteLength})`);
-    console.log(`  - finalPixelData.length: ${finalPixelData.length}`);
-    console.log(`  - totalSize: ${totalSize}`);
-    console.log(`  - this.width: ${this.width}, this.height: ${this.height}`);
-    
-    // Create binary data
-    const buffer = new ArrayBuffer(totalSize);
-    const view = new DataView(buffer);
-    let offset = 0;
-    
-    console.log(`[ImageData] Starting D2 header write at offset: ${offset}`);
-    
-    // Write header
-    view.setUint8(offset++, 0x44); // 'D'
-    view.setUint8(offset++, 0x32); // '2'
-    view.setUint16(offset, this.width, true); offset += 2;
-    view.setUint16(offset, this.height, true); offset += 2;
-    view.setUint8(offset++, prerotation);
-    view.setUint8(offset++, flags);
-    
-    // Write format byte
-    let formatByte = format & 0x0F;
-    if (useRLE) formatByte |= 0x20;
-    if (isIndexed) formatByte |= 0x40;
-    view.setUint8(offset++, formatByte);
-    
-    // Write palette name (16 bytes)
-    const paletteNameTruncated = (finalPaletteName || '').substring(0, 15); // Max 15 chars to leave room for null terminator
-    const paletteNameBytes = new Uint8Array(16);
-    for (let i = 0; i < paletteNameTruncated.length; i++) {
-      paletteNameBytes[i] = paletteNameTruncated.charCodeAt(i);
-    }
-    console.log(`[ImageData] Writing palette name to D2 header: "${paletteNameTruncated}" (${paletteNameTruncated.length} chars)`);
-    // Remaining bytes are already 0 (null terminator)
-    const targetBytes = new Uint8Array(buffer, offset, 16);
-    targetBytes.set(paletteNameBytes);
-    offset += 16;
-    
-    // Write palette if indexed
-    if (exportPalette) {
-      let colorsToWrite = [];
-      
-      // Handle both Palette objects and arrays
-      if (exportPalette.colors && Array.isArray(exportPalette.colors)) {
-        colorsToWrite = exportPalette.colors;
-      } else if (Array.isArray(exportPalette)) {
-        colorsToWrite = exportPalette;
-      }
-      
-      for (const colorStr of colorsToWrite) {
-        const color = this.parseColor(colorStr) || { r: 0, g: 0, b: 0, a: 255 };
-        view.setUint8(offset++, color.r);
-        view.setUint8(offset++, color.g);
-        view.setUint8(offset++, color.b);
-        view.setUint8(offset++, color.a);
-      }
-    }
-    
-    // Write pixel data
-    const pixelArray = new Uint8Array(buffer, offset);
-    pixelArray.set(finalPixelData);
-    
-    console.log(`[ImageData] Exported D2 texture: ${totalSize} bytes total`);
-    return buffer;
+    return this.d2Handler.exportToD2Binary(sourceRGBA, this.width, this.height, options);
+  }
+
+  /**
+   * Get D2 format constant from internal format name
+   * @deprecated Use D2FormatHandler.getD2FormatFromInternal() instead
+   */
+  static getD2FormatFromInternal(internalFormat) {
+    return D2FormatHandler.getD2FormatFromInternal(internalFormat);
+  }
+
+  /**
+   * Get internal format name from D2 format constant
+   * @deprecated Use D2FormatHandler.getInternalFromD2Format() instead
+   */
+  static getInternalFromD2Format(d2Format) {
+    return D2FormatHandler.getInternalFromD2Format(d2Format);
   }
 
   /**
@@ -2718,121 +3163,12 @@ class ImageData {
     return sortedColors;
   }
 
-  /**
-   * Get D2 format constant from internal format name
-   */
-  static getD2FormatFromInternal(internalFormat) {
-    const formatMap = {
-      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
-      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
-      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
-      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
-      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
-      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
-      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
-      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
-      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
-      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
-      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
-      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
-      'd2_mode_i8': ImageData.D2_FORMAT.I8,
-      'd2_mode_i4': ImageData.D2_FORMAT.I4,
-      'd2_mode_i2': ImageData.D2_FORMAT.I2,
-      'd2_mode_i1': ImageData.D2_FORMAT.I1,
-      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
-      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
-      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
-    };
-    
-    return formatMap[internalFormat];
-  }
+  // REMOVED: Duplicate getD2FormatFromInternal method (full implementation)
 
-  /**
-   * Get internal format name from D2 format constant
-   */
-  static getInternalFromD2Format(d2Format) {
-    const formatMap = {
-      [ImageData.D2_FORMAT.ALPHA8]: 'd2_mode_alpha8',
-      [ImageData.D2_FORMAT.RGB565]: 'd2_mode_rgb565',
-      [ImageData.D2_FORMAT.ARGB8888]: 'd2_mode_argb8888',
-      [ImageData.D2_FORMAT.RGB888]: 'd2_mode_rgb888',
-      [ImageData.D2_FORMAT.ARGB4444]: 'd2_mode_argb4444',
-      [ImageData.D2_FORMAT.RGB444]: 'd2_mode_rgb444',
-      [ImageData.D2_FORMAT.ARGB1555]: 'd2_mode_argb1555',
-      [ImageData.D2_FORMAT.RGB555]: 'd2_mode_rgb555',
-      [ImageData.D2_FORMAT.AI44]: 'd2_mode_ai44',
-      [ImageData.D2_FORMAT.RGBA8888]: 'd2_mode_rgba8888',
-      [ImageData.D2_FORMAT.RGBA4444]: 'd2_mode_rgba4444',
-      [ImageData.D2_FORMAT.RGBA5551]: 'd2_mode_rgba5551',
-      [ImageData.D2_FORMAT.I8]: 'd2_mode_i8',
-      [ImageData.D2_FORMAT.I4]: 'd2_mode_i4',
-      [ImageData.D2_FORMAT.I2]: 'd2_mode_i2',
-      [ImageData.D2_FORMAT.I1]: 'd2_mode_i1',
-      [ImageData.D2_FORMAT.ALPHA4]: 'd2_mode_alpha4',
-      [ImageData.D2_FORMAT.ALPHA2]: 'd2_mode_alpha2',
-      [ImageData.D2_FORMAT.ALPHA1]: 'd2_mode_alpha1'
-    };
-    
-    return formatMap[d2Format] || 'd2_mode_rgba8888';
-  }
+  // REMOVED: Duplicate getInternalFromD2Format method
 
-  /**
-   * Get D2 format constant from internal format name
-   */
-  static getD2FormatFromInternal(internalFormat) {
-    const formatMap = {
-      'd2_mode_alpha8': ImageData.D2_FORMAT.ALPHA8,
-      'd2_mode_rgb565': ImageData.D2_FORMAT.RGB565,
-      'd2_mode_argb8888': ImageData.D2_FORMAT.ARGB8888,
-      'd2_mode_rgb888': ImageData.D2_FORMAT.RGB888,
-      'd2_mode_argb4444': ImageData.D2_FORMAT.ARGB4444,
-      'd2_mode_rgb444': ImageData.D2_FORMAT.RGB444,
-      'd2_mode_argb1555': ImageData.D2_FORMAT.ARGB1555,
-      'd2_mode_rgb555': ImageData.D2_FORMAT.RGB555,
-      'd2_mode_ai44': ImageData.D2_FORMAT.AI44,
-      'd2_mode_rgba8888': ImageData.D2_FORMAT.RGBA8888,
-      'd2_mode_rgba4444': ImageData.D2_FORMAT.RGBA4444,
-      'd2_mode_rgba5551': ImageData.D2_FORMAT.RGBA5551,
-      'd2_mode_i8': ImageData.D2_FORMAT.I8,
-      'd2_mode_i4': ImageData.D2_FORMAT.I4,
-      'd2_mode_i2': ImageData.D2_FORMAT.I2,
-      'd2_mode_i1': ImageData.D2_FORMAT.I1,
-      'd2_mode_alpha4': ImageData.D2_FORMAT.ALPHA4,
-      'd2_mode_alpha2': ImageData.D2_FORMAT.ALPHA2,
-      'd2_mode_alpha1': ImageData.D2_FORMAT.ALPHA1
-    };
-    
-    return formatMap[internalFormat];
-  }
-
-  /**
-   * Get internal format name from D2 format constant
-   */
-  static getInternalFromD2Format(d2Format) {
-    const formatMap = {
-      [ImageData.D2_FORMAT.ALPHA8]: 'd2_mode_alpha8',
-      [ImageData.D2_FORMAT.RGB565]: 'd2_mode_rgb565',
-      [ImageData.D2_FORMAT.ARGB8888]: 'd2_mode_argb8888',
-      [ImageData.D2_FORMAT.RGB888]: 'd2_mode_rgb888',
-      [ImageData.D2_FORMAT.ARGB4444]: 'd2_mode_argb4444',
-      [ImageData.D2_FORMAT.RGB444]: 'd2_mode_rgb444',
-      [ImageData.D2_FORMAT.ARGB1555]: 'd2_mode_argb1555',
-      [ImageData.D2_FORMAT.RGB555]: 'd2_mode_rgb555',
-      [ImageData.D2_FORMAT.AI44]: 'd2_mode_ai44',
-      [ImageData.D2_FORMAT.RGBA8888]: 'd2_mode_rgba8888',
-      [ImageData.D2_FORMAT.RGBA4444]: 'd2_mode_rgba4444',
-      [ImageData.D2_FORMAT.RGBA5551]: 'd2_mode_rgba5551',
-      [ImageData.D2_FORMAT.I8]: 'd2_mode_i8',
-      [ImageData.D2_FORMAT.I4]: 'd2_mode_i4',
-      [ImageData.D2_FORMAT.I2]: 'd2_mode_i2',
-      [ImageData.D2_FORMAT.I1]: 'd2_mode_i1',
-      [ImageData.D2_FORMAT.ALPHA4]: 'd2_mode_alpha4',
-      [ImageData.D2_FORMAT.ALPHA2]: 'd2_mode_alpha2',
-      [ImageData.D2_FORMAT.ALPHA1]: 'd2_mode_alpha1'
-    };
-    
-    return formatMap[d2Format] || 'd2_mode_rgba8888';
-  }
+  // REMOVED: Another duplicate getD2FormatFromInternal method
+  // REMOVED: Yet another duplicate getInternalFromD2Format method
 
   /**
    * Test helper: Create a simple test texture with palette name
@@ -2867,6 +3203,84 @@ class ImageData {
     testImage.loadFromD2Binary(d2Binary);
     
     return testImage;
+  }
+
+  // ===== BACKWARD COMPATIBILITY - DELEGATE TO TextureFormatUtils =====
+  
+  /**
+   * @deprecated Use TextureFormatUtils.getColorDepthOptions() instead
+   */
+  static getColorDepthOptions() {
+    if (typeof TextureFormatUtils !== 'undefined') {
+      return TextureFormatUtils.getColorDepthOptions();
+    }
+    console.warn('TextureFormatUtils not loaded. Please include texture-format-utils.js');
+    return [];
+  }
+
+  /**
+   * Get available color distance methods
+   * @deprecated Use Palette.getColorDistanceMethods() instead
+   */
+  static getColorDistanceMethods() {
+    return Palette.getColorDistanceMethods();
+  }
+
+  /**
+   * @deprecated Use TextureFormatUtils.getCompressionOptions() instead
+   */
+  static getCompressionOptions() {
+    if (typeof TextureFormatUtils !== 'undefined') {
+      return TextureFormatUtils.getCompressionOptions();
+    }
+    console.warn('TextureFormatUtils not loaded. Please include texture-format-utils.js');
+    return [];
+  }
+
+  /**
+   * @deprecated Use TextureFormatUtils.getTextureFormatOptions() instead
+   */
+  static getTextureFormatOptions() {
+    if (typeof TextureFormatUtils !== 'undefined') {
+      return TextureFormatUtils.getTextureFormatOptions();
+    }
+    console.warn('TextureFormatUtils not loaded. Please include texture-format-utils.js');
+    return [];
+  }
+
+  /**
+   * @deprecated Use TextureFormatUtils.getTextureFormatColorCount() instead
+   */
+  static getTextureFormatColorCount(formatValue) {
+    if (typeof TextureFormatUtils !== 'undefined') {
+      return TextureFormatUtils.getTextureFormatColorCount(formatValue);
+    }
+    console.warn('TextureFormatUtils not loaded. Please include texture-format-utils.js');
+    return 256;
+  }
+
+  // ===== BACKWARD COMPATIBILITY - DELEGATE TO PaletteManager =====
+  
+  /**
+   * @deprecated Use paletteManager.loadPalette() instead
+   */
+  async loadPalette(paletteName) {
+    if (this.paletteManager) {
+      return this.paletteManager.loadPalette(paletteName);
+    }
+    console.warn('PaletteManager not available. Please include palette-manager.js');
+    throw new Error('PaletteManager not available');
+  }
+
+  /**
+   * @deprecated Use paletteManager.parsePaletteContent() instead
+   */
+  parsePaletteContent(content) {
+    if (this.paletteManager) {
+      return this.paletteManager.parsePaletteContent(content);
+    }
+    console.warn('PaletteManager not available. Please include palette-manager.js');
+    return null;
   }
 }
 

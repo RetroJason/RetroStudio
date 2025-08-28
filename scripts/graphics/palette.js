@@ -517,6 +517,210 @@ class Palette {
   toString() {
     return `Palette(${this.name}, ${this.colors.length} colors, ${this.format} format)`;
   }
+
+  // ===== COLOR CALCULATION UTILITIES =====
+
+  /**
+   * Calculate distance between two colors using various methods
+   * @param {number} r1, g1, b1, a1 - First color components (0-255)
+   * @param {number} r2, g2, b2, a2 - Second color components (0-255)
+   * @param {string} method - Distance calculation method
+   * @returns {number} Color distance
+   */
+  static calculateColorDistance(r1, g1, b1, a1, r2, g2, b2, a2, method = 'euclidean') {
+    switch (method) {
+      case 'euclidean':
+        return Palette.euclideanDistance(r1, g1, b1, r2, g2, b2);
+      
+      case 'weighted':
+        return Palette.weightedRGBDistance(r1, g1, b1, r2, g2, b2);
+      
+      case 'perceptual':
+        return Palette.perceptualDistance(r1, g1, b1, r2, g2, b2);
+      
+      case 'manhattan':
+        return Palette.manhattanDistance(r1, g1, b1, r2, g2, b2);
+      
+      case 'deltaE':
+        return Palette.deltaEDistance(r1, g1, b1, r2, g2, b2);
+      
+      default:
+        console.warn(`[Palette] Unknown color distance method: ${method}, using euclidean`);
+        return Palette.euclideanDistance(r1, g1, b1, r2, g2, b2);
+    }
+  }
+
+  /**
+   * Simple Euclidean distance in RGB space
+   */
+  static euclideanDistance(r1, g1, b1, r2, g2, b2) {
+    const dr = r1 - r2;
+    const dg = g1 - g2;
+    const db = b1 - b2;
+    return dr * dr + dg * dg + db * db;
+  }
+
+  /**
+   * Weighted RGB distance accounting for human perception
+   * Red and blue are less perceptually important than green
+   */
+  static weightedRGBDistance(r1, g1, b1, r2, g2, b2) {
+    const dr = r1 - r2;
+    const dg = g1 - g2;
+    const db = b1 - b2;
+    return 0.3 * dr * dr + 0.59 * dg * dg + 0.11 * db * db;
+  }
+
+  /**
+   * Perceptual distance using a simple approximation
+   * Based on the fact that human eye is more sensitive to green
+   */
+  static perceptualDistance(r1, g1, b1, r2, g2, b2) {
+    const avgR = (r1 + r2) / 2;
+    const dr = r1 - r2;
+    const dg = g1 - g2;
+    const db = b1 - b2;
+    
+    // Weight factors based on average red value
+    const weightR = 2 + avgR / 256;
+    const weightG = 4;
+    const weightB = 2 + (255 - avgR) / 256;
+    
+    return weightR * dr * dr + weightG * dg * dg + weightB * db * db;
+  }
+
+  /**
+   * Manhattan distance (L1 norm)
+   */
+  static manhattanDistance(r1, g1, b1, r2, g2, b2) {
+    return Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
+  }
+
+  /**
+   * Delta E distance (simplified version using RGB->LAB conversion)
+   * This is a more perceptually uniform color space
+   */
+  static deltaEDistance(r1, g1, b1, r2, g2, b2) {
+    // Convert RGB to LAB color space (simplified)
+    const lab1 = Palette.rgbToLab(r1, g1, b1);
+    const lab2 = Palette.rgbToLab(r2, g2, b2);
+    
+    const dL = lab1.L - lab2.L;
+    const da = lab1.a - lab2.a;
+    const db = lab1.b - lab2.b;
+    
+    return dL * dL + da * da + db * db;
+  }
+
+  /**
+   * Convert RGB to LAB color space (simplified version)
+   */
+  static rgbToLab(r, g, b) {
+    // Normalize RGB to 0-1
+    r = r / 255;
+    g = g / 255;
+    b = b / 255;
+    
+    // Apply gamma correction
+    r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+    g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+    b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+    
+    // Convert to XYZ (using sRGB matrix)
+    let x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
+    let y = r * 0.2126729 + g * 0.7151522 + b * 0.0721750;
+    let z = r * 0.0193339 + g * 0.1191920 + b * 0.9503041;
+    
+    // Normalize by D65 illuminant
+    x = x / 0.95047;
+    y = y / 1.00000;
+    z = z / 1.08883;
+    
+    // Apply LAB transformation
+    x = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x + 16/116);
+    y = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y + 16/116);
+    z = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z + 16/116);
+    
+    const L = 116 * y - 16;
+    const a = 500 * (x - y);
+    const b_lab = 200 * (y - z);
+    
+    return { L, a, b: b_lab };
+  }
+
+  /**
+   * Get available color distance methods
+   */
+  static getColorDistanceMethods() {
+    return [
+      { value: 'euclidean', label: 'Euclidean RGB', description: 'Simple RGB distance' },
+      { value: 'weighted', label: 'Weighted RGB', description: 'RGB weighted for perception' },
+      { value: 'perceptual', label: 'Perceptual RGB', description: 'Advanced perceptual weighting' },
+      { value: 'manhattan', label: 'Manhattan', description: 'Sum of absolute differences' },
+      { value: 'deltaE', label: 'Delta E (LAB)', description: 'Perceptually uniform LAB space' }
+    ];
+  }
+
+  /**
+   * Find closest color in palette
+   */
+  findClosestColor(r, g, b, a = 255, method = 'euclidean') {
+    if (!this.colors || this.colors.length === 0) return 0;
+    
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+    
+    for (let i = 0; i < this.colors.length; i++) {
+      const paletteColor = Palette.parseColor(this.colors[i]);
+      if (!paletteColor) continue;
+      
+      // Calculate color distance using the specified method
+      const distance = Palette.calculateColorDistance(
+        r, g, b, a,
+        paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a,
+        method
+      );
+      
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+    
+    return closestIndex;
+  }
+
+  /**
+   * Parse color string to RGB values
+   */
+  static parseColor(colorStr) {
+    if (!colorStr) return null;
+    
+    // If it's already an RGB object, return it directly
+    if (typeof colorStr === 'object' && colorStr.r !== undefined) {
+      return {
+        r: colorStr.r || 0,
+        g: colorStr.g || 0,
+        b: colorStr.b || 0,
+        a: colorStr.a !== undefined ? colorStr.a : 255
+      };
+    }
+    
+    // Handle hex string format
+    if (typeof colorStr === 'string' && colorStr.startsWith('#')) {
+      const hex = colorStr.slice(1);
+      if (hex.length === 6) {
+        return {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16),
+          a: 255
+        };
+      }
+    }
+    
+    return null;
+  }
 }
 
 // Export for use in other modules

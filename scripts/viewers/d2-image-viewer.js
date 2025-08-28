@@ -359,29 +359,44 @@ class D2ImageViewer extends ViewerBase {
     this.updateInfoPanel();
   }
 
-  renderImage() {
+  async renderImage() {
     try {
       if (!this.imageData || !this.canvas) {
         console.log('[D2ImageViewer] Missing imageData or canvas for rendering');
         return;
       }
 
-      console.log('[D2ImageViewer] Rendering D2 image using Image.toCanvas()');
-      const renderedCanvas = this.imageData.toCanvas();
+      console.log('[D2ImageViewer] Rendering D2 image using ImageData.render()');
       
-      if (!renderedCanvas) {
-        console.error('[D2ImageViewer] toCanvas() returned null');
+      // Set canvas size
+      this.canvas.width = this.imageData.width;
+      this.canvas.height = this.imageData.height;
+      
+      // Get the rendered ImageData object from our custom ImageData class
+      const browserImageData = await this.imageData.render();
+      
+      console.log('[D2ImageViewer] browserImageData type:', typeof browserImageData);
+      console.log('[D2ImageViewer] browserImageData constructor:', browserImageData?.constructor?.name);
+      console.log('[D2ImageViewer] browserImageData instanceof ImageData:', browserImageData instanceof ImageData);
+      console.log('[D2ImageViewer] browserImageData instanceof globalThis.ImageData:', browserImageData instanceof globalThis.ImageData);
+      console.log('[D2ImageViewer] browserImageData instanceof window.ImageData:', browserImageData instanceof window.ImageData);
+      console.log('[D2ImageViewer] browserImageData.width:', browserImageData?.width);
+      console.log('[D2ImageViewer] browserImageData.height:', browserImageData?.height);
+      console.log('[D2ImageViewer] browserImageData.data length:', browserImageData?.data?.length);
+      
+      if (!browserImageData) {
+        console.error('[D2ImageViewer] Failed to get rendered ImageData');
         return;
       }
-
-      console.log('[D2ImageViewer] Successfully rendered image from toCanvas()');
-
-      // Set canvas size and draw the image
-      this.canvas.width = renderedCanvas.width;
-      this.canvas.height = renderedCanvas.height;
       
+      // Try to create a fresh ImageData object to ensure compatibility
+      console.log('[D2ImageViewer] Creating fresh ImageData object for canvas compatibility');
+      const canvasImageData = new ImageData(browserImageData.data, browserImageData.width, browserImageData.height);
+      console.log('[D2ImageViewer] Fresh ImageData created:', canvasImageData);
+      
+      // Render the ImageData to the canvas
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.ctx.drawImage(renderedCanvas, 0, 0);
+      this.ctx.putImageData(canvasImageData, 0, 0);
 
       // Fit to view on first load
       this.fitToView();
