@@ -100,16 +100,26 @@ class RetroImage {
   async loadFromFile(file) {
     // Handle both File objects and file paths/URLs
     let content;
+    let filename;
+    
     if (typeof file === 'string') {
       // URL or data URL
       content = await this._fetchFile(file);
+      filename = file;
+      this.filename = file.split('/').pop() || 'unknown'; // Extract filename from path
     } else {
       // File object
       content = await this._readFile(file);
-      this.filename = file.name || 'unknown';
+      filename = file.name || 'unknown';
+      this.filename = filename;
     }
     
-    await this._loadFromContent(content);
+    // Check if this is a .texture file based on filename
+    if (filename.toLowerCase().endsWith('.texture') || filename.toLowerCase().endsWith('.tex')) {
+      await this.loadFromTexture(content);
+    } else {
+      await this._loadFromContent(content);
+    }
   }
 
   async loadFromD2(d2Data) {
@@ -143,16 +153,48 @@ class RetroImage {
     console.log(`[RetroImage] Loaded D2: ${this.width}x${this.height}, format: ${this._format}`);
   }
 
-  async loadFromTexture(textureData) {
-    // Parse .texture file and load referenced image
-    const textureConfig = JSON.parse(new TextDecoder().decode(textureData));
+  async loadFromTexture(textureContent) {
+    // Parse .texture file content (should be JSON string or binary data)
+    let textureConfig;
+    
+    if (typeof textureContent === 'string') {
+      textureConfig = JSON.parse(textureContent);
+    } else if (textureContent instanceof ArrayBuffer) {
+      const textString = new TextDecoder().decode(textureContent);
+      textureConfig = JSON.parse(textString);
+    } else {
+      throw new Error('Invalid texture content type');
+    }
     
     if (!textureConfig.sourceImage) {
       throw new Error('Texture file missing sourceImage reference');
     }
     
-    // Load the source image
-    await this.loadFromFile(textureConfig.sourceImage);
+    console.log(`[RetroImage] Loading texture file with source: ${textureConfig.sourceImage}`);
+    
+    // Load the source image from project storage
+    try {
+      const sourceImageFile = await window.fileIOService.loadFile(textureConfig.sourceImage);
+      if (!sourceImageFile || !sourceImageFile.fileContent) {
+        throw new Error(`Source image not found: ${textureConfig.sourceImage}`);
+      }
+      
+      // Convert base64 content to blob for image loading
+      const base64Data = sourceImageFile.fileContent;
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/png' });
+      
+      // Load the image from blob
+      await this.loadFromFile(blob);
+    } catch (error) {
+      console.error(`[RetroImage] Failed to load source image: ${textureConfig.sourceImage}`, error);
+      throw new Error(`Failed to load source image: ${textureConfig.sourceImage}`);
+    }
     
     // Apply texture configuration
     if (textureConfig.format) {
@@ -166,6 +208,8 @@ class RetroImage {
     }
     
     this.metadata.textureConfig = textureConfig;
+    
+    console.log(`[RetroImage] Loaded texture: ${this.width}x${this.height}, format: ${textureConfig.format}`);
   }
 
   loadFromCanvas(canvas, filename = 'canvas') {
@@ -595,7 +639,7 @@ class RetroImage {
   // EXPORT METHODS
   // =============================================================================
   
-  async toD2() {
+  async toD2(options = {}) {
     if (!this._format) {
       throw new Error('No format specified. Call setFormat() first.');
     }
@@ -621,7 +665,7 @@ class RetroImage {
       format: this._format,
       palette: this._palette,
       paletteOffset: this._paletteOffset,
-      reserveTransparency: false  // Preserve user palette as-is
+      reserveTransparency: options.reserveTransparency !== undefined ? options.reserveTransparency : false
     });
   }
 

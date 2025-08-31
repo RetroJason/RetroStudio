@@ -1,6 +1,6 @@
 /**
  * TextureBuilder - Converts texture files (.texture) to D2 format (.d2) during build
- * Uses ImageData class for parsing and D2 format conversion
+ * Uses RetroImage class for parsing and D2 format conversion
  * Extends BuilderBase for compatibility with new dynamic builder system
  */
 
@@ -81,37 +81,88 @@ class TextureBuilder extends window.BuilderBase {
         return this.createBuildResult(false, file.path, null, validation.error);
       }
 
-      // Ensure ImageData class is available
+      // Ensure RetroImage class is available
       this.updateProgress(20, 'Checking dependencies...');
-      if (!window.ImageData) {
-        const error = 'ImageData class not available - required for texture building';
+      if (!window.RetroImage) {
+        const error = 'RetroImage class not available - required for texture building';
         this.cancelProgress(error);
         throw new Error(error);
       }
 
-      // Create ImageData instance and load from texture file path
+      // Parse the texture file JSON
       this.updateProgress(30, 'Loading texture configuration...');
-      console.log(`[TextureBuilder] Creating ImageData and loading from path: ${file.path}`);
-      const imageData = new window.ImageData();
+      console.log(`[TextureBuilder] Loading texture configuration from: ${file.path}`);
+      const textureConfig = JSON.parse(file.content);
       
-      // Extract the directory from the file path for proper path resolution
-      const texturePath = file.path.replace(/^[^\/]+\//, ''); // Remove project prefix like "test/"
-      console.log(`[TextureBuilder] Normalized texture path: ${texturePath}`);
-      
+      // Load the referenced source image
       this.updateProgress(50, 'Loading source image data...');
-      await imageData.loadFromTexturePath(texturePath);
-      console.log(`[TextureBuilder] After loadFromTexturePath - frames: ${imageData.frames ? imageData.frames.length : 0}, width: ${imageData.width}, height: ${imageData.height}`);
+      if (!textureConfig.sourceImage) {
+        const error = 'Texture file does not specify a source image';
+        this.cancelProgress(error);
+        throw new Error(error);
+      }
       
-      console.log(`[TextureBuilder] ImageData created from texture file: ${file.path}`);
+      // Load the source image file
+      const imageFile = await window.fileIOService.loadFile(textureConfig.sourceImage);
+      if (!imageFile || !imageFile.fileContent) {
+        const error = `Failed to load source image: ${textureConfig.sourceImage}`;
+        this.cancelProgress(error);
+        throw new Error(error);
+      }
+      
+      // Convert base64 content to blob
+      const base64Data = imageFile.fileContent;
+      const byteCharacters = atob(base64Data);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'image/png' });
+      
+      // Create RetroImage and load from the blob
+      const imageData = new window.RetroImage();
+      await imageData.loadFromFile(blob);
+      console.log(`[TextureBuilder] RetroImage loaded: ${imageData.width} x ${imageData.height}, frames: ${imageData.frames ? imageData.frames.length : 0}`);
+      
+      // Apply texture configuration settings
+      if (textureConfig.format) {
+        console.log(`[TextureBuilder] Setting format from config: ${textureConfig.format}`);
+        imageData.setFormat(textureConfig.format);
+      }
+      
+      if (textureConfig.palette) {
+        console.log(`[TextureBuilder] Loading palette from config: ${textureConfig.palette}`);
+        // Load palette if specified in texture config
+        try {
+          const paletteFile = await window.fileIOService.loadFile(textureConfig.palette);
+          if (paletteFile && paletteFile.fileContent) {
+            const palette = new Palette();
+            await palette.loadFromContent(paletteFile.fileContent, textureConfig.palette);
+            if (palette.rgbObjects) {
+              imageData.setPalette(palette.rgbObjects, textureConfig.palette);
+            }
+          }
+        } catch (error) {
+          console.warn(`[TextureBuilder] Failed to load palette ${textureConfig.palette}:`, error);
+        }
+      }
+      
+      if (textureConfig.paletteOffset !== undefined) {
+        console.log(`[TextureBuilder] Setting palette offset: ${textureConfig.paletteOffset}`);
+        imageData.setPaletteOffset(textureConfig.paletteOffset);
+      }
 
-      // Debug: Check ImageData state before export
+      console.log(`[TextureBuilder] RetroImage created from texture file: ${file.path}`);
+
+      // Debug: Check RetroImage state before export
       this.updateProgress(70, 'Processing image data...');
-      console.log('[TextureBuilder] ImageData state before getD2():');
+      console.log('[TextureBuilder] RetroImage state before toD2():');
       console.log('  - frames:', imageData.frames ? imageData.frames.length : 'undefined');
       console.log('  - width:', imageData.width);
       console.log('  - height:', imageData.height);
       console.log('  - currentFrame:', imageData.currentFrame);
-      console.log('  - textureConfig:', imageData.textureConfig);
+      console.log('  - format:', imageData._format);
       if (imageData.frames && imageData.frames.length > 0) {
         const frame = imageData.frames[imageData.currentFrame];
         console.log('  - frame colors length:', frame && frame.colors ? frame.colors.length : 'undefined');
@@ -119,9 +170,9 @@ class TextureBuilder extends window.BuilderBase {
         console.log('  - frame height:', frame ? frame.height : 'undefined');
       }
 
-      // Get D2 binary data - ImageData handles all the complexity
+      // Get D2 binary data - RetroImage handles all the complexity
       this.updateProgress(80, 'Converting to D2 format...');
-      const d2Buffer = await imageData.getD2();
+      const d2Buffer = await imageData.toD2();
 
       // Generate output path
       this.updateProgress(90, 'Preparing output file...');

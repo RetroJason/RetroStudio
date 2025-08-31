@@ -93,6 +93,7 @@ class TextureEditor extends EditorBase {
     this.retroImage = null;
     this.currentPalette = null;
     this.paletteOffset = 0;
+    this.reserveTransparency = false;
     
     // Auto-save timer for texture file
     this.autoSaveTimer = null;
@@ -128,7 +129,7 @@ class TextureEditor extends EditorBase {
                 <h4 style="color: #fff; margin: 0; font-size: 16px; font-weight: 500;">Original</h4>
                 <div id="imageInfo" style="color: #999; font-size: 11px; padding: 3px 8px; background: #1e1e1e; border-radius: 3px; border: 1px solid #444;">No image loaded</div>
               </div>
-              <div id="originalViewport" style="flex: 1; overflow: auto; border: 2px solid #555; background: #1a1a1a; position: relative; border-radius: 6px;">
+              <div id="originalViewport" style="flex: 1; overflow: auto; border: 2px solid #555; background: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; background-color: #f0f0f0; position: relative; border-radius: 6px;">
                 <canvas id="originalCanvas" style="display: block; image-rendering: pixelated; cursor: grab;"></canvas>
               </div>
               <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; justify-content: center;">
@@ -142,7 +143,7 @@ class TextureEditor extends EditorBase {
             <!-- Processed Image -->
             <div style="flex: 1; background: #2d2d2d; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; min-width: 0;">
               <h4 style="color: #fff; margin: 0 0 10px 0; font-size: 16px; font-weight: 500;">Processed</h4>
-              <div id="processedViewport" style="flex: 1; overflow: auto; border: 2px solid #555; background: #1a1a1a; position: relative; border-radius: 6px;">
+              <div id="processedViewport" style="flex: 1; overflow: auto; border: 2px solid #555; background: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px; background-color: #f0f0f0; position: relative; border-radius: 6px;">
                 <canvas id="processedCanvas" style="display: block; image-rendering: pixelated; cursor: grab;"></canvas>
               </div>
               <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; justify-content: center;">
@@ -170,7 +171,7 @@ class TextureEditor extends EditorBase {
                   <option value="d2_mode_argb8888" selected>A8R8G8B8 (32-bit)</option>
                   <option value="d2_mode_argb1555">A1R5G5B5 (16-bit+α)</option>
                   <option value="d2_mode_rgb565">R5G6B5 (16-bit)</option>
-                  <option value="d2_mode_argb4444">A4R4G4B4 (16-bit+α)</option>
+                  <option value="d2_mode_rgba4444">A4R4G4B4 (16-bit+α)</option>
                   <option value="d2_mode_i8">I8 (256 colors)</option>
                   <option value="d2_mode_i4">I4 (16 colors)</option>
                   <option value="d2_mode_i2">I2 (4 colors)</option>
@@ -207,6 +208,14 @@ class TextureEditor extends EditorBase {
                   <span id="paletteOffsetValue" style="color: #ccc; font-size: 11px; min-width: 25px;">0</span>
                 </div>
               </div>
+              <div id="transparencyGroup" style="display: none; flex: 0 0 auto;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label style="color: #ccc; font-size: 12px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                    <input id="reserveTransparencyCheckbox" type="checkbox" style="margin: 0;">
+                    Reserve Index 0 for Color Key (Magenta)
+                  </label>
+                </div>
+              </div>
             </div>
             <div id="paletteDisplay" style="flex: 1; overflow-y: auto; border: 2px solid #555; background: #1a1a1a; padding: 10px; border-radius: 6px; min-height: 200px;">
               <div style="color: #999; text-align: center; padding: 30px 15px; font-size: 13px;">No palette loaded</div>
@@ -238,6 +247,8 @@ class TextureEditor extends EditorBase {
     this.paletteOffsetGroup = this.bodyContainer.querySelector('#paletteOffsetGroup');
     this.paletteOffsetSlider = this.bodyContainer.querySelector('#paletteOffsetSlider');
     this.paletteOffsetValue = this.bodyContainer.querySelector('#paletteOffsetValue');
+    this.transparencyGroup = this.bodyContainer.querySelector('#transparencyGroup');
+    this.reserveTransparencyCheckbox = this.bodyContainer.querySelector('#reserveTransparencyCheckbox');
 
     // Debug: Check if elements were found
     console.log('[TextureEditor] UI elements found:', {
@@ -353,6 +364,15 @@ class TextureEditor extends EditorBase {
         this.markDirty(); // Mark texture file as needing save
         this.displayPalette();
         this.processTexture();
+      });
+    }
+
+    if (this.reserveTransparencyCheckbox) {
+      this.reserveTransparencyCheckbox.addEventListener('change', () => {
+        this.reserveTransparency = this.reserveTransparencyCheckbox.checked;
+        this.textureData.reserveTransparency = this.reserveTransparency;
+        this.markDirty(); // Mark texture file as needing save
+        this.processTexture(); // Reprocess with new transparency setting
       });
     }
 
@@ -512,6 +532,11 @@ class TextureEditor extends EditorBase {
       this.paletteOffsetGroup.style.display = isIndexed ? 'block' : 'none';
     }
     
+    // Show/hide transparency controls for indexed formats
+    if (this.transparencyGroup) {
+      this.transparencyGroup.style.display = isIndexed ? 'block' : 'none';
+    }
+    
     // Update palette offset range based on format
     if (isIndexed && this.paletteOffsetSlider) {
       const maxColors = this.getMaxColorsForFormat(format);
@@ -539,74 +564,190 @@ class TextureEditor extends EditorBase {
     const isImageFile = filename.match(/\.(png|jpg|jpeg|gif|bmp|webp)$/i);
 
     if (isTextureFile) {
-      // Loading a .texture file - load both the texture config and the referenced image
+      // Loading a .texture file - use RetroImage to handle parsing and loading
       try {
         console.log('[TextureEditor] Loading texture file:', filename);
         
-        // Parse the texture file JSON
-        const textureConfig = JSON.parse(this.file.fileContent);
+        // Create a RetroImage and load the texture content using loadFromTexture
+        const retroImage = new window.RetroImage();
+        await retroImage.loadFromTexture(this.file.fileContent, filename);
         
-        // Update our texture data with the loaded config
-        this.textureData = new TextureData(textureConfig);
+        // Set the loaded RetroImage
+        this.retroImage = retroImage;
         
-        // Load the referenced source image
-        if (textureConfig.sourceImage) {
-          const imageFile = await window.fileIOService.loadFile(textureConfig.sourceImage);
-          if (imageFile && imageFile.fileContent) {
-            // Convert base64 content to blob
-            const base64Data = imageFile.fileContent;
-            const byteCharacters = atob(base64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: 'image/png' });
-            
-            await this.loadImage(blob);
-            
-            // Update UI with loaded settings
-            if (textureConfig.outputPixelFormat) {
-              this.formatSelect.value = textureConfig.outputPixelFormat;
-            }
-            if (textureConfig.paletteOffset !== undefined) {
-              this.paletteOffset = textureConfig.paletteOffset;
-              this.paletteOffsetSlider.value = this.paletteOffset;
-              this.paletteOffsetValue.textContent = this.paletteOffset;
-            }
-            
-            // Load the palette if specified
-            await this.loadPaletteFromPath();
-          }
+        console.log('[TextureEditor] RetroImage loaded, format:', retroImage._format);
+        
+        // Setup original canvas to show the source image
+        this.originalCanvas.width = this.retroImage.width;
+        this.originalCanvas.height = this.retroImage.height;
+        
+        const ctx = this.originalCanvas.getContext('2d');
+        
+        // Get the original image data and draw it
+        const imageData = this.retroImage.toImageData();
+        ctx.putImageData(imageData, 0, 0);
+        
+        // Update image info display
+        if (this.imageInfo) {
+          this.imageInfo.textContent = `${this.retroImage.width}x${this.retroImage.height}`;
         }
+        
+        // Update UI with format from the loaded image BEFORE processing
+        if (retroImage._format) {
+          this.formatSelect.value = retroImage._format;
+          console.log('[TextureEditor] Set format from texture file:', retroImage._format);
+        }
+        
+        // Update palette offset if available
+        if (retroImage.paletteOffset !== undefined) {
+          this.paletteOffset = retroImage.paletteOffset;
+          this.paletteOffsetSlider.value = this.paletteOffset;
+          this.paletteOffsetValue.textContent = this.paletteOffset;
+        }
+        
+        // Update display after setting UI values
+        await this.processTexture();
+        
       } catch (error) {
         console.error('[TextureEditor] Error loading texture file:', error);
       }
     } else if (isImageFile) {
-      // Loading an image file - auto-create a .texture file
+      // Loading an image file - first check if there's already a corresponding .texture file
       try {
         console.log('[TextureEditor] Loading image file:', filename);
         
-        // Convert base64 content to blob
-        const base64Data = this.file.fileContent;
-        const byteCharacters = atob(base64Data);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        // Check if a corresponding .texture file exists
+        const baseName = this.file.filename.replace(/\.[^.]+$/, ''); // Remove extension
+        const textureFileName = baseName + '.texture';
+        const texturePath = this.file.path.replace(/\.[^.]+$/, '.texture');
+        
+        console.log('[TextureEditor] Image file path:', this.file.path);
+        console.log('[TextureEditor] Constructed texture path:', texturePath);
+        
+        // Try to load the corresponding texture file
+        const fileIOService = window.serviceContainer?.get('fileIOService');
+        let existingTextureFile = null;
+        
+        if (fileIOService) {
+          try {
+            // this.file.path is already the storage path, don't remove prefix
+            existingTextureFile = await fileIOService.loadFile(texturePath);
+            console.log('[TextureEditor] Successfully loaded existing texture file');
+            console.log('[TextureEditor] Texture file has content:', !!existingTextureFile?.fileContent);
+          } catch (error) {
+            console.log('[TextureEditor] Failed to load texture file:', error.message);
+          }
         }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: 'image/png' });
         
-        // Update texture data to reference this image
-        this.textureData.sourceImage = this.file.path;
-        this.textureData.name = this.file.filename.replace(/\.[^.]+$/, ''); // Remove extension
+        if (existingTextureFile && existingTextureFile.fileContent) {
+          try {
+            console.log('[TextureEditor] Using existing texture file with', existingTextureFile.fileContent.length, 'bytes');
+            // Load the existing texture file instead of creating a new one
+            console.log('[TextureEditor] Loading existing texture file instead of image');
+            
+            // Create a RetroImage and load the texture content
+            const retroImage = new window.RetroImage();
+            await retroImage.loadFromTexture(existingTextureFile.fileContent, textureFileName);
+            
+            // Set the loaded RetroImage
+            this.retroImage = retroImage;
+            
+            console.log('[TextureEditor] RetroImage loaded from existing texture, format:', retroImage._format);
+            
+            // Setup original canvas to show the source image
+            this.originalCanvas.width = this.retroImage.width;
+            this.originalCanvas.height = this.retroImage.height;
+            
+            const ctx = this.originalCanvas.getContext('2d');
+            
+            // Get the original image data and draw it
+            const imageData = this.retroImage.toImageData();
+            ctx.putImageData(imageData, 0, 0);
+            
+            // Update image info display
+            if (this.imageInfo) {
+              this.imageInfo.textContent = `${this.retroImage.width}x${this.retroImage.height}`;
+            }
+            
+            // Update UI with format from the loaded texture BEFORE processing
+            if (retroImage._format) {
+              this.formatSelect.value = retroImage._format;
+              console.log('[TextureEditor] Set format from existing texture file:', retroImage._format);
+            }
+            
+            // Update palette offset if available
+            if (retroImage.paletteOffset !== undefined) {
+              this.paletteOffset = retroImage.paletteOffset;
+              this.paletteOffsetSlider.value = this.paletteOffset;
+              this.paletteOffsetValue.textContent = this.paletteOffset;
+            }
+            
+            // Update display after setting UI values
+            await this.processTexture();
+            
+            // Load texture data properties from the existing texture file
+            try {
+              const textureConfig = JSON.parse(existingTextureFile.fileContent);
+              this.textureData.name = textureConfig.name || baseName;
+              this.textureData.sourceImage = textureConfig.sourceImage || this.file.path;
+              
+              // Load transparency setting
+              if (textureConfig.reserveTransparency !== undefined) {
+                this.reserveTransparency = textureConfig.reserveTransparency;
+                this.textureData.reserveTransparency = this.reserveTransparency;
+                if (this.reserveTransparencyCheckbox) {
+                  this.reserveTransparencyCheckbox.checked = this.reserveTransparency;
+                }
+              }
+              
+              // Load palette if specified
+              if (textureConfig.palette) {
+                this.textureData.palettePath = textureConfig.palette;
+                await this.loadPaletteFromFile(textureConfig.palette, false); // false = don't mark dirty when loading existing
+              }
+              
+              console.log('[TextureEditor] Loaded texture configuration:', textureConfig);
+            } catch (error) {
+              console.warn('[TextureEditor] Could not parse texture config from existing file:', error);
+            }
+            
+            console.log('[TextureEditor] Successfully loaded existing texture file');
+            return; // Exit early, don't create new texture data
+            
+          } catch (error) {
+            console.error('[TextureEditor] Error loading existing texture file:', error);
+            console.log('[TextureEditor] Falling back to creating new texture data from image');
+          }
+        } else {
+          console.log('[TextureEditor] No existing texture file found or no content, creating new texture data');
+        }
         
-        await this.loadImage(blob);
-        
-        // Mark as dirty since we've created new texture data that needs saving
-        this.markDirty();
-        
-        console.log('[TextureEditor] Image loaded, texture data created and marked dirty');
+        // No existing texture file, create new texture data from image
+        {
+          // No existing texture file, create new texture data from image
+          console.log('[TextureEditor] Creating new texture data from image file');
+          
+          // Convert base64 content to blob
+          const base64Data = this.file.fileContent;
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: 'image/png' });
+          
+          // Update texture data to reference this image
+          this.textureData.sourceImage = this.file.path;
+          this.textureData.name = baseName;
+          
+          await this.loadImage(blob);
+          
+          // Mark as dirty since we've created new texture data that needs saving
+          this.markDirty();
+          
+          console.log('[TextureEditor] Image loaded, texture data created and marked dirty');
+        }
       } catch (error) {
         console.error('[TextureEditor] Error loading image file:', error);
       }
@@ -861,19 +1002,38 @@ class TextureEditor extends EditorBase {
           // Extract palette from the image if none is loaded
           const palette = this.retroImage.extractPalette(256);
           this.retroImage.setPalette(palette);
+          
+          // Generate a unique name for the auto-generated palette
+          const imageName = this.file?.filename?.replace(/\.(png|jpg|jpeg|gif|bmp|webp|tga)$/i, '') || 'texture';
+          const paletteName = `${imageName}_palette.act`;
+          const palettePath = `Sources/Palettes/${paletteName}`;
+          
           this.currentPalette = {
             colors: palette, // Store RGB objects directly (system standard)
             rgbObjects: palette, // Maintain compatibility
-            name: 'Auto-generated',
-            source: 'image'
+            name: paletteName,
+            source: 'auto-generated',
+            path: palettePath
           };
+          
+          // Update texture data to reference the saved palette
+          console.log('[TextureEditor] Setting auto-generated palette path to:', palettePath);
+          this.textureData.palettePath = palettePath;
+          // Note: Don't save the full palette object to avoid serializing color data
+          // this.textureData.palette = this.currentPalette;
+          
+          // Save the auto-generated palette to the project
+          await this.saveAutoGeneratedPalette(palettePath, palette);
+          
           this.displayPalette();
         }
         this.retroImage.setPaletteOffset(this.paletteOffset);
       }
 
       // Generate D2 texture data
-      const d2Data = await this.retroImage.toD2();
+      const d2Data = await this.retroImage.toD2({
+        reserveTransparency: this.reserveTransparency
+      });
       
       // Load back for display
       const textureImage = await window.RetroImage.fromD2(d2Data);
@@ -885,6 +1045,48 @@ class TextureEditor extends EditorBase {
       
     } catch (error) {
       console.error('[TextureEditor] Error processing texture:', error);
+    }
+  }
+
+  async saveAutoGeneratedPalette(palettePath, paletteColors) {
+    try {
+      console.log(`[TextureEditor] Saving auto-generated palette to: ${palettePath}`);
+      
+      // Convert RGB objects to ACT format binary data
+      const actBuffer = new ArrayBuffer(772); // 256 * 3 + 4 bytes for count
+      const actView = new Uint8Array(actBuffer);
+      
+      // Write palette colors (ACT format: RGB triplets)
+      for (let i = 0; i < 256; i++) {
+        const color = paletteColors[i] || { r: 0, g: 0, b: 0 }; // Pad with black if needed
+        actView[i * 3] = color.r;
+        actView[i * 3 + 1] = color.g;
+        actView[i * 3 + 2] = color.b;
+      }
+      
+      // Write color count at the end (ACT format requirement)
+      const colorCount = Math.min(paletteColors.length, 256);
+      actView[768] = colorCount & 0xFF;
+      actView[769] = (colorCount >> 8) & 0xFF;
+      actView[770] = 0; // Reserved
+      actView[771] = 0; // Reserved
+      
+      // Save to project storage
+      await window.fileIOService.saveFile(palettePath, actBuffer, { binaryData: true });
+      
+      // Add to project explorer if available
+      const gameEmulator = window.gameEmulator || (typeof window !== 'undefined' ? window.gameEmulator : null);
+      if (gameEmulator && gameEmulator.projectExplorer && gameEmulator.projectExplorer.addFileToProjectByName) {
+        const filename = palettePath.split('/').pop();
+        gameEmulator.projectExplorer.addFileToProjectByName(filename, 'Sources/Palettes');
+        console.log(`[TextureEditor] Added auto-generated palette to project: ${filename}`);
+      }
+      
+      console.log(`[TextureEditor] Successfully saved auto-generated palette with ${colorCount} colors`);
+      
+    } catch (error) {
+      console.error('[TextureEditor] Failed to save auto-generated palette:', error);
+      // Don't throw the error - we don't want to break the texture processing
     }
   }
 
@@ -929,15 +1131,29 @@ class TextureEditor extends EditorBase {
 
     try {
       // Create texture file content
+      const format = this.formatSelect?.value || 'd2_mode_i4';
+      const isIndexed = format.includes('_i') || format.includes('ai44');
+      
       const textureData = {
         name: this.textureData.name,
         width: this.retroImage.width,
         height: this.retroImage.height,
-        format: this.formatSelect?.value || 'd2_mode_i4',
-        palette: this.textureData.palettePath,
+        format: format,
         paletteOffset: this.paletteOffset || 0,
         sourceImage: this.textureData.sourceImage || this.file.path
       };
+      
+      // Only include palette for indexed formats, and ensure it's a path string
+      if (isIndexed && this.textureData.palettePath && typeof this.textureData.palettePath === 'string') {
+        textureData.palette = this.textureData.palettePath;
+        console.log('[TextureEditor] saveFile including palette for indexed format:', this.textureData.palettePath);
+      } else if (isIndexed) {
+        console.log('[TextureEditor] saveFile indexed format but no valid palette path:', this.textureData.palettePath);
+      } else {
+        console.log('[TextureEditor] saveFile direct color format, not including palette');
+      }
+
+      console.log('[TextureEditor] saveFile generated texture content:', textureData);
 
       // Determine the texture file path
       let texturePath;
@@ -1055,7 +1271,9 @@ class TextureEditor extends EditorBase {
 
   // Override markDirty to properly mark the editor as dirty
   markDirty() {
+    const stack = new Error().stack;
     console.log('[TextureEditor] markDirty called, current dirty state:', this.isDirty);
+    console.log('[TextureEditor] markDirty stack trace:', stack);
     super.markDirty(); // Call the base class method
   }
 
@@ -1072,16 +1290,29 @@ class TextureEditor extends EditorBase {
 
     try {
       // Create texture file content
+      const format = this.formatSelect?.value || 'd2_mode_i4';
+      const isIndexed = format.includes('_i') || format.includes('ai44');
+      
       const textureData = {
         name: this.textureData.name,
         width: this.retroImage.width,
         height: this.retroImage.height,
-        format: this.formatSelect?.value || 'd2_mode_i4',
-        palette: this.textureData.palettePath,
+        format: format,
         paletteOffset: this.paletteOffset || 0,
         sourceImage: this.textureData.sourceImage || this.file.path
       };
+      
+      // Only include palette for indexed formats
+      if (isIndexed && this.textureData.palettePath) {
+        console.log('[TextureEditor] Including palette for indexed format:', this.textureData.palettePath);
+        textureData.palette = this.textureData.palettePath;
+      } else if (isIndexed) {
+        console.log('[TextureEditor] Indexed format but no palette path set');
+      } else {
+        console.log('[TextureEditor] Direct color format, not including palette');
+      }
 
+      console.log('[TextureEditor] Generated texture content:', textureData);
       return JSON.stringify(textureData, null, 2);
     } catch (error) {
       console.error('[TextureEditor] Error creating texture content:', error);
@@ -1291,7 +1522,8 @@ class TextureEditor extends EditorBase {
         }
         
         // Update texture data
-        this.textureData.palette = this.currentPalette;
+        // Note: Don't save the full palette object to avoid serializing color data
+        // this.textureData.palette = this.currentPalette;
         this.textureData.paletteOffset = this.paletteOffset;
         
         this.displayPalette();
@@ -1403,7 +1635,7 @@ class TextureEditor extends EditorBase {
     }
   }
 
-  async loadPaletteFromFile(palettePath) {
+  async loadPaletteFromFile(palettePath, markDirtyFlag = true) {
     try {
       console.log(`[TextureEditor] Loading palette from: ${palettePath}`);
       
@@ -1439,8 +1671,19 @@ class TextureEditor extends EditorBase {
         
         // Set palette on image (marks as dirty)
         this.retroImage.setPalette(this.currentPalette.rgbObjects, this.currentPalette.name);
-        this.textureData.palettePath = this.currentPalette.path || this.currentPalette.name;
-        this.markDirty(); // Mark texture file as needing save
+        
+        // Ensure we only save the palette path as a string, never color data
+        const palettePath = this.currentPalette.path || this.currentPalette.name;
+        if (typeof palettePath === 'string') {
+          this.textureData.palettePath = palettePath;
+          console.log('[TextureEditor] Set palette path to:', palettePath);
+        } else {
+          console.warn('[TextureEditor] Invalid palette path type:', typeof palettePath, palettePath);
+        }
+        
+        if (markDirtyFlag) {
+          this.markDirty(); // Mark texture file as needing save
+        }
         
         this.displayPalette();
         await this.processTexture(); // Refresh display
@@ -1490,15 +1733,24 @@ class TextureEditor extends EditorBase {
 
   static createNew() {
     // Return default texture data structure
-    return JSON.stringify({
+    const format = 'd2_mode_i4';  // Default to indexed format
+    const isIndexed = format.includes('_i') || format.includes('ai44');
+    
+    const textureData = {
       name: 'texture',
       width: 32,
       height: 32,
-      format: 'd2_mode_i4',
-      palette: 'Resources/Palettes/default.act',
+      format: format,
       paletteOffset: 0,
       data: []
-    }, null, 2);
+    };
+    
+    // Only include palette for indexed formats
+    if (isIndexed) {
+      textureData.palette = 'Resources/Palettes/default.act';
+    }
+    
+    return JSON.stringify(textureData, null, 2);
   }
 
   // Fit image colors to the currently selected palette

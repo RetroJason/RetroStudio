@@ -1,7 +1,7 @@
 /**
  * D2 Image Viewer
  * Displays D2 texture files with metadata and image preview
- * Uses the ImageData class to load and display D2 textures.
+ * Uses the RetroImage class to load and display D2 textures.
  */
 
 class D2ImageViewer extends ViewerBase {
@@ -280,7 +280,7 @@ class D2ImageViewer extends ViewerBase {
         return;
       }
 
-      console.log('[D2ImageViewer] Loading D2 file');
+      console.log('[D2ImageViewer] Loading D2 file using RetroImage');
       console.log('[D2ImageViewer] File info:', {
         name: this.file.name,
         contentType: typeof this.file.content,
@@ -300,26 +300,26 @@ class D2ImageViewer extends ViewerBase {
         content = bytes.buffer;
       }
 
-      console.log('[D2ImageViewer] Loading ImageData from D2 binary data');
-      this.imageData = new ImageData();
-      await this.imageData.loadFromD2Binary(content);
+      console.log('[D2ImageViewer] Creating RetroImage and loading from D2 binary data');
+      this.retroImage = new window.RetroImage();
+      await this.retroImage.loadFromD2(content);
 
-      console.log('[D2ImageViewer] ImageData loaded:', {
-        width: this.imageData?.width,
-        height: this.imageData?.height,
-        format: this.imageData?.format,
-        frames: this.imageData?.frames?.length
+      console.log('[D2ImageViewer] RetroImage loaded:', {
+        width: this.retroImage?.width,
+        height: this.retroImage?.height,
+        format: this.retroImage?._format,
+        frames: this.retroImage?.frames?.length
       });
 
       // Always update info panel first to show header data
       this.updateInfoPanel();
 
       // Check if we have valid image data for rendering
-      const canRender = this.imageData?.width > 0 && this.imageData?.height > 0 && this.imageData?.frames?.length > 0;
+      const canRender = this.retroImage?.width > 0 && this.retroImage?.height > 0;
       
       console.log('[D2ImageViewer] Condition check:', {
-        width: this.imageData?.width,
-        height: this.imageData?.height,
+        width: this.retroImage?.width,
+        height: this.retroImage?.height,
         canvas: this.canvas ? 'present' : 'missing',
         canvasElement: this.canvas ? 'present' : 'missing',
         condition: canRender
@@ -361,42 +361,34 @@ class D2ImageViewer extends ViewerBase {
 
   async renderImage() {
     try {
-      if (!this.imageData || !this.canvas) {
-        console.log('[D2ImageViewer] Missing imageData or canvas for rendering');
+      if (!this.retroImage || !this.canvas) {
+        console.log('[D2ImageViewer] Missing retroImage or canvas for rendering');
         return;
       }
 
-      console.log('[D2ImageViewer] Rendering D2 image using ImageData.render()');
+      console.log('[D2ImageViewer] Rendering D2 image using RetroImage.toImageData()');
       
       // Set canvas size
-      this.canvas.width = this.imageData.width;
-      this.canvas.height = this.imageData.height;
+      this.canvas.width = this.retroImage.width;
+      this.canvas.height = this.retroImage.height;
       
-      // Get the rendered ImageData object from our custom ImageData class
-      const browserImageData = await this.imageData.render();
+      // Get the rendered ImageData object from RetroImage
+      const imageData = this.retroImage.toImageData();
       
-      console.log('[D2ImageViewer] browserImageData type:', typeof browserImageData);
-      console.log('[D2ImageViewer] browserImageData constructor:', browserImageData?.constructor?.name);
-      console.log('[D2ImageViewer] browserImageData instanceof ImageData:', browserImageData instanceof ImageData);
-      console.log('[D2ImageViewer] browserImageData instanceof globalThis.ImageData:', browserImageData instanceof globalThis.ImageData);
-      console.log('[D2ImageViewer] browserImageData instanceof window.ImageData:', browserImageData instanceof window.ImageData);
-      console.log('[D2ImageViewer] browserImageData.width:', browserImageData?.width);
-      console.log('[D2ImageViewer] browserImageData.height:', browserImageData?.height);
-      console.log('[D2ImageViewer] browserImageData.data length:', browserImageData?.data?.length);
+      console.log('[D2ImageViewer] ImageData type:', typeof imageData);
+      console.log('[D2ImageViewer] ImageData constructor:', imageData?.constructor?.name);
+      console.log('[D2ImageViewer] ImageData width:', imageData?.width);
+      console.log('[D2ImageViewer] ImageData height:', imageData?.height);
+      console.log('[D2ImageViewer] ImageData data length:', imageData?.data?.length);
       
-      if (!browserImageData) {
+      if (!imageData) {
         console.error('[D2ImageViewer] Failed to get rendered ImageData');
         return;
       }
       
-      // Try to create a fresh ImageData object to ensure compatibility
-      console.log('[D2ImageViewer] Creating fresh ImageData object for canvas compatibility');
-      const canvasImageData = new ImageData(browserImageData.data, browserImageData.width, browserImageData.height);
-      console.log('[D2ImageViewer] Fresh ImageData created:', canvasImageData);
-      
       // Render the ImageData to the canvas
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      this.ctx.putImageData(canvasImageData, 0, 0);
+      this.ctx.putImageData(imageData, 0, 0);
 
       // Fit to view on first load
       this.fitToView();
@@ -407,25 +399,64 @@ class D2ImageViewer extends ViewerBase {
     }
   }
 
+  getFormatDisplayName(format) {
+    const formatNames = {
+      // Direct color formats
+      'd2_mode_alpha8': 'Alpha 8-bit',
+      'd2_mode_rgb565': 'RGB 565 (16-bit)',
+      'd2_mode_rgba8888': 'RGBA 8888 (32-bit)',
+      'd2_mode_rgba4444': 'RGBA 4444 (16-bit+α)',
+      'd2_mode_alpha4': 'Alpha 4-bit',
+      
+      // Indexed formats
+      'd2_mode_i8': 'Indexed 8-bit (256 colors)',
+      'd2_mode_i4': 'Indexed 4-bit (16 colors)',
+      'd2_mode_i2': 'Indexed 2-bit (4 colors)',
+      'd2_mode_i1': 'Indexed 1-bit (2 colors)',
+      'd2_mode_ai44': 'Alpha+Indexed 4+4 (16 colors+α)',
+      
+      // Numeric format IDs (fallback for legacy)
+      '0': 'Alpha 8-bit',
+      '1': 'RGB 565 (16-bit)',
+      '6': 'RGBA 8888 (32-bit)',
+      '7': 'RGBA 4444 (16-bit+α)',
+      '13': 'Alpha 4-bit',
+      '9': 'Indexed 8-bit (256 colors)',
+      '10': 'Indexed 4-bit (16 colors)',
+      '11': 'Indexed 2-bit (4 colors)',
+      '12': 'Indexed 1-bit (2 colors)',
+      '5': 'Alpha+Indexed 4+4 (16 colors+α)'
+    };
+    
+    return formatNames[format] || `Unknown Format (${format})`;
+  }
+
   updateInfoPanel() {
     if (!this.infoPanel) return;
 
     let html = '<h3 style="margin: 0 0 15px 0; color: var(--text-primary, #fff); font-size: 14px; border-bottom: 1px solid var(--border-color, #555); padding-bottom: 8px;">D2 Texture Info</h3>';
 
-    if (this.imageData) {
-      const metadata = this.imageData.getD2Metadata ? this.imageData.getD2Metadata() : {};
-      
+    if (this.retroImage) {
       html += '<table style="width: 100%; border-collapse: collapse; font-size: 12px;">';
       
       // Essential information in clean table format
       const rows = [
-        ['Palette', metadata.paletteName || 'None'],
-        ['Format', `D2 (${metadata.baseFormat || 'Unknown'})`],
-        ['Dimensions', `${this.imageData.width || 0} × ${this.imageData.height || 0}`],
+        ['Format', this.getFormatDisplayName(this.retroImage._format)],
+        ['Dimensions', `${this.retroImage.width || 0} × ${this.retroImage.height || 0}`],
         ['Size', this.formatFileSize(this.file?.content?.byteLength || this.file?.content?.length || 0)],
-        ['Compression', metadata.isRLE ? 'RLE' : 'None'],
-        ['Flags', metadata.flags || 0]
+        ['Frames', this.retroImage.frames?.length || 0],
+        ['Current Frame', this.retroImage.currentFrame || 0]
       ];
+
+      // Add palette info if available
+      if (this.retroImage.palette) {
+        rows.push(['Palette Colors', this.retroImage.palette.length || 0]);
+      }
+
+      // Add palette offset if available
+      if (this.retroImage.paletteOffset !== undefined) {
+        rows.push(['Palette Offset', this.retroImage.paletteOffset]);
+      }
 
       rows.forEach(([label, value]) => {
         html += `
