@@ -537,7 +537,12 @@ class Palette {
 
   // Validation
   isValid() {
-    return this.colors.length > 0 && this.colors.every(color => this.isValidHex(color));
+    return this.colors.length > 0 && this.colors.every(color => 
+      color && 
+      typeof color.r === 'number' && color.r >= 0 && color.r <= 255 &&
+      typeof color.g === 'number' && color.g >= 0 && color.g <= 255 &&
+      typeof color.b === 'number' && color.b >= 0 && color.b <= 255
+    );
   }
 
   // String representation

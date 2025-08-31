@@ -895,7 +895,11 @@ class PaletteEditor extends EditorBase {
     for (let i = 0; i < this.paletteSize; i++) {
       const colorCell = document.createElement('div');
       colorCell.className = 'color-cell';
-      colorCell.style.backgroundColor = this.colors[i] || '#000000';
+      
+      // Convert RGB object to hex color for CSS
+      const colorObj = this.colors[i] || { r: 0, g: 0, b: 0 };
+      const hexColor = this.palette ? this.palette.rgbToHex(colorObj.r, colorObj.g, colorObj.b) : '#000000';
+      colorCell.style.backgroundColor = hexColor;
       colorCell.dataset.index = i;
       
       if (i === this.selectedColorIndex) {
@@ -940,18 +944,21 @@ class PaletteEditor extends EditorBase {
   }
 
   updateColorEditor() {
-    const color = this.colors[this.selectedColorIndex] || '#000000';
-    const rgb = this.hexToRgb(color);
+    const colorObj = this.colors[this.selectedColorIndex] || { r: 0, g: 0, b: 0 };
+    
+    // Convert RGB object to hex string for display
+    const hexColor = this.palette ? this.palette.rgbToHex(colorObj.r, colorObj.g, colorObj.b) : '#000000';
+    const rgb = colorObj; // RGB object is already available
     const hsl = this.rgbToHsl(rgb.r, rgb.g, rgb.b);
     
     // Update preview
     if (this.selectedColorPreview) {
-      this.selectedColorPreview.style.backgroundColor = color;
+      this.selectedColorPreview.style.backgroundColor = hexColor;
     }
     
     // Update inputs with null checks
-    if (this.hexInput) this.hexInput.value = color;
-    if (this.colorPicker) this.colorPicker.value = color;
+    if (this.hexInput) this.hexInput.value = hexColor;
+    if (this.colorPicker) this.colorPicker.value = hexColor;
     
     if (this.rgbInputs?.r) this.rgbInputs.r.value = rgb.r;
     if (this.rgbInputs?.g) this.rgbInputs.g.value = rgb.g;
@@ -997,6 +1004,7 @@ class PaletteEditor extends EditorBase {
     if (this.rgbSliders?.g) this.rgbSliders.g.value = g;
     if (this.rgbSliders?.b) this.rgbSliders.b.value = b;
     
+    // Convert to hex for setSelectedColor
     const hex = this.rgbToHex(r, g, b);
     this.setSelectedColor(hex);
   }
@@ -1011,6 +1019,7 @@ class PaletteEditor extends EditorBase {
     if (this.rgbInputs?.g) this.rgbInputs.g.value = g;
     if (this.rgbInputs?.b) this.rgbInputs.b.value = b;
     
+    // Convert to hex for setSelectedColor
     const hex = this.rgbToHex(r, g, b);
     this.setSelectedColor(hex);
   }
@@ -1282,11 +1291,12 @@ class PaletteEditor extends EditorBase {
   }
 
   updateFromColorPicker() {
-    if (this.selectedIndex >= 0) {
-      const color = this.colorPicker.value;
-      this.colors[this.selectedIndex] = color;
-      this.updateColorEditor(color);
-      this.generatePaletteGrid();
+    if (this.selectedColorIndex >= 0) {
+      const hexColor = this.colorPicker.value;
+      const rgb = this.hexToRgb(hexColor);
+      this.colors[this.selectedColorIndex] = { r: rgb.r, g: rgb.g, b: rgb.b };
+      this.updateColorEditor();
+      this.renderPaletteGrid();
       this.markDirty();
     }
   }
@@ -1296,21 +1306,26 @@ class PaletteEditor extends EditorBase {
     content += '#\n';
     
     for (let i = 0; i < this.colors.length; i++) {
-      const rgb = this.hexToRgb(this.colors[i]);
-      content += `${rgb.r.toString().padStart(3)} ${rgb.g.toString().padStart(3)} ${rgb.b.toString().padStart(3)} Color ${i}\n`;
+      const colorObj = this.colors[i] || { r: 0, g: 0, b: 0 };
+      content += `${colorObj.r.toString().padStart(3)} ${colorObj.g.toString().padStart(3)} ${colorObj.b.toString().padStart(3)} Color ${i}\n`;
     }
     
     return content;
   }
 
   exportToHex() {
-    return this.colors.join('\n');
+    return this.colors.map(colorObj => {
+      if (!colorObj || typeof colorObj.r !== 'number') return '#000000';
+      return this.palette ? this.palette.rgbToHex(colorObj.r, colorObj.g, colorObj.b) : '#000000';
+    }).join('\n');
   }
 
   exportToCSS() {
     let content = ':root {\n';
     for (let i = 0; i < this.colors.length; i++) {
-      content += `  --color-${i}: ${this.colors[i]};\n`;
+      const colorObj = this.colors[i] || { r: 0, g: 0, b: 0 };
+      const hexColor = this.palette ? this.palette.rgbToHex(colorObj.r, colorObj.g, colorObj.b) : '#000000';
+      content += `  --color-${i}: ${hexColor};\n`;
     }
     content += '}';
     return content;
