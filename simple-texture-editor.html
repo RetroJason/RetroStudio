@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Texture Editor</title>
+    <script src="scripts/graphics/palette-manager.js"></script>
+    <script src="scripts/graphics/image-new.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script src="scripts/editors/texture-editor-simple.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #0f0f0f;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #bbb;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Simple Texture Editor</h1>
+        <p class="subtitle">Clean, streamlined texture editor based on the successful workflow test</p>
+        
+        <div id="editor-container"></div>
+    </div>
+
+    <script>
+        window.onload = function() {
+            // Create and mount the simple texture editor
+            const editor = new SimpleTextureEditor();
+            const container = document.getElementById('editor-container');
+            editor.mount(container);
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,719 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Comprehensive Format Test Suite</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #2d2d2d;
+            color: #ffffff;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #555;
+            background: #3d3d3d;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #1e1e1e;
+            white-space: pre-wrap;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .error {
+            color: #ff6b6b;
+        }
+        .success {
+            color: #51cf66;
+        }
+        .info {
+            color: #74c0fc;
+        }
+        .warning {
+            color: #ffd43b;
+        }
+        canvas {
+            border: 1px solid #666;
+            margin: 10px 5px;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            width: 320px;
+            height: 320px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #495057;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #6c757d;
+        }
+        .big-button {
+            background: #0078d4;
+            color: white;
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .canvas-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .canvas-label {
+            min-width: 120px;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Comprehensive Format Test Suite</h1>
+    
+    <div class="test-section">
+        <h2>Test Control</h2>
+        <button onclick="runCompleteTest()" class="big-button">🚀 Run Complete Test Suite</button>
+        <button onclick="clearAllLogs()">Clear All Logs</button>
+        <button onclick="downloadTestImage()">💾 Download Test Image</button>
+        <button onclick="downloadTestPalette()">💾 Download Test Palette</button>
+        <button onclick="downloadAllD2Files()">💾 Download All D2 Files</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Images</h2>
+        <div class="canvas-row">
+            <div class="canvas-label">Generated Test:</div>
+            <canvas id="testCanvas" width="64" height="64"></canvas>
+            <div class="canvas-label">16x zoom:</div>
+            <canvas id="testCanvasZoom" width="256" height="256"></canvas>
+        </div>
+        <div class="canvas-row">
+            <div class="canvas-label">D2 ALPHA8:</div>
+            <canvas id="alpha8Canvas" width="64" height="64"></canvas>
+            <div class="canvas-label">D2 RGB565:</div>
+            <canvas id="rgb565Canvas" width="64" height="64"></canvas>
+        </div>
+        <div class="canvas-row">
+            <div class="canvas-label">D2 RGBA8888:</div>
+            <canvas id="rgba8888Canvas" width="64" height="64"></canvas>
+            <div class="canvas-label">D2 RGBA4444:</div>
+            <canvas id="rgba4444Canvas" width="64" height="64"></canvas>
+        </div>
+        <div class="canvas-row">
+            <div class="canvas-label">D2 I8 (256):</div>
+            <canvas id="i8Canvas" width="64" height="64"></canvas>
+            <canvas id="i8PaletteCanvas" width="256" height="16"></canvas>
+            <div class="canvas-label">D2 I4 (16):</div>
+            <canvas id="i4Canvas" width="64" height="64"></canvas>
+            <canvas id="i4PaletteCanvas" width="64" height="16"></canvas>
+        </div>
+        <div class="canvas-row">
+            <div class="canvas-label">D2 I2 (4):</div>
+            <canvas id="i2Canvas" width="64" height="64"></canvas>
+            <canvas id="i2PaletteCanvas" width="16" height="16"></canvas>
+            <div class="canvas-label">D2 I1 (2):</div>
+            <canvas id="i1Canvas" width="64" height="64"></canvas>
+            <canvas id="i1PaletteCanvas" width="8" height="16"></canvas>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Palette Visualization</h2>
+        <div class="canvas-row">
+            <div class="canvas-label">Full Test Palette (256):</div>
+            <canvas id="fullPaletteCanvas" width="256" height="16"></canvas>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <div id="testLog" class="test-result"></div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="scripts/graphics/palette.js"></script>
+    <script src="scripts/graphics/texture-format-utils.js"></script>
+    <script src="scripts/graphics/palette-manager.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script src="scripts/graphics/image.js"></script>
+
+    <script>
+        // Test state
+        let testImageData = null;
+        let testPalette = null;
+        let testResults = {};
+
+        function log(message, type = 'info') {
+            const element = document.getElementById('testLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : 'info';
+            element.innerHTML += `<span class="${className}">[${timestamp}] ${message}</span>\n`;
+            element.scrollTop = element.scrollHeight;
+            console.log(`[FormatTest][${type.toUpperCase()}] ${message}`);
+        }
+
+        function clearAllLogs() {
+            document.getElementById('testLog').innerHTML = '';
+        }
+
+        // Generate a 16x16 test image with sequential colors
+        function generateTestImage() {
+            log('Generating 16x16 test image with sequential colors...');
+            
+            const canvas = document.getElementById('testCanvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 16;
+            canvas.height = 16;
+            
+            // Disable image smoothing for pixel-perfect rendering
+            ctx.imageSmoothingEnabled = false;
+            ctx.webkitImageSmoothingEnabled = false;
+            ctx.mozImageSmoothingEnabled = false;
+            ctx.msImageSmoothingEnabled = false;
+            
+            // Create image data
+            const imageData = ctx.createImageData(16, 16);
+            const data = imageData.data;
+            
+            for (let y = 0; y < 16; y++) {
+                for (let x = 0; x < 16; x++) {
+                    const pixelIndex = (y * 16 + x) * 4;
+                    const colorIndex = y * 16 + x; // 0-255
+                    
+                    // Generate distinct colors for each pixel
+                    // Use a pattern that creates visible differences
+                    const r = (colorIndex * 7) % 256;       // Red component with step 7
+                    const g = (colorIndex * 11) % 256;      // Green component with step 11
+                    const b = (colorIndex * 13) % 256;      // Blue component with step 13
+                    const a = 255;                          // Full alpha
+                    
+                    data[pixelIndex] = r;
+                    data[pixelIndex + 1] = g;
+                    data[pixelIndex + 2] = b;
+                    data[pixelIndex + 3] = a;
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+            
+            // Create zoomed version for easier viewing
+            const zoomCanvas = document.getElementById('testCanvasZoom');
+            const zoomCtx = zoomCanvas.getContext('2d');
+            zoomCanvas.width = 256;
+            zoomCanvas.height = 256;
+            
+            // Disable image smoothing for pixel-perfect scaling
+            zoomCtx.imageSmoothingEnabled = false;
+            zoomCtx.webkitImageSmoothingEnabled = false;
+            zoomCtx.mozImageSmoothingEnabled = false;
+            zoomCtx.msImageSmoothingEnabled = false;
+            
+            zoomCtx.drawImage(canvas, 0, 0, 256, 256);
+            
+            log('✓ Test image generated: 16x16 with 256 sequential colors', 'success');
+            return canvas;
+        }
+
+        // Generate a test palette with 256 colors
+        function generateTestPalette() {
+            log('Generating test palette with 256 colors...');
+            
+            testPalette = new Palette();
+            testPalette.colors = [];
+            
+            // Generate a palette that gives better results for small indexed formats
+            // Include key colors like black, white, primary colors first
+            const keyColors = [
+                {r: 0, g: 0, b: 0},         // Black
+                {r: 255, g: 255, b: 255},   // White  
+                {r: 255, g: 0, b: 0},       // Red
+                {r: 0, g: 255, b: 0},       // Green
+                {r: 0, g: 0, b: 255},       // Blue
+                {r: 255, g: 255, b: 0},     // Yellow
+                {r: 255, g: 0, b: 255},     // Magenta
+                {r: 0, g: 255, b: 255},     // Cyan
+                {r: 128, g: 128, b: 128},   // Gray
+                {r: 255, g: 128, b: 0},     // Orange
+                {r: 128, g: 0, b: 128},     // Purple
+                {r: 0, g: 128, b: 128},     // Teal
+                {r: 128, g: 128, b: 0},     // Olive
+                {r: 192, g: 192, b: 192},   // Light Gray
+                {r: 64, g: 64, b: 64},      // Dark Gray
+                {r: 128, g: 64, b: 0}       // Brown
+            ];
+            
+            // Add key colors first
+            for (let i = 0; i < Math.min(keyColors.length, 256); i++) {
+                testPalette.colors.push(keyColors[i]);
+            }
+            
+            // Fill remaining slots with distributed colors
+            for (let i = keyColors.length; i < 256; i++) {
+                // Original sequential pattern for remaining colors
+                const r = (i * 7) % 256;
+                const g = (i * 11) % 256;
+                const b = (i * 13) % 256;
+                
+                testPalette.colors.push({r, g, b});
+            }
+            
+            log(`✓ Test palette generated: ${testPalette.colors.length} colors`, 'success');
+            return testPalette;
+        }
+
+        // Draw palette visualization 
+        function drawPaletteCanvas(canvasId, palette, usedIndices = null) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) {
+                log(`Canvas ${canvasId} not found`);
+                return;
+            }
+            
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Clear canvas
+            ctx.fillStyle = '#222';
+            ctx.fillRect(0, 0, width, height);
+            
+            if (!palette || palette.length === 0) {
+                ctx.fillStyle = '#666';
+                ctx.fillRect(0, 0, width, height);
+                return;
+            }
+            
+            // Draw palette colors
+            const colorsPerRow = Math.min(palette.length, width);
+            const colorWidth = width / colorsPerRow;
+            
+            for (let i = 0; i < palette.length && i < colorsPerRow; i++) {
+                const color = palette[i];
+                const r = color.r || 0;
+                const g = color.g || 0;
+                const b = color.b || 0;
+                
+                ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                ctx.fillRect(i * colorWidth, 0, colorWidth, height);
+                
+                // Add highlight border if this color is used in the image
+                if (usedIndices && usedIndices.includes(i)) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(i * colorWidth + 1, 1, colorWidth - 2, height - 2);
+                } else if (usedIndices && !usedIndices.includes(i)) {
+                    // Add dim overlay for unused colors
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fillRect(i * colorWidth, 0, colorWidth, height);
+                }
+            }
+        }
+
+        // Create ImageData instance from test canvas
+        function createTestImageData(canvas) {
+            log('Creating ImageData instance...');
+            
+            testImageData = new ImageData();
+            testImageData.loadFromImageElement(canvas);
+            testImageData.palette = testPalette;
+            
+            log(`✓ ImageData created: ${testImageData.width}x${testImageData.height}, ${testImageData.frames.length} frames`, 'success');
+            return testImageData;
+        }
+
+        // Test a specific D2 format
+        async function testD2Format(formatName, formatValue) {
+            log(`Testing D2 format: ${formatName} (${formatValue})...`);
+            
+            try {
+                const exportOptions = {
+                    format: formatValue,
+                    useRLE: false,
+                    flags: 0
+                };
+                
+                // Add palette for indexed formats
+                if (formatName.startsWith('I')) {
+                    exportOptions.palette = testPalette.colors;
+                }
+                
+                log(`Export options: ${JSON.stringify(exportOptions)}`);
+                
+                // Export to D2
+                const d2Buffer = testImageData.exportToD2Binary(exportOptions);
+                log(`✓ D2 export completed: ${d2Buffer.byteLength} bytes`);
+                
+                // Save D2 buffer to global for inspection
+                window[`testD2_${formatName}`] = d2Buffer;
+                
+                // Show hex dump of first 32 bytes
+                const hexDump = [];
+                const uint8View = new Uint8Array(d2Buffer);
+                for (let i = 0; i < Math.min(32, d2Buffer.byteLength); i += 16) {
+                    const row = [];
+                    for (let j = 0; j < 16 && (i + j) < d2Buffer.byteLength; j++) {
+                        const byte = uint8View[i + j];
+                        row.push(byte.toString(16).padStart(2, '0').toUpperCase());
+                    }
+                    const offset = i.toString(16).padStart(4, '0').toUpperCase();
+                    hexDump.push(`  ${offset}: ${row.join(' ')}`);
+                }
+                log(`D2 hex dump (first 32 bytes):\n${hexDump.join('\n')}`);
+                
+                // Analyze header
+                const view = new DataView(d2Buffer);
+                const header = analyzeD2Header(view);
+                
+                log(`Header analysis for ${formatName}:`);
+                log(`  Magic: 0x${header.magic.toString(16)} ${header.magic === 0x3244 ? '✓' : '✗'}`);
+                log(`  Dimensions: ${header.width}x${header.height}`);
+                log(`  Format: ${header.format} (expected: ${formatValue})`);
+                log(`  Is Indexed: ${header.isIndexed}`);
+                log(`  Is RLE: ${header.isRLE}`);
+                
+                // Calculate expected sizes
+                const pixelCount = header.width * header.height;
+                let expectedPixelSize;
+                let expectedPaletteSize = 0;
+                
+                switch (formatValue) {
+                    case ImageData.D2_FORMAT.ALPHA8:
+                        expectedPixelSize = pixelCount * 1;
+                        break;
+                    case ImageData.D2_FORMAT.RGB565:
+                        expectedPixelSize = pixelCount * 2;
+                        break;
+                    case ImageData.D2_FORMAT.RGBA4444:
+                        expectedPixelSize = pixelCount * 2;
+                        break;
+                    case ImageData.D2_FORMAT.RGBA8888:
+                        expectedPixelSize = pixelCount * 4;
+                        break;
+                    case ImageData.D2_FORMAT.I8:
+                        expectedPixelSize = pixelCount * 1;
+                        expectedPaletteSize = 256 * 4;
+                        break;
+                    case ImageData.D2_FORMAT.I4:
+                        expectedPixelSize = Math.ceil(pixelCount / 2); // 4 bits per pixel
+                        expectedPaletteSize = 16 * 4;
+                        break;
+                    case ImageData.D2_FORMAT.I2:
+                        expectedPixelSize = Math.ceil(pixelCount / 4); // 2 bits per pixel
+                        expectedPaletteSize = 4 * 4;
+                        break;
+                    case ImageData.D2_FORMAT.I1:
+                        expectedPixelSize = Math.ceil(pixelCount / 8); // 1 bit per pixel
+                        expectedPaletteSize = 2 * 4;
+                        break;
+                    default:
+                        expectedPixelSize = pixelCount * 4; // fallback
+                }
+                
+                const headerSize = 25; // Based on D2 format spec
+                const actualDataSize = d2Buffer.byteLength - headerSize;
+                const expectedTotalSize = expectedPixelSize + expectedPaletteSize;
+                
+                log(`  Expected pixel data: ${expectedPixelSize} bytes`);
+                log(`  Expected palette: ${expectedPaletteSize} bytes`);
+                log(`  Expected total data: ${expectedTotalSize} bytes`);
+                log(`  Actual data size: ${actualDataSize} bytes`);
+                
+                const sizeMatch = actualDataSize === expectedTotalSize;
+                log(`  Size validation: ${sizeMatch ? '✓ CORRECT' : '✗ INCORRECT'}`, sizeMatch ? 'success' : 'error');
+                
+                // Test round-trip: load the D2 data back
+                log(`Attempting round-trip test for ${formatName}...`);
+                const roundTripImageData = new ImageData();
+                
+                // Use the D2FormatHandler directly and then populate ImageData
+                const d2Data = roundTripImageData.d2Handler.loadFromD2Binary(d2Buffer);
+                
+                // Populate the ImageData instance with the loaded data
+                roundTripImageData.width = d2Data.width;
+                roundTripImageData.height = d2Data.height;
+                roundTripImageData.frames = d2Data.frames || [];
+                roundTripImageData.metadata = d2Data.metadata || {};
+                
+                log(`✓ Round-trip successful: ${roundTripImageData.width}x${roundTripImageData.height}, ${roundTripImageData.frames.length} frames`, 'success');
+                
+                // Draw the result to canvas for visual comparison
+                const canvasId = formatName.toLowerCase() + 'Canvas';
+                const resultCanvas = document.getElementById(canvasId);
+                log(`Looking for canvas: ${canvasId}`);
+                
+                if (resultCanvas && roundTripImageData.frames.length > 0) {
+                    const resultCtx = resultCanvas.getContext('2d');
+                    resultCanvas.width = 16;
+                    resultCanvas.height = 16;
+                    
+                    // Disable image smoothing for pixel-perfect rendering
+                    resultCtx.imageSmoothingEnabled = false;
+                    resultCtx.webkitImageSmoothingEnabled = false;
+                    resultCtx.mozImageSmoothingEnabled = false;
+                    resultCtx.msImageSmoothingEnabled = false;
+                    
+                    const frame = roundTripImageData.frames[0];
+                    log(`Frame available: ${frame ? 'yes' : 'no'}, Frame keys: ${frame ? Object.keys(frame).join(',') : 'none'}`);
+                    
+                    if (frame && frame.canvas) {
+                        resultCtx.drawImage(frame.canvas, 0, 0, 16, 16);
+                        log(`✓ Visual result drawn from canvas to ${canvasId}`, 'success');
+                    } else if (frame && frame.data) {
+                        // The frame data is always RGBA from D2FormatHandler.convertD2ToRGBA()
+                        // So let's use it even if the size is unexpected
+                        const expectedRGBASize = 16 * 16 * 4; // 1024 bytes for 16x16 RGBA
+                        
+                        if (frame.data.length >= expectedRGBASize) {
+                            // Take only the first 1024 bytes (16x16 RGBA)
+                            const imageData = resultCtx.createImageData(16, 16);
+                            imageData.data.set(frame.data.slice(0, expectedRGBASize));
+                            resultCtx.putImageData(imageData, 0, 0);
+                            log(`✓ Visual result drawn from RGBA data to ${canvasId} (used first ${expectedRGBASize} of ${frame.data.length} bytes)`, 'success');
+                        } else {
+                            log(`⚠ Frame data too small: ${frame.data.length} (need ${expectedRGBASize})`, 'warning');
+                        }
+                    } else {
+                        log(`⚠ No canvas or data in frame for ${formatName}`, 'warning');
+                    }
+                } else {
+                    if (!resultCanvas) {
+                        log(`⚠ Canvas ${canvasId} not found`, 'warning');
+                    } else {
+                        log(`⚠ No frames available (${roundTripImageData.frames.length})`, 'warning');
+                    }
+                }
+                
+                // Draw palette for indexed formats
+                if (formatName.startsWith('I')) {
+                    const paletteCanvasId = formatName.toLowerCase() + 'PaletteCanvas';
+                    
+                    // Extract actual palette from D2 buffer
+                    let actualPalette = null;
+                    if (header.isIndexed && d2Buffer.byteLength > 25) { // D2_HEADER_SIZE = 25
+                        const paletteSize = formatValue === 9 ? 256 : formatValue === 10 ? 16 : formatValue === 11 ? 4 : 2;
+                        
+                        const paletteStartOffset = 25; // D2_HEADER_SIZE
+                        const paletteView = new DataView(d2Buffer, paletteStartOffset, paletteSize * 4);
+                        
+                        actualPalette = [];
+                        for (let i = 0; i < paletteSize; i++) {
+                            const offset = i * 4;
+                            actualPalette.push({
+                                r: paletteView.getUint8(offset),
+                                g: paletteView.getUint8(offset + 1),
+                                b: paletteView.getUint8(offset + 2)
+                                // Alpha at offset + 3 if needed
+                            });
+                        }
+                        
+                        log(`Extracted ${actualPalette.length} colors from D2 buffer palette`, 'info');
+                        if (actualPalette.length <= 16) {
+                            // Log first few colors for debugging small palettes
+                            const colorStr = actualPalette.slice(0, Math.min(8, actualPalette.length))
+                                .map(c => `rgb(${c.r},${c.g},${c.b})`).join(', ');
+                            log(`First colors: ${colorStr}`, 'info');
+                        }
+                    }
+                    
+                    // Use extracted palette or fall back to expected quantized palette
+                    const displayPalette = actualPalette || (() => {
+                        let maxColors;
+                        switch (formatValue) {
+                            case ImageData.D2_FORMAT.I8: maxColors = 256; break;
+                            case ImageData.D2_FORMAT.I4: maxColors = 16; break;
+                            case ImageData.D2_FORMAT.I2: maxColors = 4; break;
+                            case ImageData.D2_FORMAT.I1: maxColors = 2; break;
+                            default: maxColors = 256;
+                        }
+                        return testPalette.colors.slice(0, maxColors);
+                    })();
+                    
+                    drawPaletteCanvas(paletteCanvasId, displayPalette);
+                    log(`✓ Palette visualization drawn: ${displayPalette.length} colors to ${paletteCanvasId}`, 'success');
+                }
+                
+                // Store result
+                testResults[formatName] = {
+                    success: true,
+                    bufferSize: d2Buffer.byteLength,
+                    sizeMatch: sizeMatch,
+                    roundTripSuccess: true,
+                    header: header
+                };
+                
+                log(`✓ ${formatName} test completed successfully`, 'success');
+                
+            } catch (error) {
+                log(`✗ ${formatName} test failed: ${error.message}`, 'error');
+                console.error(`${formatName} test error:`, error);
+                
+                testResults[formatName] = {
+                    success: false,
+                    error: error.message
+                };
+            }
+        }
+
+        // Analyze D2 header
+        function analyzeD2Header(view) {
+            const formatByte = view.getUint8(8);
+            const flagsByte = view.getUint8(7);
+            return {
+                magic: view.getUint16(0, true),
+                width: view.getUint16(2, true),
+                height: view.getUint16(4, true),
+                prerotation: view.getUint8(6),
+                flags: flagsByte,
+                formatByte: formatByte,
+                format: formatByte,
+                isRLE: (flagsByte & 0x20) !== 0,
+                isIndexed: (flagsByte & 0x40) !== 0
+            };
+        }
+
+        // Run the complete test suite
+        async function runCompleteTest() {
+            clearAllLogs();
+            log('=== STARTING COMPREHENSIVE FORMAT TEST ===', 'info');
+            
+            testResults = {};
+            
+            try {
+                // Step 1: Generate test image and palette
+                const testCanvas = generateTestImage();
+                generateTestPalette();
+                createTestImageData(testCanvas);
+                
+                // Draw full palette visualization
+                drawPaletteCanvas('fullPaletteCanvas', testPalette.colors);
+                log(`✓ Full palette visualization drawn: ${testPalette.colors.length} colors`, 'success');
+                
+                // Step 2: Test all D2 formats
+                log('\n=== TESTING D2 FORMATS ===', 'info');
+                
+                const formats = [
+                    ['ALPHA8', ImageData.D2_FORMAT.ALPHA8],
+                    ['RGB565', ImageData.D2_FORMAT.RGB565],
+                    ['RGBA8888', ImageData.D2_FORMAT.RGBA8888],
+                    ['RGBA4444', ImageData.D2_FORMAT.RGBA4444],
+                    ['I8', ImageData.D2_FORMAT.I8],
+                    ['I4', ImageData.D2_FORMAT.I4],
+                    ['I2', ImageData.D2_FORMAT.I2],
+                    ['I1', ImageData.D2_FORMAT.I1]
+                ];
+                
+                for (const [formatName, formatValue] of formats) {
+                    log(`\n--- Testing ${formatName} ---`);
+                    await testD2Format(formatName, formatValue);
+                }
+                
+                // Step 3: Summary
+                log('\n=== TEST SUMMARY ===', 'info');
+                
+                let passCount = 0;
+                let failCount = 0;
+                
+                for (const [formatName, result] of Object.entries(testResults)) {
+                    if (result.success) {
+                        passCount++;
+                        log(`✓ ${formatName}: PASS (${result.bufferSize} bytes, size match: ${result.sizeMatch})`, 'success');
+                    } else {
+                        failCount++;
+                        log(`✗ ${formatName}: FAIL (${result.error})`, 'error');
+                    }
+                }
+                
+                log(`\nResults: ${passCount} passed, ${failCount} failed`, passCount === formats.length ? 'success' : 'warning');
+                log('=== TEST COMPLETE ===', 'success');
+                
+            } catch (error) {
+                log(`Test suite failed: ${error.message}`, 'error');
+                console.error('Test suite error:', error);
+            }
+        }
+
+        // Download test image as PNG
+        function downloadTestImage() {
+            const canvas = document.getElementById('testCanvas');
+            if (canvas) {
+                const link = document.createElement('a');
+                link.download = 'test-image-16x16.png';
+                link.href = canvas.toDataURL();
+                link.click();
+                log('✓ Test image downloaded as test-image-16x16.png', 'success');
+            } else {
+                log('✗ No test image available to download', 'error');
+            }
+        }
+
+        // Download test palette as ACT
+        function downloadTestPalette() {
+            if (!testPalette) {
+                log('✗ No test palette available to download', 'error');
+                return;
+            }
+            
+            try {
+                // Create ACT format data (768 bytes: 256 colors × 3 bytes RGB)
+                const actData = new Uint8Array(768);
+                
+                for (let i = 0; i < 256; i++) {
+                    const color = testPalette.colors[i];
+                    actData[i * 3] = color.r;
+                    actData[i * 3 + 1] = color.g;
+                    actData[i * 3 + 2] = color.b;
+                }
+                
+                const blob = new Blob([actData], { type: 'application/octet-stream' });
+                const link = document.createElement('a');
+                link.download = 'test-palette-256.act';
+                link.href = URL.createObjectURL(blob);
+                link.click();
+                
+                log('✓ Test palette downloaded as test-palette-256.act', 'success');
+                
+            } catch (error) {
+                log(`✗ Failed to download palette: ${error.message}`, 'error');
+            }
+        }
+
+        // Download all D2 files
+        function downloadAllD2Files() {
+            const formatNames = ['ALPHA8', 'RGB565', 'RGBA8888', 'RGBA4444', 'I8', 'I4', 'I2', 'I1'];
+            let downloadCount = 0;
+            
+            for (const formatName of formatNames) {
+                const buffer = window[`testD2_${formatName}`];
+                if (buffer) {
+                    const blob = new Blob([buffer], { type: 'application/octet-stream' });
+                    const link = document.createElement('a');
+                    link.download = `test-${formatName.toLowerCase()}.d2`;
+                    link.href = URL.createObjectURL(blob);
+                    link.click();
+                    downloadCount++;
+                }
+            }
+            
+            if (downloadCount > 0) {
+                log(`✓ Downloaded ${downloadCount} D2 files`, 'success');
+            } else {
+                log('✗ No D2 files available. Run test suite first.', 'error');
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('🚀 Comprehensive Format Test Suite Ready');
+            log('Click "Run Complete Test Suite" to test all D2 formats with generated test data');
+        });
+    </script>
+</body>
+</html>

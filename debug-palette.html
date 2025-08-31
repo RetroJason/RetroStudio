@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Palette</title>
+</head>
+<body>
+    <h1>Debug Palette Test</h1>
+    <div>
+        <h2>Test Palette (like working test)</h2>
+        <canvas id="testCanvas" width="256" height="1"></canvas>
+    </div>
+    <div>
+        <h2>Transparency Palette (like texture editor)</h2>
+        <canvas id="transCanvas" width="256" height="1"></canvas>
+    </div>
+    <div>
+        <h2>Debug Output</h2>
+        <pre id="output"></pre>
+    </div>
+
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script>
+        function log(msg) {
+            document.getElementById('output').textContent += msg + '\n';
+        }
+
+        // Generate test palette (like working test - all entries opaque)
+        function generateTestPalette() {
+            const palette = [];
+            for (let i = 0; i < 256; i++) {
+                palette.push({
+                    r: Math.floor((i % 8) * 255 / 7),
+                    g: Math.floor(((i >> 3) % 8) * 255 / 7),
+                    b: Math.floor(((i >> 6) % 4) * 255 / 3),
+                    a: 255  // All entries opaque
+                });
+            }
+            return palette;
+        }
+
+        // Generate transparency palette (like texture editor - index 0 transparent)
+        function generateTransparencyPalette() {
+            const palette = [];
+            for (let i = 0; i < 256; i++) {
+                palette.push({
+                    r: Math.floor((i % 8) * 255 / 7),
+                    g: Math.floor(((i >> 3) % 8) * 255 / 7),
+                    b: Math.floor(((i >> 6) % 4) * 255 / 3),
+                    a: i === 0 ? 0 : 255  // Index 0 transparent, others opaque
+                });
+            }
+            return palette;
+        }
+
+        // Draw palette to canvas
+        function drawPalette(canvas, palette) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(256, 1);
+            
+            for (let i = 0; i < 256; i++) {
+                const color = palette[i];
+                imageData.data[i * 4] = color.r;
+                imageData.data[i * 4 + 1] = color.g;
+                imageData.data[i * 4 + 2] = color.b;
+                imageData.data[i * 4 + 3] = color.a;
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+        }
+
+        async function testConversion() {
+            const d2Handler = new D2FormatHandler();
+            
+            log('Testing D2 conversion with different palettes...\n');
+
+            // Create simple 2x2 indexed image
+            const indexedData = new Uint8Array([0, 1, 2, 3]); // 4 pixels using indices 0,1,2,3
+            const width = 2;
+            const height = 2;
+
+            // Test with opaque palette (like working test)
+            log('=== Test Palette (all opaque) ===');
+            const testPalette = generateTestPalette();
+            log(`Index 0: r=${testPalette[0].r}, g=${testPalette[0].g}, b=${testPalette[0].b}, a=${testPalette[0].a}`);
+            log(`Index 1: r=${testPalette[1].r}, g=${testPalette[1].g}, b=${testPalette[1].b}, a=${testPalette[1].a}`);
+            
+            log('\n--- Reserve Transparency Mode (old behavior) ---');
+            try {
+                const result1a = await d2Handler.roundTripConversion(indexedData, width, height, {
+                    format: 'd2_mode_i8',
+                    palette: testPalette,
+                    paletteName: 'test-palette',
+                    reserveTransparency: true
+                });
+                log(`Result: ${result1a.rgbaData.length} bytes RGBA data`);
+                log(`First pixel: r=${result1a.rgbaData[0]}, g=${result1a.rgbaData[1]}, b=${result1a.rgbaData[2]}, a=${result1a.rgbaData[3]}`);
+            } catch (e) {
+                log(`Error: ${e.message}`);
+            }
+            
+            log('\n--- Use Palette As-Is Mode (new behavior) ---');
+            try {
+                const result1b = await d2Handler.roundTripConversion(indexedData, width, height, {
+                    format: 'd2_mode_i8',
+                    palette: testPalette,
+                    paletteName: 'test-palette',
+                    reserveTransparency: false
+                });
+                log(`Result: ${result1b.rgbaData.length} bytes RGBA data`);
+                log(`First pixel: r=${result1b.rgbaData[0]}, g=${result1b.rgbaData[1]}, b=${result1b.rgbaData[2]}, a=${result1b.rgbaData[3]}`);
+            } catch (e) {
+                log(`Error: ${e.message}`);
+            }
+
+            log('\n=== Transparency Palette (index 0 transparent) ===');
+            const transPalette = generateTransparencyPalette();
+            log(`Index 0: r=${transPalette[0].r}, g=${transPalette[0].g}, b=${transPalette[0].b}, a=${transPalette[0].a}`);
+            log(`Index 1: r=${transPalette[1].r}, g=${transPalette[1].g}, b=${transPalette[1].b}, a=${transPalette[1].a}`);
+            
+            log('\n--- Use Palette As-Is Mode (should preserve index 0 transparency) ---');
+            try {
+                const result2 = await d2Handler.roundTripConversion(indexedData, width, height, {
+                    format: 'd2_mode_i8',
+                    palette: transPalette,
+                    paletteName: 'trans-palette',
+                    reserveTransparency: false
+                });
+                log(`Result: ${result2.rgbaData.length} bytes RGBA data`);
+                log(`First pixel: r=${result2.rgbaData[0]}, g=${result2.rgbaData[1]}, b=${result2.rgbaData[2]}, a=${result2.rgbaData[3]}`);
+            } catch (e) {
+                log(`Error: ${e.message}`);
+            }
+
+            // Draw palettes for visual comparison
+            drawPalette(document.getElementById('testCanvas'), testPalette);
+            drawPalette(document.getElementById('transCanvas'), transPalette);
+        }
+
+        window.onload = testConversion;
+    </script>
+</body>
+</html>

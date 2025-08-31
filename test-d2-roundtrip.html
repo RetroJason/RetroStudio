@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>D2 Format Round-Trip Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #2d2d2d;
+            color: #ffffff;
+        }
+        
+        h1, h2 {
+            color: #ffd700;
+            border-bottom: 2px solid #ffd700;
+            padding-bottom: 5px;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 5px;
+        }
+        
+        .format-result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #3d3d3d;
+            border-radius: 3px;
+        }
+        
+        .canvas-row {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            gap: 15px;
+        }
+        
+        .canvas-label {
+            min-width: 120px;
+            font-weight: bold;
+        }
+        
+        canvas {
+            border: 1px solid #666;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .success {
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.1);
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #106ebe;
+        }
+        
+        #test-results {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>D2 Format Round-Trip Test</h1>
+    <p>Testing D2 format round-trip: Original RGBA → D2 Binary → Back to RGBA</p>
+    
+    <div class="test-section">
+        <h2>Controls</h2>
+        <button onclick="runD2RoundTripTest()">Run D2 Round-Trip Test</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <div id="test-results"></div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="scripts/graphics/palette.js"></script>
+    <script src="scripts/graphics/texture-format-utils.js"></script>
+    <script src="scripts/graphics/palette-manager.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script src="scripts/graphics/image-new.js"></script>
+
+    <script>
+        function clearResults() {
+            document.getElementById('test-results').innerHTML = '';
+            console.clear();
+        }
+
+        function drawImageToCanvas(canvasId, rgbaData, width, height) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return false;
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+            imageData.data.set(rgbaData);
+            ctx.putImageData(imageData, 0, 0);
+            
+            return true;
+        }
+
+        function drawImageDataToCanvas(canvasId, imageData) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !imageData) return false;
+            
+            canvas.width = 64;
+            canvas.height = 64;
+            
+            const ctx = canvas.getContext('2d');
+            
+            // Create a temporary canvas to draw the ImageData at original size
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = imageData.width;
+            tempCanvas.height = imageData.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            // Scale and draw to display canvas
+            ctx.imageSmoothingEnabled = false; // Pixel art scaling
+            ctx.drawImage(tempCanvas, 0, 0, 64, 64);
+            
+            return true;
+        }
+
+        function drawPaletteToCanvas(canvasId, paletteColors) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !paletteColors) return false;
+            
+            const paletteSize = Math.min(paletteColors.length, 256);
+            const colsPerRow = 16;
+            const rows = Math.ceil(paletteSize / colsPerRow);
+            
+            canvas.width = colsPerRow * 8;
+            canvas.height = rows * 8;
+            
+            const ctx = canvas.getContext('2d');
+            
+            for (let i = 0; i < paletteSize; i++) {
+                const color = paletteColors[i];
+                const x = (i % colsPerRow) * 8;
+                const y = Math.floor(i / colsPerRow) * 8;
+                
+                // Handle RGBA objects from new RetroImage API
+                ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                ctx.fillRect(x, y, 8, 8);
+            }
+            
+            return true;
+        }
+
+        async function renderComparison(formatName, originalImageData, roundTripImageData, extractedPalette) {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'format-result';
+            
+            // Only show palette section for indexed formats (including AI44)
+            const paletteSection = (formatName.includes('_i') || formatName === 'd2_mode_ai44') ? 
+                `<div class="canvas-label">Extracted Palette:</div>
+                 <canvas id="${formatName}_palette" width="128" height="32"></canvas>` : '';
+            
+            resultDiv.innerHTML = `
+                <h3>${formatName} Round-Trip Test</h3>
+                <div class="canvas-row">
+                    <div class="canvas-label">Original:</div>
+                    <canvas id="${formatName}_original" width="64" height="64"></canvas>
+                    <div class="canvas-label">D2 Round-trip:</div>
+                    <canvas id="${formatName}_converted" width="64" height="64"></canvas>
+                    ${paletteSection}
+                </div>
+                <p>Original: ${originalImageData.width}x${originalImageData.height}, Round-trip: ${roundTripImageData.width}x${roundTripImageData.height}</p>
+            `;
+            
+            document.getElementById('test-results').appendChild(resultDiv);
+            
+            // Draw the images using ImageData directly
+            drawImageDataToCanvas(`${formatName}_original`, originalImageData);
+            drawImageDataToCanvas(`${formatName}_converted`, roundTripImageData);
+            
+            // Draw extracted palette only for indexed formats (including AI44)
+            if ((formatName.includes('_i') || formatName === 'd2_mode_ai44') && extractedPalette && extractedPalette.length > 0) {
+                drawPaletteToCanvas(`${formatName}_palette`, extractedPalette);
+            }
+        }
+
+        async function runD2RoundTripTest() {
+            console.log('\n=== D2 FORMAT ROUND-TRIP TEST ===');
+            clearResults();
+            
+            try {
+                // Step 1: Load PNG using new RetroImage class (clean API)
+                console.log('[TEST] Step 1: Loading test2.png via RetroImage class...');
+                const canvas = await loadImageToCanvas('test2.png');
+                const image = RetroImage.fromCanvas(canvas);
+                console.log(`[TEST] Loaded image: ${image.width}x${image.height}`);
+                
+                // Step 2: Extract palette only for indexed formats (we'll do this per format)
+                console.log('[TEST] Step 2: Will extract palette only for indexed formats...');
+                
+                // Step 3: Test actually implemented D2 formats using only RetroImage class methods
+                const testFormats = [
+                    // Direct color formats (implemented in convertRGBAToD2Direct)
+                    'd2_mode_rgba8888',
+                    'd2_mode_rgba4444', 
+                    'd2_mode_rgb565',
+                    'd2_mode_alpha8',
+                    // Note: ALPHA4, ALPHA2, ALPHA1 exist but not exposed via d2_mode_ names
+                    
+                    // Indexed formats (implemented in convertRGBAToD2Indexed)
+                    'd2_mode_ai44',  // Alpha-Intensity 44 (indexed with alpha)
+                    'd2_mode_i8',    // 8-bit indexed
+                    'd2_mode_i4',    // 4-bit indexed
+                    'd2_mode_i2',    // 2-bit indexed
+                    'd2_mode_i1'     // 1-bit indexed
+                ];
+                
+                let extractedPalette = null;
+                
+                for (const formatName of testFormats) {
+                    console.log(`\n--- Testing ${formatName} ---`);
+                    
+                    try {
+                        // Configure the image for this format
+                        image.setFormat(formatName);
+                        
+                        // Set palette for indexed formats (including AI44)
+                        if (formatName.includes('_i') || formatName === 'd2_mode_ai44') {
+                            if (!extractedPalette) {
+                                console.log(`[${formatName}] Extracting palette for indexed formats...`);
+                                extractedPalette = image.extractPalette(256);
+                                console.log(`[${formatName}] Extracted palette: ${extractedPalette.length} colors`);
+                            }
+                            image.setPalette(extractedPalette);
+                            image.setPaletteOffset(0);
+                        } else {
+                            console.log(`[${formatName}] Using direct color format (no palette needed)`);
+                        }
+                        
+                        console.log(`[${formatName}] Converting to D2 format...`);
+                        const d2Data = await image.toD2();
+                        console.log(`[${formatName}] Generated ${d2Data.byteLength} bytes of D2 data`);
+                        
+                        console.log(`[${formatName}] Loading D2 data back to image...`);
+                        const roundTripImage = await RetroImage.fromD2(d2Data);
+                        console.log(`[${formatName}] Round-trip image: ${roundTripImage.width}x${roundTripImage.height}`);
+                        
+                        console.log(`[${formatName}] Rendering both images for comparison...`);
+                        const originalImageData = image.toImageData();
+                        const roundTripImageData = roundTripImage.toImageData();
+                        
+                        // Display results
+                        await renderComparison(formatName, originalImageData, roundTripImageData, extractedPalette);
+                        
+                    } catch (error) {
+                        console.error(`[${formatName}] Test failed:`, error);
+                        const errorDiv = document.createElement('div');
+                        errorDiv.className = 'format-result error';
+                        errorDiv.innerHTML = `<h3>${formatName} - ERROR</h3><p>${error.message}</p>`;
+                        document.getElementById('test-results').appendChild(errorDiv);
+                    }
+                }
+                
+            } catch (error) {
+                console.error('[TEST] Failed to load test image:', error);
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'format-result error';
+                errorDiv.innerHTML = `<h3>TEST SETUP ERROR</h3><p>${error.message}</p>`;
+                document.getElementById('test-results').appendChild(errorDiv);
+            }
+            
+            console.log('\n=== D2 ROUND-TRIP TEST COMPLETE ===');
+        }
+        
+        // Helper function to load image to canvas (minimal processing)
+        async function loadImageToCanvas(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();  // Correct way to create image element
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    resolve(canvas);
+                };
+                img.onerror = () => reject(new Error(`Failed to load ${src}`));
+                img.src = src;
+            });
+        }
+    </script>
+</body>
+</html>

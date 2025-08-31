@@ -154,7 +154,7 @@ class Palette {
           const b = parseInt(parts[2]);
 
           if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
-            this.colors.push(this.rgbToHex(r, g, b));
+            this.colors.push({r, g, b, a: 255});
           }
         }
       }
@@ -205,7 +205,7 @@ class Palette {
         const r = bytes[offset];
         const g = bytes[offset + 1];
         const b = bytes[offset + 2];
-        this.colors.push(this.rgbToHex(r, g, b));
+        this.colors.push({r, g, b, a: 255});
       }
     }
 
@@ -223,11 +223,11 @@ class Palette {
         const r = (i & 1) ? intensity : 0;
         const g = (i & 2) ? intensity : 0;
         const b = (i & 4) ? intensity : 0;
-        this.colors.push(this.rgbToHex(r, g, b));
+        this.colors.push({r, g, b, a: 255});
       } else {
         // Remaining colors: grayscale gradient
         const gray = Math.floor((i - 16) * 255 / (size - 17));
-        this.colors.push(this.rgbToHex(gray, gray, gray));
+        this.colors.push({r: gray, g: gray, b: gray, a: 255});
       }
     }
     
@@ -248,8 +248,7 @@ class Palette {
     lines.push(this.colors.length.toString());
 
     this.colors.forEach(color => {
-      const rgb = this.hexToRgb(color);
-      lines.push(`${rgb.r} ${rgb.g} ${rgb.b}`);
+      lines.push(`${color.r} ${color.g} ${color.b}`);
     });
 
     return lines.join('\n');
@@ -266,10 +265,9 @@ class Palette {
       let r = 0, g = 0, b = 0;
 
       if (i < this.colors.length && this.colors[i]) {
-        const rgb = this.hexToRgb(this.colors[i]);
-        r = rgb.r;
-        g = rgb.g;
-        b = rgb.b;
+        r = this.colors[i].r;
+        g = this.colors[i].g;
+        b = this.colors[i].b;
       }
 
       const offset = i * 3;
@@ -307,24 +305,36 @@ class Palette {
 
   // Color manipulation methods
   getColor(index) {
-    return this.colors[index] || '#000000';
+    return this.colors[index] || {r: 0, g: 0, b: 0, a: 255};
   }
 
-  setColor(index, hexColor) {
-    if (index >= 0 && index < this.maxColors && this.isValidHex(hexColor)) {
+  setColor(index, rgbColor) {
+    if (index >= 0 && index < this.maxColors && rgbColor && 
+        typeof rgbColor.r === 'number' && typeof rgbColor.g === 'number' && typeof rgbColor.b === 'number') {
       // Extend array if necessary
       while (this.colors.length <= index) {
-        this.colors.push('#000000');
+        this.colors.push({r: 0, g: 0, b: 0, a: 255});
       }
-      this.colors[index] = hexColor;
+      this.colors[index] = {
+        r: Math.max(0, Math.min(255, Math.floor(rgbColor.r))),
+        g: Math.max(0, Math.min(255, Math.floor(rgbColor.g))),
+        b: Math.max(0, Math.min(255, Math.floor(rgbColor.b))),
+        a: rgbColor.a !== undefined ? Math.max(0, Math.min(255, Math.floor(rgbColor.a))) : 255
+      };
       return true;
     }
     return false;
   }
 
-  addColor(hexColor) {
-    if (this.colors.length < this.maxColors && this.isValidHex(hexColor)) {
-      this.colors.push(hexColor);
+  addColor(rgbColor) {
+    if (this.colors.length < this.maxColors && rgbColor && 
+        typeof rgbColor.r === 'number' && typeof rgbColor.g === 'number' && typeof rgbColor.b === 'number') {
+      this.colors.push({
+        r: Math.max(0, Math.min(255, Math.floor(rgbColor.r))),
+        g: Math.max(0, Math.min(255, Math.floor(rgbColor.g))),
+        b: Math.max(0, Math.min(255, Math.floor(rgbColor.b))),
+        a: rgbColor.a !== undefined ? Math.max(0, Math.min(255, Math.floor(rgbColor.a))) : 255
+      });
       return this.colors.length - 1; // Return new index
     }
     return -1;
@@ -342,11 +352,18 @@ class Palette {
   }
 
   setColors(colorArray) {
-    this.colors = colorArray.slice(0, this.maxColors).filter(color => this.isValidHex(color));
+    this.colors = colorArray.slice(0, this.maxColors).filter(color => 
+      color && typeof color.r === 'number' && typeof color.g === 'number' && typeof color.b === 'number'
+    );
   }
 
   getColorCount() {
     return this.colors.length;
+  }
+
+  // Compatibility getter for RGB objects (now the native format)
+  get rgbObjects() {
+    return this.getColors();
   }
 
   clear() {
@@ -359,7 +376,7 @@ class Palette {
       const r = Math.floor(Math.random() * 256);
       const g = Math.floor(Math.random() * 256);
       const b = Math.floor(Math.random() * 256);
-      this.setColor(i, this.rgbToHex(r, g, b));
+      this.setColor(i, {r, g, b, a: 255});
     }
     console.log(`[Palette] Randomized ${this.colors.length} colors`);
   }
@@ -369,7 +386,7 @@ class Palette {
     const colorData = this.colors.map((color, index) => ({
       original: color,
       index: index,
-      hsl: this.hexToHsl(color)
+      hsl: this.rgbToHsl(color)
     }));
 
     // Sort by hue, then saturation, then lightness
@@ -408,13 +425,20 @@ class Palette {
     return 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
   }
 
-  // Convert hex to HSL for sorting
-  hexToHsl(hex) {
-    const rgb = this.hexToRgb(hex);
-    return this.rgbToHsl(rgb.r, rgb.g, rgb.b);
-  }
-
-  rgbToHsl(r, g, b) {
+  // Convert RGB to HSL for sorting  
+  rgbToHsl(rgbColor) {
+    let r, g, b;
+    if (typeof rgbColor === 'object') {
+      r = rgbColor.r;
+      g = rgbColor.g;
+      b = rgbColor.b;
+    } else {
+      // Legacy support for separate r, g, b parameters
+      r = rgbColor;
+      g = arguments[1];
+      b = arguments[2];
+    }
+    
     r /= 255;
     g /= 255;
     b /= 255;
@@ -455,15 +479,18 @@ class Palette {
       // Skip transparent pixels
       if (alpha < 128) continue;
 
-      const hex = Palette.prototype.rgbToHex(r, g, b);
-      colorMap.set(hex, (colorMap.get(hex) || 0) + 1);
+      const colorKey = `${r},${g},${b}`;
+      colorMap.set(colorKey, (colorMap.get(colorKey) || 0) + 1);
     }
 
     // Sort by frequency and take top colors
     const sortedColors = Array.from(colorMap.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, maxColors)
-      .map(entry => entry[0]);
+      .map(entry => {
+        const [r, g, b] = entry[0].split(',').map(Number);
+        return {r, g, b, a: 255};
+      });
 
     return sortedColors;
   }
@@ -671,13 +698,13 @@ class Palette {
     let closestDistance = Infinity;
     
     for (let i = 0; i < this.colors.length; i++) {
-      const paletteColor = Palette.parseColor(this.colors[i]);
+      const paletteColor = this.colors[i];
       if (!paletteColor) continue;
       
       // Calculate color distance using the specified method
       const distance = Palette.calculateColorDistance(
         r, g, b, a,
-        paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a,
+        paletteColor.r, paletteColor.g, paletteColor.b, paletteColor.a || 255,
         method
       );
       

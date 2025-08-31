@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Texture Editor Workflow Test</title>
+    <script src="scripts/graphics/palette-manager.js"></script>
+    <script src="scripts/graphics/image-new.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #1e1e1e;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .controls-panel {
+            background: #2d2d2d;
+            padding: 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #444;
+        }
+        
+        .format-controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin: 10px 0;
+        }
+        
+        .format-controls label {
+            font-weight: bold;
+            min-width: 120px;
+        }
+        
+        select, input[type="file"], button {
+            background: #3d3d3d;
+            color: white;
+            border: 1px solid #555;
+            padding: 8px 12px;
+            border-radius: 3px;
+        }
+        
+        button {
+            background: #0078d4;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background: #106ebe;
+        }
+        
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        
+        .preview-panel {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .preview-section {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            flex: 1;
+        }
+        
+        .preview-section h3 {
+            margin-top: 0;
+            color: #4fc3f7;
+        }
+        
+        .palette-display {
+            margin: 10px 0;
+        }
+        
+        .palette-info {
+            font-size: 0.9em;
+            color: #bbb;
+            margin-bottom: 5px;
+            padding: 5px;
+            background: #3d3d3d;
+            border-radius: 3px;
+        }
+        
+        canvas {
+            border: 1px solid #666;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><rect width="10" height="10" fill="%23ccc"/><rect x="10" y="10" width="10" height="10" fill="%23ccc"/><rect x="10" y="0" width="10" height="10" fill="%23999"/><rect x="0" y="10" width="10" height="10" fill="%23999"/></svg>');
+        }
+        
+        .texture-info {
+            background: #2d2d2d;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            margin-bottom: 20px;
+        }
+        
+        .texture-info h3 {
+            margin-top: 0;
+            color: #81c784;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        
+        .info-item {
+            background: #3d3d3d;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        
+        .info-label {
+            font-weight: bold;
+            color: #bbb;
+            font-size: 0.9em;
+        }
+        
+        .info-value {
+            color: #fff;
+            margin-top: 5px;
+        }
+        
+        .success {
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.1);
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 10px;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        
+        .log-panel {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-panel h3 {
+            margin-top: 0;
+            color: #ffb74d;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Texture Editor Workflow Test</h1>
+        <p>Test the complete texture editor workflow: Load image → Configure format → Generate .texture → Display result</p>
+        
+        <!-- Controls Panel -->
+        <div class="controls-panel">
+            <h3>🎛️ Texture Editor Controls</h3>
+            
+            <div class="format-controls">
+                <label for="file-input">Load Image:</label>
+                <input type="file" id="file-input" accept="image/*">
+                <button onclick="loadSelectedFile()">Load</button>
+            </div>
+            
+            <div class="format-controls">
+                <label for="format-select">Texture Format:</label>
+                <select id="format-select">
+                    <!-- True Color Formats -->
+                    <option value="d2_mode_rgba8888">RGBA8888 (32-bit)</option>
+                    <option value="d2_mode_rgba4444">RGBA4444 (16-bit)</option>
+                    <option value="d2_mode_rgb565" selected>RGB565 (16-bit)</option>
+                    <option value="d2_mode_alpha8">ALPHA8 (8-bit)</option>
+                    <!-- Indexed Formats -->
+                    <option value="d2_mode_ai44">AI44 (4+4 bit indexed)</option>
+                    <option value="d2_mode_i8">I8 (8-bit indexed)</option>
+                    <option value="d2_mode_i4">I4 (4-bit indexed)</option>
+                    <option value="d2_mode_i2">I2 (2-bit indexed)</option>
+                    <option value="d2_mode_i1">I1 (1-bit indexed)</option>
+                </select>
+            </div>
+            
+            <div class="format-controls">
+                <label for="color-key-check">Use Color Key:</label>
+                <input type="checkbox" id="color-key-check" checked>
+                <span style="margin-left: 10px; color: #ff00ff;">■</span> Magenta (255,0,255)
+            </div>
+            
+            <div class="format-controls">
+                <span id="auto-update-status" style="color: #4fc3f7;">🔄 Auto-updating enabled</span>
+                <button onclick="clearAll()">Clear All</button>
+            </div>
+        </div>
+        
+        <!-- Preview Panel -->
+        <div class="preview-panel">
+            <div class="preview-section">
+                <h3>📸 Original Image</h3>
+                <canvas id="original-canvas" width="256" height="256"></canvas>
+                <div id="original-info"></div>
+                <div class="palette-display">
+                    <div id="original-palette-info" class="palette-info" style="display: none;">
+                        Click on the palette to set the starting offset for indexed formats
+                    </div>
+                    <canvas id="original-palette" width="256" height="192" style="cursor: pointer;"></canvas>
+                    <div id="original-palette-status" class="palette-info" style="display: none; margin-top: 5px;">
+                        Selection info will appear here
+                    </div>
+                </div>
+            </div>
+            
+            <div class="preview-section">
+                <h3>🎨 Texture Output</h3>
+                <canvas id="texture-canvas" width="256" height="256"></canvas>
+                <div id="texture-info"></div>
+                <div class="palette-display">
+                    <canvas id="texture-palette" width="256" height="128"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Texture Information -->
+        <div class="texture-info" id="texture-info-panel" style="display: none;">
+            <h3>📄 .texture File Information</h3>
+            <div class="info-grid" id="texture-details"></div>
+        </div>
+        
+        <!-- Log Panel -->
+        <div class="log-panel">
+            <h3>📋 Process Log</h3>
+            <div id="log-output"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentImage = null;
+        let currentTexture = null;
+        let currentPaletteOffset = 0; // This is the logical offset (index/color_count)
+        
+        function log(message) {
+            const logOutput = document.getElementById('log-output');
+            const timestamp = new Date().toLocaleTimeString();
+            logOutput.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log-output').innerHTML = '';
+        }
+        
+        function clearAll() {
+            currentImage = null;
+            currentTexture = null;
+            currentPaletteOffset = 0;
+            document.getElementById('file-input').value = '';
+            document.getElementById('texture-info-panel').style.display = 'none';
+            document.getElementById('original-palette-info').style.display = 'none';
+            document.getElementById('original-palette-status').style.display = 'none';
+            
+            // Clear canvases
+            clearCanvas('original-canvas');
+            clearCanvas('texture-canvas');
+            clearCanvas('original-palette');
+            clearCanvas('texture-palette');
+            
+            // Clear info
+            document.getElementById('original-info').innerHTML = '';
+            document.getElementById('texture-info').innerHTML = '';
+            
+            clearLog();
+            log('🧹 Cleared all data');
+        }
+        
+        function clearCanvas(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        async function loadSelectedFile() {
+            const fileInput = document.getElementById('file-input');
+            if (!fileInput.files[0]) {
+                log('❌ No file selected');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            log(`📁 Loading file: ${file.name} (${file.size} bytes)`);
+            
+            try {
+                // Load image into canvas
+                const img = new Image();
+                img.onload = async function() {
+                    log(`🖼️ Image loaded: ${img.width}x${img.height}`);
+                    
+                    // Draw to canvas
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    
+                    // Create RetroImage
+                    currentImage = RetroImage.fromCanvas(canvas);
+                    currentPaletteOffset = 0; // Reset offset
+                    
+                    // Auto-detect format based on image type
+                    await autoDetectFormat(canvas, file.name);
+                    
+                    // Display original image
+                    displayOriginalImage(canvas);
+                    
+                    // Extract and display palette after format detection
+                    updateOriginalPaletteDisplay();
+                    
+                    log('✅ Image ready for texture generation');
+                };
+                
+                img.onerror = function() {
+                    log('❌ Failed to load image');
+                };
+                
+                img.src = URL.createObjectURL(file);
+                
+            } catch (error) {
+                log(`❌ Error loading file: ${error.message}`);
+            }
+        }
+        
+        async function autoDetectFormat(canvas, filename) {
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            
+            // Check if image has transparency
+            let hasTransparency = false;
+            let colorCount = new Set();
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const alpha = data[i + 3];
+                if (alpha < 255) hasTransparency = true;
+                
+                // Count unique colors (for palette detection)
+                const color = `${data[i]},${data[i+1]},${data[i+2]},${alpha}`;
+                colorCount.add(color);
+                
+                // Stop counting after reasonable limit
+                if (colorCount.size > 256) break;
+            }
+            
+            log(`🔍 Image analysis: ${colorCount.size <= 256 ? colorCount.size : '256+'} colors, transparency: ${hasTransparency}`);
+            
+            // Auto-select format
+            const formatSelect = document.getElementById('format-select');
+            const colorKeyCheck = document.getElementById('color-key-check');
+            
+            if (colorCount.size <= 256) {
+                // 8-bit indexed format
+                if (colorCount.size <= 2) formatSelect.value = 'd2_mode_i1';
+                else if (colorCount.size <= 4) formatSelect.value = 'd2_mode_i2';
+                else if (colorCount.size <= 16) formatSelect.value = 'd2_mode_i4';
+                else formatSelect.value = 'd2_mode_i8';
+                
+                colorKeyCheck.checked = hasTransparency;
+                log(`🎨 Auto-selected indexed format: ${formatSelect.value}`);
+            } else {
+                // True color format
+                formatSelect.value = 'd2_mode_rgb565';
+                colorKeyCheck.checked = hasTransparency;
+                log(`🎨 Auto-selected RGB565 with ${hasTransparency ? 'magenta color key' : 'no transparency'}`);
+            }
+        }
+        
+        function displayOriginalImage(canvas) {
+            const originalCanvas = document.getElementById('original-canvas');
+            const ctx = originalCanvas.getContext('2d');
+            
+            // Scale to fit display canvas
+            const scale = Math.min(originalCanvas.width / canvas.width, originalCanvas.height / canvas.height);
+            const newWidth = canvas.width * scale;
+            const newHeight = canvas.height * scale;
+            const x = (originalCanvas.width - newWidth) / 2;
+            const y = (originalCanvas.height - newHeight) / 2;
+            
+            ctx.clearRect(0, 0, originalCanvas.width, originalCanvas.height);
+            ctx.drawImage(canvas, x, y, newWidth, newHeight);
+            
+            // Show image info
+            document.getElementById('original-info').innerHTML = `
+                <div><strong>Size:</strong> ${canvas.width}x${canvas.height}</div>
+                <div><strong>Format:</strong> Original</div>
+            `;
+        }
+        
+        function updateOriginalPaletteDisplay() {
+            const formatSelect = document.getElementById('format-select');
+            const paletteInfo = document.getElementById('original-palette-info');
+            const paletteStatus = document.getElementById('original-palette-status');
+            
+            if (formatSelect.value.includes('_i') || formatSelect.value === 'd2_mode_ai44') {
+                const palette = currentImage.extractPalette(256);
+                
+                // Show palette info
+                paletteInfo.style.display = 'block';
+                paletteStatus.style.display = 'block';
+                
+                // Get max colors for this format
+                const maxColors = getMaxColorsForFormat(formatSelect.value);
+                
+                // Calculate actual color offset from logical offset
+                const actualColorOffset = currentPaletteOffset * maxColors;
+                
+                // Draw palette with selection highlight
+                drawClickablePalette('original-palette', palette, actualColorOffset, maxColors);
+                
+                // Update status text below palette
+                const endColorIndex = actualColorOffset + maxColors - 1;
+                paletteStatus.innerHTML = `Logical offset: ${currentPaletteOffset}, using ${maxColors} colors from color ${actualColorOffset} (colors ${actualColorOffset}-${endColorIndex})`;
+                
+                log(`🎨 Extracted palette: ${palette.length} colors, logical offset ${currentPaletteOffset}, using colors ${actualColorOffset}-${endColorIndex}`);
+                
+                // Auto-regenerate texture
+                if (currentImage) {
+                    autoGenerateTexture();
+                }
+            } else {
+                // Hide palette for non-indexed formats
+                paletteInfo.style.display = 'none';
+                paletteStatus.style.display = 'none';
+                clearCanvas('original-palette');
+                
+                // Auto-regenerate texture
+                if (currentImage) {
+                    autoGenerateTexture();
+                }
+            }
+        }
+        
+        function getMaxColorsForFormat(format) {
+            const colorLimits = {
+                'd2_mode_i1': 2,
+                'd2_mode_i2': 4,
+                'd2_mode_i4': 16,
+                'd2_mode_i8': 256,
+                'd2_mode_ai44': 16
+            };
+            return colorLimits[format] || 256;
+        }
+        
+        function drawClickablePalette(canvasId, palette, offset = 0, maxColors = null) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (!palette || palette.length === 0) return;
+            
+            // Fixed 16 colors per row with larger squares
+            const colsPerRow = 16;
+            const squareSize = Math.floor(canvas.width / colsPerRow);
+            
+            // Draw all palette colors as squares
+            for (let i = 0; i < palette.length; i++) {
+                const color = palette[i];
+                const x = (i % colsPerRow) * squareSize;
+                const y = Math.floor(i / colsPerRow) * squareSize;
+                
+                // Stop if we've exceeded canvas height
+                if (y + squareSize > canvas.height) break;
+                
+                ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                ctx.fillRect(x, y, squareSize, squareSize);
+                
+                // Draw subtle border
+                ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(x, y, squareSize, squareSize);
+            }
+            
+            // Highlight the selected range with a single border around the entire selection
+            if (maxColors !== null && offset !== null && maxColors > 0) {
+                // Calculate the bounds of the selection
+                let minX = canvas.width, maxX = 0, minY = canvas.height, maxY = 0;
+                
+                for (let i = 0; i < maxColors && (offset + i) < palette.length; i++) {
+                    const colorIndex = offset + i;
+                    const x = (colorIndex % colsPerRow) * squareSize;
+                    const y = Math.floor(colorIndex / colsPerRow) * squareSize;
+                    
+                    if (y + squareSize > canvas.height) break;
+                    
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x + squareSize);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y + squareSize);
+                }
+                
+                // Draw single green border around the entire selection
+                if (maxX > minX && maxY > minY) {
+                    ctx.strokeStyle = '#00ff00';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(minX - 1, minY - 1, maxX - minX + 2, maxY - minY + 2);
+                }
+            }
+            
+            // Store data for click handling
+            canvas.paletteData = {
+                palette: palette,
+                squareSize: squareSize,
+                colsPerRow: colsPerRow,
+                maxColors: maxColors
+            };
+        }
+        
+        // Handle palette clicks
+        function handlePaletteClick(event) {
+            const canvas = event.target;
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            if (!canvas.paletteData) return;
+            
+            const { squareSize, colsPerRow, palette, maxColors } = canvas.paletteData;
+            
+            // Calculate which color was clicked
+            const col = Math.floor(x / squareSize);
+            const row = Math.floor(y / squareSize);
+            const colorIndex = row * colsPerRow + col;
+            
+            if (colorIndex >= 0 && colorIndex < palette.length) {
+                // Calculate logical offset (which group of maxColors was clicked)
+                const logicalOffset = Math.floor(colorIndex / maxColors);
+                
+                // Ensure we don't go beyond palette bounds
+                const maxLogicalOffset = Math.floor((palette.length - 1) / maxColors);
+                currentPaletteOffset = Math.min(logicalOffset, maxLogicalOffset);
+                
+                const actualColorOffset = currentPaletteOffset * maxColors;
+                log(`🎨 Palette offset set to: ${currentPaletteOffset} (logical), color offset ${actualColorOffset} (clicked color ${colorIndex}, group of ${maxColors})`);
+                updateOriginalPaletteDisplay();
+            }
+        }
+        
+        async function autoGenerateTexture() {
+            if (!currentImage) return;
+            
+            try {
+                const formatSelect = document.getElementById('format-select');
+                const selectedFormat = formatSelect.value;
+                
+                // Configure image
+                currentImage.setFormat(selectedFormat);
+                
+                // Handle palette for indexed formats
+                if (selectedFormat.includes('_i') || selectedFormat === 'd2_mode_ai44') {
+                    const palette = currentImage.extractPalette(256);
+                    currentImage.setPalette(palette);
+                    
+                    // Convert logical offset to actual color offset and set it
+                    const maxColors = getMaxColorsForFormat(selectedFormat);
+                    const actualColorOffset = currentPaletteOffset * maxColors;
+                    currentImage.setPaletteOffset(actualColorOffset);
+                    
+                    log(`🔧 Set palette offset: logical ${currentPaletteOffset}, actual color offset ${actualColorOffset}`);
+                }
+                
+                // Generate D2 texture data
+                const d2Data = await currentImage.toD2();
+                
+                // Load back for display
+                const textureImage = await RetroImage.fromD2(d2Data);
+                
+                // Display texture output
+                displayTextureOutput(textureImage, selectedFormat, d2Data.byteLength);
+                
+                currentTexture = d2Data;
+                showTextureInfo(textureImage, selectedFormat, d2Data.byteLength);
+                
+            } catch (error) {
+                log(`❌ Auto-generation error: ${error.message}`);
+            }
+        }
+        
+        function displayTextureOutput(textureImage, format, fileSize) {
+            const imageData = textureImage.toImageData();
+            const textureCanvas = document.getElementById('texture-canvas');
+            const ctx = textureCanvas.getContext('2d');
+            
+            // Scale to fit display canvas
+            const scale = Math.min(textureCanvas.width / imageData.width, textureCanvas.height / imageData.height);
+            const newWidth = imageData.width * scale;
+            const newHeight = imageData.height * scale;
+            const x = (textureCanvas.width - newWidth) / 2;
+            const y = (textureCanvas.height - newHeight) / 2;
+            
+            ctx.clearRect(0, 0, textureCanvas.width, textureCanvas.height);
+            
+            // Create temporary canvas for scaling
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = imageData.width;
+            tempCanvas.height = imageData.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            ctx.drawImage(tempCanvas, x, y, newWidth, newHeight);
+            
+            // Show texture info
+            document.getElementById('texture-info').innerHTML = `
+                <div><strong>Size:</strong> ${imageData.width}x${imageData.height}</div>
+                <div><strong>Format:</strong> ${format}</div>
+                <div><strong>File Size:</strong> ${(fileSize / 1024).toFixed(1)}KB</div>
+            `;
+            
+            // Display palette for indexed formats
+            if (format.includes('_i') || format === 'd2_mode_ai44') {
+                const palette = textureImage.extractPalette(256);
+                const maxColors = getMaxColorsForFormat(format);
+                drawClickablePalette('texture-palette', palette, currentPaletteOffset, maxColors);
+            } else {
+                clearCanvas('texture-palette');
+            }
+        }
+        
+        function showTextureInfo(textureImage, format, fileSize) {
+            const panel = document.getElementById('texture-info-panel');
+            const details = document.getElementById('texture-details');
+            
+            // Calculate compression ratio
+            const originalSize = textureImage.width * textureImage.height * 4; // RGBA
+            const compressionRatio = ((originalSize - fileSize) / originalSize * 100).toFixed(1);
+            
+            details.innerHTML = `
+                <div class="info-item">
+                    <div class="info-label">Dimensions</div>
+                    <div class="info-value">${textureImage.width} x ${textureImage.height}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Format</div>
+                    <div class="info-value">${format}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">File Size</div>
+                    <div class="info-value">${(fileSize / 1024).toFixed(1)} KB</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Compression</div>
+                    <div class="info-value">${compressionRatio}% smaller</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Bits per Pixel</div>
+                    <div class="info-value">${(fileSize * 8 / (textureImage.width * textureImage.height)).toFixed(2)}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Palette Offset</div>
+                    <div class="info-value">${currentPaletteOffset} (logical)</div>
+                </div>
+            `;
+            
+            panel.style.display = 'block';
+        }
+        
+        // Initialize
+        window.onload = function() {
+            // Add click handler to original palette
+            document.getElementById('original-palette').addEventListener('click', handlePaletteClick);
+            
+            // Add event listener for format changes
+            document.getElementById('format-select').addEventListener('change', function() {
+                if (currentImage) {
+                    currentPaletteOffset = 0; // Reset offset when format changes
+                    updateOriginalPaletteDisplay();
+                    log(`🔄 Format changed to: ${this.value}`);
+                }
+            });
+            
+            // Add event listener for color key changes
+            document.getElementById('color-key-check').addEventListener('change', function() {
+                if (currentImage) {
+                    autoGenerateTexture();
+                    log(`🔑 Color key ${this.checked ? 'enabled' : 'disabled'}`);
+                }
+            });
+            
+            log('🚀 Texture Editor Workflow Test ready');
+            log('📝 Load an image file to begin testing');
+            log('⚡ Auto-update enabled - changes will regenerate texture automatically');
+            log('🎨 Click on palette colors to set the offset for indexed formats');
+        };
+    </script>
+</body>
+</html>

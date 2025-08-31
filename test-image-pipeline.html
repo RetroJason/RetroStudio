@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Complete Image Pipeline Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background: #2d2d2d;
+            color: #ffffff;
+        }
+        
+        h1, h2 {
+            color: #ffd700;
+            border-bottom: 2px solid #ffd700;
+            padding-bottom: 5px;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 5px;
+        }
+        
+        .format-result {
+            margin: 10px 0;
+            padding: 10px;
+            background: #3d3d3d;
+            border-radius: 3px;
+        }
+        
+        .canvas-row {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            gap: 15px;
+        }
+        
+        .canvas-label {
+            min-width: 120px;
+            font-weight: bold;
+        }
+        
+        canvas {
+            border: 1px solid #666;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .success {
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.1);
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        .warning {
+            color: #ffd43b;
+            background: rgba(255, 212, 59, 0.1);
+            padding: 5px;
+            border-radius: 3px;
+        }
+        
+        button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #106ebe;
+        }
+        
+        #test-results {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Complete Image Pipeline Test</h1>
+    <p>Testing the full pipeline: Original → .texture → .d2 with proper Image class usage</p>
+    
+    <div class="test-section">
+        <h2>Controls</h2>
+        <button onclick="runCompletePipelineTest()">Run Complete Pipeline Test</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <div id="test-results"></div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="scripts/graphics/palette.js"></script>
+    <script src="scripts/graphics/texture-format-utils.js"></script>
+    <script src="scripts/graphics/palette-manager.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script src="scripts/graphics/image.js"></script>
+
+    <script>
+        function clearResults() {
+            document.getElementById('test-results').innerHTML = '';
+            console.clear();
+        }
+
+        function generateTestPalette() {
+            const palette = [];
+            for (let i = 0; i < 256; i++) {
+                palette.push({
+                    r: Math.floor((i % 8) * 255 / 7),
+                    g: Math.floor(((i >> 3) % 8) * 255 / 7),
+                    b: Math.floor(((i >> 6) % 4) * 255 / 3),
+                    a: 255
+                });
+            }
+            return palette;
+        }
+
+        function createTestImageData(width, height, format) {
+            const pixelCount = width * height;
+            const rgbaData = new Uint8Array(pixelCount * 4);
+            
+            // Create test pattern based on format
+            for (let i = 0; i < pixelCount; i++) {
+                const x = i % width;
+                const y = Math.floor(i / width);
+                const baseIndex = i * 4;
+                
+                if (format >= 9 && format <= 12) { // Indexed formats
+                    // Create pattern that uses palette indices
+                    const paletteIndex = (x + y * 2) % 16; // Use first 16 colors
+                    const testPalette = generateTestPalette();
+                    const color = testPalette[paletteIndex];
+                    
+                    rgbaData[baseIndex] = color.r;
+                    rgbaData[baseIndex + 1] = color.g;
+                    rgbaData[baseIndex + 2] = color.b;
+                    rgbaData[baseIndex + 3] = color.a;
+                } else {
+                    // Direct color formats - create a gradient pattern
+                    rgbaData[baseIndex] = (x * 255) / (width - 1);     // Red gradient
+                    rgbaData[baseIndex + 1] = (y * 255) / (height - 1); // Green gradient
+                    rgbaData[baseIndex + 2] = ((x + y) * 255) / (width + height - 2); // Blue gradient
+                    rgbaData[baseIndex + 3] = 255; // Full alpha
+                }
+            }
+            
+            return rgbaData;
+        }
+
+        function drawImageToCanvas(canvasId, rgbaData, width, height) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return false;
+            
+            canvas.width = width;
+            canvas.height = height;
+            
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(width, height);
+            imageData.data.set(rgbaData);
+            ctx.putImageData(imageData, 0, 0);
+            
+            return true;
+        }
+
+        function drawPaletteToCanvas(canvasId, palette) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas || !palette) return false;
+            
+            const paletteSize = Math.min(palette.length, 256);
+            const colsPerRow = 16;
+            const rows = Math.ceil(paletteSize / colsPerRow);
+            
+            canvas.width = colsPerRow * 8;
+            canvas.height = rows * 8;
+            
+            const ctx = canvas.getContext('2d');
+            
+            for (let i = 0; i < paletteSize; i++) {
+                const color = palette[i];
+                const x = (i % colsPerRow) * 8;
+                const y = Math.floor(i / colsPerRow) * 8;
+                
+                ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                ctx.fillRect(x, y, 8, 8);
+            }
+            
+            return true;
+        }
+
+        async function renderTripleComparison(formatName, data) {
+            const resultDiv = document.createElement('div');
+            resultDiv.className = 'format-result';
+            resultDiv.innerHTML = `
+                <h3>${formatName} Pipeline Test</h3>
+                <div class="canvas-row">
+                    <div class="canvas-label">Original:</div>
+                    <canvas id="${formatName}_original" width="64" height="64"></canvas>
+                    <div class="canvas-label">.texture:</div>
+                    <canvas id="${formatName}_texture" width="64" height="64"></canvas>
+                    <div class="canvas-label">.d2:</div>
+                    <canvas id="${formatName}_d2" width="64" height="64"></canvas>
+                    <div class="canvas-label">Palette:</div>
+                    <canvas id="${formatName}_palette" width="128" height="32"></canvas>
+                </div>
+            `;
+            
+            document.getElementById('test-results').appendChild(resultDiv);
+            
+            // Draw the images
+            drawImageToCanvas(`${formatName}_original`, data.original.rgbaData, data.original.width, data.original.height);
+            drawImageToCanvas(`${formatName}_texture`, data.texture.rgbaData, data.texture.width, data.texture.height);
+            drawImageToCanvas(`${formatName}_d2`, data.d2.rgbaData, data.d2.width, data.d2.height);
+            drawPaletteToCanvas(`${formatName}_palette`, data.palette);
+        }
+
+        async function runCompletePipelineTest() {
+            console.log('\n=== COMPLETE IMAGE CLASS PIPELINE TEST ===');
+            clearResults();
+            
+            // Create test data
+            const testWidth = 16;
+            const testHeight = 16;
+            const testPalette = generateTestPalette();
+            
+            for (const formatName of Object.keys(D2FormatHandler.D2_FORMAT)) {
+                const format = D2FormatHandler.D2_FORMAT[formatName];
+                console.log(`\n--- Testing ${formatName} (${format}) via Complete Pipeline ---`);
+                
+                try {
+                    // Step 1: Create original Image object with test data
+                    const rgbaData = createTestImageData(testWidth, testHeight, format);
+                    
+                    // Create a canvas with the RGBA data
+                    const canvas = document.createElement('canvas');
+                    canvas.width = testWidth;
+                    canvas.height = testHeight;
+                    const ctx = canvas.getContext('2d');
+                    const imageData = ctx.createImageData(testWidth, testHeight);
+                    imageData.data.set(rgbaData);
+                    ctx.putImageData(imageData, 0, 0);
+                    
+                    // Create Image from canvas
+                    const originalImage = new ImageData();
+                    originalImage.loadFromCanvas(canvas, `test-${formatName}`);
+                    
+                    // Set palette if needed for indexed formats
+                    if (format >= 9 && format <= 12) { // Indexed formats
+                        originalImage.paletteManager.setPalette('test', testPalette);
+                        originalImage.paletteManager.setActive('test');
+                    }
+                    
+                    console.log(`[${formatName}] Step 1: Created original Image object from RGBA data`);
+                    
+                    // Step 2: Export to .texture format and create second Image
+                    const textureOptions = {
+                        format: formatName, // Use string name like 'I8', 'RGBA8888', etc.
+                        paletteName: 'test-palette'
+                    };
+                    
+                    const textureData = originalImage.exportTexture(textureOptions);
+                    const textureImage = new Image();
+                    await textureImage.loadTexture(textureData);
+                    
+                    console.log(`[${formatName}] Step 2: .texture round-trip - ${textureData.byteLength} bytes`);
+                    console.log(`[${formatName}] Texture Image metadata:`, {
+                        width: textureImage.width,
+                        height: textureImage.height,
+                        format: textureImage.format,
+                        paletteSize: textureImage.palette ? textureImage.palette.length : 0,
+                        paletteName: textureImage.paletteName
+                    });
+                    
+                    // Step 3: Export to .d2 format and create third Image
+                    const d2Options = {
+                        format: formatName,
+                        paletteName: 'test-palette-d2'
+                    };
+                    
+                    const d2Data = textureImage.exportD2(d2Options);
+                    const d2Image = new Image();
+                    await d2Image.loadD2(d2Data);
+                    
+                    console.log(`[${formatName}] Step 3: .d2 round-trip - ${d2Data.byteLength} bytes`);
+                    console.log(`[${formatName}] D2 Image metadata:`, {
+                        width: d2Image.width,
+                        height: d2Image.height,
+                        format: d2Image.format,
+                        paletteSize: d2Image.palette ? d2Image.palette.length : 0,
+                        paletteName: d2Image.paletteName
+                    });
+                    
+                    // Step 4: Get final RGBA data from all three images
+                    const originalRGBA = originalImage.getRGBAData();
+                    const textureRGBA = textureImage.getRGBAData();
+                    const d2RGBA = d2Image.getRGBAData();
+                    
+                    console.log(`[${formatName}] Step 4: Final RGBA comparison - Original: ${originalRGBA.length}, Texture: ${textureRGBA.length}, D2: ${d2RGBA.length} bytes`);
+                    
+                    // Step 5: Render triple comparison
+                    await renderTripleComparison(formatName, {
+                        original: { rgbaData: originalRGBA, width: testWidth, height: testHeight, label: 'Original' },
+                        texture: { rgbaData: textureRGBA, width: testWidth, height: testHeight, label: '.texture' },
+                        d2: { rgbaData: d2RGBA, width: testWidth, height: testHeight, label: '.d2' },
+                        palette: d2Image.palette || textureImage.palette || originalImage.palette || testPalette
+                    });
+                    
+                } catch (error) {
+                    console.error(`[${formatName}] Complete pipeline test failed:`, error);
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'format-result error';
+                    errorDiv.innerHTML = `<h3>${formatName} - ERROR</h3><p>${error.message}</p>`;
+                    document.getElementById('test-results').appendChild(errorDiv);
+                }
+            }
+            
+            console.log('\n=== PIPELINE TEST COMPLETE ===');
+        }
+    </script>
+</body>
+</html>

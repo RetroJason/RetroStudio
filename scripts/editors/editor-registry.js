@@ -29,6 +29,16 @@ class EditorRegistry {
       console.error('[EditorRegistry] Failed to register SoundFXEditor:', error);
     }
     
+    try {
+      if (typeof TextureEditor !== 'undefined') {
+        this.registerEditor(TextureEditor);
+      } else {
+        console.warn('[EditorRegistry] TextureEditor not available yet');
+      }
+    } catch (error) {
+      console.error('[EditorRegistry] Failed to register TextureEditor:', error);
+    }
+    
     console.log('[EditorRegistry] Registered default editors');
   }
   
