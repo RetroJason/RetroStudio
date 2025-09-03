@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image to D2 Converter Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .main-layout {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+        
+        .image-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        
+        .controls-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .control-section {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 6px;
+        }
+        
+        .control-section h3 {
+            margin: 0 0 15px 0;
+            color: #4CAF50;
+            font-size: 14px;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+        
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+        
+        .control-group label {
+            font-size: 12px;
+            color: #ccc;
+            font-weight: 500;
+        }
+        
+        .control-group input, .control-group select {
+            padding: 6px;
+            background: #2a2a2a;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 4px;
+            font-family: inherit;
+        }
+        
+        .control-group input[type="range"] {
+            padding: 0;
+        }
+        
+        .range-display {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .range-value {
+            background: #1a1a1a;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            min-width: 30px;
+            text-align: center;
+        }
+        
+        .checkbox-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-control input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+        }
+        
+        .image-display {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .image-container {
+            text-align: center;
+        }
+        
+        .image-container h4 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+            font-size: 12px;
+        }
+        
+        .image-viewport {
+            border: 2px solid #555;
+            background: repeating-conic-gradient(#444 0% 25%, #333 25% 50%) 50% / 20px 20px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 200px;
+            position: relative;
+        }
+        
+        .image-viewport canvas {
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        .image-info {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #999;
+        }
+        
+        .palette-display {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #1a1a1a;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        
+        .palette-grid {
+            display: grid;
+            grid-template-columns: repeat(16, 16px);
+            gap: 2px;
+        }
+        
+        .palette-color {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #666;
+            border-radius: 2px;
+            position: relative;
+        }
+        
+        .palette-color:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: #fff;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            white-space: nowrap;
+            z-index: 1000;
+            pointer-events: none;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+        
+        .btn-warning {
+            background: #FF9800;
+            color: white;
+        }
+        
+        .btn-success {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn:hover {
+            opacity: 0.9;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .output-section {
+            background: #1a1a2a;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+        }
+        
+        .output-section h3 {
+            margin: 0 0 15px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+        
+        .output-info {
+            background: #2a2a3a;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 12px;
+        }
+        
+        .log {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+        }
+        
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        
+        .log-error { color: #f44336; }
+        .log-warn { color: #ff9800; }
+        .log-info { color: #2196f3; }
+        .log-success { color: #4caf50; }
+        
+        .file-drop-zone {
+            border: 2px dashed #555;
+            border-radius: 8px;
+            padding: 40px 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            background: #2a2a2a;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .file-drop-zone:hover {
+            border-color: #4CAF50;
+            background: #2a3a2a;
+        }
+        
+        .file-drop-zone.dragover {
+            border-color: #4CAF50;
+            background: #2a3a2a;
+        }
+        
+        .file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Image to D2 Converter</h1>
+        <p>Load an image, adjust format settings, and generate D2 texture data using the RetroImage class.</p>
+        
+        <div class="main-layout">
+            <div class="image-panel">
+                <!-- File Input -->
+                <div class="file-drop-zone" id="fileDropZone">
+                    <div>Drop an image file here or click to select</div>
+                    <div style="font-size: 11px; color: #999; margin-top: 5px;">
+                        Supported: PNG, JPG, GIF, BMP, WebP
+                    </div>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept="image/*">
+                
+                <!-- Image Display -->
+                <div class="image-display">
+                    <div class="image-container">
+                        <h4>Original Image</h4>
+                        <div class="image-viewport" id="originalViewport">
+                            <div style="color: #666;">No image loaded</div>
+                        </div>
+                        <div class="image-info" id="originalInfo"></div>
+                    </div>
+                    
+                    <div class="image-container">
+                        <h4>Processed D2</h4>
+                        <div class="image-viewport" id="processedViewport">
+                            <div style="color: #666;">Process image to preview</div>
+                        </div>
+                        <div class="image-info" id="processedInfo"></div>
+                    </div>
+                </div>
+                
+                <!-- Output Section -->
+                <div class="output-section">
+                    <h3>D2 Output</h3>
+                    <div class="output-info" id="outputInfo">
+                        No D2 data generated yet
+                    </div>
+                    <div class="action-buttons">
+                        <button class="btn btn-primary" id="processBtn" disabled>Generate D2 Data</button>
+                        <button class="btn btn-secondary" id="downloadBtn" disabled>Download D2 File</button>
+                        <button class="btn btn-secondary" id="downloadPaletteBtn" disabled>Download Palette</button>
+                        <button class="btn btn-warning" id="testWebGLBtn" disabled>Test in WebGL Renderer</button>
+                        <button class="btn btn-success" id="openGraphicsAPIBtn" disabled>Open Graphics API Test</button>
+                    </div>
+                </div>
+                
+                <!-- Log -->
+                <div class="log" id="logContainer">
+                    <div class="log-entry log-info">Ready to load image file...</div>
+                </div>
+            </div>
+            
+            <div class="controls-panel">
+                <!-- Format Settings -->
+                <div class="control-section">
+                    <h3>Format Settings</h3>
+                    
+                    <div class="control-group">
+                        <label for="formatSelect">D2 Format:</label>
+                        <select id="formatSelect">
+                            <option value="0">ALPHA8 (8-bit alpha)</option>
+                            <option value="1">RGB565 (16-bit no alpha)</option>
+                            <option value="2">ARGB8888 (32-bit with alpha)</option>
+                            <option value="3">ARGB4444 (16-bit with alpha)</option>
+                            <option value="4">ARGB1555 (16-bit with 1-bit alpha)</option>
+                            <option value="5">AI44 (8-bit alpha + 4-bit indexed)</option>
+                            <option value="6" selected>RGBA8888 (32-bit RGBA)</option>
+                            <option value="7">RGBA4444 (16-bit RGBA)</option>
+                            <option value="8">RGBA5551 (16-bit RGBA with 1-bit alpha)</option>
+                            <option value="9">I8 (8-bit indexed, 256 colors)</option>
+                            <option value="10">I4 (4-bit indexed, 16 colors)</option>
+                            <option value="11">I2 (2-bit indexed, 4 colors)</option>
+                            <option value="12">I1 (1-bit indexed, 2 colors)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Palette Settings -->
+                <div class="control-section" id="paletteSection">
+                    <h3>Palette Settings</h3>
+                    
+                    <div class="control-group">
+                        <label>Palette Offset:</label>
+                        <div class="range-display">
+                            <input type="range" id="paletteOffsetSlider" min="0" max="255" value="0">
+                            <span class="range-value" id="paletteOffsetValue">0</span>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <div class="checkbox-control">
+                            <input type="checkbox" id="reserveTransparencyCheck">
+                            <label for="reserveTransparencyCheck">Reserve Index 0 for Color Key</label>
+                        </div>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>Generated Palette:</label>
+                        <div class="palette-display" id="paletteDisplay">
+                            <div style="color: #666; text-align: center; padding: 20px;">
+                                Process image to see palette
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Processing Settings -->
+                <div class="control-section">
+                    <h3>Processing Settings</h3>
+                    
+                    <div class="control-group">
+                        <label>Dithering:</label>
+                        <select id="ditheringSelect">
+                            <option value="none" selected>None</option>
+                            <option value="floyd-steinberg">Floyd-Steinberg</option>
+                            <option value="ordered">Ordered Dither</option>
+                        </select>
+                    </div>
+                    
+                    <div class="control-group">
+                        <label>Color Quantization:</label>
+                        <select id="quantizationSelect">
+                            <option value="median-cut" selected>Median Cut</option>
+                            <option value="octree">Octree</option>
+                            <option value="k-means">K-Means</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include required scripts -->
+    <script src="scripts/graphics/image.js"></script>
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    
+    <script>
+        class ImageToD2Converter {
+            constructor() {
+                this.retroImage = null;
+                this.currentImageFile = null;
+                this.currentD2Data = null;
+                
+                this.initializeUI();
+                this.setupEventListeners();
+            }
+            
+            initializeUI() {
+                this.fileDropZone = document.getElementById('fileDropZone');
+                this.fileInput = document.getElementById('fileInput');
+                this.formatSelect = document.getElementById('formatSelect');
+                this.paletteOffsetSlider = document.getElementById('paletteOffsetSlider');
+                this.paletteOffsetValue = document.getElementById('paletteOffsetValue');
+                this.reserveTransparencyCheck = document.getElementById('reserveTransparencyCheck');
+                this.processBtn = document.getElementById('processBtn');
+                this.downloadBtn = document.getElementById('downloadBtn');
+                this.downloadPaletteBtn = document.getElementById('downloadPaletteBtn');
+                this.testWebGLBtn = document.getElementById('testWebGLBtn');
+                this.openGraphicsAPIBtn = document.getElementById('openGraphicsAPIBtn');
+                
+                this.updatePaletteVisibility();
+            }
+            
+            setupEventListeners() {
+                // File input handling
+                this.fileDropZone.addEventListener('click', () => {
+                    this.fileInput.click();
+                });
+                
+                this.fileDropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    this.fileDropZone.classList.add('dragover');
+                });
+                
+                this.fileDropZone.addEventListener('dragleave', () => {
+                    this.fileDropZone.classList.remove('dragover');
+                });
+                
+                this.fileDropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    this.fileDropZone.classList.remove('dragover');
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        this.loadImageFile(files[0]);
+                    }
+                });
+                
+                this.fileInput.addEventListener('change', (e) => {
+                    if (e.target.files.length > 0) {
+                        this.loadImageFile(e.target.files[0]);
+                    }
+                });
+                
+                // Control event listeners
+                this.formatSelect.addEventListener('change', () => {
+                    this.updatePaletteVisibility();
+                    if (this.retroImage) {
+                        this.updateFormatSettings();
+                    }
+                });
+                
+                this.paletteOffsetSlider.addEventListener('input', () => {
+                    this.paletteOffsetValue.textContent = this.paletteOffsetSlider.value;
+                    if (this.retroImage) {
+                        this.updateFormatSettings();
+                    }
+                });
+                
+                this.reserveTransparencyCheck.addEventListener('change', () => {
+                    if (this.retroImage) {
+                        this.updateFormatSettings();
+                    }
+                });
+                
+                // Action buttons
+                this.processBtn.addEventListener('click', () => {
+                    this.generateD2Data();
+                });
+                
+                this.downloadBtn.addEventListener('click', () => {
+                    this.downloadD2File();
+                });
+                
+                this.downloadPaletteBtn.addEventListener('click', () => {
+                    this.downloadPaletteFile();
+                });
+                
+                this.testWebGLBtn.addEventListener('click', () => {
+                    this.openWebGLTest();
+                });
+                
+                this.openGraphicsAPIBtn.addEventListener('click', () => {
+                    this.openGraphicsAPITest();
+                });
+            }
+            
+            async loadImageFile(file) {
+                try {
+                    this.log(`Loading image: ${file.name}`, 'info');
+                    
+                    // Create RetroImage from file
+                    this.retroImage = await window.RetroImage.fromFile(file);
+                    this.currentImageFile = file;
+                    
+                    // Display original image
+                    this.displayOriginalImage();
+                    
+                    // Update format settings
+                    this.updateFormatSettings();
+                    
+                    // Enable process button
+                    this.processBtn.disabled = false;
+                    
+                    this.log(`Image loaded: ${this.retroImage.width}x${this.retroImage.height}`, 'success');
+                    
+                } catch (error) {
+                    this.log(`Error loading image: ${error.message}`, 'error');
+                    console.error(error);
+                }
+            }
+            
+            displayOriginalImage() {
+                const viewport = document.getElementById('originalViewport');
+                const info = document.getElementById('originalInfo');
+                
+                // Clear viewport
+                viewport.innerHTML = '';
+                
+                // Create canvas and display original image
+                const canvas = document.createElement('canvas');
+                canvas.width = this.retroImage.width;
+                canvas.height = this.retroImage.height;
+                
+                const imageData = this.retroImage.toImageData();
+                const ctx = canvas.getContext('2d');
+                ctx.putImageData(imageData, 0, 0);
+                
+                viewport.appendChild(canvas);
+                
+                // Update info
+                info.textContent = `${this.retroImage.width} x ${this.retroImage.height} pixels`;
+            }
+            
+            updateFormatSettings() {
+                if (!this.retroImage) return;
+                
+                const format = parseInt(this.formatSelect.value);
+                const paletteOffset = parseInt(this.paletteOffsetSlider.value);
+                
+                // Update RetroImage settings
+                this.retroImage.setFormat(format);
+                this.retroImage.setPaletteOffset(paletteOffset);
+                
+                // For indexed formats, generate a palette from the image
+                if (format >= 9 || format === 5) { // I8, I4, I2, I1, AI44
+                    this.generatePaletteForIndexedFormat(format);
+                }
+                
+                this.log(`Format updated: ${this.getFormatName(format)}, offset: ${paletteOffset}`, 'info');
+            }
+            
+            generatePaletteForIndexedFormat(format) {
+                if (!this.retroImage) return;
+                
+                const maxColors = this.getMaxColorsForFormat(format);
+                const reserveTransparency = this.reserveTransparencyCheck.checked;
+                const availableColors = reserveTransparency ? maxColors - 1 : maxColors;
+                
+                this.log(`Generating palette for ${this.getFormatName(format)}: ${availableColors} colors${reserveTransparency ? ' + transparency' : ''}`, 'info');
+                
+                // Get image data for palette generation
+                const imageData = this.retroImage.toImageData();
+                const palette = this.quantizeColors(imageData, availableColors, reserveTransparency);
+                
+                // Set the palette on the RetroImage
+                this.retroImage.setPalette(palette);
+                
+                // Update the palette display
+                this.updatePaletteDisplay(palette);
+                
+                this.log(`Generated ${palette.length} colors for palette`, 'success');
+            }
+            
+            quantizeColors(imageData, maxColors, reserveTransparency) {
+                const pixels = imageData.data;
+                const colorMap = new Map();
+                const paletteOffset = parseInt(this.paletteOffsetSlider.value);
+                
+                // Collect unique colors
+                for (let i = 0; i < pixels.length; i += 4) {
+                    const r = pixels[i];
+                    const g = pixels[i + 1];
+                    const b = pixels[i + 2];
+                    const a = pixels[i + 3];
+                    
+                    // Skip transparent pixels if we're reserving transparency
+                    if (reserveTransparency && a < 128) continue;
+                    
+                    const colorKey = `${r},${g},${b},${a}`;
+                    colorMap.set(colorKey, (colorMap.get(colorKey) || 0) + 1);
+                }
+                
+                // Sort colors by frequency
+                const sortedColors = Array.from(colorMap.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, maxColors)
+                    .map(([colorKey]) => {
+                        const [r, g, b, a] = colorKey.split(',').map(Number);
+                        return { r, g, b, a };
+                    });
+                
+                // Create final palette
+                const palette = [];
+                
+                if (reserveTransparency) {
+                    // Reserve index 0 for magenta color key
+                    palette.push({ r: 255, g: 0, b: 255, a: 0 });
+                }
+                
+                // Add the quantized colors starting from the appropriate offset
+                for (let i = 0; i < sortedColors.length; i++) {
+                    palette.push(sortedColors[i]);
+                }
+                
+                // Fill remaining slots with black
+                const totalSlots = this.getMaxColorsForFormat(parseInt(this.formatSelect.value));
+                while (palette.length < totalSlots) {
+                    palette.push({ r: 0, g: 0, b: 0, a: 255 });
+                }
+                
+                return palette;
+            }
+            
+            async generateD2Data() {
+                try {
+                    if (!this.retroImage) {
+                        throw new Error('No image loaded');
+                    }
+                    
+                    this.log('Generating D2 data...', 'info');
+                    this.processBtn.disabled = true;
+                    
+                    // Get settings
+                    const reserveTransparency = this.reserveTransparencyCheck.checked;
+                    
+                    // Generate D2 data
+                    const startTime = performance.now();
+                    this.currentD2Data = await this.retroImage.toD2({
+                        reserveTransparency: reserveTransparency
+                    });
+                    const endTime = performance.now();
+                    
+                    // Load back for display
+                    const resultImage = await window.RetroImage.fromD2(this.currentD2Data);
+                    this.displayProcessedImage(resultImage);
+                    
+                    // Update output info
+                    this.updateOutputInfo(endTime - startTime);
+                    
+                    // Enable download and test buttons
+                    this.downloadBtn.disabled = false;
+                    this.testWebGLBtn.disabled = false;
+                    this.openGraphicsAPIBtn.disabled = false;
+                    
+                    // Enable palette download for indexed formats
+                    const format = parseInt(this.formatSelect.value);
+                    if ((format >= 9 || format === 5) && this.retroImage._palette) {
+                        this.downloadPaletteBtn.disabled = false;
+                    }
+                    
+                    this.log(`D2 data generated successfully (${(endTime - startTime).toFixed(2)}ms)`, 'success');
+                    
+                } catch (error) {
+                    this.log(`Error generating D2 data: ${error.message}`, 'error');
+                    console.error(error);
+                } finally {
+                    this.processBtn.disabled = false;
+                }
+            }
+            
+            displayProcessedImage(resultImage) {
+                const viewport = document.getElementById('processedViewport');
+                const info = document.getElementById('processedInfo');
+                
+                // Clear viewport
+                viewport.innerHTML = '';
+                
+                // Create canvas and display processed image
+                const canvas = document.createElement('canvas');
+                canvas.width = resultImage.width;
+                canvas.height = resultImage.height;
+                
+                const imageData = resultImage.toImageData();
+                const ctx = canvas.getContext('2d');
+                ctx.putImageData(imageData, 0, 0);
+                
+                viewport.appendChild(canvas);
+                
+                // Update info
+                const format = this.getFormatName(parseInt(this.formatSelect.value));
+                info.textContent = `${resultImage.width} x ${resultImage.height} - ${format}`;
+                
+                // Update palette display if applicable
+                if (resultImage._palette) {
+                    this.updatePaletteDisplay(resultImage._palette);
+                }
+            }
+            
+            updateOutputInfo(processingTime) {
+                const info = document.getElementById('outputInfo');
+                const format = this.getFormatName(parseInt(this.formatSelect.value));
+                const size = this.currentD2Data.byteLength;
+                
+                info.innerHTML = `
+                    <strong>Format:</strong> ${format}<br>
+                    <strong>Size:</strong> ${size.toLocaleString()} bytes<br>
+                    <strong>Processing Time:</strong> ${processingTime.toFixed(2)}ms<br>
+                    <strong>Compression Ratio:</strong> ${((this.retroImage.width * this.retroImage.height * 4) / size).toFixed(2)}:1
+                `;
+            }
+            
+            updatePaletteDisplay(palette) {
+                const container = document.getElementById('paletteDisplay');
+                container.innerHTML = '';
+                
+                if (!palette || palette.length === 0) {
+                    container.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No palette data</div>';
+                    return;
+                }
+                
+                const grid = document.createElement('div');
+                grid.className = 'palette-grid';
+                
+                for (let i = 0; i < Math.min(palette.length, 256); i++) {
+                    const color = palette[i];
+                    const div = document.createElement('div');
+                    div.className = 'palette-color';
+                    div.style.backgroundColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                    div.setAttribute('data-tooltip', `${i}: rgb(${color.r}, ${color.g}, ${color.b}, ${color.a})`);
+                    grid.appendChild(div);
+                }
+                
+                container.appendChild(grid);
+            }
+            
+            updatePaletteVisibility() {
+                const format = parseInt(this.formatSelect.value);
+                const isIndexed = format >= 9 || format === 5; // I8, I4, I2, I1 + AI44 (indexed formats)
+                const paletteSection = document.getElementById('paletteSection');
+                
+                paletteSection.style.display = isIndexed ? 'block' : 'none';
+                
+                // Update max palette offset based on format
+                if (isIndexed) {
+                    const maxColors = this.getMaxColorsForFormat(format);
+                    this.paletteOffsetSlider.max = Math.max(0, 256 - maxColors);
+                    console.log(`[Converter] Updated palette controls for indexed format ${format}, max colors: ${maxColors}`);
+                }
+            }
+            
+            getMaxColorsForFormat(format) {
+                switch (format) {
+                    case 5: return 16;   // AI44 (4-bit indexed)
+                    case 9: return 256;  // I8
+                    case 10: return 16;  // I4  
+                    case 11: return 4;   // I2
+                    case 12: return 2;   // I1
+                    default: return 256;
+                }
+            }
+            
+            downloadD2File() {
+                if (!this.currentD2Data) {
+                    this.log('No D2 data to download', 'warn');
+                    return;
+                }
+                
+                const fileName = this.currentImageFile.name.replace(/\.[^/.]+$/, '') + '.d2';
+                const blob = new Blob([this.currentD2Data], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                
+                URL.revokeObjectURL(url);
+                this.log(`Downloaded: ${fileName}`, 'success');
+            }
+            
+            downloadPaletteFile() {
+                if (!this.retroImage || !this.retroImage._palette) {
+                    this.log('No palette data to download', 'warn');
+                    return;
+                }
+                
+                const palette = this.retroImage._palette;
+                const fileName = this.currentImageFile.name.replace(/\.[^/.]+$/, '') + '.pal';
+                
+                // Create palette data in a simple format (could be .pal, .act, or JSON)
+                const paletteData = this.createPaletteFileData(palette);
+                const blob = new Blob([paletteData], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                a.click();
+                
+                URL.revokeObjectURL(url);
+                this.log(`Downloaded palette: ${fileName}`, 'success');
+            }
+            
+            createPaletteFileData(palette) {
+                // Create a simple JSON palette format
+                const paletteObj = {
+                    name: this.currentImageFile.name.replace(/\.[^/.]+$/, '') + '_palette',
+                    colors: palette.length,
+                    format: 'RGBA',
+                    data: palette
+                };
+                return JSON.stringify(paletteObj, null, 2);
+            }
+            
+            openWebGLTest() {
+                if (!this.currentD2Data) {
+                    this.log('No D2 data to test', 'warn');
+                    return;
+                }
+                
+                // Store D2 data and palette in session storage for the WebGL test page
+                const fileName = this.currentImageFile.name.replace(/\.[^/.]+$/, '') + '.d2';
+                const testData = {
+                    fileName: fileName,
+                    d2Data: Array.from(new Uint8Array(this.currentD2Data)),
+                    format: parseInt(this.formatSelect.value),
+                    width: this.retroImage.width,
+                    height: this.retroImage.height
+                };
+                
+                // Include palette data for indexed formats
+                if ((parseInt(this.formatSelect.value) >= 9 || parseInt(this.formatSelect.value) === 5) && this.retroImage._palette) {
+                    testData.palette = this.retroImage._palette;
+                    this.log('Including palette data for WebGL test', 'info');
+                }
+                
+                sessionStorage.setItem('testD2Data', JSON.stringify(testData));
+                
+                // Open WebGL test page
+                window.open('test-d2-webgl-render.html', '_blank');
+                this.log('Opened WebGL test page with D2 data and palette', 'info');
+            }
+            
+            openGraphicsAPITest() {
+                if (!this.currentD2Data) {
+                    this.log('No D2 data to test', 'warn');
+                    return;
+                }
+                
+                // Store D2 data and palette in session storage for the Graphics API test page
+                // Use the same format as the WebGL test but with the session key expected by Graphics API
+                const fileName = this.currentImageFile.name.replace(/\.[^/.]+$/, '') + '.d2';
+                const testData = {
+                    fileName: fileName,
+                    d2Data: Array.from(new Uint8Array(this.currentD2Data)),
+                    format: parseInt(this.formatSelect.value),
+                    baseFormat: parseInt(this.formatSelect.value),
+                    width: this.retroImage.width,
+                    height: this.retroImage.height,
+                    metadata: {
+                        format: parseInt(this.formatSelect.value),
+                        fileName: fileName
+                    }
+                };
+                
+                // Include palette data for indexed formats
+                if ((parseInt(this.formatSelect.value) >= 9 || parseInt(this.formatSelect.value) === 5) && this.retroImage._palette) {
+                    testData.palette = this.retroImage._palette;
+                    this.log('Including palette data for Graphics API test', 'info');
+                }
+                
+                sessionStorage.setItem('d2_texture_data', JSON.stringify(testData));
+                
+                // Open Graphics API test page
+                window.open('test-d2-graphics-api.html', '_blank');
+                this.log('Opened Graphics API test page with D2 data and palette', 'success');
+            }
+            
+            getFormatName(format) {
+                const formats = {
+                    0: 'ALPHA8',
+                    1: 'RGB565',
+                    2: 'ARGB8888',
+                    3: 'ARGB4444',
+                    4: 'ARGB1555',
+                    5: 'AI44 (4-bit alpha + 4-bit indexed)',
+                    6: 'RGBA8888',
+                    7: 'RGBA4444',
+                    8: 'RGBA5551',
+                    9: 'I8 (256 colors)',
+                    10: 'I4 (16 colors)',
+                    11: 'I2 (4 colors)',
+                    12: 'I1 (2 colors)'
+                };
+                return formats[format] || `Unknown (${format})`;
+            }
+            
+            log(message, type = 'info') {
+                const container = document.getElementById('logContainer');
+                const entry = document.createElement('div');
+                entry.className = `log-entry log-${type}`;
+                entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                container.appendChild(entry);
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+        
+        // Initialize converter when DOM is ready
+        window.addEventListener('DOMContentLoaded', () => {
+            new ImageToD2Converter();
+        });
+    </script>
+</body>
+</html>

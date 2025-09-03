@@ -330,187 +330,187 @@ Void Song.Stop()
 Stops the currently playing song
 
 Sprite
-Void Sprite.SetAnimation(String name, String label)
+Int32 Sprite.Create(String resource)
+
+Create a sprite from a texture resource and return a unique sprite ID
+
+Void Sprite.Destroy(Int32 spriteId)
+
+Destroy a sprite and free its resources
+
+Void Sprite.SetAnimation(Int32 spriteId, String label)
 
 Set the animation, interrupt the current animation
 
-Void Sprite.SetFrameIndex(String name, Int32 frameIndex)
+Void Sprite.SetFrameIndex(Int32 spriteId, Int32 frameIndex)
 
 Set the frame index of the current animation
 
-Void Sprite.UpdateAnimation(String name, float deltaTime)
+Void Sprite.UpdateAnimation(Int32 spriteId, float deltaTime)
 
 Call this once per update loop to update animations
 
-Void Sprite.Clone(String name, String newName)
-
-Clone this sprite into another sprite
-
-Boolean Sprite.IsHit(Int32 x, Int32 y)
+Boolean Sprite.IsHit(Int32 spriteId, Int32 x, Int32 y)
 
 Returns true if the point x and y is inside the object bounding box
 
-Void Sprite.SetName(String name, String newName)
-
-Renames an object
-
-Void Sprite.SetPosition(String name, Int32 positionX, Int32 positionY, float positionZ)
+Void Sprite.SetPosition(Int32 spriteId, Int32 positionX, Int32 positionY, float positionZ)
 
 Set the position of the object (screen relative)
 
-(Int x, Int y, Single z) Sprite.GetPosition(String name)
+(Int x, Int y, Single z) Sprite.GetPosition(Int32 spriteId)
 
 Returns the x y position in pixels (screen relative) of the object
 
-Void Sprite.SetPositionX(String name, Int32 positionX)
+Void Sprite.SetPositionX(Int32 spriteId, Int32 positionX)
 
 Set the X position of the object
 
-Int Sprite.GetPositionX(String name)
+Int Sprite.GetPositionX(Int32 spriteId)
 
 Get the X position of the object
 
-Void Sprite.SetPositionY(String name, Int32 positionY)
+Void Sprite.SetPositionY(Int32 spriteId, Int32 positionY)
 
 Set the Y position of the object
 
-Int Sprite.GetPositionY(String name)
+Int Sprite.GetPositionY(Int32 spriteId)
 
 Get the Y position of the object
 
-Void Sprite.SetPositionZ(String name, Int32 positionZ)
+Void Sprite.SetPositionZ(Int32 spriteId, Int32 positionZ)
 
 Set the Z position of the object
 
-Single Sprite.GetPositionZ(String name)
+Single Sprite.GetPositionZ(Int32 spriteId)
 
 Get the Z position of the object
 
-Void Sprite.SetCenter(String name, Int32 centerX, Int32 centerY)
+Void Sprite.SetCenter(Int32 spriteId, Int32 centerX, Int32 centerY)
 
 Set the rotation center of the object
 
-(Int centerX, Int centerY) Sprite.GetCenter(String name)
+(Int centerX, Int centerY) Sprite.GetCenter(Int32 spriteId)
 
 Get the rotation center of the object
 
-Void Sprite.SetSize(String name, Int32 width, Int32 height)
+Void Sprite.SetSize(Int32 spriteId, Int32 width, Int32 height)
 
 Set the size of the object
 
-(Int width, Int height) Sprite.GetSize(String name)
+(Int width, Int height) Sprite.GetSize(Int32 spriteId)
 
 Gets the size of the object
 
-Void Sprite.SetWidth(String name, Int32 width)
+Void Sprite.SetWidth(Int32 spriteId, Int32 width)
 
 Set the width of the object
 
-Int Sprite.GetWidth(String name)
+Int Sprite.GetWidth(Int32 spriteId)
 
 Get the width of the object
 
-Void Sprite.SetHeight(String name, Int32 height)
+Void Sprite.SetHeight(Int32 spriteId, Int32 height)
 
 Set the height of the object
 
-Int16 Sprite.GetHeight(String name)
+Int16 Sprite.GetHeight(Int32 spriteId)
 
 Get the height of the object
 
-Void Sprite.SetRect(String name, Int32 x, Int32 y, Int32 width, Int32 height)
+Void Sprite.SetRect(Int32 spriteId, Int32 x, Int32 y, Int32 width, Int32 height)
 
 Set the position and size of the object
 
-(Int x, Int y, Int width, Int height) Sprite.GetRect(String name)
+(Int x, Int y, Int width, Int height) Sprite.GetRect(Int32 spriteId)
 
 Gets the position and size of the object
 
-Void Sprite.SetRotation(String name, Int32 angle)
+Void Sprite.SetRotation(Int32 spriteId, Int32 angle)
 
 Set the rotation angle (degrees)
 
-Int Sprite.GetRotation(String name)
+Int Sprite.GetRotation(Int32 spriteId)
 
 Get the rotation angle (degrees)
 
-Void Sprite.SetScale(String name, float scaleX, float scaleY)
+Void Sprite.SetScale(Int32 spriteId, float scaleX, float scaleY)
 
 Set the x and y scale of the object
 
-(Single scaleX, Single scaleY) Sprite.GetScale(String name)
+(Single scaleX, Single scaleY) Sprite.GetScale(Int32 spriteId)
 
 Get the x and y scale of the object
 
-Void Sprite.SetColor(String name, UInt32 color)
+Void Sprite.SetColor(Int32 spriteId, UInt32 color)
 
 Set the color tint of the object
 
-UInt Sprite.GetColor(String name)
+UInt Sprite.GetColor(Int32 spriteId)
 
 Gets the tint color on the object
 
-Void Sprite.SetPaletteSlot(String name, Byte paletteSlot)
+Void Sprite.SetPaletteSlot(Int32 spriteId, Byte paletteSlot)
 
 Set the palette slot for the current frame of animation
 
-Int Sprite.GetPaletteSlot(String name)
+Int Sprite.GetPaletteSlot(Int32 spriteId)
 
 Get palettel slot of the current frame
 
-Void Sprite.SetVisible(String name, Boolean visible)
+Void Sprite.SetVisible(Int32 spriteId, Boolean visible)
 
 Set visibility of the object
 
-Boolean Sprite.GetVisible(String name)
+Boolean Sprite.GetVisible(Int32 spriteId)
 
 Get visibility of the object
 
-Void Sprite.SetTextureU0(String name, Int32 u0)
+Void Sprite.SetTextureU0(Int32 spriteId, Int32 u0)
 
 Set the texture U0 on the object
 
-Int Sprite.GetTextureU0(String name)
+Int Sprite.GetTextureU0(Int32 spriteId)
 
 Get the texture U0 on the object
 
-Void Sprite.SetTextureV0(String name, Int32 v0)
+Void Sprite.SetTextureV0(Int32 spriteId, Int32 v0)
 
 Set the texture V0
 
-Int Sprite.GetTextureV0(String name)
+Int Sprite.GetTextureV0(Int32 spriteId)
 
 Get the texture V0
 
-Void Sprite.SetTextureU1(String name, Int32 u1)
+Void Sprite.SetTextureU1(Int32 spriteId, Int32 u1)
 
 Set the texture U1
 
-Int Sprite.GetTextureU1(String name)
+Int Sprite.GetTextureU1(Int32 spriteId)
 
 Get the texture U1
 
-Void Sprite.SetTextureV1(String name, Int32 v1)
+Void Sprite.SetTextureV1(Int32 spriteId, Int32 v1)
 
 Set the texture V1
 
-Int Sprite.GetTextureV1(String name)
+Int Sprite.GetTextureV1(Int32 spriteId)
 
 Get the texture V1
 
-Void Sprite.SetTextureUV(String name, Int32 u0, Int32 v0, Int32 u1, Int32 v1)
+Void Sprite.SetTextureUV(Int32 spriteId, Int32 u0, Int32 v0, Int32 u1, Int32 v1)
 
 Set the texture cordinates for the object
 
-(Int u0, Int v0, Int u1, Int u2) Sprite.GetTextureUV(String name)
+(Int u0, Int v0, Int u1, Int u2) Sprite.GetTextureUV(Int32 spriteId)
 
 Returns the texture coordinates for the object
 
-Void Sprite.SetAttributes(String name, UInt16 attributes)
+Void Sprite.SetAttributes(Int32 spriteId, UInt16 attributes)
 
 Sets the sprite attributes
 
-UInt16 Sprite.GetAttributes(String name)
+UInt16 Sprite.GetAttributes(Int32 spriteId)
 
 Get the sprite attributes
 

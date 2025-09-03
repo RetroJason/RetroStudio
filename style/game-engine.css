@@ -328,10 +328,8 @@
   border: 2px solid #3c3c3c;
   border-radius: 4px;
   background: #000000;
-  width: 100%;
-  max-width: 600px;
-  height: auto;
-  aspect-ratio: 4/3;
+  width: 488px;
+  height: 368px;
   object-fit: contain;
   flex-shrink: 0;
 }

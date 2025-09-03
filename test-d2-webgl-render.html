@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D2 WebGL Renderer Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .controls {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .control-group label {
+            font-size: 12px;
+            color: #ccc;
+        }
+        
+        .control-group input, .control-group select {
+            padding: 5px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            color: #fff;
+            border-radius: 4px;
+        }
+        
+        .render-area {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        #renderCanvas {
+            border: 2px solid #555;
+            background: repeating-conic-gradient(#444 0% 25%, #333 25% 50%) 50% / 20px 20px;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        
+        .info-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .info-item {
+            background: #3a3a3a;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        
+        .info-item h4 {
+            margin: 0 0 5px 0;
+            color: #4CAF50;
+            font-size: 14px;
+        }
+        
+        .palette-display {
+            display: grid;
+            grid-template-columns: repeat(16, 20px);
+            gap: 2px;
+            margin-top: 10px;
+        }
+        
+        .palette-color {
+            width: 20px;
+            height: 20px;
+            border: 1px solid #666;
+            border-radius: 2px;
+            position: relative;
+        }
+        
+        .palette-color::after {
+            content: attr(data-index);
+            position: absolute;
+            bottom: -15px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 8px;
+            color: #999;
+        }
+        
+        .error {
+            color: #f44336;
+            background: #2a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .log {
+            background: #1a1a2a;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        }
+        
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        
+        .log-error { color: #f44336; }
+        .log-warn { color: #ff9800; }
+        .log-info { color: #2196f3; }
+        .log-success { color: #4caf50; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>D2 WebGL Renderer Test</h1>
+        <p>Test rendering D2 texture files using WebGL with pixel shaders for palette and format handling.</p>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="d2FileInput">D2 Texture File:</label>
+                <input type="file" id="d2FileInput" accept=".d2">
+            </div>
+            
+            <div class="control-group">
+                <label for="paletteFileInput">Palette File (optional):</label>
+                <input type="file" id="paletteFileInput" accept=".pal,.act">
+            </div>
+            
+            <div class="control-group">
+                <label for="colorKeyEnabled">Color Key Transparency:</label>
+                <input type="checkbox" id="colorKeyEnabled" checked>
+            </div>
+            
+            <div class="control-group">
+                <label for="scaleMode">Scale Mode:</label>
+                <select id="scaleMode">
+                    <option value="1">1x (Pixel Perfect)</option>
+                    <option value="2" selected>2x</option>
+                    <option value="4">4x</option>
+                    <option value="8">8x</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="blendMode">Blend Mode:</label>
+                <select id="blendMode">
+                    <option value="normal" selected>Normal</option>
+                    <option value="additive">Additive</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="render-area">
+            <canvas id="renderCanvas" width="512" height="512"></canvas>
+        </div>
+        
+        <div class="info-panel">
+            <h3>Texture Information</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <h4>Format</h4>
+                    <div id="formatInfo">No texture loaded</div>
+                </div>
+                <div class="info-item">
+                    <h4>Dimensions</h4>
+                    <div id="dimensionsInfo">-</div>
+                </div>
+                <div class="info-item">
+                    <h4>Palette</h4>
+                    <div id="paletteInfo">-</div>
+                    <div id="paletteDisplay" class="palette-display"></div>
+                </div>
+                <div class="info-item">
+                    <h4>Performance</h4>
+                    <div id="performanceInfo">-</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="log" id="logContainer">
+            <div class="log-entry log-info">WebGL renderer initialized. Load a D2 file to begin.</div>
+        </div>
+    </div>
+
+    <!-- Include our D2 format handler -->
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    
+    <script>
+        class D2WebGLRenderer {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.gl = null;
+                this.program = null;
+                this.paletteTexture = null;
+                this.dataTexture = null;
+                this.currentD2Data = null;
+                this.currentPalette = null;
+                this.formatHandler = new D2FormatHandler();
+                
+                this.init();
+            }
+            
+            init() {
+                // Get WebGL context
+                this.gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
+                if (!this.gl) {
+                    throw new Error('WebGL not supported');
+                }
+                
+                this.log('WebGL context created', 'success');
+                
+                // Create shader program
+                this.createShaderProgram();
+                
+                // Setup geometry for a full-screen quad
+                this.setupGeometry();
+                
+                // Enable blending for transparency
+                this.gl.enable(this.gl.BLEND);
+                this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+            }
+            
+            createShaderProgram() {
+                const vertexShaderSource = `
+                    attribute vec2 a_position;
+                    attribute vec2 a_texCoord;
+                    varying vec2 v_texCoord;
+                    
+                    void main() {
+                        gl_Position = vec4(a_position, 0.0, 1.0);
+                        v_texCoord = a_texCoord;
+                    }
+                `;
+                
+                const fragmentShaderSource = `
+                    precision mediump float;
+                    
+                    uniform sampler2D u_dataTexture;
+                    uniform sampler2D u_paletteTexture;
+                    uniform vec2 u_textureSize;
+                    uniform float u_format;
+                    uniform float u_colorKeyEnabled;
+                    uniform vec3 u_colorKey;
+                    uniform float u_blendMode;
+                    
+                    varying vec2 v_texCoord;
+                    
+                    vec4 decodeRGB565(float value) {
+                        float pixel = value * 65535.0;
+                        // Use math operations instead of bitwise for WebGL 1.0 compatibility
+                        float r = floor(pixel / 2048.0) / 31.0;  // Extract 5 red bits
+                        float g = mod(floor(pixel / 32.0), 64.0) / 63.0;  // Extract 6 green bits  
+                        float b = mod(pixel, 32.0) / 31.0;  // Extract 5 blue bits
+                        return vec4(r, g, b, 1.0);
+                    }
+                    
+                    vec4 decodeARGB8888(vec4 data) {
+                        return vec4(data.gba, data.r); // ARGB -> RGBA
+                    }
+                    
+                    vec4 decodeIndexed(float index) {
+                        float paletteIndex = index * 255.0;
+                        vec2 paletteCoord = vec2(paletteIndex / 256.0, 0.5);
+                        return texture2D(u_paletteTexture, paletteCoord);
+                    }
+                    
+                    void main() {
+                        vec4 texel = texture2D(u_dataTexture, v_texCoord);
+                        vec4 color;
+                        
+                        // Since we pre-convert all formats to RGBA on the CPU side,
+                        // we can use the texture data directly for most formats
+                        if (abs(u_format - 5.0) < 0.5) { // AI44 - Alpha + Index
+                            // For AI44: red channel = palette index, alpha channel = alpha value
+                            color = decodeIndexed(texel.r);
+                            color.a = texel.a; // Alpha is already normalized (0-1)
+                        } else if (u_format >= 8.5) { // Other indexed formats (I8, I4, I2, I1)
+                            color = decodeIndexed(texel.r);
+                        } else {
+                            // For RGB565, ARGB8888, etc. - already converted to RGBA
+                            color = texel;
+                        }
+                        
+                        // Apply color key transparency (but not for AI44 since it has its own alpha)
+                        if (u_colorKeyEnabled > 0.5 && abs(u_format - 5.0) >= 0.5) {
+                            vec3 colorKey = u_colorKey / 255.0;
+                            if (distance(color.rgb, colorKey) < 0.01) {
+                                discard;
+                            }
+                        }
+                        
+                        gl_FragColor = color;
+                    }
+                `;
+                
+                const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+                
+                this.program = this.gl.createProgram();
+                this.gl.attachShader(this.program, vertexShader);
+                this.gl.attachShader(this.program, fragmentShader);
+                this.gl.linkProgram(this.program);
+                
+                if (!this.gl.getProgramParameter(this.program, this.gl.LINK_STATUS)) {
+                    throw new Error('Shader program failed to link: ' + this.gl.getProgramInfoLog(this.program));
+                }
+                
+                this.log('Shader program compiled successfully', 'success');
+            }
+            
+            createShader(type, source) {
+                const shader = this.gl.createShader(type);
+                this.gl.shaderSource(shader, source);
+                this.gl.compileShader(shader);
+                
+                if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+                    throw new Error('Shader compilation failed: ' + this.gl.getShaderInfoLog(shader));
+                }
+                
+                return shader;
+            }
+            
+            setupGeometry() {
+                // Create a full-screen quad
+                const positions = new Float32Array([
+                    -1, -1,  0, 1,
+                     1, -1,  1, 1,
+                    -1,  1,  0, 0,
+                     1,  1,  1, 0
+                ]);
+                
+                const buffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, positions, this.gl.STATIC_DRAW);
+                
+                this.gl.useProgram(this.program);
+                
+                const positionLocation = this.gl.getAttribLocation(this.program, 'a_position');
+                const texCoordLocation = this.gl.getAttribLocation(this.program, 'a_texCoord');
+                
+                this.gl.enableVertexAttribArray(positionLocation);
+                this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 16, 0);
+                
+                this.gl.enableVertexAttribArray(texCoordLocation);
+                this.gl.vertexAttribPointer(texCoordLocation, 2, this.gl.FLOAT, false, 16, 8);
+            }
+            
+            async loadTestData(testData) {
+                try {
+                    this.log(`Loading test data: ${testData.fileName}`, 'info');
+                    
+                    // Convert array back to Uint8Array, then to ArrayBuffer
+                    const uint8Array = new Uint8Array(testData.d2Data);
+                    const arrayBuffer = uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
+                    
+                    // Parse D2 data using our format handler
+                    const result = this.formatHandler.loadFromD2Binary(arrayBuffer);
+                    
+                    // Override metadata with test data
+                    result.baseFormat = testData.format;
+                    result.metadata.format = testData.format;
+                    
+                    // Use test palette if provided
+                    if (testData.palette) {
+                        result.palette = testData.palette;
+                        result.metadata.palette = testData.palette;
+                        this.log(`Using provided palette with ${testData.palette.length} colors`, 'info');
+                    }
+                    
+                    this.currentD2Data = result;
+                    this.updateTextureInfo(result);
+                    
+                    // Create WebGL texture from the decoded data
+                    this.createDataTexture(result);
+                    
+                    // Create palette texture if needed
+                    if (result.palette) {
+                        this.createPaletteTexture(result.palette);
+                        console.log('[WebGL] Created palette texture for format', result.baseFormat, 'with', result.palette.length, 'colors');
+                    } else {
+                        console.log('[WebGL] No palette data for format', result.baseFormat);
+                    }
+                    
+                    // Render the texture
+                    this.render();
+                    
+                    this.log(`Test data loaded successfully: ${result.width}x${result.height}, format ${result.baseFormat}`, 'success');
+                    
+                } catch (error) {
+                    this.log(`Error loading test data: ${error.message}`, 'error');
+                    console.error(error);
+                }
+            }
+            
+            async loadD2File(file) {
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    
+                    this.log(`Loading D2 file: ${file.name} (${arrayBuffer.byteLength} bytes)`, 'info');
+                    
+                    // Parse D2 data using our format handler - pass ArrayBuffer directly
+                    const result = this.formatHandler.loadFromD2Binary(arrayBuffer);
+                    
+                    this.currentD2Data = result;
+                    this.updateTextureInfo(result);
+                    
+                    // Create WebGL texture from the decoded data
+                    this.createDataTexture(result);
+                    
+                    // Create palette texture if needed
+                    if (result.palette) {
+                        this.createPaletteTexture(result.palette);
+                    }
+                    
+                    // Render the texture
+                    this.render();
+                    
+                    this.log(`D2 file loaded successfully: ${result.width}x${result.height}, format ${result.metadata.format}`, 'success');
+                    
+                } catch (error) {
+                    this.log(`Error loading D2 file: ${error.message}`, 'error');
+                    console.error(error);
+                }
+            }
+            
+            createDataTexture(d2Data) {
+                if (this.dataTexture) {
+                    this.gl.deleteTexture(this.dataTexture);
+                }
+                
+                console.log('[WebGL] Creating texture from D2 data:', {
+                    width: d2Data.width,
+                    height: d2Data.height,
+                    format: d2Data.metadata.format,
+                    baseFormat: d2Data.baseFormat,
+                    frames: d2Data.frames ? d2Data.frames.length : 'undefined',
+                    frameDataLength: d2Data.frames && d2Data.frames[0] ? d2Data.frames[0].data.length : 'undefined'
+                });
+                
+                this.dataTexture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.dataTexture);
+                
+                // Check if we have valid frame data
+                if (!d2Data.frames || !d2Data.frames[0] || !d2Data.frames[0].data) {
+                    console.error('[WebGL] No frame data in D2 result');
+                    return;
+                }
+                
+                const frameData = d2Data.frames[0].data;
+                const format = d2Data.baseFormat || d2Data.metadata.format;
+                
+                // For RGB565 and other formats, we need to convert the raw D2 data to RGBA
+                let textureData;
+                
+                if (format === 1) { // RGB565
+                    console.log('[WebGL] Converting RGB565 data to RGBA');
+                    textureData = this.convertRGB565ToRGBA(frameData, d2Data.width, d2Data.height);
+                } else if (format === 2) { // ARGB8888
+                    console.log('[WebGL] Converting ARGB8888 data to RGBA');
+                    textureData = this.convertARGB8888ToRGBA(frameData, d2Data.width, d2Data.height);
+                } else if (format >= 9 || format === 5) { // Indexed formats (I8, I4, I2, I1, AI44)
+                    console.log(`[WebGL] Processing indexed format ${format}`);
+                    // Check if D2FormatHandler already converted to RGBA
+                    if (frameData.length === d2Data.width * d2Data.height * 4) {
+                        console.log('[WebGL] Using pre-converted RGBA data from D2FormatHandler');
+                        textureData = frameData;
+                        
+                        // For AI44, log some debug info
+                        if (format === 5) {
+                            console.log('[WebGL] AI44 data - first few RGBA values:', Array.from(frameData.slice(0, 16)));
+                        }
+                    } else {
+                        console.log('[WebGL] Converting raw indexed data to texture format');
+                        textureData = this.convertIndexedToTexture(frameData, d2Data.width, d2Data.height, format);
+                        
+                        // For AI44, log some debug info
+                        if (format === 5) {
+                            console.log('[WebGL] AI44 raw data - first few bytes:', Array.from(frameData.slice(0, 8)));
+                            console.log('[WebGL] AI44 converted - first few RGBA values:', Array.from(textureData.slice(0, 16)));
+                        }
+                    }
+                } else {
+                    console.log('[WebGL] Using data as RGBA directly');
+                    textureData = frameData;
+                }
+                
+                console.log('[WebGL] Texture data prepared, length:', textureData.length);
+                
+                // Upload the pixel data
+                this.gl.texImage2D(
+                    this.gl.TEXTURE_2D, 0, this.gl.RGBA,
+                    d2Data.width, d2Data.height, 0,
+                    this.gl.RGBA, this.gl.UNSIGNED_BYTE, textureData
+                );
+                
+                // Set texture parameters for pixel-perfect rendering
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+            }
+            
+            convertRGB565ToRGBA(data, width, height) {
+                const rgbaData = new Uint8Array(width * height * 4);
+                
+                console.log('[WebGL] Converting RGB565, first few raw bytes:', Array.from(data.slice(0, 8)));
+                
+                let magentaCount = 0;
+                
+                for (let i = 0; i < data.length; i += 2) {
+                    const pixel = data[i] | (data[i + 1] << 8); // Little endian 16-bit
+                    const pixelIndex = (i / 2) * 4;
+                    
+                    // Extract RGB components from RGB565 format
+                    // RGB565: RRRRRGGGGGGBBBBB (5 red, 6 green, 5 blue bits)
+                    const r5 = (pixel >> 11) & 0x1F;  // Extract 5 red bits
+                    const g6 = (pixel >> 5) & 0x3F;   // Extract 6 green bits  
+                    const b5 = pixel & 0x1F;          // Extract 5 blue bits
+                    
+                    // Convert to 8-bit values
+                    const r = (r5 << 3) | (r5 >> 2);  // 5-bit to 8-bit: shift left 3, fill with high bits
+                    const g = (g6 << 2) | (g6 >> 4);  // 6-bit to 8-bit: shift left 2, fill with high bits
+                    const b = (b5 << 3) | (b5 >> 2);  // 5-bit to 8-bit: shift left 3, fill with high bits
+                    
+                    // Check for magenta color key (RGB565 magenta = 0xF81F)
+                    if (pixel === 0xF81F || (r >= 248 && g <= 7 && b >= 248)) {
+                        magentaCount++;
+                    }
+                    
+                    rgbaData[pixelIndex] = r;
+                    rgbaData[pixelIndex + 1] = g;
+                    rgbaData[pixelIndex + 2] = b;
+                    rgbaData[pixelIndex + 3] = 255; // Full alpha
+                    
+                    // Debug first few pixels
+                    if (i < 8) {
+                        console.log(`[WebGL] Pixel ${i/2}: raw=0x${pixel.toString(16).padStart(4,'0')}, r5=${r5}, g6=${g6}, b5=${b5}, rgb=(${r},${g},${b})`);
+                    }
+                }
+                
+                console.log(`[WebGL] RGB565 conversion complete. Found ${magentaCount} potential magenta pixels out of ${data.length/2} total pixels`);
+                console.log('[WebGL] First few RGBA bytes:', Array.from(rgbaData.slice(0, 16)));
+                return rgbaData;
+            }
+            
+            convertARGB8888ToRGBA(data, width, height) {
+                const rgbaData = new Uint8Array(width * height * 4);
+                
+                for (let i = 0; i < data.length; i += 4) {
+                    rgbaData[i] = data[i + 1];     // R
+                    rgbaData[i + 1] = data[i + 2]; // G
+                    rgbaData[i + 2] = data[i + 3]; // B
+                    rgbaData[i + 3] = data[i];     // A
+                }
+                
+                return rgbaData;
+            }
+            
+            convertIndexedToTexture(data, width, height, format) {
+                // For indexed formats, the D2FormatHandler should have already converted to RGBA
+                // but if not, we need to handle the raw indexed data
+                
+                if (format === 5) { // AI44 - 4-bit alpha + 4-bit index
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        const alpha = (byte >> 4) & 0x0F;
+                        const index = byte & 0x0F;
+                        
+                        const pixelIndex = i * 4;
+                        rgbaData[pixelIndex] = index;           // Store palette index in red channel
+                        rgbaData[pixelIndex + 1] = 0;           // Green
+                        rgbaData[pixelIndex + 2] = 0;           // Blue
+                        rgbaData[pixelIndex + 3] = alpha * 17;  // Convert 4-bit alpha to 8-bit (0-15 → 0-255)
+                    }
+                    return rgbaData;
+                } else if (format === 9) { // I8 - 1 byte per pixel
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const pixelIndex = i * 4;
+                        rgbaData[pixelIndex] = data[i];     // Store palette index in red channel
+                        rgbaData[pixelIndex + 1] = 0;       // Green
+                        rgbaData[pixelIndex + 2] = 0;       // Blue
+                        rgbaData[pixelIndex + 3] = 255;     // Alpha
+                    }
+                    return rgbaData;
+                } else if (format === 10) { // I4 - 2 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        const pixel1 = (byte >> 4) & 0x0F;
+                        const pixel2 = byte & 0x0F;
+                        
+                        // First pixel
+                        const pixelIndex1 = (i * 2) * 4;
+                        rgbaData[pixelIndex1] = pixel1;
+                        rgbaData[pixelIndex1 + 1] = 0;
+                        rgbaData[pixelIndex1 + 2] = 0;
+                        rgbaData[pixelIndex1 + 3] = 255;
+                        
+                        // Second pixel
+                        const pixelIndex2 = (i * 2 + 1) * 4;
+                        rgbaData[pixelIndex2] = pixel2;
+                        rgbaData[pixelIndex2 + 1] = 0;
+                        rgbaData[pixelIndex2 + 2] = 0;
+                        rgbaData[pixelIndex2 + 3] = 255;
+                    }
+                    return rgbaData;
+                } else if (format === 11) { // I2 - 4 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        
+                        for (let j = 0; j < 4; j++) {
+                            const pixel = (byte >> (6 - j * 2)) & 0x03;
+                            const pixelIndex = (i * 4 + j) * 4;
+                            rgbaData[pixelIndex] = pixel;
+                            rgbaData[pixelIndex + 1] = 0;
+                            rgbaData[pixelIndex + 2] = 0;
+                            rgbaData[pixelIndex + 3] = 255;
+                        }
+                    }
+                    return rgbaData;
+                } else if (format === 12) { // I1 - 8 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        
+                        for (let j = 0; j < 8; j++) {
+                            const pixel = (byte >> (7 - j)) & 0x01;
+                            const pixelIndex = (i * 8 + j) * 4;
+                            rgbaData[pixelIndex] = pixel;
+                            rgbaData[pixelIndex + 1] = 0;
+                            rgbaData[pixelIndex + 2] = 0;
+                            rgbaData[pixelIndex + 3] = 255;
+                        }
+                    }
+                    return rgbaData;
+                } else {
+                    // Fallback - treat as I8
+                    return this.convertIndexedToTexture(data, width, height, 9);
+                }
+            }
+            
+            createPaletteTexture(palette) {
+                console.log('[WebGL] createPaletteTexture called with palette:', palette);
+                
+                if (this.paletteTexture) {
+                    this.gl.deleteTexture(this.paletteTexture);
+                }
+                
+                // Convert palette to RGBA texture (256x1)
+                const paletteData = new Uint8Array(256 * 4);
+                for (let i = 0; i < 256; i++) {
+                    const color = palette[i] || { r: 0, g: 0, b: 0, a: 255 };
+                    paletteData[i * 4] = color.r;
+                    paletteData[i * 4 + 1] = color.g;
+                    paletteData[i * 4 + 2] = color.b;
+                    paletteData[i * 4 + 3] = color.a;
+                }
+                
+                console.log('[WebGL] Palette data created, first 4 colors:', 
+                    Array.from(paletteData.slice(0, 16)).map((v, i) => i % 4 === 0 ? '\n  Color ' + (i/4) + ':' : '').join('') + 
+                    Array.from(paletteData.slice(0, 16)).map((v, i) => i % 4 === 0 ? '' : v).join(','));
+                
+                this.paletteTexture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.paletteTexture);
+                this.gl.texImage2D(
+                    this.gl.TEXTURE_2D, 0, this.gl.RGBA,
+                    256, 1, 0,
+                    this.gl.RGBA, this.gl.UNSIGNED_BYTE,
+                    paletteData
+                );
+                
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+                
+                this.updatePaletteDisplay(palette);
+            }
+            
+            render() {
+                if (!this.currentD2Data || !this.dataTexture) {
+                    console.log('[WebGL] Cannot render: missing data or texture');
+                    return;
+                }
+                
+                const scale = parseInt(document.getElementById('scaleMode').value);
+                const colorKeyEnabled = document.getElementById('colorKeyEnabled').checked;
+                
+                console.log('[WebGL] Rendering with scale:', scale, 'colorKey:', colorKeyEnabled);
+                
+                // Resize canvas to fit texture
+                const displayWidth = this.currentD2Data.width * scale;
+                const displayHeight = this.currentD2Data.height * scale;
+                
+                this.canvas.width = displayWidth;
+                this.canvas.height = displayHeight;
+                this.gl.viewport(0, 0, displayWidth, displayHeight);
+                
+                console.log('[WebGL] Canvas size:', displayWidth, 'x', displayHeight);
+                
+                // Clear canvas
+                this.gl.clearColor(0, 0, 0, 0);
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+                
+                // Use shader program
+                this.gl.useProgram(this.program);
+                
+                // Set uniforms
+                this.gl.uniform1i(this.gl.getUniformLocation(this.program, 'u_dataTexture'), 0);
+                this.gl.uniform1i(this.gl.getUniformLocation(this.program, 'u_paletteTexture'), 1);
+                this.gl.uniform2f(this.gl.getUniformLocation(this.program, 'u_textureSize'), 
+                    this.currentD2Data.width, this.currentD2Data.height);
+                this.gl.uniform1f(this.gl.getUniformLocation(this.program, 'u_format'), 
+                    this.currentD2Data.baseFormat || this.currentD2Data.metadata.format);
+                this.gl.uniform1f(this.gl.getUniformLocation(this.program, 'u_colorKeyEnabled'), 
+                    colorKeyEnabled ? 1.0 : 0.0);
+                this.gl.uniform3f(this.gl.getUniformLocation(this.program, 'u_colorKey'), 
+                    255, 0, 255); // Magenta color key
+                
+                console.log('[WebGL] Set uniforms - format:', this.currentD2Data.baseFormat || this.currentD2Data.metadata.format);
+                
+                // Special debug for AI44
+                if ((this.currentD2Data.baseFormat || this.currentD2Data.metadata.format) === 5) {
+                    console.log('[WebGL] Rendering AI44 format with palette:', !!this.paletteTexture);
+                    if (this.currentD2Data.palette) {
+                        console.log('[WebGL] AI44 palette colors:', this.currentD2Data.palette.slice(0, 4));
+                    }
+                    // Check first few pixels of texture data for debugging
+                    if (this.currentD2Data.textureData) {
+                        const firstPixels = Array.from(this.currentD2Data.textureData.slice(0, 16));
+                        console.log('[WebGL] AI44 first 4 pixels (RGBA):', 
+                            [firstPixels.slice(0,4), firstPixels.slice(4,8), firstPixels.slice(8,12), firstPixels.slice(12,16)]);
+                    }
+                }
+                
+                // Bind textures
+                this.gl.activeTexture(this.gl.TEXTURE0);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.dataTexture);
+                
+                if (this.paletteTexture) {
+                    this.gl.activeTexture(this.gl.TEXTURE1);
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, this.paletteTexture);
+                }
+                
+                // Draw quad
+                this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+                
+                // Check for WebGL errors
+                const error = this.gl.getError();
+                if (error !== this.gl.NO_ERROR) {
+                    console.error('[WebGL] Render error:', error);
+                } else {
+                    console.log('[WebGL] Render completed successfully');
+                }
+            }
+            
+            updateTextureInfo(d2Data) {
+                const format = d2Data.baseFormat || d2Data.metadata.format;
+                document.getElementById('formatInfo').textContent = 
+                    this.getFormatName(format);
+                document.getElementById('dimensionsInfo').textContent = 
+                    `${d2Data.width} x ${d2Data.height}`;
+                document.getElementById('paletteInfo').textContent = 
+                    d2Data.palette ? `${d2Data.palette.length} colors` : 'None';
+            }
+            
+            updatePaletteDisplay(palette) {
+                const container = document.getElementById('paletteDisplay');
+                container.innerHTML = '';
+                
+                if (!palette) return;
+                
+                for (let i = 0; i < Math.min(palette.length, 256); i++) {
+                    const color = palette[i];
+                    const div = document.createElement('div');
+                    div.className = 'palette-color';
+                    div.style.backgroundColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                    div.setAttribute('data-index', i);
+                    div.title = `Index ${i}: rgb(${color.r}, ${color.g}, ${color.b}, ${color.a})`;
+                    container.appendChild(div);
+                }
+            }
+            
+            getFormatName(format) {
+                const formats = {
+                    0: 'ALPHA8',
+                    1: 'RGB565',
+                    2: 'ARGB8888',
+                    3: 'ARGB4444',
+                    4: 'ARGB1555',
+                    5: 'AI44',
+                    6: 'RGBA8888',
+                    7: 'RGBA4444',
+                    8: 'RGBA5551',
+                    9: 'P8',
+                    10: 'P4',
+                    11: 'P2',
+                    12: 'P1'
+                };
+                return formats[format] || `Unknown (${format})`;
+            }
+            
+            log(message, type = 'info') {
+                const container = document.getElementById('logContainer');
+                const entry = document.createElement('div');
+                entry.className = `log-entry log-${type}`;
+                entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+                container.appendChild(entry);
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+        
+        // Initialize renderer
+        let renderer;
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            try {
+                const canvas = document.getElementById('renderCanvas');
+                renderer = new D2WebGLRenderer(canvas);
+                
+                // Check for test data from the converter
+                const testData = sessionStorage.getItem('testD2Data');
+                if (testData) {
+                    try {
+                        const data = JSON.parse(testData);
+                        renderer.log(`Loading test data: ${data.fileName}`, 'info');
+                        renderer.loadTestData(data);
+                        // Clear the session storage after loading
+                        sessionStorage.removeItem('testD2Data');
+                    } catch (error) {
+                        renderer.log(`Error loading test data: ${error.message}`, 'error');
+                    }
+                }
+                
+                // Setup file input handlers
+                document.getElementById('d2FileInput').addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        renderer.loadD2File(file);
+                    }
+                });
+                
+                // Setup control handlers
+                document.getElementById('scaleMode').addEventListener('change', () => {
+                    if (renderer.currentD2Data) {
+                        renderer.render();
+                    }
+                });
+                
+                document.getElementById('colorKeyEnabled').addEventListener('change', () => {
+                    if (renderer.currentD2Data) {
+                        renderer.render();
+                    }
+                });
+                
+                document.getElementById('blendMode').addEventListener('change', () => {
+                    if (renderer.currentD2Data) {
+                        renderer.render();
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Failed to initialize renderer:', error);
+                document.getElementById('logContainer').innerHTML = 
+                    '<div class="log-entry log-error">Failed to initialize WebGL renderer: ' + error.message + '</div>';
+            }
+        });
+    </script>
+</body>
+</html>

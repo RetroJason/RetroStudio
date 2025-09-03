@@ -18,6 +18,9 @@ class GameEmulator {
     // Input management
     this.inputManager = null; // Game input manager for keyboard capture
     
+    // Graphics management - D2 Graphics API
+    this.d2Graphics = null; // D2 Graphics API for texture rendering
+    
     // Console management - NEW
     this.gameConsole = null;
     this.consoleInitialized = false;
@@ -237,10 +240,10 @@ class GameEmulator {
   addAudioContextResumeHandler() {
     const resumeHandler = async () => {
       if (this.audioEngine.audioContext.state === 'suspended') {
-        console.log('[GameEditor] User interaction detected, resuming AudioContext...');
+        // console.log('[GameEditor] User interaction detected, resuming AudioContext...');
         try {
           await this.audioEngine.audioContext.resume();
-          console.log('[GameEditor] AudioContext resumed, state:', this.audioEngine.audioContext.state);
+          // console.log('[GameEditor] AudioContext resumed, state:', this.audioEngine.audioContext.state);
         } catch (error) {
           console.warn('[GameEditor] Failed to resume AudioContext:', error);
         }
@@ -568,17 +571,24 @@ class GameEmulator {
     const fileExtension = file.name.split('.').pop().toLowerCase();
     const fileName = file.name.replace(new RegExp(`\\.${fileExtension}$`), '');
     
-    // Create resource ID: FOLDERNAME.FILENAME
-    const resourceId = `${folderMatch}.${fileName.toUpperCase()}`;
-    
     // Determine resource type and supported extensions
     const resourceTypeMap = {
       'SFX': ['wav'],
       'MUSIC': ['mod', 'xm', 's3m', 'it'],
-      'GRAPHICS': ['png', 'jpg', 'jpeg', 'gif', 'bmp'],
+      'IMAGES': ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'd2'],  // d2 files are built textures
       'DATA': ['json', 'txt', 'xml'],
       'SHADERS': ['glsl', 'frag', 'vert'],
       'PALETTES': ['pal', 'act', 'aco']
+    };
+
+    // Map folder names to resource prefixes 
+    const folderToResourceType = {
+      'IMAGES': 'TEXTURE',  // Images folder creates TEXTURE resources
+      'SFX': 'SFX',
+      'MUSIC': 'MUSIC', 
+      'PALETTES': 'PALETTES',
+      'DATA': 'DATA',
+      'SHADERS': 'SHADERS'
     };
 
     // Check if this file type is supported for this folder
@@ -587,6 +597,10 @@ class GameEmulator {
       console.log(`[GameEmulator] DEBUG: Skipping unsupported file type .${fileExtension} in ${folderMatch} folder: ${file.path}`);
       return null;
     }
+
+    // Create resource ID using the mapped resource type
+    const resourceType = folderToResourceType[folderMatch] || folderMatch;
+    const resourceId = `${resourceType}.${fileName.toUpperCase()}`;
 
     console.log(`[GameEmulator] DEBUG: Creating ${folderMatch} resource: ${resourceId} (.${fileExtension})`);
 
@@ -627,7 +641,7 @@ class GameEmulator {
             .then((audioResourceId) => {
               resource.loaded = true;
               resource.audioResource = audioResourceId;
-              console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
+              // console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
             })
             .catch((error) => {
               console.warn(`[GameEmulator] Failed to preload ${resourceId}:`, error);
@@ -636,8 +650,23 @@ class GameEmulator {
             });
           
           preloadPromises.push(loadPromise);
+        } else if (resource.type === 'TEXTURE' || resource.type === 'IMAGES') {
+          // Handle texture resources - load them into D2Graphics
+          const textureLoadPromise = this.preloadTextureResource(resource)
+            .then((textureId) => {
+              resource.loaded = true;
+              resource.textureId = textureId;
+              console.log(`[GameEmulator] Successfully preloaded texture: ${resourceId} as ${textureId}`);
+            })
+            .catch((error) => {
+              console.warn(`[GameEmulator] Failed to preload texture ${resourceId}:`, error);
+              resource.loaded = false;
+              resource.textureId = null;
+            });
+          
+          preloadPromises.push(textureLoadPromise);
         } else {
-          // For non-audio resources, just mark as loaded (no preloading needed)
+          // For other non-audio resources, just mark as loaded (no preloading needed)
           // They will be loaded on-demand when accessed
           resource.loaded = true;
           console.log(`[GameEmulator] Marked ${resource.type} resource as available: ${resourceId}`);
@@ -1002,7 +1031,7 @@ class GameEmulator {
    * @returns {Promise<string>} Resource ID
    */
   async preloadAudioResource(resource) {
-    console.log(`[GameEmulator] Preloading audio resource: ${resource.id} from ${resource.filePath}`);
+    // console.log(`[GameEmulator] Preloading audio resource: ${resource.id} from ${resource.filePath}`);
     
     try {
       // Load the file from build storage
@@ -1050,12 +1079,75 @@ class GameEmulator {
       
       // Load through ResourceManager
       const resourceId = await this.resourceManager.loadFromFile(file, audioType);
-      console.log(`[GameEmulator] Successfully loaded audio resource: ${resourceId}`);
+      // console.log(`[GameEmulator] Successfully loaded audio resource: ${resourceId}`);
       
       return resourceId;
       
     } catch (error) {
       console.error(`[GameEmulator] Failed to preload audio resource ${resource.id}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Preload a texture resource into D2Graphics
+   * @param {Object} resource - Resource object with type and filePath
+   * @returns {Promise<string>} Texture ID
+   */
+  async preloadTextureResource(resource) {
+    try {
+      console.log(`[GameEmulator] Preloading texture resource: ${resource.id} from ${resource.filePath}`);
+      
+      // Load the file from build storage
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (!fileManager) {
+        throw new Error('FileManager not available');
+      }
+      
+      // Convert UI path to storage path
+      const storagePath = resource.filePath.replace('test/Game Objects/', 'build/');
+      console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
+      
+      // Load the D2 texture file from storage
+      const fileData = await fileManager.loadFile(storagePath);
+      if (!fileData || !fileData.fileContent) {
+        throw new Error(`Failed to load texture file: ${storagePath}`);
+      }
+      
+      // Convert file data to ArrayBuffer
+      let arrayBuffer;
+      if (fileData.content instanceof ArrayBuffer) {
+        arrayBuffer = fileData.content;
+      } else if (fileData.binaryData && fileData.fileContent) {
+        // Decode base64 binary data
+        const binaryString = atob(fileData.fileContent);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        arrayBuffer = bytes.buffer;
+      } else {
+        throw new Error(`Unsupported file data format for ${storagePath}`);
+      }
+      
+      console.log(`[GameEmulator] Converted D2 texture to ArrayBuffer, size: ${arrayBuffer.byteLength} bytes`);
+      
+      // Load texture into D2Graphics
+      const textureName = resource.fileName || resource.id;
+      const textureId = this.d2Graphics.loadD2Texture(arrayBuffer, textureName);
+      
+      if (!textureId) {
+        throw new Error(`Failed to create D2 texture from ${storagePath}`);
+      }
+      
+      // Store the textureId in the resource for sprite access
+      resource.textureId = textureId;
+      
+      console.log(`[GameEmulator] Successfully preloaded texture: ${resource.id} as ${textureId}`);
+      return textureId;
+      
+    } catch (error) {
+      console.error(`[GameEmulator] Failed to preload texture resource ${resource.id}:`, error);
       throw error;
     }
   }
@@ -1322,7 +1414,7 @@ class GameEmulator {
 
   onResourceLoaded(event) {
     const { resourceId, resource, type } = event.detail;
-    console.log(`[GameEditor] Resource loaded event: ${resourceId} (${type})`);
+    // console.log(`[GameEditor] Resource loaded event: ${resourceId} (${type})`);
     this.updateStatus(`Loaded ${resource.name}`, 'success');
   }
 
@@ -1585,11 +1677,25 @@ class GameEmulator {
       `);
       
       // Initialize centralized resource mappings
+      // Initialize D2 Graphics API before resource preloading
+      console.log('[GameEmulator] Initializing D2 Graphics API...');
+      try {
+        const gameCanvas = document.getElementById('game-canvas');
+        if (gameCanvas) {
+          this.initializeD2Graphics(gameCanvas);
+          console.log('[GameEmulator] D2 Graphics API initialized before resource preloading');
+        } else {
+          console.warn('[GameEmulator] Game canvas not found - D2 Graphics initialization skipped');
+        }
+      } catch (error) {
+        console.error('[GameEmulator] Error initializing D2 Graphics API:', error);
+      }
+      
       console.log('[GameEmulator] DEBUG: About to initialize resource mappings...');
       await this.initializeResourceMappings();
       console.log('[GameEmulator] DEBUG: Resource mappings initialization completed');
       
-      // Load and initialize Lua extensions
+      // Load and initialize Lua extensions (D2Graphics already initialized)
       console.log('[GameEmulator] Loading Lua extensions...');
       try {
         await this.loadLuaExtensions(L);
@@ -1756,8 +1862,16 @@ class GameEmulator {
         
         // Only update if not paused
         if (!this.isPaused) {
+          // Update sprite animations
+          if (this.spriteManager) {
+            this.spriteManager.updateAnimations(deltaTime);
+          }
+          
           // Call Update(deltaTime) in Lua
           this.luaState.execute(`Update(${deltaTime})`);
+          
+          // Render graphics
+          this.renderFrame();
         }
         
         // Always check for new print output from Lua (even when paused, to capture any buffered output)
@@ -1800,6 +1914,26 @@ class GameEmulator {
     
     // Update button appearance
     this.updatePlayPauseButton();
+  }
+  
+  // Render a single frame
+  renderFrame() {
+    if (!this.d2Graphics) {
+      return;
+    }
+    
+    try {
+      // Clear the screen
+      this.d2Graphics.clearScreen();
+      
+      // Render all sprites
+      if (this.spriteManager) {
+        this.spriteManager.renderAll();
+      }
+      
+    } catch (error) {
+      console.error('[GameEmulator] Error rendering frame:', error);
+    }
   }
 
   /**
@@ -2292,7 +2426,7 @@ class GameEmulator {
       
       <div class="game-main-area">
         <div class="game-canvas-container">
-          <canvas id="game-canvas" width="800" height="600"></canvas>
+          <canvas id="game-canvas" width="488" height="368"></canvas>
           <div class="game-info">Game running... (simulated)</div>
         </div>
         
@@ -2395,6 +2529,7 @@ class GameEmulator {
       if (success) {
         console.log('[GameEmulator] Input manager initialized successfully');
         
+        // D2 Graphics API is now initialized earlier in the sequence
         // Focus the canvas to activate input capture
         setTimeout(() => {
           gameCanvas.focus();
@@ -2408,6 +2543,121 @@ class GameEmulator {
       console.error('[GameEmulator] Error initializing input manager:', error);
       this.inputManager = null;
     }
+  }
+  
+  // Initialize D2 Graphics API for texture rendering
+  initializeD2Graphics(canvas) {
+    try {
+      if (!window.D2GraphicsAPI) {
+        console.error('[GameEmulator] D2GraphicsAPI not loaded - cannot initialize graphics');
+        return;
+      }
+
+      this.d2Graphics = new window.D2GraphicsAPI(canvas);
+      console.log('[GameEmulator] D2 Graphics API initialized successfully');
+      
+      // Initialize sprite manager
+      if (window.SpriteManager) {
+        this.spriteManager = new window.SpriteManager(this.d2Graphics, this);
+        console.log('[GameEmulator] Sprite manager initialized');
+      } else {
+        console.warn('[GameEmulator] SpriteManager not loaded - sprite functionality disabled');
+      }
+      
+      // Load default palette and textures if available
+      this.loadDefaultGraphicsResources();
+      
+    } catch (error) {
+      console.error('[GameEmulator] Failed to initialize D2 Graphics API:', error);
+    }
+  }  // Load default graphics resources (palette and textures)
+  async loadDefaultGraphicsResources() {
+    try {
+      // Try to load default palette
+      await this.loadDefaultPalette();
+      
+      // Try to load any default textures
+      await this.loadDefaultTextures();
+      
+    } catch (error) {
+      console.log('[GameEmulator] No default graphics resources found (this is normal)');
+    }
+  }
+
+  // Load default palette from project
+  async loadDefaultPalette() {
+    const palettePaths = [
+      'Resources/Palettes/default.pal',
+      'Resources/Palettes/main.pal',
+      'game.pal'
+    ];
+    
+    for (const path of palettePaths) {
+      try {
+        const paletteData = await this.loadResource(path);
+        if (paletteData) {
+          // Convert binary palette data to color array
+          const palette = this.parsePaletteData(paletteData);
+          this.d2Graphics.loadActivePalette(palette);
+          console.log(`[GameEmulator] Loaded default palette: ${path}`);
+          break;
+        }
+      } catch (error) {
+        // Continue to next palette
+      }
+    }
+  }
+
+  // Load default textures from project
+  async loadDefaultTextures() {
+    const texturePaths = [
+      'Resources/Textures/',
+      'Game Objects/Textures/'
+    ];
+    
+    for (const basePath of texturePaths) {
+      try {
+        // Look for .d2 files in the texture directories
+        const files = await this.listResourcesInDirectory(basePath);
+        for (const file of files) {
+          if (file.endsWith('.d2')) {
+            try {
+              const d2Data = await this.loadResource(basePath + file);
+              if (d2Data) {
+                const textureId = this.d2Graphics.loadD2Texture(d2Data, file);
+                console.log(`[GameEmulator] Loaded default texture: ${file}`);
+              }
+            } catch (error) {
+              console.warn(`[GameEmulator] Failed to load texture ${file}:`, error);
+            }
+          }
+        }
+      } catch (error) {
+        // Directory doesn't exist or is empty
+      }
+    }
+  }
+
+  // Parse binary palette data to color array
+  parsePaletteData(data) {
+    const palette = [];
+    const uint8Array = new Uint8Array(data);
+    
+    // Assume RGB palette format (3 bytes per color)
+    for (let i = 0; i < Math.min(256, uint8Array.length / 3); i++) {
+      palette.push({
+        r: uint8Array[i * 3],
+        g: uint8Array[i * 3 + 1],
+        b: uint8Array[i * 3 + 2]
+      });
+    }
+    
+    // Fill remaining slots with black if needed
+    while (palette.length < 256) {
+      palette.push({ r: 0, g: 0, b: 0 });
+    }
+    
+    return palette;
   }
   
   /**
@@ -2611,6 +2861,29 @@ class GameEmulator {
         window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: false });
       }
     }
+  }
+  
+  // Resource manager interface for sprites
+  getResource(resourceId) {
+    // Check if resource exists in our resource map
+    if (this.resourceMap && this.resourceMap.has(resourceId)) {
+      const resource = this.resourceMap.get(resourceId);
+      
+      // For texture resources, we need to check if they have a textureId
+      if (resource.type === 'TEXTURE' && resource.textureId) {
+        return {
+          type: resource.type,
+          id: resourceId,
+          textureId: resource.textureId,
+          filePath: resource.filePath
+        };
+      }
+      
+      return resource;
+    }
+    
+    console.warn(`[GameEmulator] Resource not found: ${resourceId}`);
+    return null;
   }
 }
 

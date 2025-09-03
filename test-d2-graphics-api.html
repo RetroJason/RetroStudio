@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>D2 Graphics API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #2e2e2e;
+            color: #ffffff;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        .controls {
+            min-width: 350px;
+            background: #3e3e3e;
+            padding: 20px;
+            border-radius: 8px;
+            height: fit-content;
+        }
+        .control-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #4e4e4e;
+            border-radius: 5px;
+        }
+        .control-group h3 {
+            margin: 0 0 10px 0;
+            color: #ffcc00;
+            border-bottom: 1px solid #666;
+            padding-bottom: 5px;
+        }
+        .control-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            gap: 10px;
+        }
+        .control-row label {
+            min-width: 100px;
+            font-size: 12px;
+        }
+        input, select, button {
+            padding: 5px;
+            border: 1px solid #666;
+            background: #2e2e2e;
+            color: #fff;
+            border-radius: 3px;
+        }
+        input[type="file"] {
+            font-size: 11px;
+        }
+        input[type="checkbox"] {
+            transform: scale(1.2);
+        }
+        input[type="range"] {
+            flex: 1;
+        }
+        button {
+            background: #0066cc;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #0088ff;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .canvas-container {
+            flex: 1;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        canvas {
+            border: 2px solid #666;
+            background: #000;
+            image-rendering: pixelated;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: crisp-edges;
+        }
+        .texture-list {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #666;
+            background: #2e2e2e;
+            margin-top: 10px;
+        }
+        .texture-item {
+            padding: 8px;
+            border-bottom: 1px solid #444;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .texture-item:hover {
+            background: #4e4e4e;
+        }
+        .texture-item.active {
+            background: #0066cc;
+        }
+        .texture-preview {
+            width: 32px;
+            height: 32px;
+            border: 1px solid #666;
+            background: #000;
+            image-rendering: pixelated;
+        }
+        .palette-display {
+            display: grid;
+            grid-template-columns: repeat(16, 1fr);
+            gap: 1px;
+            margin-top: 10px;
+            border: 1px solid #666;
+            padding: 5px;
+            background: #2e2e2e;
+        }
+        .palette-color {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #444;
+            cursor: pointer;
+        }
+        .palette-color:hover {
+            border-color: #fff;
+        }
+        .log {
+            background: #1e1e1e;
+            border: 1px solid #666;
+            padding: 10px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+        .log-entry {
+            margin-bottom: 2px;
+        }
+        .log-success { color: #66ff66; }
+        .log-error { color: #ff6666; }
+        .log-warning { color: #ffff66; }
+        .log-info { color: #66ccff; }
+        .quad-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .uv-group {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            align-items: center;
+        }
+        .coord-input {
+            width: 60px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <div class="control-group">
+                <h3>🎨 Palette Control</h3>
+                <div class="control-row">
+                    <label>Palette File:</label>
+                    <input type="file" id="paletteFile" accept=".pal,.json,.act">
+                </div>
+                <div class="control-row">
+                    <label>Offset:</label>
+                    <input type="range" id="paletteOffset" min="0" max="240" value="0">
+                    <span id="paletteOffsetValue">0</span>
+                </div>
+                <div class="palette-display" id="paletteDisplay"></div>
+            </div>
+
+            <div class="control-group">
+                <h3>🖼️ Texture Management</h3>
+                <div class="control-row">
+                    <label>Load Texture:</label>
+                    <input type="file" id="textureFile" accept=".d2,.png,.jpg,.bmp">
+                </div>
+                <div class="control-row">
+                    <button id="loadFromConverter">Load from Converter</button>
+                    <span id="converterStatus" style="margin-left: 10px; font-size: 11px; color: #666;">No data available</span>
+                </div>
+                <div class="control-row">
+                    <button id="clearTextures">Clear All</button>
+                    <button id="autoLoad">Auto Load Test Data</button>
+                </div>
+                <div class="texture-list" id="textureList"></div>
+            </div>
+
+            <div class="control-group">
+                <h3>🎛️ Rendering Settings</h3>
+                <div class="control-row">
+                    <label>Color Key:</label>
+                    <input type="checkbox" id="colorKeyEnabled">
+                    <input type="color" id="colorKeyColor" value="#ff00ff">
+                </div>
+                <div class="control-row">
+                    <label>U Filter:</label>
+                    <input type="checkbox" id="uFilterLinear">
+                    <label style="min-width: auto;">Linear</label>
+                </div>
+                <div class="control-row">
+                    <label>V Filter:</label>
+                    <input type="checkbox" id="vFilterLinear">
+                    <label style="min-width: auto;">Linear</label>
+                </div>
+                <div class="control-row">
+                    <label>Anti-Alias:</label>
+                    <input type="checkbox" id="antiAlias">
+                </div>
+                <div class="control-row">
+                    <label>Bilinear:</label>
+                    <input type="checkbox" id="bilinearFilter">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>� Transform Control</h3>
+                <div class="control-row">
+                    <label>Scale:</label>
+                    <input type="range" id="scaleSlider" min="0.1" max="5.0" step="0.1" value="2.0">
+                    <span id="scaleValue">2.0</span>
+                </div>
+                <div class="control-row">
+                    <label>Rotation:</label>
+                    <input type="range" id="rotationSlider" min="0" max="360" step="1" value="0">
+                    <span id="rotationValue">0°</span>
+                </div>
+                <div class="control-row">
+                    <label>Center X:</label>
+                    <input type="number" id="centerX" value="400" class="coord-input">
+                    <label>Y:</label>
+                    <input type="number" id="centerY" value="300" class="coord-input">
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>�📐 Quad Blit Control</h3>
+                <div class="control-row">
+                    <label>Screen Pos:</label>
+                    <input type="number" id="screenX" value="100" class="coord-input">
+                    <input type="number" id="screenY" value="100" class="coord-input">
+                </div>
+                <div class="control-row">
+                    <label>Screen Size:</label>
+                    <input type="number" id="screenW" value="128" class="coord-input">
+                    <input type="number" id="screenH" value="128" class="coord-input">
+                </div>
+                <div class="quad-controls">
+                    <div>
+                        <label>UV Top-Left:</label>
+                        <div class="uv-group">
+                            <input type="number" id="u1" value="0" step="0.01" class="coord-input">
+                            <input type="number" id="v1" value="0" step="0.01" class="coord-input">
+                        </div>
+                    </div>
+                    <div>
+                        <label>UV Bottom-Right:</label>
+                        <div class="uv-group">
+                            <input type="number" id="u2" value="1" step="0.01" class="coord-input">
+                            <input type="number" id="v2" value="1" step="0.01" class="coord-input">
+                        </div>
+                    </div>
+                </div>
+                <div class="control-row">
+                    <button id="blitQuad">Blit Textured Quad</button>
+                    <button id="clearScreen">Clear Screen</button>
+                    <button id="autoLoad">Auto Load Test Data</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3>📊 Canvas Control</h3>
+                <div class="control-row">
+                    <label>Canvas Size:</label>
+                    <input type="number" id="canvasWidth" value="800" class="coord-input">
+                    <input type="number" id="canvasHeight" value="600" class="coord-input">
+                    <button id="resizeCanvas">Resize</button>
+                </div>
+            </div>
+
+            <div class="log" id="logOutput"></div>
+        </div>
+
+        <div class="canvas-container">
+            <h2>D2 Graphics API Renderer</h2>
+            <canvas id="renderCanvas" width="800" height="600"></canvas>
+        </div>
+    </div>
+
+    <script src="scripts/graphics/d2-format-handler.js"></script>
+    <script>
+        class D2GraphicsAPI {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+                
+                if (!this.gl) {
+                    throw new Error('WebGL not supported');
+                }
+
+                // State
+                this.activePalette = null;
+                this.paletteOffset = 0;
+                this.activeTexture = null;
+                this.textures = new Map();
+                this.textureCounter = 0;
+                
+                // Rendering settings
+                this.colorKeyEnabled = false;
+                this.colorKey = { r: 255, g: 0, b: 255 };
+                this.uFilter = 'nearest';
+                this.vFilter = 'nearest';
+                this.antiAlias = false;
+
+                this.initializeWebGL();
+                this.log('D2 Graphics API initialized', 'success');
+            }
+
+            initializeWebGL() {
+                // Enable blending for transparency
+                this.gl.enable(this.gl.BLEND);
+                this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+
+                // Create shader program
+                this.createShaderProgram();
+                
+                // Create quad geometry
+                this.createQuadGeometry();
+                
+                // Set initial viewport
+                this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            }
+
+            createShaderProgram() {
+                const vertexShaderSource = `
+                    attribute vec2 a_position;
+                    attribute vec2 a_texCoord;
+                    
+                    uniform vec2 u_resolution;
+                    
+                    varying vec2 v_texCoord;
+                    
+                    void main() {
+                        // Convert from pixels to clip space (simple passthrough)
+                        vec2 clipSpace = ((a_position / u_resolution) * 2.0) - 1.0;
+                        gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+                        
+                        // Pass texture coordinates directly (already calculated by Dave2D mapping)
+                        v_texCoord = a_texCoord;
+                    }
+                `;
+
+                const fragmentShaderSource = `
+                    precision mediump float;
+                    
+                    uniform sampler2D u_texture;
+                    uniform sampler2D u_paletteTexture;
+                    uniform float u_textureFormat;
+                    uniform float u_colorKeyEnabled;
+                    uniform vec3 u_colorKey;
+                    uniform float u_paletteOffset;
+                    uniform float u_hasActivePalette;
+                    
+                    varying vec2 v_texCoord;
+                    
+                    vec4 decodeIndexed(float index) {
+                        float paletteIndex = index * 255.0;
+                        vec2 paletteCoord = vec2(paletteIndex / 256.0, 0.5);
+                        return texture2D(u_paletteTexture, paletteCoord);
+                    }
+                    
+                    void main() {
+                        vec4 texel = texture2D(u_texture, v_texCoord);
+                        vec4 color;
+                        
+                        // Use the exact same logic as the working WebGL render page
+                        if (abs(u_textureFormat - 5.0) < 0.5) { // AI44 - Alpha + Index
+                            // For AI44: red channel = palette index, alpha channel = alpha value
+                            color = decodeIndexed(texel.r);
+                            color.a = texel.a; // Alpha is already normalized (0-1)
+                        } else if (u_textureFormat >= 8.5) { // Other indexed formats (I8, I4, I2, I1)
+                            color = decodeIndexed(texel.r);
+                        } else {
+                            // For RGB565, ARGB8888, etc. - already converted to RGBA
+                            color = texel;
+                        }
+                        
+                        // Apply color key transparency (but not for AI44 since it has its own alpha)
+                        if (u_colorKeyEnabled > 0.5 && abs(u_textureFormat - 5.0) >= 0.5) {
+                            vec3 colorKey = u_colorKey / 255.0;
+                            if (distance(color.rgb, colorKey) < 0.01) {
+                                discard;
+                            }
+                        }
+                        
+                        gl_FragColor = color;
+                    }
+                `;
+
+                const vertexShader = this.createShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+                const fragmentShader = this.createShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+                this.program = this.gl.createProgram();
+                this.gl.attachShader(this.program, vertexShader);
+                this.gl.attachShader(this.program, fragmentShader);
+                this.gl.linkProgram(this.program);
+
+                if (!this.gl.getProgramParameter(this.program, this.gl.LINK_STATUS)) {
+                    throw new Error('Shader program failed to link: ' + this.gl.getProgramInfoLog(this.program));
+                }
+
+                // Get attribute and uniform locations
+                this.attribLocations = {
+                    position: this.gl.getAttribLocation(this.program, 'a_position'),
+                    texCoord: this.gl.getAttribLocation(this.program, 'a_texCoord')
+                };
+
+                this.uniformLocations = {
+                    resolution: this.gl.getUniformLocation(this.program, 'u_resolution'),
+                    texture: this.gl.getUniformLocation(this.program, 'u_texture'),
+                    paletteTexture: this.gl.getUniformLocation(this.program, 'u_paletteTexture'),
+                    textureFormat: this.gl.getUniformLocation(this.program, 'u_textureFormat'),
+                    colorKeyEnabled: this.gl.getUniformLocation(this.program, 'u_colorKeyEnabled'),
+                    colorKey: this.gl.getUniformLocation(this.program, 'u_colorKey'),
+                    paletteOffset: this.gl.getUniformLocation(this.program, 'u_paletteOffset'),
+                    hasActivePalette: this.gl.getUniformLocation(this.program, 'u_hasActivePalette')
+                };
+            }
+
+            createShader(type, source) {
+                const shader = this.gl.createShader(type);
+                this.gl.shaderSource(shader, source);
+                this.gl.compileShader(shader);
+
+                if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+                    throw new Error('Shader compilation failed: ' + this.gl.getShaderInfoLog(shader));
+                }
+
+                return shader;
+            }
+
+            createQuadGeometry() {
+                // Create quad vertices (position + UV)
+                const vertices = new Float32Array([
+                    // Position  UV
+                    0, 0,        0, 0,  // Top-left
+                    1, 0,        1, 0,  // Top-right
+                    0, 1,        0, 1,  // Bottom-left
+                    1, 1,        1, 1   // Bottom-right
+                ]);
+
+                this.vertexBuffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.STATIC_DRAW);
+
+                // Create index buffer
+                const indices = new Uint16Array([0, 1, 2, 1, 3, 2]);
+                this.indexBuffer = this.gl.createBuffer();
+                this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, indices, this.gl.STATIC_DRAW);
+            }
+
+            // Palette Management
+            loadActivePalette(palette) {
+                this.activePalette = palette;
+                
+                if (this.paletteTexture) {
+                    this.gl.deleteTexture(this.paletteTexture);
+                }
+
+                // Create palette texture
+                const paletteData = new Uint8Array(256 * 4);
+                for (let i = 0; i < 256; i++) {
+                    const color = palette[i] || { r: 0, g: 0, b: 0, a: 255 };
+                    paletteData[i * 4] = color.r;
+                    paletteData[i * 4 + 1] = color.g;
+                    paletteData[i * 4 + 2] = color.b;
+                    paletteData[i * 4 + 3] = color.a;
+                }
+
+                this.paletteTexture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.paletteTexture);
+                this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, 256, 1, 0, 
+                                 this.gl.RGBA, this.gl.UNSIGNED_BYTE, paletteData);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+
+                this.log(`Loaded palette with ${palette.length} colors`, 'success');
+            }
+
+            setPaletteOffset(offset) {
+                this.paletteOffset = offset;
+                this.log(`Set palette offset to ${offset}`, 'info');
+            }
+
+            // Texture Management
+            loadTexture(textureData, name) {
+                const textureId = `texture_${this.textureCounter++}`;
+                
+                // Debug texture data
+                console.log('[D2Graphics] Loading texture:', {
+                    name: name,
+                    width: textureData.width,
+                    height: textureData.height,
+                    format: textureData.format,
+                    textureDataLength: textureData.textureData ? textureData.textureData.length : 'undefined',
+                    expectedLength: textureData.width * textureData.height * 4,
+                    firstPixels: textureData.textureData ? Array.from(textureData.textureData.slice(0, 16)) : 'undefined'
+                });
+                
+                // Create WebGL texture
+                const glTexture = this.gl.createTexture();
+                this.gl.bindTexture(this.gl.TEXTURE_2D, glTexture);
+                
+                // Upload texture data
+                this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, 
+                                 textureData.width, textureData.height, 0,
+                                 this.gl.RGBA, this.gl.UNSIGNED_BYTE, textureData.textureData);
+                
+                // Set texture parameters based on filter settings
+                this.updateTextureFiltering(glTexture);
+
+                const texture = {
+                    id: textureId,
+                    name: name || textureId,
+                    glTexture: glTexture,
+                    width: textureData.width,
+                    height: textureData.height,
+                    format: textureData.baseFormat || textureData.metadata?.format || 0,
+                    palette: textureData.palette
+                };
+
+                this.textures.set(textureId, texture);
+                this.log(`Loaded texture: ${texture.name} (${texture.width}x${texture.height})`, 'success');
+                
+                return textureId;
+            }
+
+            updateTextureFiltering(glTexture) {
+                this.gl.bindTexture(this.gl.TEXTURE_2D, glTexture);
+                
+                const uLinear = this.uFilter === 'linear';
+                const vLinear = this.vFilter === 'linear';
+                
+                const minFilter = (uLinear || vLinear) ? this.gl.LINEAR : this.gl.NEAREST;
+                const magFilter = (uLinear || vLinear) ? this.gl.LINEAR : this.gl.NEAREST;
+                
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, minFilter);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, magFilter);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+                this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+            }
+
+            updateAllTextureFiltering() {
+                for (const texture of this.textures.values()) {
+                    this.updateTextureFiltering(texture.glTexture);
+                }
+                this.log('Updated texture filtering for all textures', 'info');
+            }
+
+            setActiveTexture(textureId) {
+                if (this.textures.has(textureId)) {
+                    this.activeTexture = this.textures.get(textureId);
+                    this.log(`Set active texture: ${this.activeTexture.name}`, 'info');
+                } else {
+                    this.log(`Texture not found: ${textureId}`, 'error');
+                }
+            }
+
+            // Rendering Settings
+            setColorKey(enabled, color = null) {
+                this.colorKeyEnabled = enabled;
+                if (color) {
+                    this.colorKey = color;
+                }
+                this.log(`Color key ${enabled ? 'enabled' : 'disabled'}`, 'info');
+            }
+
+            setTextureFiltering(u, v, antiAlias = false, bilinear = false) {
+                this.uFilter = u ? 'linear' : 'nearest';
+                this.vFilter = v ? 'linear' : 'nearest';
+                this.antiAlias = antiAlias;
+                this.bilinear = bilinear;
+                this.updateAllTextureFiltering();
+            }
+
+            // Core Rendering
+            clearScreen(color = { r: 0, g: 0, b: 0, a: 1 }) {
+                this.gl.clearColor(color.r / 255, color.g / 255, color.b / 255, color.a);
+                this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+            }
+            
+            calculateTextureMapping(screenX, screenY, screenW, screenH, u1, v1, u2, v2, rotation, scale) {
+                // Implement Dave2D-style texture mapping calculation
+                // Based on d2_settexturemapping parameters: x, y, u0, v0, dxu, dyu, dxv, dyv
+                
+                const rotRad = rotation * Math.PI / 180.0;
+                const cosR = Math.cos(rotRad);
+                const sinR = Math.sin(rotRad);
+                
+                // Calculate scaled dimensions
+                const scaledW = screenW * scale;
+                const scaledH = screenH * scale;
+                
+                // Calculate texture coordinate range
+                const uRange = u2 - u1;
+                const vRange = v2 - v1;
+                
+                // Dave2D texture mapping parameters
+                // dxu, dxv = texture increment for a step in x direction
+                // dyu, dyv = texture increment for a step in y direction
+                
+                // For a normal (non-rotated) quad:
+                // dxu = uRange / scaledW, dxv = 0
+                // dyu = 0, dyv = vRange / scaledH
+                
+                // Apply rotation to the texture increments
+                const dxu = (uRange / scaledW) * cosR;  // U increment per X step
+                const dxv = (vRange / scaledH) * sinR;  // V increment per X step  
+                const dyu = -(uRange / scaledW) * sinR; // U increment per Y step
+                const dyv = (vRange / scaledH) * cosR;  // V increment per Y step
+                
+                // Calculate center offset for rotation around center
+                const centerX = scaledW / 2;
+                const centerY = scaledH / 2;
+                const offsetX = screenW / 2 - centerX;
+                const offsetY = screenH / 2 - centerY;
+                
+                // Calculate UV coordinates for each corner using Dave2D mapping
+                // Starting from the texture center and applying the increments
+                const centerU = u1 + uRange / 2;
+                const centerV = v1 + vRange / 2;
+                
+                // Top-left corner (0, 0)
+                const u1_calc = centerU + dxu * (-centerX + offsetX) + dyu * (-centerY + offsetY);
+                const v1_calc = centerV + dxv * (-centerX + offsetX) + dyv * (-centerY + offsetY);
+                
+                // Top-right corner (screenW, 0)
+                const u2_calc = centerU + dxu * (scaledW - centerX + offsetX) + dyu * (-centerY + offsetY);
+                const v2_calc = centerV + dxv * (scaledW - centerX + offsetX) + dyv * (-centerY + offsetY);
+                
+                // Bottom-left corner (0, screenH)
+                const u3_calc = centerU + dxu * (-centerX + offsetX) + dyu * (scaledH - centerY + offsetY);
+                const v3_calc = centerV + dxv * (-centerX + offsetX) + dyv * (scaledH - centerY + offsetY);
+                
+                // Bottom-right corner (screenW, screenH)
+                const u4_calc = centerU + dxu * (scaledW - centerX + offsetX) + dyu * (scaledH - centerY + offsetY);
+                const v4_calc = centerV + dxv * (scaledW - centerX + offsetX) + dyv * (scaledH - centerY + offsetY);
+                
+                return {
+                    screenX: screenX + offsetX,
+                    screenY: screenY + offsetY,
+                    screenW: scaledW,
+                    screenH: scaledH,
+                    u1: u1_calc, v1: v1_calc,
+                    u2: u2_calc, v2: v2_calc,
+                    u3: u3_calc, v3: v3_calc,
+                    u4: u4_calc, v4: v4_calc,
+                    // Also store the Dave2D parameters for debugging
+                    dxu: dxu, dxv: dxv, dyu: dyu, dyv: dyv
+                };
+            }
+
+            blitTexturedQuad(screenX, screenY, screenW, screenH, u1, v1, u2, v2, rotation = 0, scale = 1.0) {
+                if (!this.activeTexture) {
+                    this.log('No active texture set', 'error');
+                    return;
+                }
+
+                // Calculate texture mapping parameters like Dave2D
+                const mapping = this.calculateTextureMapping(screenX, screenY, screenW, screenH, u1, v1, u2, v2, rotation, scale);
+                
+                this.gl.useProgram(this.program);
+
+                // Set up vertex attributes
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
+                this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+
+                // Position attribute
+                this.gl.enableVertexAttribArray(this.attribLocations.position);
+                this.gl.vertexAttribPointer(this.attribLocations.position, 2, this.gl.FLOAT, false, 16, 0);
+
+                // Texture coordinate attribute
+                this.gl.enableVertexAttribArray(this.attribLocations.texCoord);
+                this.gl.vertexAttribPointer(this.attribLocations.texCoord, 2, this.gl.FLOAT, false, 16, 8);
+
+                // Set uniforms - only need resolution now (Dave2D style)
+                this.gl.uniform2f(this.uniformLocations.resolution, this.canvas.width, this.canvas.height);
+
+                // Update vertex buffer with calculated UV coordinates (Dave2D style)
+                const vertices = new Float32Array([
+                    // Position (screen space)     // UV coordinates (calculated)
+                    mapping.screenX, mapping.screenY,                           mapping.u1, mapping.v1,
+                    mapping.screenX + mapping.screenW, mapping.screenY,         mapping.u2, mapping.v2,
+                    mapping.screenX, mapping.screenY + mapping.screenH,         mapping.u3, mapping.v3,
+                    mapping.screenX + mapping.screenW, mapping.screenY + mapping.screenH, mapping.u4, mapping.v4
+                ]);
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.DYNAMIC_DRAW);
+
+                // Bind textures
+                this.gl.activeTexture(this.gl.TEXTURE0);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, this.activeTexture.glTexture);
+                this.gl.uniform1i(this.uniformLocations.texture, 0);
+
+                if (this.paletteTexture) {
+                    this.gl.activeTexture(this.gl.TEXTURE1);
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, this.paletteTexture);
+                    this.gl.uniform1i(this.uniformLocations.paletteTexture, 1);
+                    this.gl.uniform1f(this.uniformLocations.hasActivePalette, 1.0);
+                } else {
+                    this.gl.uniform1f(this.uniformLocations.hasActivePalette, 0.0);
+                }
+
+                // Set other uniforms
+                this.gl.uniform1f(this.uniformLocations.textureFormat, this.activeTexture.format);
+                this.gl.uniform1f(this.uniformLocations.colorKeyEnabled, this.colorKeyEnabled ? 1.0 : 0.0);
+                this.gl.uniform3f(this.uniformLocations.colorKey, this.colorKey.r, this.colorKey.g, this.colorKey.b);
+                this.gl.uniform1f(this.uniformLocations.paletteOffset, this.paletteOffset);
+
+                console.log('[WebGL] Rendering texture format:', this.activeTexture.format, 'with palette offset:', this.paletteOffset);
+                if (this.activeTexture.format >= 8.5) {
+                    console.log('[WebGL] Using indexed format shader path for I8/I4/I2/I1');
+                } else if (Math.abs(this.activeTexture.format - 5.0) < 0.5) {
+                    console.log('[WebGL] Using AI44 shader path');
+                } else {
+                    console.log('[WebGL] Using direct texture shader path');
+                }
+
+                // Draw the quad
+                this.gl.drawElements(this.gl.TRIANGLES, 6, this.gl.UNSIGNED_SHORT, 0);
+
+                this.log(`Blitted quad: ${screenX},${screenY} ${screenW}x${screenH} UV(${u1},${v1})-(${u2},${v2}) rot:${rotation}° scale:${scale}`, 'info');
+            }
+
+            // Utility
+            log(message, type = 'info') {
+                console.log(`[D2Graphics] ${message}`);
+                
+                const logOutput = document.getElementById('logOutput');
+                if (logOutput) {
+                    const entry = document.createElement('div');
+                    entry.className = `log-entry log-${type}`;
+                    entry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+                    logOutput.appendChild(entry);
+                    logOutput.scrollTop = logOutput.scrollHeight;
+                }
+            }
+
+            // Cleanup
+            destroy() {
+                // Clean up WebGL resources
+                for (const texture of this.textures.values()) {
+                    this.gl.deleteTexture(texture.glTexture);
+                }
+                if (this.paletteTexture) {
+                    this.gl.deleteTexture(this.paletteTexture);
+                }
+                this.gl.deleteBuffer(this.vertexBuffer);
+                this.gl.deleteBuffer(this.indexBuffer);
+                this.gl.deleteProgram(this.program);
+            }
+            
+            convertIndexedToTexture(data, width, height, format) {
+                // For indexed formats, we store the palette index in the red channel
+                // This matches the working WebGL render page approach
+                
+                if (format === 5) { // AI44 - 4-bit alpha + 4-bit index
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        const alpha = (byte >> 4) & 0x0F;
+                        const index = byte & 0x0F;
+                        
+                        const pixelIndex = i * 4;
+                        rgbaData[pixelIndex] = index;           // Store palette index in red channel
+                        rgbaData[pixelIndex + 1] = 0;           // Green
+                        rgbaData[pixelIndex + 2] = 0;           // Blue
+                        rgbaData[pixelIndex + 3] = alpha * 17;  // Convert 4-bit alpha to 8-bit (0-15 → 0-255)
+                    }
+                    return rgbaData;
+                } else if (format === 9) { // I8 - 1 byte per pixel
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const pixelIndex = i * 4;
+                        rgbaData[pixelIndex] = data[i];     // Store palette index in red channel
+                        rgbaData[pixelIndex + 1] = 0;       // Green
+                        rgbaData[pixelIndex + 2] = 0;       // Blue
+                        rgbaData[pixelIndex + 3] = 255;     // Alpha
+                    }
+                    return rgbaData;
+                } else if (format === 10) { // I4 - 2 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        const pixel1 = (byte >> 4) & 0x0F;
+                        const pixel2 = byte & 0x0F;
+                        
+                        // First pixel
+                        const pixelIndex1 = (i * 2) * 4;
+                        rgbaData[pixelIndex1] = pixel1;
+                        rgbaData[pixelIndex1 + 1] = 0;
+                        rgbaData[pixelIndex1 + 2] = 0;
+                        rgbaData[pixelIndex1 + 3] = 255;
+                        
+                        // Second pixel (if it exists)
+                        if (i * 2 + 1 < width * height) {
+                            const pixelIndex2 = (i * 2 + 1) * 4;
+                            rgbaData[pixelIndex2] = pixel2;
+                            rgbaData[pixelIndex2 + 1] = 0;
+                            rgbaData[pixelIndex2 + 2] = 0;
+                            rgbaData[pixelIndex2 + 3] = 255;
+                        }
+                    }
+                    return rgbaData;
+                } else if (format === 11) { // I2 - 4 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        for (let j = 0; j < 4; j++) {
+                            const pixelNum = i * 4 + j;
+                            if (pixelNum >= width * height) break;
+                            
+                            const shift = (3 - j) * 2;
+                            const index = (byte >> shift) & 0x03;
+                            
+                            const pixelIndex = pixelNum * 4;
+                            rgbaData[pixelIndex] = index;
+                            rgbaData[pixelIndex + 1] = 0;
+                            rgbaData[pixelIndex + 2] = 0;
+                            rgbaData[pixelIndex + 3] = 255;
+                        }
+                    }
+                    return rgbaData;
+                } else if (format === 12) { // I1 - 8 pixels per byte
+                    const rgbaData = new Uint8Array(width * height * 4);
+                    for (let i = 0; i < data.length; i++) {
+                        const byte = data[i];
+                        for (let j = 0; j < 8; j++) {
+                            const pixelNum = i * 8 + j;
+                            if (pixelNum >= width * height) break;
+                            
+                            const shift = 7 - j;
+                            const index = (byte >> shift) & 0x01;
+                            
+                            const pixelIndex = pixelNum * 4;
+                            rgbaData[pixelIndex] = index;
+                            rgbaData[pixelIndex + 1] = 0;
+                            rgbaData[pixelIndex + 2] = 0;
+                            rgbaData[pixelIndex + 3] = 255;
+                        }
+                    }
+                    return rgbaData;
+                } else {
+                    throw new Error(`Unsupported indexed format: ${format}`);
+                }
+            }
+        }
+
+        // UI Controller
+        class GraphicsAPIUI {
+            constructor() {
+                this.canvas = document.getElementById('renderCanvas');
+                this.graphics = new D2GraphicsAPI(this.canvas);
+                this.setupEventListeners();
+                this.updatePaletteDisplay();
+                this.updateTextureList();
+                this.updateConverterStatus();
+                
+                // Auto-load test data on startup
+                setTimeout(() => {
+                    this.autoLoadTestData();
+                }, 500);
+            }
+
+            setupEventListeners() {
+                // Palette controls
+                document.getElementById('paletteFile').addEventListener('change', (e) => this.handlePaletteFile(e));
+                document.getElementById('paletteOffset').addEventListener('input', (e) => {
+                    const offset = parseInt(e.target.value);
+                    document.getElementById('paletteOffsetValue').textContent = offset;
+                    this.graphics.setPaletteOffset(offset);
+                    this.blitQuad(); // Real-time update
+                });
+
+                // Transform controls
+                document.getElementById('scaleSlider').addEventListener('input', (e) => {
+                    const scale = parseFloat(e.target.value);
+                    document.getElementById('scaleValue').textContent = scale.toFixed(1);
+                    this.blitQuad(); // Real-time update
+                });
+                document.getElementById('rotationSlider').addEventListener('input', (e) => {
+                    const rotation = parseInt(e.target.value);
+                    document.getElementById('rotationValue').textContent = rotation + '°';
+                    this.blitQuad(); // Real-time update
+                });
+
+                // Texture controls
+                document.getElementById('textureFile').addEventListener('change', (e) => this.handleTextureFile(e));
+                document.getElementById('loadFromConverter').addEventListener('click', () => this.loadFromConverter());
+                document.getElementById('clearTextures').addEventListener('click', () => this.clearTextures());
+                document.getElementById('autoLoad').addEventListener('click', () => this.autoLoadTestData());
+
+                // Rendering settings
+                document.getElementById('colorKeyEnabled').addEventListener('change', (e) => {
+                    this.updateColorKey();
+                });
+                document.getElementById('colorKeyColor').addEventListener('change', (e) => {
+                    this.updateColorKey();
+                });
+
+                ['uFilterLinear', 'vFilterLinear', 'antiAlias', 'bilinearFilter'].forEach(id => {
+                    document.getElementById(id).addEventListener('change', () => this.updateFiltering());
+                });
+
+                // Coordinate inputs - real-time updates
+                ['screenX', 'screenY', 'screenW', 'screenH', 'u1', 'v1', 'u2', 'v2'].forEach(id => {
+                    document.getElementById(id).addEventListener('input', () => this.blitQuad());
+                });
+
+                // Quad controls
+                document.getElementById('blitQuad').addEventListener('click', () => this.blitQuad());
+                document.getElementById('clearScreen').addEventListener('click', () => this.graphics.clearScreen());
+
+                // Canvas controls
+                document.getElementById('resizeCanvas').addEventListener('click', () => this.resizeCanvas());
+            }
+
+            async handlePaletteFile(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    let palette;
+                    const ext = file.name.toLowerCase().split('.').pop();
+                    
+                    if (ext === 'json') {
+                        const text = await file.text();
+                        palette = JSON.parse(text);
+                    } else if (ext === 'pal' || ext === 'act') {
+                        // Load binary palette format
+                        const buffer = await file.arrayBuffer();
+                        palette = this.parseBinaryPalette(new Uint8Array(buffer), ext);
+                    } else {
+                        throw new Error('Unsupported palette format');
+                    }
+
+                    this.graphics.loadActivePalette(palette);
+                    this.updatePaletteDisplay();
+                } catch (error) {
+                    this.graphics.log(`Failed to load palette: ${error.message}`, 'error');
+                }
+            }
+
+            parseBinaryPalette(data, format) {
+                const palette = [];
+                const stride = format === 'act' ? 3 : 4; // ACT is RGB, PAL is RGBA
+                
+                for (let i = 0; i < Math.min(data.length / stride, 256); i++) {
+                    const offset = i * stride;
+                    palette.push({
+                        r: data[offset],
+                        g: data[offset + 1],
+                        b: data[offset + 2],
+                        a: stride === 4 ? data[offset + 3] : 255
+                    });
+                }
+                
+                return palette;
+            }
+
+            async handleTextureFile(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+
+                try {
+                    if (file.name.toLowerCase().endsWith('.d2')) {
+                        // Load D2 texture
+                        const buffer = await file.arrayBuffer();
+                        const handler = new D2FormatHandler();
+                        const result = await handler.loadD2Texture(buffer);
+                        const textureId = this.graphics.loadTexture(result, file.name);
+                        this.updateTextureList();
+                        this.graphics.setActiveTexture(textureId);
+                    } else {
+                        // Load regular image
+                        const img = new Image();
+                        img.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            const ctx = canvas.getContext('2d');
+                            canvas.width = img.width;
+                            canvas.height = img.height;
+                            ctx.drawImage(img, 0, 0);
+                            
+                            const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                            const textureData = {
+                                width: img.width,
+                                height: img.height,
+                                textureData: imageData.data,
+                                baseFormat: 0 // RGB format
+                            };
+                            
+                            const textureId = this.graphics.loadTexture(textureData, file.name);
+                            this.updateTextureList();
+                            this.graphics.setActiveTexture(textureId);
+                        };
+                        img.src = URL.createObjectURL(file);
+                    }
+                } catch (error) {
+                    this.graphics.log(`Failed to load texture: ${error.message}`, 'error');
+                }
+            }
+
+            async autoLoadTestData() {
+                try {
+                    // First try to load from session storage (converter)
+                    const d2Data = sessionStorage.getItem('d2_texture_data');
+                    if (d2Data) {
+                        const data = JSON.parse(d2Data);
+                        
+                        // Check if this is raw D2 data that needs processing
+                        if (data.d2Data) {
+                            // Process the raw D2 data using D2FormatHandler
+                            const handler = new D2FormatHandler();
+                            const d2Buffer = new Uint8Array(data.d2Data).buffer;
+                            const d2Result = handler.loadFromD2Binary(d2Buffer);
+                            
+                            // For indexed formats, we need to convert to texture format (not RGBA colors)
+                            let textureData;
+                            const format = d2Result.baseFormat;
+                            const frameData = d2Result.frames[0].data;
+                            
+                            if (format >= 9 || format === 5) { // Indexed formats (I8, I4, I2, I1, AI44)
+                                console.log(`[D2Graphics] Processing indexed format ${format} - converting to texture format`);
+                                textureData = this.graphics.convertIndexedToTexture(frameData, d2Result.width, d2Result.height, format);
+                            } else {
+                                // For non-indexed formats, use D2FormatHandler conversion
+                                textureData = handler.convertD2ToRGBA(frameData, format, d2Result.palette);
+                            }
+                            
+                            // Create texture data object
+                            const textureDataObj = {
+                                width: d2Result.width,
+                                height: d2Result.height,
+                                textureData: textureData,
+                                baseFormat: format,
+                                palette: d2Result.palette
+                            };
+                            
+                            const textureId = this.graphics.loadTexture(textureDataObj, 'From Converter');
+                            this.updateTextureList();
+                            this.graphics.setActiveTexture(textureId);
+
+                            // Load palette if available
+                            if (d2Result.palette) {
+                                this.graphics.loadActivePalette(d2Result.palette);
+                                this.updatePaletteDisplay();
+                            }
+                        } else {
+                            // This is already processed texture data
+                            const textureId = this.graphics.loadTexture(data, 'From Converter');
+                            this.updateTextureList();
+                            this.graphics.setActiveTexture(textureId);
+
+                            // Load palette if available
+                            if (data.palette) {
+                                this.graphics.loadActivePalette(data.palette);
+                                this.updatePaletteDisplay();
+                            }
+                        }
+                        
+                        this.graphics.log('Auto-loaded test data from converter', 'success');
+                        
+                        // Auto-blit the texture
+                        setTimeout(() => {
+                            const centerX = this.canvas.width / 2;
+                            const centerY = this.canvas.height / 2;
+                            const size = Math.min(data.width, data.height);
+                            
+                            document.getElementById('screenX').value = centerX - size/2;
+                            document.getElementById('screenY').value = centerY - size/2;
+                            document.getElementById('screenW').value = size;
+                            document.getElementById('screenH').value = size;
+                            
+                            this.blitQuad();
+                        }, 100);
+                        
+                        return;
+                    }
+
+                    // Try to load a default D2 file if available
+                    const testFiles = ['test.d2', 'test-sample.texture'];
+                    for (const filename of testFiles) {
+                        try {
+                            const response = await fetch(filename);
+                            if (response.ok) {
+                                const buffer = await response.arrayBuffer();
+                                const handler = new D2FormatHandler();
+                                const result = await handler.loadD2Texture(buffer);
+                                const textureId = this.graphics.loadTexture(result, filename);
+                                this.updateTextureList();
+                                this.graphics.setActiveTexture(textureId);
+                                
+                                // Load palette if available
+                                if (result.palette) {
+                                    this.graphics.loadActivePalette(result.palette);
+                                    this.updatePaletteDisplay();
+                                }
+                                
+                                this.graphics.log(`Auto-loaded ${filename}`, 'success');
+                                
+                                // Auto-blit the texture
+                                setTimeout(() => {
+                                    const centerX = this.canvas.width / 2;
+                                    const centerY = this.canvas.height / 2;
+                                    const size = Math.min(result.width, result.height);
+                                    
+                                    document.getElementById('screenX').value = centerX - size/2;
+                                    document.getElementById('screenY').value = centerY - size/2;
+                                    document.getElementById('screenW').value = size;
+                                    document.getElementById('screenH').value = size;
+                                    
+                                    this.blitQuad();
+                                }, 100);
+                                
+                                return;
+                            }
+                        } catch (e) {
+                            // Continue to next file
+                        }
+                    }
+                    
+                    // Try to load a sample palette
+                    try {
+                        const response = await fetch('sample-palette.pal');
+                        if (response.ok) {
+                            const buffer = await response.arrayBuffer();
+                            const palette = this.parseBinaryPalette(new Uint8Array(buffer), 'pal');
+                            this.graphics.loadActivePalette(palette);
+                            this.updatePaletteDisplay();
+                            this.graphics.log('Auto-loaded sample palette', 'success');
+                        }
+                    } catch (e) {
+                        // Palette loading failed, continue
+                    }
+                    
+                    // Create a test pattern if no files found
+                    this.createTestPattern();
+                    
+                } catch (error) {
+                    this.graphics.log(`Auto-load failed: ${error.message}`, 'error');
+                    this.createTestPattern();
+                }
+            }
+
+            createTestPattern() {
+                // Create a simple test pattern
+                const size = 64;
+                const data = new Uint8Array(size * size * 4);
+                
+                for (let y = 0; y < size; y++) {
+                    for (let x = 0; x < size; x++) {
+                        const i = (y * size + x) * 4;
+                        data[i] = (x * 4) % 256;     // Red
+                        data[i + 1] = (y * 4) % 256; // Green
+                        data[i + 2] = ((x + y) * 2) % 256; // Blue
+                        data[i + 3] = 255;           // Alpha
+                    }
+                }
+                
+                const textureData = {
+                    width: size,
+                    height: size,
+                    textureData: data,
+                    baseFormat: 0
+                };
+                
+                const textureId = this.graphics.loadTexture(textureData, 'Test Pattern');
+                this.updateTextureList();
+                this.graphics.setActiveTexture(textureId);
+                
+                this.graphics.log('Created test pattern', 'info');
+                
+                // Auto-blit the test pattern
+                setTimeout(() => {
+                    const centerX = this.canvas.width / 2;
+                    const centerY = this.canvas.height / 2;
+                    
+                    document.getElementById('screenX').value = centerX - size;
+                    document.getElementById('screenY').value = centerY - size;
+                    document.getElementById('screenW').value = size * 2;
+                    document.getElementById('screenH').value = size * 2;
+                    
+                    this.blitQuad();
+                }, 100);
+            }
+
+            async loadFromConverter() {
+                try {
+                    const d2Data = sessionStorage.getItem('d2_texture_data');
+                    if (!d2Data) {
+                        this.graphics.log('No data found in session storage. Run the Image-to-D2 converter first.', 'warning');
+                        return;
+                    }
+
+                    const data = JSON.parse(d2Data);
+                    
+                    // Check if this is raw D2 data that needs processing
+                    if (data.d2Data) {
+                        // Process the raw D2 data using D2FormatHandler
+                        const handler = new D2FormatHandler();
+                        const d2Buffer = new Uint8Array(data.d2Data).buffer;
+                        const d2Result = handler.loadFromD2Binary(d2Buffer);
+                        
+                        // Convert D2 data to RGBA texture data
+                        const rgbaData = handler.convertD2ToRGBA(
+                            d2Result.frames[0].data, 
+                            d2Result.baseFormat, 
+                            d2Result.palette
+                        );
+                        
+                        // Create texture data object
+                        const textureData = {
+                            width: d2Result.width,
+                            height: d2Result.height,
+                            textureData: rgbaData,
+                            baseFormat: d2Result.baseFormat,
+                            palette: d2Result.palette
+                        };
+                        
+                        const textureId = this.graphics.loadTexture(textureData, 'From Converter');
+                        this.updateTextureList();
+                        this.graphics.setActiveTexture(textureId);
+
+                        // Load palette if available
+                        if (d2Result.palette) {
+                            this.graphics.loadActivePalette(d2Result.palette);
+                            this.updatePaletteDisplay();
+                        }
+                    } else {
+                        // This is already processed texture data
+                        const textureId = this.graphics.loadTexture(data, 'From Converter');
+                        this.updateTextureList();
+                        this.graphics.setActiveTexture(textureId);
+
+                        // Load palette if available
+                        if (data.palette) {
+                            this.graphics.loadActivePalette(data.palette);
+                            this.updatePaletteDisplay();
+                        }
+                    }
+                } catch (error) {
+                    this.graphics.log(`Failed to load from converter: ${error.message}`, 'error');
+                }
+            }
+
+            updateColorKey() {
+                const enabled = document.getElementById('colorKeyEnabled').checked;
+                const colorHex = document.getElementById('colorKeyColor').value;
+                
+                const r = parseInt(colorHex.substr(1, 2), 16);
+                const g = parseInt(colorHex.substr(3, 2), 16);
+                const b = parseInt(colorHex.substr(5, 2), 16);
+                
+                this.graphics.setColorKey(enabled, { r, g, b });
+                this.blitQuad(); // Real-time update
+            }
+
+            updateFiltering() {
+                const u = document.getElementById('uFilterLinear').checked;
+                const v = document.getElementById('vFilterLinear').checked;
+                const aa = document.getElementById('antiAlias').checked;
+                const bilinear = document.getElementById('bilinearFilter').checked;
+                
+                this.graphics.setTextureFiltering(u, v, aa, bilinear);
+                this.blitQuad(); // Real-time update
+            }
+
+            blitQuad() {
+                // Safety check - only render if we have an active texture
+                if (!this.graphics.activeTexture) {
+                    return;
+                }
+                
+                const screenX = parseInt(document.getElementById('screenX').value);
+                const screenY = parseInt(document.getElementById('screenY').value);
+                const screenW = parseInt(document.getElementById('screenW').value);
+                const screenH = parseInt(document.getElementById('screenH').value);
+                
+                const u1 = parseFloat(document.getElementById('u1').value);
+                const v1 = parseFloat(document.getElementById('v1').value);
+                const u2 = parseFloat(document.getElementById('u2').value);
+                const v2 = parseFloat(document.getElementById('v2').value);
+                
+                const rotation = parseFloat(document.getElementById('rotationSlider').value);
+                const scale = parseFloat(document.getElementById('scaleSlider').value);
+                
+                this.graphics.blitTexturedQuad(screenX, screenY, screenW, screenH, u1, v1, u2, v2, rotation, scale);
+            }
+
+            clearTextures() {
+                this.graphics.textures.clear();
+                this.graphics.activeTexture = null;
+                this.updateTextureList();
+                this.graphics.log('Cleared all textures', 'info');
+            }
+
+            resizeCanvas() {
+                const width = parseInt(document.getElementById('canvasWidth').value);
+                const height = parseInt(document.getElementById('canvasHeight').value);
+                
+                this.canvas.width = width;
+                this.canvas.height = height;
+                this.graphics.gl.viewport(0, 0, width, height);
+                this.graphics.log(`Canvas resized to ${width}x${height}`, 'info');
+            }
+
+            updatePaletteDisplay() {
+                const container = document.getElementById('paletteDisplay');
+                container.innerHTML = '';
+
+                const palette = this.graphics.activePalette;
+                if (!palette) return;
+
+                for (let i = 0; i < Math.min(palette.length, 256); i++) {
+                    const color = palette[i];
+                    const div = document.createElement('div');
+                    div.className = 'palette-color';
+                    div.style.backgroundColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+                    div.title = `Index ${i}: RGB(${color.r},${color.g},${color.b}) A=${color.a}`;
+                    container.appendChild(div);
+                }
+            }
+
+            updateTextureList() {
+                const container = document.getElementById('textureList');
+                container.innerHTML = '';
+
+                for (const [id, texture] of this.graphics.textures.entries()) {
+                    const item = document.createElement('div');
+                    item.className = 'texture-item';
+                    if (this.graphics.activeTexture?.id === id) {
+                        item.classList.add('active');
+                    }
+
+                    item.innerHTML = `
+                        <div>
+                            <div style="font-weight: bold;">${texture.name}</div>
+                            <div style="font-size: 11px; color: #ccc;">${texture.width}x${texture.height} Format:${texture.format}</div>
+                        </div>
+                        <canvas class="texture-preview" width="32" height="32"></canvas>
+                    `;
+
+                    item.addEventListener('click', () => {
+                        this.graphics.setActiveTexture(id);
+                        this.updateTextureList();
+                    });
+
+                    container.appendChild(item);
+
+                    // Generate preview
+                    const preview = item.querySelector('.texture-preview');
+                    this.generateTexturePreview(texture, preview);
+                }
+            }
+
+            generateTexturePreview(texture, canvas) {
+                // Simple preview generation - just draw a scaled down version
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#333';
+                ctx.fillRect(0, 0, 32, 32);
+                
+                // For now, just show a colored rectangle based on format
+                const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+                ctx.fillStyle = colors[texture.format % colors.length];
+                ctx.fillRect(2, 2, 28, 28);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '8px monospace';
+                ctx.fillText(texture.format.toString(), 4, 12);
+            }
+
+            updateConverterStatus() {
+                const statusElement = document.getElementById('converterStatus');
+                const loadButton = document.getElementById('loadFromConverter');
+                
+                try {
+                    const d2Data = sessionStorage.getItem('d2_texture_data');
+                    if (d2Data) {
+                        const data = JSON.parse(d2Data);
+                        if (data.d2Data || data.textureData) {
+                            statusElement.textContent = `✓ ${data.fileName || 'Texture data'} available`;
+                            statusElement.style.color = '#4CAF50';
+                            loadButton.disabled = false;
+                        } else {
+                            statusElement.textContent = '⚠ Invalid data format';
+                            statusElement.style.color = '#FF9800';
+                            loadButton.disabled = true;
+                        }
+                    } else {
+                        statusElement.textContent = 'No data available';
+                        statusElement.style.color = '#666';
+                        loadButton.disabled = true;
+                    }
+                } catch (error) {
+                    statusElement.textContent = '✗ Data corrupted';
+                    statusElement.style.color = '#f44336';
+                    loadButton.disabled = true;
+                }
+            }
+        }
+
+        // Initialize the UI when page loads
+        window.addEventListener('load', () => {
+            try {
+                new GraphicsAPIUI();
+            } catch (error) {
+                console.error('Failed to initialize D2 Graphics API:', error);
+                alert('Failed to initialize WebGL. Please check browser support.');
+            }
+        });
+    </script>
+</body>
+</html>

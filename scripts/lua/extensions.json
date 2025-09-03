@@ -15,6 +15,150 @@
       "functions": []
     },
     {
+      "name": "Sprite",
+      "description": "Sprite management and rendering functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a sprite from a texture resource and return a unique sprite ID",
+          "parameters": [
+            {"name": "resource", "type": "string", "description": "Resource ID (use TEXTURE constants)"}
+          ],
+          "returns": {"type": "int32", "description": "Sprite ID (negative on error)"},
+          "example": "local spriteId = Sprite.Create(\"TEXTURE.PLAYER\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Destroy a sprite and free its resources",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID to destroy"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.Destroy(spriteId)"
+        },
+        {
+          "name": "SetAnimation",
+          "description": "Set the animation, interrupt the current animation",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "label", "type": "string", "description": "Animation label"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetAnimation(spriteId, \"walk\")"
+        },
+        {
+          "name": "SetFrameIndex",
+          "description": "Set the frame index of the current animation",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "frameIndex", "type": "int32", "description": "Frame index"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetFrameIndex(spriteId, 0)"
+        },
+        {
+          "name": "UpdateAnimation",
+          "description": "Call this once per update loop to update animations",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "deltaTime", "type": "float", "description": "Time since last update"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.UpdateAnimation(spriteId, deltaTime)"
+        },
+        {
+          "name": "IsHit",
+          "description": "Returns true if the point x and y is inside the sprite bounding box",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "x", "type": "int32", "description": "X coordinate"},
+            {"name": "y", "type": "int32", "description": "Y coordinate"}
+          ],
+          "returns": {"type": "boolean", "description": "True if point is inside sprite"},
+          "example": "Sprite.IsHit(spriteId, mouseX, mouseY)"
+        },
+        {
+          "name": "SetPosition",
+          "description": "Set the position of the sprite (screen relative)",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "positionX", "type": "int32", "description": "X position"},
+            {"name": "positionY", "type": "int32", "description": "Y position"},
+            {"name": "positionZ", "type": "float", "description": "Z position"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetPosition(spriteId, 100, 200, 0)"
+        },
+        {
+          "name": "GetPosition",
+          "description": "Returns the x y z position in pixels (screen relative) of the sprite",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"}
+          ],
+          "returns": {"type": "tuple", "description": "Position tuple (x, y, z)"},
+          "example": "local x, y, z = Sprite.GetPosition(spriteId)"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set visibility of the sprite",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "visible", "type": "boolean", "description": "Visibility flag"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetVisible(spriteId, true)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get visibility of the sprite",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility flag"},
+          "example": "local visible = Sprite.GetVisible(spriteId)"
+        },
+        {
+          "name": "SetRotation",
+          "description": "Set the rotation angle (degrees)",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "angle", "type": "int32", "description": "Rotation angle in degrees"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetRotation(spriteId, 45)"
+        },
+        {
+          "name": "GetRotation",
+          "description": "Get the rotation angle (degrees)",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"}
+          ],
+          "returns": {"type": "int32", "description": "Rotation angle in degrees"},
+          "example": "local angle = Sprite.GetRotation(spriteId)"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set the x and y scale of the sprite",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"},
+            {"name": "scaleX", "type": "float", "description": "X scale factor"},
+            {"name": "scaleY", "type": "float", "description": "Y scale factor"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.SetScale(spriteId, 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get the x and y scale of the sprite",
+          "parameters": [
+            {"name": "spriteId", "type": "int32", "description": "Sprite ID"}
+          ],
+          "returns": {"type": "tuple", "description": "Scale tuple (scaleX, scaleY)"},
+          "example": "local scaleX, scaleY = Sprite.GetScale(spriteId)"
+        }
+      ]
+    },
+    {
       "name": "Music",
       "description": "Background music playback functions", 
       "functions": [
