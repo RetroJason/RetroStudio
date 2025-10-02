@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Level-Based Resource Manager Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #005a87;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .status.info { background: #e7f3ff; border-left: 4px solid #007cba; }
+        .status.success { background: #e8f5e8; border-left: 4px solid #28a745; }
+        .status.error { background: #ffeaea; border-left: 4px solid #dc3545; }
+        .level-definition {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            font-size: 14px;
+        }
+        .resource-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .loader-interface {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Level-Based Resource Manager Test</h1>
+        <p>This demonstrates the new level-based resource management system with pluggable loaders.</p>
+        
+        <div class="section">
+            <h3>System Overview</h3>
+            <div class="status info">
+                <strong>Key Concepts:</strong><br>
+                • <strong>Levels:</strong> Collections of resources mapped to file paths<br>
+                • <strong>Loaders:</strong> Pluggable handlers for different file types<br>
+                • <strong>Integer IDs:</strong> Resources are assigned numeric IDs internally<br>
+                • <strong>Automatic Loading/Unloading:</strong> Only level resources are kept in memory
+            </div>
+            
+            <div class="loader-interface">
+ResourceLoader Interface:
+- GetFileExtensions()  // Returns array of supported extensions
+- Load(file, resourceId)  // Load file into engine with numeric ID
+- Unload(resourceId)  // Unload resource by numeric ID</div>
+        </div>
+
+        <div class="section">
+            <h3>Initialization Status</h3>
+            <div id="initStatus" class="status info">Checking initialization...</div>
+            <button onclick="initializeSystem()">Initialize System</button>
+            <button onclick="checkStatus()">Check Status</button>
+        </div>
+
+        <div class="section">
+            <h3>Level Management</h3>
+            <div class="level-definition" id="level1Definition">{
+  "resources": {
+    "menuMusic": "demomods/jesper_kyd_-_nightfall.mod",
+    "buttonSound": "demomods/sound-of-da-lunatic.mod", 
+    "backgroundMusic": "demomods/spacedeb.mod"
+  }
+}</div>
+            <button onclick="loadLevel1()">Load Level 1 (Audio Test)</button>
+            <button onclick="loadLevel2()">Load Level 2 (Mixed Resources)</button>
+            <button onclick="unloadLevel()">Unload Current Level</button>
+            <div id="levelStatus" class="status info">No level loaded</div>
+        </div>
+
+        <div class="section">
+            <h3>Resource Testing</h3>
+            <button onclick="playResource('menuMusic')">Play Menu Music</button>
+            <button onclick="playResource('buttonSound')">Play Button Sound</button>
+            <button onclick="playResource('backgroundMusic')">Play Background Music</button>
+            <button onclick="stopAllSounds()">Stop All Sounds</button>
+            <div id="audioStatus" class="status info">No audio playing</div>
+        </div>
+
+        <div class="section">
+            <h3>Resource Information</h3>
+            <button onclick="listResources()">List All Resources</button>
+            <button onclick="listAudioResources()">List Audio Resources</button>
+            <button onclick="listTextureResources()">List Texture Resources</button>
+            <div class="resource-list" id="resourceList">Click "List All Resources" to see loaded resources...</div>
+        </div>
+
+        <div class="section">
+            <h3>Loader Information</h3>
+            <button onclick="showLoaderInfo()">Show Registered Loaders</button>
+            <div class="resource-list" id="loaderInfo">Click "Show Registered Loaders" to see loader information...</div>
+        </div>
+
+        <div class="section">
+            <h3>Performance Testing</h3>
+            <button onclick="testPerformance()">Test Load/Unload Performance</button>
+            <div id="performanceResults" class="status info">Click "Test Performance" to run benchmark...</div>
+        </div>
+    </div>
+
+    <!-- Include required scripts -->
+    <script src="scripts/file-io-service.js"></script>
+    <script src="scripts/audio/audio-api.js"></script>
+    <script src="scripts/audio/audio-resource-loader.js"></script>
+    <script src="scripts/graphics/texture-resource-loader.js"></script>
+    <script src="scripts/game-emulator/unified-resource-manager.js"></script>
+    <script src="scripts/game-emulator/game-emulator.js"></script>
+
+    <script>
+        let gameEmulator = null;
+        let resourceManager = null;
+
+        async function initializeSystem() {
+            const statusElement = document.getElementById('initStatus');
+            statusElement.textContent = 'Initializing...';
+            statusElement.className = 'status info';
+
+            try {
+                // Initialize file manager if not present
+                if (!window.fileManager) {
+                    window.fileManager = new FileIOService();
+                }
+
+                // Initialize game emulator (this will set up resource manager and loaders)
+                gameEmulator = new GameEmulator();
+                await gameEmulator.initialize();
+
+                resourceManager = gameEmulator.unifiedResourceManager;
+
+                statusElement.textContent = 'System initialized successfully! Resource manager ready with loaders.';
+                statusElement.className = 'status success';
+
+                // Show registered loaders
+                showLoaderInfo();
+
+            } catch (error) {
+                statusElement.textContent = `Initialization failed: ${error.message}`;
+                statusElement.className = 'status error';
+                console.error('Initialization error:', error);
+            }
+        }
+
+        function checkStatus() {
+            const statusElement = document.getElementById('initStatus');
+            
+            if (!resourceManager) {
+                statusElement.textContent = 'System not initialized';
+                statusElement.className = 'status error';
+                return;
+            }
+
+            const resourceCount = resourceManager.getAllResources().length;
+            const loaderCount = Object.keys(resourceManager.loaders || {}).length;
+            
+            statusElement.textContent = `System ready: ${resourceCount} resources loaded, ${loaderCount} loaders registered`;
+            statusElement.className = 'status success';
+        }
+
+        async function loadLevel1() {
+            if (!resourceManager) {
+                alert('System not initialized');
+                return;
+            }
+
+            const statusElement = document.getElementById('levelStatus');
+            statusElement.textContent = 'Loading Level 1...';
+            statusElement.className = 'status info';
+
+            try {
+                const level1 = {
+                    resources: {
+                        "menuMusic": "demomods/jesper_kyd_-_nightfall.mod",
+                        "buttonSound": "demomods/sound-of-da-lunatic.mod", 
+                        "backgroundMusic": "demomods/spacedeb.mod"
+                    }
+                };
+
+                await resourceManager.loadLevel(level1);
+                
+                statusElement.textContent = `Level 1 loaded successfully! ${Object.keys(level1.resources).length} resources available.`;
+                statusElement.className = 'status success';
+
+                listResources();
+
+            } catch (error) {
+                statusElement.textContent = `Failed to load Level 1: ${error.message}`;
+                statusElement.className = 'status error';
+                console.error('Level loading error:', error);
+            }
+        }
+
+        async function loadLevel2() {
+            if (!resourceManager) {
+                alert('System not initialized');
+                return;
+            }
+
+            const statusElement = document.getElementById('levelStatus');
+            statusElement.textContent = 'Loading Level 2...';
+            statusElement.className = 'status info';
+
+            try {
+                const level2 = {
+                    resources: {
+                        "gameMusic": "demomods/Monday.mod",
+                        "victorySound": "demomods/Tinytune.mod",
+                        "explosionSound": "demomods/toonladder.mod"
+                    }
+                };
+
+                await resourceManager.loadLevel(level2);
+                
+                statusElement.textContent = `Level 2 loaded successfully! ${Object.keys(level2.resources).length} resources available.`;
+                statusElement.className = 'status success';
+
+                listResources();
+
+            } catch (error) {
+                statusElement.textContent = `Failed to load Level 2: ${error.message}`;
+                statusElement.className = 'status error';
+                console.error('Level loading error:', error);
+            }
+        }
+
+        async function unloadLevel() {
+            if (!resourceManager) {
+                alert('System not initialized');
+                return;
+            }
+
+            const statusElement = document.getElementById('levelStatus');
+            
+            try {
+                await resourceManager.unloadCurrentLevel();
+                
+                statusElement.textContent = 'Level unloaded successfully. No resources loaded.';
+                statusElement.className = 'status success';
+
+                listResources();
+
+            } catch (error) {
+                statusElement.textContent = `Failed to unload level: ${error.message}`;
+                statusElement.className = 'status error';
+                console.error('Level unloading error:', error);
+            }
+        }
+
+        async function playResource(resourceName) {
+            if (!gameEmulator || !gameEmulator.audioEngine) {
+                alert('Audio system not initialized');
+                return;
+            }
+
+            const statusElement = document.getElementById('audioStatus');
+            
+            try {
+                // Get resource info
+                const resourceInfo = resourceManager.getResource(resourceName);
+                if (!resourceInfo) {
+                    throw new Error(`Resource not loaded: ${resourceName}`);
+                }
+
+                // Get audio engine resource ID
+                const audioEngineId = gameEmulator.audioResourceLoader?.getAudioEngineResourceId(resourceInfo.id);
+                if (!audioEngineId) {
+                    throw new Error(`Audio resource not available: ${resourceName}`);
+                }
+
+                // Play the sound
+                await gameEmulator.audioEngine.startSong(audioEngineId, 0.5, true);
+                
+                statusElement.textContent = `Playing: ${resourceName} (Resource ID: ${resourceInfo.id}, Audio ID: ${audioEngineId})`;
+                statusElement.className = 'status success';
+
+            } catch (error) {
+                statusElement.textContent = `Failed to play ${resourceName}: ${error.message}`;
+                statusElement.className = 'status error';
+                console.error('Playback error:', error);
+            }
+        }
+
+        function stopAllSounds() {
+            if (!gameEmulator || !gameEmulator.audioEngine) {
+                alert('Audio system not initialized');
+                return;
+            }
+
+            try {
+                gameEmulator.audioEngine.stopAllSongs();
+                gameEmulator.audioEngine.stopAllSounds();
+                
+                const statusElement = document.getElementById('audioStatus');
+                statusElement.textContent = 'All sounds stopped';
+                statusElement.className = 'status success';
+
+            } catch (error) {
+                console.error('Stop error:', error);
+            }
+        }
+
+        function listResources() {
+            const listElement = document.getElementById('resourceList');
+            
+            if (!resourceManager) {
+                listElement.textContent = 'System not initialized';
+                return;
+            }
+
+            const resources = resourceManager.getAllResources();
+            
+            if (resources.length === 0) {
+                listElement.textContent = 'No resources loaded';
+                return;
+            }
+
+            let output = `Total Resources: ${resources.length}\n\n`;
+            resources.forEach(resource => {
+                output += `Name: ${resource.name}\n`;
+                output += `ID: ${resource.id}\n`;
+                output += `Loader: ${resource.loaderId}\n`;
+                output += `File: ${resource.filePath}\n\n`;
+            });
+
+            listElement.textContent = output;
+        }
+
+        function listAudioResources() {
+            const listElement = document.getElementById('resourceList');
+            
+            if (!resourceManager) {
+                listElement.textContent = 'System not initialized';
+                return;
+            }
+
+            const audioResources = resourceManager.getResourcesByLoader('audio');
+            
+            if (audioResources.length === 0) {
+                listElement.textContent = 'No audio resources loaded';
+                return;
+            }
+
+            let output = `Audio Resources: ${audioResources.length}\n\n`;
+            audioResources.forEach(resource => {
+                const audioId = gameEmulator.audioResourceLoader?.getAudioEngineResourceId(resource.id);
+                output += `Name: ${resource.name}\n`;
+                output += `ID: ${resource.id}\n`;
+                output += `Audio Engine ID: ${audioId || 'N/A'}\n`;
+                output += `File: ${resource.filePath}\n\n`;
+            });
+
+            listElement.textContent = output;
+        }
+
+        function listTextureResources() {
+            const listElement = document.getElementById('resourceList');
+            
+            if (!resourceManager) {
+                listElement.textContent = 'System not initialized';
+                return;
+            }
+
+            const textureResources = resourceManager.getResourcesByLoader('texture');
+            
+            if (textureResources.length === 0) {
+                listElement.textContent = 'No texture resources loaded';
+                return;
+            }
+
+            let output = `Texture Resources: ${textureResources.length}\n\n`;
+            textureResources.forEach(resource => {
+                const textureId = gameEmulator.textureResourceLoader?.getTextureId(resource.id);
+                output += `Name: ${resource.name}\n`;
+                output += `ID: ${resource.id}\n`;
+                output += `Texture ID: ${textureId !== null ? textureId : 'N/A'}\n`;
+                output += `File: ${resource.filePath}\n\n`;
+            });
+
+            listElement.textContent = output;
+        }
+
+        function showLoaderInfo() {
+            const infoElement = document.getElementById('loaderInfo');
+            
+            if (!resourceManager) {
+                infoElement.textContent = 'System not initialized';
+                return;
+            }
+
+            let output = 'Registered Loaders:\n\n';
+
+            // Show audio loader info
+            if (gameEmulator.audioResourceLoader) {
+                const extensions = gameEmulator.audioResourceLoader.GetFileExtensions();
+                const mappings = gameEmulator.audioResourceLoader.getAllMappings();
+                output += `Audio Loader:\n`;
+                output += `  Extensions: ${extensions.join(', ')}\n`;
+                output += `  Loaded Resources: ${mappings.size}\n\n`;
+            }
+
+            // Show texture loader info
+            if (gameEmulator.textureResourceLoader) {
+                const extensions = gameEmulator.textureResourceLoader.GetFileExtensions();
+                const mappings = gameEmulator.textureResourceLoader.getAllMappings();
+                output += `Texture Loader:\n`;
+                output += `  Extensions: ${extensions.join(', ')}\n`;
+                output += `  Loaded Resources: ${mappings.size}\n\n`;
+            }
+
+            if (output === 'Registered Loaders:\n\n') {
+                output = 'No loaders registered';
+            }
+
+            infoElement.textContent = output;
+        }
+
+        async function testPerformance() {
+            if (!resourceManager) {
+                alert('System not initialized');
+                return;
+            }
+
+            const resultsElement = document.getElementById('performanceResults');
+            resultsElement.textContent = 'Running performance test...';
+            resultsElement.className = 'status info';
+
+            try {
+                const testLevel = {
+                    resources: {
+                        "test1": "demomods/jesper_kyd_-_nightfall.mod",
+                        "test2": "demomods/Monday.mod",
+                        "test3": "demomods/spacedeb.mod"
+                    }
+                };
+
+                // Test loading
+                const loadStart = performance.now();
+                await resourceManager.loadLevel(testLevel);
+                const loadTime = performance.now() - loadStart;
+
+                // Test unloading
+                const unloadStart = performance.now();
+                await resourceManager.unloadCurrentLevel();
+                const unloadTime = performance.now() - unloadStart;
+
+                resultsElement.textContent = `Performance Test Results:\nLoad Time: ${loadTime.toFixed(2)}ms\nUnload Time: ${unloadTime.toFixed(2)}ms\nTotal: ${(loadTime + unloadTime).toFixed(2)}ms`;
+                resultsElement.className = 'status success';
+
+            } catch (error) {
+                resultsElement.textContent = `Performance test failed: ${error.message}`;
+                resultsElement.className = 'status error';
+                console.error('Performance test error:', error);
+            }
+        }
+
+        // Auto-initialize on page load
+        window.addEventListener('load', () => {
+            setTimeout(initializeSystem, 500);
+        });
+    </script>
+</body>
+</html>

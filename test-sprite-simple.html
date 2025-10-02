@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Sprite Simple API</title>
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+</head>
+<body>
+    <h1>Sprite Simple API Test</h1>
+    <button onclick="testSpriteAPI()">Test Sprite API</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <pre id="output"></pre>
+
+    <script>
+        // Mock SpriteManager for testing
+        class SpriteManager {
+            constructor(d2Graphics, resourceManager) {
+                this.d2Graphics = d2Graphics;
+                this.resourceManager = resourceManager;
+                this.sprites = new Map();
+                this.nextSpriteId = 1;
+            }
+            
+            create(resourceId) {
+                const spriteId = this.nextSpriteId++;
+                const sprite = {
+                    id: spriteId,
+                    resourceId: resourceId,
+                    position: { x: 0, y: 0, z: 0 },
+                    visible: true,
+                    
+                    setPosition: function(x, y, z) {
+                        this.position.x = x;
+                        this.position.y = y;
+                        this.position.z = z;
+                    },
+                    
+                    getPosition: function() {
+                        return this.position;
+                    },
+                    
+                    setVisible: function(visible) {
+                        this.visible = visible;
+                    },
+                    
+                    getVisible: function() {
+                        return this.visible;
+                    }
+                };
+                
+                this.sprites.set(spriteId, sprite);
+                return spriteId;
+            }
+            
+            getSprite(id) {
+                return this.sprites.get(id);
+            }
+            
+            destroy(id) {
+                this.sprites.delete(id);
+            }
+        }
+        
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('output').textContent = '';
+        }
+
+        async function testSpriteAPI() {
+            try {
+                log('=== Testing Sprite Simple API ===');
+                
+                // Create Lua state
+                const L = new Lua.State();
+                log('✓ Lua state created');
+                
+                // Mock game emulator with required services
+                const mockGameEmulator = {
+                    d2Graphics: {
+                        createTexture: function() { return { id: 1 }; },
+                        deleteTexture: function() {},
+                    },
+                    resourceManager: {
+                        getResource: function(id) { return { id: id, data: 'mock_data' }; }
+                    }
+                };
+                
+                // Create sprite extension
+                const spriteExt = new LuaSpriteExtensions(mockGameEmulator);
+                await spriteExt.initialize(L);
+                log('✓ Sprite extension initialized');
+                
+                // Override print function to capture output
+                window.luaPrint = function(message) {
+                    log('[Lua] ' + message);
+                };
+                
+                // Test Lua script using the same approach as math test
+                const testScript = `
+                    print("=== Testing Sprite Functions ===")
+                    
+                    -- Test Create function
+                    local spriteId = Sprite.Create("test_texture.png")
+                    print("Created sprite with ID: " .. tostring(spriteId))
+                    
+                    -- Test SetPosition function
+                    Sprite.SetPosition(spriteId, 100, 200, 0)
+                    print("Set sprite position to (100, 200, 0)")
+                    
+                    -- Test GetPosition function (multiple return values)
+                    print("--- Testing Multiple Return Values ---")
+                    local x, y, z = Sprite.GetPosition(spriteId)
+                    print("Got sprite position: (" .. tostring(x) .. ", " .. tostring(y) .. ", " .. tostring(z) .. ")")
+                    
+                    -- Test SetVisible function
+                    Sprite.SetVisible(spriteId, true)
+                    print("Set sprite visibility to true")
+                    
+                    -- Test GetVisible function
+                    local visible = Sprite.GetVisible(spriteId)
+                    print("Got sprite visibility: " .. tostring(visible))
+                    
+                    -- Validation
+                    local success = true
+                    if spriteId ~= 1 then
+                        print("ERROR: Expected spriteId 1, got " .. tostring(spriteId))
+                        success = false
+                    end
+                    
+                    if x ~= 100 or y ~= 200 or z ~= 0 then
+                        print("ERROR: Expected position (100, 200, 0), got (" .. tostring(x) .. ", " .. tostring(y) .. ", " .. tostring(z) .. ")")
+                        success = false
+                    end
+                    
+                    if not visible then
+                        print("ERROR: Expected visible to be true, got " .. tostring(visible))
+                        success = false
+                    end
+                    
+                    if success then
+                        print("✓ All tests passed!")
+                        return "SUCCESS"
+                    else
+                        print("✗ Some tests failed!")
+                        return "FAILED"
+                    end
+                `;
+
+                log('--- Executing Lua sprite test script ---');
+                const result = L.execute(testScript);
+                log('--- Lua execution completed ---');
+                log('Test Result: ' + result);
+                log('Test Result type: ' + typeof result);
+                log('Test Result length: ' + (result ? result.length : 'N/A'));
+                log('Test Result === "SUCCESS": ' + (result === "SUCCESS"));
+                log('Test Result == "SUCCESS": ' + (result == "SUCCESS"));
+                
+                // Convert result to string if it's an object
+                const resultStr = (typeof result === 'object' && result !== null) ? result.toString() : result;
+                log('Converted result: "' + resultStr + '"');
+                
+                if (resultStr === "SUCCESS") {
+                    log('🎉 === Sprite Simple API PASSED ===');
+                } else {
+                    log('💥 === Sprite Simple API FAILED ===');
+                    log('Expected: "SUCCESS", Got: "' + resultStr + '"');
+                }
+                
+            } catch (error) {
+                log('❌ ERROR: ' + error.message);
+                log('Stack: ' + error.stack);
+                console.error('Sprite test failed:', error);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -7,6 +7,49 @@ class LuaTimeExtensions extends BaseLuaExtension {
     this.gameEmulator = gameEmulator;
   }
 
+  initialize(luaState) {
+    console.log('[LuaTimeExtensions] Initializing Time extension...');
+    
+    // Note: luaState is already set by the base class setLuaState() method
+    
+    // Register all time methods using the base class approach
+    this.registerMethod('HoursToDegrees', this.HoursToDegrees.bind(this), 'Time');
+    this.registerMethod('MinutesToDegrees', this.MinutesToDegrees.bind(this), 'Time');
+    this.registerMethod('SecondsToDegrees', this.SecondsToDegrees.bind(this), 'Time');
+    this.registerMethod('Hours', this.Hours.bind(this), 'Time');
+    this.registerMethod('Minutes', this.Minutes.bind(this), 'Time');
+    this.registerMethod('Seconds', this.Seconds.bind(this), 'Time');
+    this.registerMethod('Day', this.Day.bind(this), 'Time');
+    this.registerMethod('Month', this.Month.bind(this), 'Time');
+    this.registerMethod('Year', this.Year.bind(this), 'Time');
+    this.registerMethod('DayOfWeek', this.DayOfWeek.bind(this), 'Time');
+    this.registerMethod('ToString', this.ToString.bind(this), 'Time');
+    this.registerMethod('Now', this.Now.bind(this), 'Time');
+    this.registerMethod('GetDelta', this.GetDelta.bind(this), 'Time');
+    this.registerMethod('GetFPS', this.GetFPS.bind(this), 'Time');
+    this.registerMethod('Sleep', this.Sleep.bind(this), 'Time');
+    
+    console.log('[LuaTimeExtensions] Time extension initialized successfully');
+  }
+
+  // Add missing methods
+  Now() {
+    return Date.now();
+  }
+
+  GetDelta() {
+    return 16.67; // Mock 60 FPS delta time
+  }
+
+  GetFPS() {
+    return 60; // Mock FPS
+  }
+
+  Sleep() {
+    const ms = parseFloat(this.luaState.raw_tostring(2) || 0);
+    console.log(`[Time] Sleep for ${ms}ms requested`);
+  }
+
   /**
    * Get current hours as degrees for watch hand positioning
    * Lua usage: Time.HoursToDegrees()

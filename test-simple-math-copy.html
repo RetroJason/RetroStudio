@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Math Test Copy</title>
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/math.js"></script>
+</head>
+<body>
+    <h1>Simple Math Test Copy</h1>
+    <button onclick="testMathAPI()">Test Math API</button>
+    <pre id="output"></pre>
+
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+
+        async function testMathAPI() {
+            try {
+                log('=== Testing Math API ===');
+                
+                // Create Lua state exactly like working test
+                const L = new Lua.State();
+                log('✓ Lua state created');
+                
+                // Create math extension exactly like working test
+                const mathExt = new LuaMathExtensions(null);
+                mathExt.setLuaState(L);
+                log('✓ Math extension created and Lua state set');
+                
+                // Register functions exactly like working test
+                mathExt.registerMethod('Sin', mathExt.Sin.bind(mathExt), 'Math');
+                mathExt.registerMethod('Cos', mathExt.Cos.bind(mathExt), 'Math');
+                mathExt.registerMethod('Abs', mathExt.Abs.bind(mathExt), 'Math');
+                mathExt.registerMethod('DivMod', mathExt.DivMod.bind(mathExt), 'Math');
+                log('✓ Math functions registered');
+
+                // Test function existence
+                const sinType = L.execute('return type(Math.Sin)');
+                log('Type of Math.Sin: ' + sinType);
+                
+                const absType = L.execute('return type(Math.Abs)');
+                log('Type of Math.Abs: ' + absType);
+                
+                const divmodType = L.execute('return type(Math.DivMod)');
+                log('Type of Math.DivMod: ' + divmodType);
+
+                // Test function calls
+                try {
+                    const sinResult = L.execute('return Math.Sin(0)');
+                    log('Math.Sin(0) = ' + JSON.stringify(sinResult));
+                } catch (e) {
+                    log('Math.Sin(0) error: ' + e.message);
+                }
+
+                try {
+                    const absResult = L.execute('return Math.Abs(-5)');
+                    log('Math.Abs(-5) = ' + JSON.stringify(absResult));
+                } catch (e) {
+                    log('Math.Abs(-5) error: ' + e.message);
+                }
+
+                try {
+                    const divmodResult = L.execute('local div, mod = Math.DivMod(10, 3); return div, mod');
+                    log('Math.DivMod(10, 3) = ' + JSON.stringify(divmodResult));
+                } catch (e) {
+                    log('Math.DivMod(10, 3) error: ' + e.message);
+                }
+
+            } catch (error) {
+                log('Error: ' + error.message);
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>

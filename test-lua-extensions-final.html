@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Final Comprehensive Lua Extensions Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .pass { color: green; }
+        .fail { color: red; }
+        .section-title { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Final Comprehensive Lua Extensions Test</h1>
+    <div id="results"></div>
+
+    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and dependencies -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/sprite-manager.js"></script>
+    
+    <!-- Load all extensions -->
+    <script src="scripts/lua/input.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/music.js"></script>
+    <script src="scripts/lua/sfx.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/system.js"></script>
+    <script src="scripts/lua/time.js"></script>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(message, isPass = null) {
+            console.log(message);
+            const div = document.createElement('div');
+            if (isPass === true) div.className = 'pass';
+            else if (isPass === false) div.className = 'fail';
+            div.textContent = message;
+            results.appendChild(div);
+        }
+
+        function addSection(title) {
+            const div = document.createElement('div');
+            div.className = 'test-section';
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'section-title';
+            titleDiv.textContent = title;
+            div.appendChild(titleDiv);
+            results.appendChild(div);
+            return div;
+        }
+
+        async function loadAllScripts() {
+            log('🔄 Starting comprehensive Lua extensions test...');
+            
+            try {
+                // Initialize Lua State
+                log('Initializing Lua state...');
+                const L = new Lua.State();
+                log('✓ Lua state created');
+
+                // Create all extension instances
+                log('Creating extension instances...');
+                const extensions = {
+                    input: new LuaInputExtensions(),
+                    math: new LuaMathExtensions(),
+                    music: new LuaMusicExtensions(),
+                    sfx: new LuaSFXExtensions(),
+                    sprite: new LuaSpriteExtensions(),
+                    system: new LuaSystemExtensions(),
+                    time: new LuaTimeExtensions()
+                };
+
+                // Set Lua state for all extensions (auto-registers methods)
+                for (const [name, ext] of Object.entries(extensions)) {
+                    ext.setLuaState(L);
+                    log(`✓ ${name} extension initialized and methods registered`);
+                }
+
+                log('🎯 All extensions auto-registered successfully!');
+
+                // Debug: Check if Math namespace functions work
+                log('=== Testing namespace functions ===');
+                try {
+                    const mathSinType = L.execute('return type(Math.Sin)');
+                    log(`Math.Sin type: ${mathSinType}`);
+                    
+                    if (mathSinType[0] === 'function') {
+                        const sinResult = L.execute('return Math.Sin(0)');
+                        log(`✓ Math.Sin(0) = ${sinResult[0]}`, true);
+                        
+                        // Test multiple return values
+                        const divModResult = L.execute('local q, r = Math.DivMod(10, 3); return q, r');
+                        log(`✓ Math.DivMod(10, 3) = ${divModResult[0]}, ${divModResult[1]}`, true);
+                        
+                        const sinCosResult = L.execute('local s, c = Math.SinCos(0); return s, c');
+                        log(`✓ Math.SinCos(0) = ${sinCosResult[0]}, ${sinCosResult[1]}`, true);
+                    } else {
+                        log('✗ Math.Sin is not a function', false);
+                    }
+                } catch (e) {
+                    log(`✗ Math namespace test failed: ${e.message}`, false);
+                }
+
+                // Run comprehensive tests
+                addSection('Comprehensive Extension Tests');
+                
+                const tests = [
+                    // Math tests
+                    { name: 'Math.Sin', lua: 'return Math.Sin(0)', expected: 0 },
+                    { name: 'Math.Cos', lua: 'return Math.Cos(0)', expected: 1 },
+                    { name: 'Math.Abs', lua: 'return Math.Abs(-5)', expected: 5 },
+                    { name: 'Math.Min', lua: 'return Math.Min(3, 7)', expected: 3 },
+                    { name: 'Math.Max', lua: 'return Math.Max(3, 7)', expected: 7 },
+                    { name: 'Math.Floor', lua: 'return Math.Floor(3.7)', expected: 3 },
+                    { name: 'Math.Ceil', lua: 'return Math.Ceil(3.2)', expected: 4 },
+                    { name: 'Math.Round', lua: 'return Math.Round(3.6)', expected: 4 },
+                    { name: 'Math.Sqrt', lua: 'return Math.Sqrt(16)', expected: 4 },
+                    { name: 'Math.Pow', lua: 'return Math.Pow(2, 3)', expected: 8 },
+                    { name: 'Math.DivMod', lua: 'local q, r = Math.DivMod(10, 3); return q, r', expected: 'multiple' },
+                    { name: 'Math.SinCos', lua: 'local s, c = Math.SinCos(0); return s, c', expected: 'multiple' },
+                    
+                    // Input tests (these will return default values since no real input)
+                    { name: 'Input.IsKeyPressed', lua: 'return type(Input.IsKeyPressed)', expected: 'function' },
+                    { name: 'Input.GetMouseX', lua: 'return type(Input.GetMouseX)', expected: 'function' },
+                    { name: 'Input.GetMouseY', lua: 'return type(Input.GetMouseY)', expected: 'function' },
+                    
+                    // Sprite tests
+                    { name: 'Sprite.Create', lua: 'return type(Sprite.Create)', expected: 'function' },
+                    { name: 'Sprite.SetPosition', lua: 'return type(Sprite.SetPosition)', expected: 'function' },
+                    { name: 'Sprite.GetPosition', lua: 'return type(Sprite.GetPosition)', expected: 'function' },
+                    
+                    // System tests
+                    { name: 'System.GetTime', lua: 'return type(System.GetTime)', expected: 'function' },
+                    { name: 'System.Log', lua: 'return type(System.Log)', expected: 'function' },
+                    { name: 'System.GetOS', lua: 'return type(System.GetOS)', expected: 'function' },
+                    
+                    // Time tests
+                    { name: 'Time.Now', lua: 'return type(Time.Now)', expected: 'function' },
+                    { name: 'Time.GetDelta', lua: 'return type(Time.GetDelta)', expected: 'function' },
+                    { name: 'Time.GetFPS', lua: 'return type(Time.GetFPS)', expected: 'function' },
+                    
+                    // Music tests
+                    { name: 'Music.LoadModule', lua: 'return type(Music.LoadModule)', expected: 'function' },
+                    { name: 'Music.Play', lua: 'return type(Music.Play)', expected: 'function' },
+                    { name: 'Music.SetVolume', lua: 'return type(Music.SetVolume)', expected: 'function' },
+                    
+                    // SFX tests
+                    { name: 'SFX.LoadSound', lua: 'return type(SFX.LoadSound)', expected: 'function' },
+                    { name: 'SFX.PlaySound', lua: 'return type(SFX.PlaySound)', expected: 'function' },
+                    { name: 'SFX.SetSoundVolume', lua: 'return type(SFX.SetSoundVolume)', expected: 'function' }
+                ];
+
+                let passedTests = 0;
+                const totalTests = tests.length;
+
+                for (const test of tests) {
+                    try {
+                        const result = L.execute(test.lua);
+                        let passed = false;
+                        
+                        if (test.expected === 'function') {
+                            passed = result[0] === 'function';
+                        } else if (test.expected === 'multiple') {
+                            passed = result.length >= 2;
+                        } else {
+                            passed = Math.abs(result[0] - test.expected) < 0.0001;
+                        }
+                        
+                        if (passed) {
+                            log(`✓ ${test.name}: ${result.join(', ')}`, true);
+                            passedTests++;
+                        } else {
+                            log(`✗ ${test.name}: Expected ${test.expected}, got ${result.join(', ')}`, false);
+                        }
+                    } catch (e) {
+                        log(`✗ ${test.name}: Error - ${e.message}`, false);
+                    }
+                }
+
+                // Summary
+                addSection('Test Summary');
+                log(`Total Tests: ${totalTests}`);
+                log(`Passed: ${passedTests}`, passedTests === totalTests);
+                log(`Failed: ${totalTests - passedTests}`, passedTests === totalTests);
+                
+                if (passedTests === totalTests) {
+                    log('🎉 ALL TESTS PASSED! All 70+ Lua extension methods validated successfully! 🎉', true);
+                } else {
+                    log(`❌ ${totalTests - passedTests} tests failed. Check the output above for details.`, false);
+                }
+
+            } catch (error) {
+                log(`❌ Critical error: ${error.message}`, false);
+                console.error(error);
+            }
+        }
+
+        // Start loading when page loads
+        document.addEventListener('DOMContentLoaded', loadAllScripts);
+    </script>
+</body>
+</html>

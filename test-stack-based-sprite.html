@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stack-Based Sprite API Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1e1e1e; color: #d4d4d4; }
+        .log { margin: 5px 0; padding: 5px; border-left: 3px solid #007acc; }
+        .success { color: #4ec9b0; border-left-color: #4ec9b0; }
+        .error { color: #f44747; border-left-color: #f44747; }
+        .test-result { margin: 20px 0; padding: 10px; background: #2d2d30; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Stack-Based Sprite API Test</h1>
+    <div id="output"></div>
+
+    <!-- Include required scripts -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/game-sprite.js"></script>
+    <script src="scripts/graphics/game-sprite-manager.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+
+    <script>
+        const outputDiv = document.getElementById('output');
+        
+        function log(message, type = 'log') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = message;
+            outputDiv.appendChild(div);
+            console.log(message);
+        }
+
+        async function testStackBasedSprite() {
+            try {
+                log('=== Testing True Stack-Based Sprite API ===');
+                
+                // Initialize Lua
+                const L = new Lua.State();
+                log('✓ Lua state created');
+
+                // Create mock game emulator
+                const gameEmulator = {
+                    d2Graphics: {}, // Mock D2Graphics
+                    resourceManager: {
+                        // Mock GetResource method that SpriteManager expects
+                        GetResource: function(resourceId) {
+                            // Return a mock resource for any requested ID
+                            return {
+                                id: resourceId,
+                                type: 'texture',
+                                data: 'mock-texture-data'
+                            };
+                        }
+                    }
+                };
+
+                // Create sprite extension (will use real SpriteManager)
+                const spriteExt = new LuaSpriteExtensions(gameEmulator);
+                
+                // Initialize the extension
+                await spriteExt.initialize(L);
+                log('✓ Sprite extension initialized with stack-based registration');
+
+                // Test the stack-based API from Lua
+                log('--- Testing Create ---');
+                const luaScript = `
+                    -- Test Create (should read resource ID from stack position 2)
+                    local spriteId = Sprite.Create("test_texture.png")
+                    print("Raw spriteId value:", spriteId)
+                    print("spriteId type:", type(spriteId))
+                    
+                    if spriteId and spriteId ~= -1 then
+                        print("Created sprite ID: " .. tostring(spriteId))
+                        
+                        -- Test SetPosition (should read spriteId, x, y, z from stack positions 2, 3, 4, 5)
+                        Sprite.SetPosition(spriteId, 150, 250, 50)
+                        print("Set position to (150, 250, 50)")
+                        
+                        -- Test GetPosition (should read spriteId from stack position 2, return array)
+                        local pos = Sprite.GetPosition(spriteId)
+                        if pos and #pos >= 3 then
+                            print("Got position: (" .. pos[1] .. ", " .. pos[2] .. ", " .. pos[3] .. ")")
+                        else
+                            print("GetPosition failed or returned invalid result")
+                        end
+                        
+                        -- Test SetVisible (should read spriteId and boolean from stack positions 2, 3)
+                        Sprite.SetVisible(spriteId, true)
+                        print("Set visible to true")
+                        
+                        -- Test GetVisible (should read spriteId from stack position 2, return boolean)
+                        local visible = Sprite.GetVisible(spriteId)
+                        print("Got visible: " .. tostring(visible))
+                        
+                        _G.testResult = "SUCCESS"
+                    else
+                        print("ERROR: Failed to create sprite - got nil or -1")
+                        _G.testResult = "FAILED"
+                    end
+                    
+                    -- Validate results
+                    local success = true
+                    
+                    if spriteId ~= 1 then
+                        print("ERROR: Expected sprite ID 1, got " .. tostring(spriteId))
+                        success = false
+                    end
+                    
+                    if pos[1] ~= 150 or pos[2] ~= 250 or pos[3] ~= 50 then
+                        print("ERROR: Position mismatch - expected (150, 250, 50), got (" .. pos[1] .. ", " .. pos[2] .. ", " .. pos[3] .. ")")
+                        success = false
+                    end
+                    
+                    if visible ~= true then
+                        print("ERROR: Expected visible=true, got " .. tostring(visible))
+                        success = false
+                    end
+                    
+                    if success then
+                        print("🎉 STACK-BASED API TEST PASSED!")
+                        _G.testResult = "SUCCESS"
+                    else
+                        print("💥 STACK-BASED API TEST FAILED!")
+                        _G.testResult = "FAILED"
+                    end
+                    
+                    -- Cleanup
+                    Sprite.Destroy(spriteId)
+                    print("Sprite destroyed")
+                `;
+
+                // Override print to capture Lua output
+                window.luaPrint = function(message) {
+                    log(`[Lua] ${message}`);
+                };
+
+                L.execute(`
+                    function print(...)
+                        local args = {...}
+                        local str = ""
+                        for i = 1, #args do
+                            if i > 1 then str = str .. "\\t" end
+                            str = str .. tostring(args[i])
+                        end
+                        js.global.luaPrint(str)
+                    end
+                `);
+
+                // Execute the test script
+                L.execute(luaScript);
+                
+                // Get the result
+                const result = L.execute('return _G.testResult');
+                log(`Test Result: ${result}`);
+                
+                if (result === "SUCCESS") {
+                    log('🎉 === STACK-BASED SPRITE API VERIFIED! ===', 'success');
+                    log('✓ True stack-based parameter reading using raw_tostring(index)', 'success');
+                    log('✓ Parameters read from Lua stack positions 2, 3, 4, 5...', 'success');
+                    log('✓ No unpack(args) - direct stack access like C Lua API', 'success');
+                    log('✓ Stack-based approach working correctly!', 'success');
+                } else {
+                    log('💥 Stack-based API test failed', 'error');
+                }
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                console.error('Test error:', error);
+            }
+        }
+
+        // Start test when page loads
+        window.addEventListener('load', testStackBasedSprite);
+    </script>
+</body>
+</html>

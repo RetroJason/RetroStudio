@@ -13,11 +13,23 @@ class LuaInputExtensions extends BaseLuaExtension {
    * Initialize the Input extension
    * @param {Object} luaState - The Lua execution state
    */
-  async initialize(luaState) {
-    this.setLuaState(luaState);
+  initialize(luaState) {
+    console.log('[LuaInputExtensions] Initializing Input extension...');
     
-    // Get input manager from game emulator
-    this.inputManager = this.gameEmulator.inputManager;
+    // Note: luaState is already set by the base class setLuaState() method
+    
+    // Get input manager from game emulator (if available)
+    if (this.gameEmulator && this.gameEmulator.inputManager) {
+      this.inputManager = this.gameEmulator.inputManager;
+    }
+    
+    // Register all input methods using the base class approach
+    this.registerMethod('GetKeysHeld', this.GetKeysHeld.bind(this), 'Input');
+    this.registerMethod('GetKeysPressed', this.GetKeysPressed.bind(this), 'Input');
+    this.registerMethod('GetKeysReleased', this.GetKeysReleased.bind(this), 'Input');
+    this.registerMethod('IsKeyHeld', this.IsKeyHeld.bind(this), 'Input');
+    this.registerMethod('IsKeyPressed', this.IsKeyPressed.bind(this), 'Input');
+    this.registerMethod('IsKeyReleased', this.IsKeyReleased.bind(this), 'Input');
     
     // Create Input.Buttons constants in Lua
     luaState.execute(`
@@ -41,8 +53,9 @@ class LuaInputExtensions extends BaseLuaExtension {
         R      = 0x0800   -- Right Shift
       }
       
-
     `);
+    
+    console.log('[LuaInputExtensions] Input extension initialized successfully');
   }
 
   /**

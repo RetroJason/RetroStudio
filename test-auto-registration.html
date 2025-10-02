@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Auto-Registration</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .pass { color: green; }
+        .fail { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Test Auto-Registration</h1>
+    <div id="results"></div>
+
+    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and Math extension -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/math.js"></script>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(message, isPass = null) {
+            console.log(message);
+            const div = document.createElement('div');
+            if (isPass === true) div.className = 'pass';
+            else if (isPass === false) div.className = 'fail';
+            div.textContent = message;
+            results.appendChild(div);
+        }
+
+        function testAutoRegistration() {
+            log('🔄 Testing automatic function registration...');
+            
+            try {
+                // Initialize Lua State
+                const L = new Lua.State();
+                log('✓ Lua state created');
+
+                // Create math extension and set Lua state (should auto-register)
+                const mathExt = new LuaMathExtensions();
+                mathExt.setLuaState(L);
+                log('✓ Math extension created and Lua state set');
+
+                // Test if functions are automatically registered
+                const mathSinType = L.execute('return type(Math.Sin)');
+                log(`Math.Sin type: ${mathSinType}`);
+                
+                if (mathSinType[0] === 'function') {
+                    log('✓ Math.Sin is automatically registered as function!', true);
+                    
+                    // Test actual function calls
+                    const sinResult = L.execute('return Math.Sin(0)');
+                    log(`✓ Math.Sin(0) = ${sinResult[0]}`, true);
+                    
+                    // Test multiple return values
+                    const divModResult = L.execute('local q, r = Math.DivMod(10, 3); return q, r');
+                    log(`✓ Math.DivMod(10, 3) = ${divModResult[0]}, ${divModResult[1]}`, true);
+                    
+                    log('🎉 AUTO-REGISTRATION WORKS! Just setLuaState() registers all functions!', true);
+                } else {
+                    log('✗ Auto-registration failed - Math.Sin is not a function', false);
+                }
+
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, false);
+                console.error(error);
+            }
+        }
+
+        // Start test when page loads
+        document.addEventListener('DOMContentLoaded', testAutoRegistration);
+    </script>
+</body>
+</html>

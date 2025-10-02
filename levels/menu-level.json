@@ -1,0 +1,11 @@
+{
+  "name": "Menu Level",
+  "description": "Main menu resources",
+  "resources": {
+    "menuMusic": "demomods/jesper_kyd_-_nightfall.mod",
+    "buttonHover": "demomods/sound-of-da-lunatic.mod",
+    "buttonClick": "demomods/Tinytune.mod",
+    "menuBackground": "Resources/Images/menu_bg.png",
+    "logoTexture": "Resources/Images/logo.png"
+  }
+}

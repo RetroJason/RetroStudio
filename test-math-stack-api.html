@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Math Stack-based API</title>
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/extension-loader.js"></script>
+</head>
+<body>
+    <h1>Math Stack-based API Test</h1>
+    <button onclick="testMathAPI()">Test Math API</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <pre id="output"></pre>
+
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('output').textContent = '';
+        }
+
+        async function testMathAPI() {
+            try {
+                log('=== Testing Math Stack-based API ===');
+                
+                // Create Lua state
+                const L = new Lua.State();
+                log('✓ Lua state created');
+                
+                // Create math extension (if it exists)
+                let mathExt = null;
+                if (window.LuaMathExtensions) {
+                    mathExt = new LuaMathExtensions();
+                    await mathExt.initialize(L);
+                    log('✓ Math extension initialized');
+                } else {
+                    log('Math extension class not found, using extension loader...');
+                    
+                    // Try using extension loader
+                    const extensionLoader = new LuaExtensionLoader({});
+                    await extensionLoader.initializeExtensions(L);
+                    log('✓ Extension loader initialized');
+                }
+
+                // Override print function to capture output
+                L.execute(`
+                    local outputs = {}
+                    function print(...)
+                        local args = {...}
+                        local str = ""
+                        for i = 1, #args do
+                            if i > 1 then str = str .. "\\t" end
+                            str = str .. tostring(args[i])
+                        end
+                        table.insert(outputs, str)
+                        js.global.luaPrint(str)
+                    end
+                    
+                    function getOutputs()
+                        return table.concat(outputs, "\\n")
+                    end
+                `);
+                
+                // Create global function to receive print output
+                window.luaPrint = function(message) {
+                    log('[Lua] ' + message);
+                };
+
+                // Test Lua script using stack-based Math API
+                const testScript = `
+                    print("=== Testing Math Functions ===")
+                    
+                    -- Test Sin function
+                    local sinResult = Math.Sin(1.57079632679)  -- π/2, should be ~1
+                    print("Math.Sin(π/2) = " .. tostring(sinResult))
+                    
+                    -- Test Cos function
+                    local cosResult = Math.Cos(0)  -- cos(0), should be 1
+                    print("Math.Cos(0) = " .. tostring(cosResult))
+                    
+                    -- Test Sqrt function
+                    local sqrtResult = Math.Sqrt(16)  -- sqrt(16), should be 4
+                    print("Math.Sqrt(16) = " .. tostring(sqrtResult))
+                    
+                    -- Test Pow function
+                    local powResult = Math.Pow(2, 3)  -- 2^3, should be 8
+                    print("Math.Pow(2, 3) = " .. tostring(powResult))
+                    
+                    -- Test Min function
+                    local minResult = Math.Min(5, 10)  -- min(5, 10), should be 5
+                    print("Math.Min(5, 10) = " .. tostring(minResult))
+                    
+                    -- Test Max function
+                    local maxResult = Math.Max(5, 10)  -- max(5, 10), should be 10
+                    print("Math.Max(5, 10) = " .. tostring(maxResult))
+                    
+                    -- Test Abs function
+                    local absResult = Math.Abs(-7)  -- abs(-7), should be 7
+                    print("Math.Abs(-7) = " .. tostring(absResult))
+                    
+                    -- Test DivMod function (multiple return values)
+                    print("=== Testing Multiple Return Values ===")
+                    local quotient, remainder = Math.DivMod(17, 5)  -- 17 / 5 = 3 remainder 2
+                    print("Math.DivMod(17, 5) = " .. tostring(quotient) .. ", " .. tostring(remainder))
+                    
+                    -- Test SinCos function (multiple return values)
+                    local sinVal, cosVal = Math.SinCos(0)  -- sin(0) = 0, cos(0) = 1
+                    print("Math.SinCos(0) = " .. tostring(sinVal) .. ", " .. tostring(cosVal))
+                    
+                    print("=== Math API Test Complete ===")
+                    return "SUCCESS"
+                `;
+
+                log('--- Executing Lua math test script ---');
+                const result = L.execute(testScript);
+                log('--- Lua execution completed ---');
+                log('Result: ' + result);
+                
+                // Get any captured output
+                const luaOutput = L.execute('return getOutputs()');
+                if (luaOutput) {
+                    log('Captured Lua output:');
+                    log(luaOutput);
+                }
+                
+                log('=== Math test completed! ===');
+                
+            } catch (error) {
+                log('❌ ERROR: ' + error.message);
+                log('Stack: ' + error.stack);
+                console.error('Math test failed:', error);
+            }
+        }
+
+        // Auto-run test when page loads
+        window.addEventListener('load', () => {
+            log('Page loaded. Click "Test Math API" to run the test.');
+        });
+    </script>
+</body>
+</html>

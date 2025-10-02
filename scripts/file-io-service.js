@@ -666,21 +666,18 @@ class FileIOService {
 // Enable clearOnStartup to clean up old test files
 const fileIOService = new FileIOService({ clearOnStartup: true });
 
-// Register with ServiceContainer immediately - before initialization completes
-if (!window.serviceContainer) {
-  throw new Error('ServiceContainer is not available. Cannot register FileIOService.');
+// Register with ServiceContainer if available
+if (window.serviceContainer && typeof window.serviceContainer.registerSingleton === 'function') {
+  // Register the service immediately so it's available for dependency injection
+  window.serviceContainer.registerSingleton('fileIOService', fileIOService);
+  console.log('[FileIOService] Registered with ServiceContainer immediately');
+} else {
+  console.log('[FileIOService] ServiceContainer not available - service will only be available globally');
 }
 
-if (typeof window.serviceContainer.registerSingleton !== 'function') {
-  throw new Error('ServiceContainer.registerSingleton is not available. Service registration failed.');
-}
-
-// Register the service immediately so it's available for dependency injection
-window.serviceContainer.registerSingleton('fileIOService', fileIOService);
-console.log('[FileIOService] Registered with ServiceContainer immediately');
-
-// Also make it available globally
+// Always make it available globally for direct access
 window.fileIOService = fileIOService;
+window.fileManager = fileIOService;
 
 // Handle initialization completion separately
 fileIOService.initPromise.then(() => {

@@ -78,11 +78,7 @@ class GameEmulator {
     // Initialize unified resource manager
     if (!this.unifiedResourceManager) {
       this.unifiedResourceManager = new UnifiedResourceManager(this);
-      
-      // Register loaders
-      this._initializeResourceLoaders();
-      
-      console.log('[GameEmulator] Unified resource manager initialized with loaders');
+      console.log('[GameEmulator] Unified resource manager initialized');
     }
 
     // Initialize or obtain BuildSystem
@@ -100,6 +96,10 @@ class GameEmulator {
       console.log('[GameEditor] Service container not available, BuildSystem will be initialized later');
       this.buildSystem = null;
     }
+    
+    // Listen for audio engine events
+    this.audioEngine.addEventListener('resourceLoaded', this.onResourceLoaded.bind(this));
+    this.audioEngine.addEventListener('resourceUpdated', this.onResourceUpdated.bind(this));
     
     // Initialize or obtain TabManager
     if (services) {
@@ -492,6 +492,329 @@ class GameEmulator {
     return buildFiles;
   }
 
+  /**
+   * Initialize all resource mappings from build files
+   * This creates a centralized resource mapping system for all components to use
+   */
+  /**
+   * Initialize centralized resource mappings by scanning all build files
+   * Uses folder structure to determine resource type (e.g., SFX/, Music/, Graphics/)
+   */
+  async initializeResourceMappings() {
+    console.log('[GameEmulator] Initializing centralized resource mappings...');
+    
+    try {
+      this.resourceMap.clear();
+      
+      // Get all build files
+      console.log('[GameEmulator] DEBUG: Getting all build files...');
+      const buildFiles = this.getAllBuildFiles();
+      console.log(`[GameEmulator] DEBUG: Found ${buildFiles.length} total build files:`, buildFiles);
+      
+      // Process all build files and create resource mappings based on folder structure
+      for (const file of buildFiles) {
+        const resourceMapping = this.createResourceMapping(file);
+        if (resourceMapping) {
+          this.resourceMap.set(resourceMapping.id, resourceMapping);
+          console.log(`[GameEmulator] DEBUG: Mapped resource: ${resourceMapping.id} -> ${file.path}`);
+        }
+      }
+      
+      console.log(`[GameEmulator] DEBUG: Final resource map size: ${this.resourceMap.size}`);
+      console.log(`[GameEmulator] DEBUG: All resource IDs:`, Array.from(this.resourceMap.keys()));
+      
+      // Preload all resources into memory
+      await this.preloadResources();
+      
+      // Create Lua constants for all resource types
+      await this.createAllLuaConstants();
+      
+    } catch (error) {
+      console.error('[GameEmulator] Failed to initialize resource mappings:', error);
+    }
+  }
+
+  /**
+   * Create a resource mapping object from a build file based on its folder structure
+   * @param {Object} file - Build file object with path and name
+   * @returns {Object|null} Resource mapping object or null if not a mappable resource
+   */
+  createResourceMapping(file) {
+    if (!file.path || !file.name) {
+      return null;
+    }
+
+    // Extract folder structure from path
+    // Expected formats: "test/Game Objects/SFX/sound.wav" or "build/SFX/sound.wav"
+    let folderMatch = null;
+    
+    // Try "Game Objects/FolderName/" pattern first
+    const gameObjectsMatch = file.path.match(/Game Objects\/([^\/]+)\//);
+    if (gameObjectsMatch) {
+      folderMatch = gameObjectsMatch[1].toUpperCase();
+    } else {
+      // Fallback to "build/FolderName/" pattern
+      const buildMatch = file.path.match(/build\/([^\/]+)\//);
+      if (buildMatch) {
+        folderMatch = buildMatch[1].toUpperCase();
+      }
+    }
+
+    if (!folderMatch) {
+      console.log(`[GameEmulator] DEBUG: Skipping file with no recognized folder structure: ${file.path}`);
+      return null;
+    }
+
+    // Get file extension and base name
+    const fileExtension = file.name.split('.').pop().toLowerCase();
+    const fileName = file.name.replace(new RegExp(`\\.${fileExtension}$`), '');
+    
+    // Determine resource type and supported extensions
+    const resourceTypeMap = {
+      'SFX': ['wav'],
+      'MUSIC': ['mod', 'xm', 's3m', 'it'],
+      'IMAGES': ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'd2'],  // d2 files are built textures
+      'DATA': ['json', 'txt', 'xml'],
+      'SHADERS': ['glsl', 'frag', 'vert'],
+      'PALETTES': ['pal', 'act', 'aco']
+    };
+
+    // Map folder names to resource prefixes 
+    const folderToResourceType = {
+      'IMAGES': 'TEXTURE',  // Images folder creates TEXTURE resources
+      'SFX': 'SFX',
+      'MUSIC': 'MUSIC', 
+      'PALETTES': 'PALETTES',
+      'DATA': 'DATA',
+      'SHADERS': 'SHADERS'
+    };
+
+    // Check if this file type is supported for this folder
+    const supportedExtensions = resourceTypeMap[folderMatch] || [];
+    if (supportedExtensions.length > 0 && !supportedExtensions.includes(fileExtension)) {
+      console.log(`[GameEmulator] DEBUG: Skipping unsupported file type .${fileExtension} in ${folderMatch} folder: ${file.path}`);
+      return null;
+    }
+
+    // Create resource ID using the mapped resource type
+    const resourceType = folderToResourceType[folderMatch] || folderMatch;
+    const resourceId = `${resourceType}.${fileName.toUpperCase()}`;
+
+    console.log(`[GameEmulator] DEBUG: Creating ${folderMatch} resource: ${resourceId} (.${fileExtension})`);
+
+    return {
+      type: folderMatch,
+      id: resourceId,
+      fileName: fileName,
+      filePath: file.path,
+      category: folderMatch,
+      name: file.name,
+      extension: fileExtension,
+      loaded: false,
+      audioResource: null
+    };
+  }
+
+  /**
+   * Preload all resources into memory so Play() doesn't need to load them
+   * Handles both audio (SFX, MUSIC) and non-audio resources
+   */
+  async preloadResources() {
+    console.log('[GameEmulator] Preloading all resources into memory...');
+    
+    if (!this.resourceManager) {
+      console.warn('[GameEmulator] ResourceManager not available - skipping preload');
+      return;
+    }
+    
+    const preloadPromises = [];
+    
+    for (const [resourceId, resource] of this.resourceMap) {
+      if (!resource.loaded) {
+        console.log(`[GameEmulator] Preloading ${resource.type} resource: ${resourceId}`);
+        
+        // Handle audio resources (SFX and MUSIC)
+        if (resource.type === 'SFX' || resource.type === 'MUSIC') {
+          const loadPromise = this.preloadAudioResource(resource)
+            .then((audioResourceId) => {
+              resource.loaded = true;
+              resource.audioResource = audioResourceId;
+              // console.log(`[GameEmulator] Successfully preloaded: ${resourceId} as ${audioResourceId}`);
+            })
+            .catch((error) => {
+              console.warn(`[GameEmulator] Failed to preload ${resourceId}:`, error);
+              resource.loaded = false;
+              resource.audioResource = null;
+            });
+          
+          preloadPromises.push(loadPromise);
+        } else if (resource.type === 'TEXTURE' || resource.type === 'IMAGES') {
+          // Handle texture resources - load them into D2Graphics
+          const textureLoadPromise = this.preloadTextureResource(resource)
+            .then((textureId) => {
+              resource.loaded = true;
+              resource.textureId = textureId;
+              console.log(`[GameEmulator] Successfully preloaded texture: ${resourceId} as ${textureId}`);
+            })
+            .catch((error) => {
+              console.warn(`[GameEmulator] Failed to preload texture ${resourceId}:`, error);
+              resource.loaded = false;
+              resource.textureId = null;
+            });
+          
+          preloadPromises.push(textureLoadPromise);
+        } else {
+          // For other non-audio resources, just mark as loaded (no preloading needed)
+          // They will be loaded on-demand when accessed
+          resource.loaded = true;
+          console.log(`[GameEmulator] Marked ${resource.type} resource as available: ${resourceId}`);
+        }
+      }
+    }
+    
+    // Wait for all audio resources to load
+    await Promise.all(preloadPromises);
+    
+    const loadedCount = Array.from(this.resourceMap.values()).filter(r => r.loaded).length;
+    console.log(`[GameEmulator] Preloaded ${loadedCount}/${this.resourceMap.size} resources into memory`);
+  }
+
+  /**
+   * Create Lua constants for all resource types
+   */
+  async createAllLuaConstants() {
+    console.log('[GameEmulator] DEBUG: Creating Lua constants for all resource types...');
+    
+    if (!this.luaState) {
+      console.error('[GameEmulator] DEBUG: Lua state not available - skipping constant creation');
+      return;
+    }
+    
+    console.log('[GameEmulator] DEBUG: Lua state is available, proceeding with constant creation');
+    
+    try {
+      // Create SFX constants
+      console.log('[GameEmulator] DEBUG: Getting SFX resource constants...');
+      const sfxConstants = this.GetResourceConstants('SFX');
+      console.log(`[GameEmulator] DEBUG: Got ${Object.keys(sfxConstants).length} SFX constants:`, sfxConstants);
+      
+      if (Object.keys(sfxConstants).length > 0) {
+        let luaCode = 'SFX = SFX or {}\n';
+        
+        for (const [constantName, resourceId] of Object.entries(sfxConstants)) {
+          luaCode += `SFX.${constantName} = "${resourceId}"\n`;
+          console.log(`[GameEmulator] DEBUG: Adding constant: SFX.${constantName} = "${resourceId}"`);
+        }
+        
+        console.log(`[GameEmulator] DEBUG: About to execute Lua code:\n${luaCode}`);
+        this.luaState.execute(luaCode);
+        console.log(`[GameEmulator] DEBUG: Successfully executed Lua constants creation`);
+        
+        // Verify the constants were created
+        try {
+          const verifyCode = 'return type(SFX), SFX';
+          const result = this.luaState.execute(verifyCode);
+          console.log(`[GameEmulator] DEBUG: Verification - SFX type and value:`, result);
+        } catch (verifyError) {
+          console.error('[GameEmulator] DEBUG: Failed to verify SFX constants:', verifyError);
+        }
+        
+        console.log(`[GameEmulator] Created ${Object.keys(sfxConstants).length} SFX constants in Lua`);
+        console.log('[GameEmulator] SFX constants:', Object.keys(sfxConstants));
+      } else {
+        console.warn('[GameEmulator] DEBUG: No SFX constants to create');
+      }
+      
+      // TODO: Add other resource type constants here (Graphics, Music, etc.)
+      
+    } catch (error) {
+      console.error('[GameEmulator] DEBUG: Failed to create Lua constants:', error);
+    }
+  }
+
+  /**
+   * Get a resource by its ID
+   * @param {string} resourceId - The resource ID (e.g., "SFX.COOL")
+   * @returns {Object|null} Resource object or null if not found
+   */
+  GetResource(resourceId) {
+    if (!this.unifiedResourceManager) {
+      console.error('[GameEmulator] Unified resource manager not available');
+      return null;
+    }
+    
+    return this.unifiedResourceManager.getResource(resourceId);
+  }
+
+  /**
+   * Get all resources of a specific type
+   * @param {string} type - Resource type (e.g., "SFX", "MUSIC", "TEXTURE")
+   * @returns {Array} Array of resource objects
+   */
+  GetResourcesByType(type) {
+    if (!this.unifiedResourceManager) {
+      console.error('[GameEmulator] Unified resource manager not available');
+      return [];
+    }
+    
+    return this.unifiedResourceManager.getResourcesByType(type);
+  }
+
+  /**
+   * Load a resource on demand
+   * @param {string} resourceId - Resource ID to load
+   * @returns {Promise<Object>} Loaded resource
+   */
+  async loadResourceOnDemand(resourceId) {
+    if (!this.unifiedResourceManager) {
+      throw new Error('Unified resource manager not available');
+    }
+    
+    return await this.unifiedResourceManager.loadResource(resourceId);
+  }
+
+  /**
+   * Preload all resources
+   * @returns {Promise<void>}
+   */
+  async preloadAllResources() {
+    if (!this.unifiedResourceManager) {
+      throw new Error('Unified resource manager not available');
+    }
+    
+    await this.unifiedResourceManager.preloadAllResources();
+  }
+
+  /**
+   * Get all resource IDs for Lua constant generation
+   * @param {string} type - Resource type filter (optional)
+   * @returns {Object} Map of constant names to resource IDs
+   */
+  GetResourceConstants(type = null) {
+    console.log(`[GameEmulator] DEBUG: GetResourceConstants called with type: ${type}`);
+    console.log(`[GameEmulator] DEBUG: Current resourceMap size: ${this.resourceMap.size}`);
+    console.log(`[GameEmulator] DEBUG: All resources in map:`, Array.from(this.resourceMap.entries()));
+    
+    const constants = {};
+    for (const [resourceId, resource] of this.resourceMap) {
+      console.log(`[GameEmulator] DEBUG: Processing resource: ${resourceId}, type: ${resource.type}`);
+      if (!type || resource.type === type) {
+        // Extract constant name from resource ID (e.g., "SFX.COOL" -> "COOL")
+        const parts = resourceId.split('.');
+        if (parts.length === 2) {
+          const constantName = parts[1];
+          constants[constantName] = resourceId;
+          console.log(`[GameEmulator] DEBUG: Added constant: ${constantName} = ${resourceId}`);
+        } else {
+          console.warn(`[GameEmulator] DEBUG: Invalid resource ID format: ${resourceId}`);
+        }
+      }
+    }
+    
+    console.log(`[GameEmulator] DEBUG: Final constants object:`, constants);
+    return constants;
+  }
+  
   findMainLuaScript() {
     // Look for main.lua in the Lua directory
   const project = this.projectExplorer?.getFocusedProjectName?.();
@@ -660,6 +983,482 @@ class GameEmulator {
   
   getAllSFXFiles() {
     return this.projectExplorer.getProjectFiles('sfx');
+  }
+  
+  getLoadedResourceId(filename) {
+    for (const [path, id] of this.loadedAudioResources) {
+      if (path.endsWith(filename)) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Invalidate ALL cached resources
+   * This is called when any build operation occurs to ensure viewers get the latest version
+   */
+  invalidateAllResourceCache() {
+    console.log(`[GameEmulator] Invalidating ALL cached resources due to build operation`);
+    
+    // Clear all audio resources
+    const audioResourceCount = this.loadedAudioResources.size;
+    for (const [path, resourceId] of this.loadedAudioResources.entries()) {
+      console.log(`[GameEmulator] Clearing cached audio resource: ${path} -> ${resourceId}`);
+      
+      // Unload from audio engine
+      if (this.audioEngine) {
+        this.audioEngine.unloadResource(resourceId);
+      }
+      
+      // Unload from resource manager
+      if (this.resourceManager) {
+        this.resourceManager.unloadResource(resourceId);
+      }
+    }
+    
+    // Clear the entire cache
+    this.loadedAudioResources.clear();
+    
+    // Clear resource manager cache
+    if (this.resourceManager && typeof this.resourceManager.clear === 'function') {
+      this.resourceManager.clear();
+    }
+    
+    // Clear resource mappings that might be cached
+    if (this.resourceMap) {
+      // Reset loaded status for all resources so they reload on next access
+      for (const [resourceId, resource] of this.resourceMap.entries()) {
+        if (resource.loaded) {
+          resource.loaded = false;
+          resource.audioResource = null;
+        }
+      }
+    }
+    
+    console.log(`[GameEmulator] Cleared ${audioResourceCount} audio resources and reset all resource cache`);
+  }
+
+  /**
+   * Preload a single audio resource directly from build files
+   * Used during emulator startup to load ALL resources into memory
+   * @param {Object} resource - Resource object with filePath and type info
+   * @returns {Promise<string>} Resource ID
+   */
+  async preloadAudioResource(resource) {
+    // console.log(`[GameEmulator] Preloading audio resource: ${resource.id} from ${resource.filePath}`);
+    
+    try {
+      // Load the file from build storage
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (!fileManager) {
+        throw new Error('FileManager not available');
+      }
+      
+      // Convert UI path to storage path
+      const storagePath = resource.filePath.replace('test/Game Objects/', 'build/');
+      console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
+      
+      const fileData = await fileManager.loadFile(storagePath);
+      if (!fileData) {
+        throw new Error(`Failed to load file from storage: ${storagePath}`);
+      }
+      
+      // Convert file data to ArrayBuffer
+      let arrayBuffer;
+      if (fileData.content instanceof ArrayBuffer) {
+        arrayBuffer = fileData.content;
+      } else if (fileData.binaryData && fileData.fileContent) {
+        // Decode base64 binary data
+        const binaryString = atob(fileData.fileContent);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        arrayBuffer = bytes.buffer;
+      } else {
+        throw new Error(`Unsupported file data format for ${storagePath}`);
+      }
+      
+      console.log(`[GameEmulator] Converted to ArrayBuffer, size: ${arrayBuffer.byteLength} bytes`);
+      
+      // Determine audio type from file extension
+      const extension = resource.name.toLowerCase();
+      const isModFile = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => extension.endsWith(ext));
+      const audioType = isModFile ? 'mod' : 'wav';
+      const mimeType = isModFile ? 'application/octet-stream' : 'audio/wav';
+      
+      // Create File object for ResourceManager
+      const file = new File([arrayBuffer], resource.name, { type: mimeType });
+      console.log(`[GameEmulator] Created File object: ${file.name}, size: ${file.size}, type: ${file.type}`);
+      
+      // Load through ResourceManager
+      const resourceId = await this.resourceManager.loadFromFile(file, audioType);
+      // console.log(`[GameEmulator] Successfully loaded audio resource: ${resourceId}`);
+      
+      return resourceId;
+      
+    } catch (error) {
+      console.error(`[GameEmulator] Failed to preload audio resource ${resource.id}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Preload a texture resource into D2Graphics
+   * @param {Object} resource - Resource object with type and filePath
+   * @returns {Promise<string>} Texture ID
+   */
+  async preloadTextureResource(resource) {
+    try {
+      console.log(`[GameEmulator] Preloading texture resource: ${resource.id} from ${resource.filePath}`);
+      
+      // Load the file from build storage
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (!fileManager) {
+        throw new Error('FileManager not available');
+      }
+      
+      // Convert UI path to storage path
+      const storagePath = resource.filePath.replace('test/Game Objects/', 'build/');
+      console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
+      
+      // Load the D2 texture file from storage
+      const fileData = await fileManager.loadFile(storagePath);
+      if (!fileData || !fileData.fileContent) {
+        throw new Error(`Failed to load texture file: ${storagePath}`);
+      }
+      
+      // Convert file data to ArrayBuffer
+      let arrayBuffer;
+      if (fileData.content instanceof ArrayBuffer) {
+        arrayBuffer = fileData.content;
+      } else if (fileData.binaryData && fileData.fileContent) {
+        // Decode base64 binary data
+        const binaryString = atob(fileData.fileContent);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        arrayBuffer = bytes.buffer;
+      } else {
+        throw new Error(`Unsupported file data format for ${storagePath}`);
+      }
+      
+      console.log(`[GameEmulator] Converted D2 texture to ArrayBuffer, size: ${arrayBuffer.byteLength} bytes`);
+      
+      // Load texture into D2Graphics
+      const textureName = resource.fileName || resource.id;
+      const textureId = this.d2Graphics.loadD2Texture(arrayBuffer, textureName);
+      
+      if (!textureId) {
+        throw new Error(`Failed to create D2 texture from ${storagePath}`);
+      }
+      
+      // Store the textureId in the resource for sprite access
+      resource.textureId = textureId;
+      
+      console.log(`[GameEmulator] Successfully preloaded texture: ${resource.id} as ${textureId}`);
+      return textureId;
+      
+    } catch (error) {
+      console.error(`[GameEmulator] Failed to preload texture resource ${resource.id}:`, error);
+      throw error;
+    }
+  }
+
+  // Load an audio file on demand (called by viewers)
+  async loadAudioFileOnDemand(filename, forceReload = false) {
+    console.log(`[GameEditor] Loading audio file on demand: ${filename}${forceReload ? ' (force reload)' : ''}`);
+    
+    // Check if already loaded, unless forcing reload
+    if (!forceReload) {
+      const existingId = this.getLoadedResourceId(filename);
+      if (existingId) {
+        console.log(`[GameEditor] File ${filename} already loaded with ID: ${existingId}`);
+        return existingId;
+      }
+    } else {
+      // Force reload: clear existing resource first
+      const existingId = this.getLoadedResourceId(filename);
+      if (existingId) {
+        console.log(`[GameEditor] Force reload: clearing existing resource ${existingId} for ${filename}`);
+        if (this.audioEngine) {
+          this.audioEngine.unloadResource(existingId);
+        }
+      }
+    }
+    
+    // Dedupe concurrent requests for the same filename
+    if (!forceReload && this._inflightLoads.has(filename)) {
+      console.log('[GameEditor] Returning in-flight load for', filename);
+      return this._inflightLoads.get(filename);
+    }
+
+    const loadPromise = (async () => {
+      // First try to find in pending files (regular project files)
+      // But only if this file was recently added and has proper file data
+    if (this.pendingAudioFiles) {
+      for (const [fileKey, fileData] of this.pendingAudioFiles.entries()) {
+        if (fileKey.endsWith(filename)) {
+          // Check if fileData.file has proper file content/data
+          if (fileData.file && (
+            (fileData.file.arrayBuffer && typeof fileData.file.arrayBuffer === 'function') ||
+            fileData.file.fileContent ||
+            fileData.file.content
+          )) {
+            try {
+              console.log(`[GameEditor] Loading ${filename} (${fileData.audioType}) from pending files...`);
+              
+              let fileToLoad = fileData.file;
+              
+              // Check if file has arrayBuffer method, if not, convert it to a proper File object
+              if (!fileToLoad.arrayBuffer || typeof fileToLoad.arrayBuffer !== 'function') {
+                console.log(`[GameEditor] Converting storage file to File object for ${filename}`);
+                console.log(`[GameEditor] fileToLoad structure:`, {
+                  hasBinaryData: 'binaryData' in fileToLoad,
+                  binaryData: fileToLoad.binaryData,
+                  hasContent: 'content' in fileToLoad,
+                  contentType: typeof fileToLoad.content,
+                  hasFileContent: 'fileContent' in fileToLoad,
+                  fileContentType: typeof fileToLoad.fileContent,
+                  keys: Object.keys(fileToLoad)
+                });
+                
+                let buf;
+                if (fileToLoad.content instanceof ArrayBuffer) {
+                  console.log(`[GameEditor] Using ArrayBuffer content directly`);
+                  buf = fileToLoad.content;
+                } else if (fileToLoad.binaryData && fileToLoad.fileContent) {
+                  console.log(`[GameEditor] Converting base64 fileContent to ArrayBuffer`);
+                  const binaryString = atob(fileToLoad.fileContent);
+                  const bytes = new Uint8Array(binaryString.length);
+                  for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                  buf = bytes.buffer;
+                } else if (typeof fileToLoad.fileContent === 'string' && fileToLoad.fileContent.length > 0) {
+                  console.log(`[GameEditor] Treating fileContent as base64 binary data`);
+                  // Try to decode as base64 first (common for binary files from storage)
+                  try {
+                    const binaryString = atob(fileToLoad.fileContent);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+                    buf = bytes.buffer;
+                  } catch (e) {
+                    console.log(`[GameEditor] Base64 decode failed, treating as text:`, e);
+                    buf = new TextEncoder().encode(fileToLoad.fileContent).buffer;
+                  }
+                } else {
+                  console.error(`[GameEditor] Cannot convert file - unknown format:`, fileToLoad);
+                  throw new Error('Unsupported file format for conversion');
+                }
+                
+                console.log(`[GameEditor] Created ArrayBuffer with ${buf.byteLength} bytes`);
+                
+                const isMod = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => filename.toLowerCase().endsWith(ext));
+                fileToLoad = new File([buf], filename, { 
+                  type: isMod ? 'application/octet-stream' : 'audio/wav' 
+                });
+                console.log(`[GameEditor] Created File object:`, {
+                  name: fileToLoad.name,
+                  size: fileToLoad.size,
+                  type: fileToLoad.type,
+                  hasArrayBuffer: typeof fileToLoad.arrayBuffer === 'function'
+                });
+              }
+              
+              const resourceId = await this.resourceManager.loadFromFile(fileToLoad, fileData.audioType);
+              
+              // Move from pending to loaded
+              this.loadedAudioResources.set(fileKey, resourceId);
+              this.pendingAudioFiles.delete(fileKey);
+              
+              console.log(`[GameEditor] Loaded audio resource: ${resourceId} (${filename})`);
+              this.updateStatus(`Loaded ${filename}`, 'success');
+              
+              return resourceId;
+            } catch (error) {
+              console.error(`[GameEditor] Failed to load audio file ${filename}:`, error);
+              throw error;
+            }
+          } else {
+            console.log(`[GameEditor] Found ${filename} in pending files but file data is incomplete, removing from pending and trying storage...`);
+            this.pendingAudioFiles.delete(fileKey);
+            break; // Exit loop and try storage approach
+          }
+        }
+      }
+    }
+    
+      // If not found in pending files, try to load from build files via storage
+      console.log(`[GameEditor] File ${filename} not found in pending files, checking build files...`);
+    
+    try {
+      // Prefer storage backend to enumerate possible build files
+      const candidates = [];
+      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+        console.log(`[GameEditor] Listing build files for ${filename}...`);
+        const buildRecords = await window.fileIOService.listFiles('build');
+        console.log(`[GameEditor] Found ${buildRecords.length} build records:`, buildRecords);
+        for (const rec of buildRecords) {
+          const recPath = rec.path || rec;
+          if ((recPath || '').endsWith(filename)) {
+            candidates.push(recPath);
+            console.log(`[GameEditor] Found candidate: ${recPath}`);
+          }
+        }
+      }
+      
+      console.log(`[GameEditor] Total candidates for ${filename}:`, candidates);
+
+      // Sort to prioritize clean paths
+      candidates.sort((a, b) => {
+        const aBad = a.includes('.sfx/') || a.includes('/Resources/');
+        const bBad = b.includes('.sfx/') || b.includes('/Resources/');
+        if (aBad && !bBad) return 1;
+        if (!aBad && bBad) return -1;
+        return a.length - b.length; // prefer shorter paths
+      });
+
+        for (const path of candidates) {
+        try {
+            console.log(`[GameEditor] Attempting to load candidate: ${path}`);
+            const rec = window.fileIOService ? await window.fileIOService.loadFile(path) : null;
+          if (!rec) {
+            console.log(`[GameEditor] No record found for: ${path}`);
+            continue;
+          }
+          console.log(`[GameEditor] Loaded record:`, { 
+            path: path, 
+            binaryData: rec.binaryData, 
+            contentType: typeof rec.content, 
+            fileContentType: typeof rec.fileContent,
+            fileContentLength: rec.fileContent ? rec.fileContent.length : 'N/A'
+          });
+          const buf = rec.content instanceof ArrayBuffer ? rec.content : (rec.binaryData && rec.fileContent ? (() => { const bin = atob(rec.fileContent); const bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer; })() : new TextEncoder().encode(String(rec.fileContent || rec.content || '')).buffer);
+          console.log(`[GameEditor] Converted to ArrayBuffer, length: ${buf.byteLength}`);
+          const file = new File([buf], filename, { type: 'audio/wav' });
+          console.log(`[GameEditor] Created File object:`, { name: file.name, size: file.size, type: file.type });
+          const resourceId = await this.resourceManager.loadFromFile(file, 'wav');
+          console.log(`[GameEditor] Successfully loaded audio resource: ${resourceId}`);
+          this.loadedAudioResources.set(path, resourceId);
+          this.updateStatus(`Loaded ${filename}`, 'success');
+          return resourceId;
+        } catch (innerErr) {
+          console.warn('[GameEditor] Candidate load failed, trying next:', path, innerErr);
+        }
+      }
+    } catch (error) {
+      console.error(`[GameEditor] Error loading build file ${filename}:`, error);
+    }
+    
+    // If still not found, try to load directly from stored Resources by filename
+    console.log(`[GameEditor] ${filename} not found in build files, checking Resources in storage...`);
+  try {
+      const resourceCandidates = [];
+      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const resRecords = await window.fileIOService.listFiles(sourcesRoot);
+        for (const rec of resRecords) {
+          const recPath = rec.path || rec;
+          if ((recPath || '').endsWith(filename)) {
+            resourceCandidates.push(recPath);
+          }
+        }
+      }
+
+      // Sort to prioritize shortest paths
+      resourceCandidates.sort((a, b) => a.length - b.length);
+
+      if (resourceCandidates.length) {
+        // Determine audio type by extension
+        const lower = filename.toLowerCase();
+        const isMod = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => lower.endsWith(ext));
+        const audioType = isMod ? 'mod' : (lower.endsWith('.wav') ? 'wav' : null);
+        if (!audioType) {
+          throw new Error('Unsupported audio type for on-demand load');
+        }
+
+          for (const key of resourceCandidates) {
+          try {
+              const path = key;
+              const rec = await window.fileIOService.loadFile(path);
+            if (!rec) continue;
+            let buf;
+            if (rec.content instanceof ArrayBuffer) {
+              buf = rec.content;
+            } else if (rec.binaryData && rec.fileContent) {
+              const binaryString = atob(rec.fileContent);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+              buf = bytes.buffer;
+            } else if (typeof rec.fileContent === 'string') {
+              buf = new TextEncoder().encode(rec.fileContent).buffer;
+            } else {
+              continue;
+            }
+            const file = new File([buf], filename, { type: isMod ? 'application/octet-stream' : 'audio/wav' });
+            const resourceId = await this.resourceManager.loadFromFile(file, audioType);
+            this.loadedAudioResources.set(path, resourceId);
+            this.updateStatus(`Loaded ${filename}`, 'success');
+            return resourceId;
+          } catch (resErr) {
+            console.warn('[GameEditor] Failed to load resource candidate:', key, resErr);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[GameEditor] Error during Resources storage lookup:', error);
+    }
+
+    // If we get here, the file wasn't found anywhere
+    throw new Error(`File ${filename} not found in project or build files`);
+    })();
+
+    // Track in-flight and clean up when done
+    this._inflightLoads.set(filename, loadPromise);
+    try {
+      const id = await loadPromise;
+      return id;
+    } finally {
+      // Remove only if this exact promise is still the one stored
+      if (this._inflightLoads.get(filename) === loadPromise) {
+        this._inflightLoads.delete(filename);
+      }
+    }
+  }
+
+  onResourceLoaded(event) {
+    const { resourceId, resource, type } = event.detail;
+    // console.log(`[GameEditor] Resource loaded event: ${resourceId} (${type})`);
+    this.updateStatus(`Loaded ${resource.name}`, 'success');
+  }
+
+  onResourceUpdated(event) {
+    const { resourceId, property, value } = event.detail;
+    console.log(`[GameEditor] Resource updated event: ${resourceId} ${property} = ${value}`);
+    
+    // Find the filename for this resource
+    let filename = null;
+    for (const [fileKey, loadedResourceId] of this.loadedAudioResources.entries()) {
+      if (loadedResourceId === resourceId) {
+        // Extract filename from the fileKey (which is like "Resources/Music/filename.mod")
+        filename = fileKey.split('/').pop();
+        break;
+      }
+    }
+    
+    // Notify the tab manager to update any open viewers for this resource
+    if (this.tabManager && typeof this.tabManager.notifyResourceUpdated === 'function') {
+      this.tabManager.notifyResourceUpdated(resourceId, property, value, filename);
+    } else {
+      console.warn('[GameEditor] TabManager.notifyResourceUpdated is not available');
+    }
+  }
+
+  notifyResourceUpdated(resourceId, property, value) {
+    // Legacy method - now just delegates to the event system
+    console.log(`[GameEditor] Legacy notification: ${resourceId} ${property} = ${value}`);
+    this.onResourceUpdated({ detail: { resourceId, property, value } });
   }
   
   async concatenateLuaScripts() {
@@ -2077,61 +2876,6 @@ class GameEmulator {
         window.panelResizer.requestResize('gameEngine', { adjustForSlidePanel: false });
       }
     }
-  }
-  
-  /**
-   * Initialize resource loaders for the unified resource manager
-   * @private
-   */
-  _initializeResourceLoaders() {
-    try {
-      // Initialize audio loader if audio engine is available
-      if (this.audioEngine) {
-        const audioLoader = new AudioResourceLoader(this.audioEngine);
-        this.unifiedResourceManager.registerLoader('audio', audioLoader);
-        
-        // Store reference for SFX extension
-        this.audioResourceLoader = audioLoader;
-      }
-      
-      // Initialize texture loader if D2Graphics is available
-      if (this.d2Graphics) {
-        const textureLoader = new TextureResourceLoader(this.d2Graphics);
-        this.unifiedResourceManager.registerLoader('texture', textureLoader);
-        
-        // Store reference for sprite access
-        this.textureResourceLoader = textureLoader;
-      }
-      
-      console.log('[GameEmulator] Resource loaders initialized');
-    } catch (error) {
-      console.error('[GameEmulator] Failed to initialize resource loaders:', error);
-    }
-  }
-  
-  /**
-   * Load a level with resources
-   * @param {Object} level - Level definition with resource mappings
-   * @returns {Promise<void>}
-   */
-  async loadLevel(level) {
-    if (!this.unifiedResourceManager) {
-      throw new Error('Unified resource manager not initialized');
-    }
-    
-    return await this.unifiedResourceManager.loadLevel(level);
-  }
-  
-  /**
-   * Unload the current level
-   * @returns {Promise<void>}
-   */
-  async unloadCurrentLevel() {
-    if (!this.unifiedResourceManager) {
-      return;
-    }
-    
-    return await this.unifiedResourceManager.unloadCurrentLevel();
   }
   
   // Resource manager interface for sprites

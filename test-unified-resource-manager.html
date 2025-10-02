@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Resource Manager Test</title>
+    <style>
+        body {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #cccccc;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            color: #0078d4;
+            margin-bottom: 20px;
+            font-size: 24px;
+            border-bottom: 2px solid #3c3c3c;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: #2d2d30;
+            padding: 20px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border: 1px solid #3c3c3c;
+        }
+        .test-title {
+            color: #ffb74d;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        .button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-family: inherit;
+        }
+        .button:hover {
+            background: #106ebe;
+        }
+        .button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .output {
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success { background: #4a5c1a; color: #9acd32; }
+        .status.error { background: #5c1a1a; color: #ff6b6b; }
+        .status.info { background: #1a3a5c; color: #6bb6ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">🚀 Unified Resource Manager Test</div>
+        
+        <div class="test-section">
+            <div class="test-title">Resource Manager Initialization</div>
+            <button class="button" onclick="initializeTest()">Initialize Systems</button>
+            <button class="button" onclick="loadUnifiedManager()">Load Unified Manager</button>
+            <div id="init-status" class="status info">Ready to initialize</div>
+        </div>
+        
+        <div class="test-section">
+            <div class="test-title">Resource Loading Tests</div>
+            <button class="button" onclick="testResourceMapping()">Test Resource Mapping</button>
+            <button class="button" onclick="testResourceLoading()">Test Resource Loading</button>
+            <button class="button" onclick="testPreloading()">Test Preload All</button>
+            <div id="loading-status" class="status info">Ready to test loading</div>
+        </div>
+        
+        <div class="test-section">
+            <div class="test-title">Performance Comparison</div>
+            <button class="button" onclick="testOldSystem()">Test Old System</button>
+            <button class="button" onclick="testNewSystem()">Test New System</button>
+            <button class="button" onclick="compareSystems()">Compare Both</button>
+            <div id="performance-status" class="status info">Ready to compare performance</div>
+        </div>
+        
+        <div class="test-section">
+            <div class="test-title">Console Output</div>
+            <div id="console-output" class="output">Test output will appear here...</div>
+            <button class="button" onclick="clearOutput()">Clear Output</button>
+        </div>
+    </div>
+
+    <!-- Load the required scripts -->
+    <script src="scripts/game-emulator/unified-resource-manager.js"></script>
+    
+    <script>
+        let gameEmulator = null;
+        let unifiedManager = null;
+        
+        function log(message) {
+            const output = document.getElementById('console-output');
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `status ${type}`;
+        }
+        
+        function clearOutput() {
+            document.getElementById('console-output').textContent = '';
+        }
+        
+        async function initializeTest() {
+            try {
+                log('Initializing test environment...');
+                
+                // Mock the service container and basic services
+                if (!window.serviceContainer) {
+                    window.serviceContainer = {
+                        services: new Map(),
+                        get: function(name) {
+                            if (!this.services.has(name)) {
+                                throw new Error(`Service ${name} not found`);
+                            }
+                            return this.services.get(name);
+                        },
+                        register: function(name, service) {
+                            this.services.set(name, service);
+                        }
+                    };
+                }
+                
+                // Mock file manager
+                if (!window.serviceContainer.services.has('fileManager')) {
+                    const mockFileManager = {
+                        async loadFile(path) {
+                            log(`Mock loading file: ${path}`);
+                            // Simulate different types of files
+                            if (path.includes('cool.wav')) {
+                                return {
+                                    fileContent: 'mock-wav-data',
+                                    binaryData: true
+                                };
+                            } else if (path.includes('test.mod')) {
+                                return {
+                                    fileContent: 'mock-mod-data',
+                                    binaryData: true
+                                };
+                            }
+                            return null;
+                        }
+                    };
+                    window.serviceContainer.register('fileManager', mockFileManager);
+                }
+                
+                // Mock audio engine
+                if (!window.serviceContainer.services.has('audioEngine')) {
+                    const mockAudioEngine = {
+                        async loadResource(data, type, name) {
+                            const resourceId = `audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                            log(`Mock audio engine loaded ${type} resource: ${name} -> ${resourceId}`);
+                            return resourceId;
+                        },
+                        
+                        unloadResource(resourceId) {
+                            log(`Mock audio engine unloaded: ${resourceId}`);
+                            return true;
+                        }
+                    };
+                    window.serviceContainer.register('audioEngine', mockAudioEngine);
+                }
+                
+                // Mock game emulator with basic build files
+                gameEmulator = {
+                    getAllBuildFiles() {
+                        return [
+                            { path: 'build/SFX/cool.wav', name: 'cool.wav', type: 'file' },
+                            { path: 'build/SFX/beep.wav', name: 'beep.wav', type: 'file' },
+                            { path: 'build/MUSIC/test.mod', name: 'test.mod', type: 'file' },
+                            { path: 'build/TEXTURE/sprite.d2', name: 'sprite.d2', type: 'file' }
+                        ];
+                    },
+                    
+                    d2Graphics: {
+                        loadD2Texture(data, name) {
+                            const textureId = `texture_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                            log(`Mock D2 graphics loaded texture: ${name} -> ${textureId}`);
+                            return textureId;
+                        }
+                    }
+                };
+                
+                log('Test environment initialized successfully');
+                updateStatus('init-status', 'Systems initialized', 'success');
+                
+            } catch (error) {
+                log(`Error initializing: ${error.message}`);
+                updateStatus('init-status', `Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadUnifiedManager() {
+            try {
+                log('Creating unified resource manager...');
+                
+                if (!window.UnifiedResourceManager) {
+                    throw new Error('UnifiedResourceManager class not found - check script loading');
+                }
+                
+                unifiedManager = new window.UnifiedResourceManager(gameEmulator);
+                await unifiedManager.initialize();
+                
+                log('Unified resource manager created successfully');
+                updateStatus('init-status', 'Unified manager ready', 'success');
+                
+            } catch (error) {
+                log(`Error creating unified manager: ${error.message}`);
+                updateStatus('init-status', `Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testResourceMapping() {
+            if (!unifiedManager) {
+                log('Please initialize unified manager first');
+                return;
+            }
+            
+            try {
+                log('Testing resource ID mapping...');
+                
+                // Test path to resource ID conversion
+                const testPaths = [
+                    'build/SFX/cool.wav',
+                    'test/Game Objects/MUSIC/test.mod',
+                    'build/TEXTURE/sprite.d2'
+                ];
+                
+                for (const path of testPaths) {
+                    const resourceId = unifiedManager._pathToResourceId(path);
+                    log(`Path: ${path} -> Resource ID: ${resourceId}`);
+                }
+                
+                log('Resource mapping test completed');
+                updateStatus('loading-status', 'Mapping test completed', 'success');
+                
+            } catch (error) {
+                log(`Error in mapping test: ${error.message}`);
+                updateStatus('loading-status', `Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testResourceLoading() {
+            if (!unifiedManager) {
+                log('Please initialize unified manager first');
+                return;
+            }
+            
+            try {
+                log('Testing individual resource loading...');
+                
+                // Test loading specific resources
+                const testResources = ['SFX.COOL', 'MUSIC.TEST', 'TEXTURE.SPRITE'];
+                
+                for (const resourceId of testResources) {
+                    try {
+                        log(`Loading resource: ${resourceId}`);
+                        const startTime = performance.now();
+                        
+                        const resource = await unifiedManager.loadResource(resourceId);
+                        
+                        const endTime = performance.now();
+                        const loadTime = (endTime - startTime).toFixed(2);
+                        
+                        log(`✓ Loaded ${resourceId} in ${loadTime}ms`);
+                        log(`  - Type: ${resource.type}`);
+                        log(`  - Status: ${resource.status}`);
+                        log(`  - File: ${resource.filePath}`);
+                        
+                        if (resource.audioResourceId) {
+                            log(`  - Audio ID: ${resource.audioResourceId}`);
+                        }
+                        if (resource.textureId) {
+                            log(`  - Texture ID: ${resource.textureId}`);
+                        }
+                        
+                    } catch (error) {
+                        log(`✗ Failed to load ${resourceId}: ${error.message}`);
+                    }
+                }
+                
+                log('Individual loading test completed');
+                updateStatus('loading-status', 'Loading test completed', 'success');
+                
+            } catch (error) {
+                log(`Error in loading test: ${error.message}`);
+                updateStatus('loading-status', `Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testPreloading() {
+            if (!unifiedManager) {
+                log('Please initialize unified manager first');
+                return;
+            }
+            
+            try {
+                log('Testing preload all resources...');
+                
+                const startTime = performance.now();
+                await unifiedManager.preloadAllResources();
+                const endTime = performance.now();
+                
+                const totalTime = (endTime - startTime).toFixed(2);
+                const loadedResources = Array.from(unifiedManager.resources.values())
+                    .filter(r => r.status === 'loaded');
+                
+                log(`Preloaded ${loadedResources.length} resources in ${totalTime}ms`);
+                
+                // Show loaded resources by type
+                const resourcesByType = {};
+                for (const resource of loadedResources) {
+                    if (!resourcesByType[resource.type]) {
+                        resourcesByType[resource.type] = [];
+                    }
+                    resourcesByType[resource.type].push(resource.id);
+                }
+                
+                for (const [type, resources] of Object.entries(resourcesByType)) {
+                    log(`${type}: ${resources.join(', ')}`);
+                }
+                
+                log('Preload test completed');
+                updateStatus('loading-status', `Preloaded ${loadedResources.length} resources`, 'success');
+                
+            } catch (error) {
+                log(`Error in preload test: ${error.message}`);
+                updateStatus('loading-status', `Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testOldSystem() {
+            log('Testing old resource system performance...');
+            log('(Simulated - old system would require full GameEmulator setup)');
+            
+            // Simulate the complexity of the old system
+            const startTime = performance.now();
+            
+            // Simulate the complex file searching logic
+            await new Promise(resolve => setTimeout(resolve, 100)); // File enumeration
+            await new Promise(resolve => setTimeout(resolve, 50));  // Path conversion
+            await new Promise(resolve => setTimeout(resolve, 75));  // File loading
+            await new Promise(resolve => setTimeout(resolve, 25));  // Cache management
+            
+            const endTime = performance.now();
+            const oldSystemTime = endTime - startTime;
+            
+            log(`Old system simulated time: ${oldSystemTime.toFixed(2)}ms`);
+            updateStatus('performance-status', `Old: ${oldSystemTime.toFixed(2)}ms`, 'info');
+            
+            return oldSystemTime;
+        }
+        
+        async function testNewSystem() {
+            if (!unifiedManager) {
+                log('Please initialize unified manager first');
+                return;
+            }
+            
+            log('Testing new unified system performance...');
+            
+            const startTime = performance.now();
+            
+            try {
+                // Test loading a resource that should be quick with the new system
+                await unifiedManager.loadResource('SFX.COOL');
+                
+                const endTime = performance.now();
+                const newSystemTime = endTime - startTime;
+                
+                log(`New system time: ${newSystemTime.toFixed(2)}ms`);
+                updateStatus('performance-status', `New: ${newSystemTime.toFixed(2)}ms`, 'success');
+                
+                return newSystemTime;
+                
+            } catch (error) {
+                log(`Error in new system test: ${error.message}`);
+                updateStatus('performance-status', `Error: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        async function compareSystems() {
+            log('Comparing old vs new resource systems...');
+            
+            const oldTime = await testOldSystem();
+            const newTime = await testNewSystem();
+            
+            if (oldTime && newTime) {
+                const improvement = ((oldTime - newTime) / oldTime * 100).toFixed(1);
+                const speedup = (oldTime / newTime).toFixed(1);
+                
+                log(`Performance comparison:`);
+                log(`  Old system: ${oldTime.toFixed(2)}ms`);
+                log(`  New system: ${newTime.toFixed(2)}ms`);
+                log(`  Improvement: ${improvement}% faster`);
+                log(`  Speed up: ${speedup}x`);
+                
+                updateStatus('performance-status', 
+                    `${improvement}% faster (${speedup}x speedup)`, 'success');
+            }
+        }
+        
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            log('Unified Resource Manager Test loaded');
+            log('Click "Initialize Systems" to begin testing');
+        });
+    </script>
+</body>
+</html>

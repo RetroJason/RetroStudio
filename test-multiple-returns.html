@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multiple Return Values Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .pass { color: green; }
+        .fail { color: red; }
+        .test-result { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>Multiple Return Values Test</h1>
+    <div id="results"></div>
+
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/input.js"></script>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(message, isPass = null) {
+            const div = document.createElement('div');
+            div.className = 'test-result';
+            if (isPass === true) div.className += ' pass';
+            else if (isPass === false) div.className += ' fail';
+            div.textContent = message;
+            results.appendChild(div);
+        }
+
+        async function runTests() {
+            try {
+                // Initialize extensions with the global L state
+                const mathExt = new LuaMathExtensions(null); // Mock gameEmulator
+                await mathExt.initialize(L);
+
+                const spriteExt = new LuaSpriteExtensions(null); // Mock gameEmulator
+                await spriteExt.initialize(L);
+
+                const inputExt = new LuaInputExtensions(null); // Mock gameEmulator
+                await inputExt.initialize(L);
+
+            log("Testing multiple return value functions...\n");
+
+            // For testing, we'll use js.global to capture results
+            // Test Math.DivMod
+            try {
+                L.execute(`
+                    local quotient, remainder = DivMod(17, 5)
+                    js.global.testResult = {quotient, remainder}
+                `);
+                
+                if (window.testResult && window.testResult[0] === 3 && window.testResult[1] === 2) {
+                    log("✓ Math.DivMod(17, 5) = 3, 2", true);
+                } else {
+                    log(`✗ Math.DivMod(17, 5) = ${window.testResult ? window.testResult.join(', ') : 'failed'} (expected 3, 2)`, false);
+                }
+            } catch (e) {
+                log("✗ Math.DivMod failed to execute: " + e.message, false);
+            }
+
+            // Test Math.SinCos
+            try {
+                L.execute(`
+                    local sinVal, cosVal = SinCos(0)
+                    js.global.testResult = {sinVal, cosVal}
+                `);
+                
+                if (window.testResult && Math.abs(window.testResult[0] - 0) < 0.001 && Math.abs(window.testResult[1] - 1) < 0.001) {
+                    log("✓ Math.SinCos(0) = 0, 1", true);
+                } else {
+                    log(`✗ Math.SinCos(0) = ${window.testResult ? window.testResult.join(', ') : 'failed'} (expected ~0, ~1)`, false);
+                }
+            } catch (e) {
+                log("✗ Math.SinCos failed to execute: " + e.message, false);
+            }
+
+            // Test Sprite.GetPosition
+            try {
+                L.execute(`
+                    local spriteId = Create()
+                    SetPosition(spriteId, 100, 200)
+                    local x, y = GetPosition(spriteId)
+                    js.global.testResult = {x, y}
+                `);
+                
+                if (window.testResult && window.testResult[0] === 100 && window.testResult[1] === 200) {
+                    log("✓ Sprite.GetPosition() = 100, 200", true);
+                } else {
+                    log(`✗ Sprite.GetPosition() = ${window.testResult ? window.testResult.join(', ') : 'failed'} (expected 100, 200)`, false);
+                }
+            } catch (e) {
+                log("✗ Sprite.GetPosition failed to execute: " + e.message, false);
+            }
+
+            // Test Input.GetKeysHeld (returns an array/table)
+            try {
+                L.execute(`
+                    local keys = GetKeysHeld()
+                    js.global.testResult = {type(keys)}
+                `);
+                
+                if (window.testResult && (window.testResult[0] === 'number' || window.testResult[0] === 'table')) {
+                    log("✓ Input.GetKeysHeld() returns expected type", true);
+                } else {
+                    log("✗ Input.GetKeysHeld() doesn't return expected type", false);
+                }
+            } catch (e) {
+                log("✗ Input.GetKeysHeld failed to execute: " + e.message, false);
+            }
+
+            log("\n🎉 Multiple return value tests completed!");
+
+        } catch (error) {
+            log(`Critical error: ${error.message}`, false);
+            console.error(error);
+        }
+        }
+
+        // Run the tests
+        runTests();
+    </script>
+</body>
+</html>

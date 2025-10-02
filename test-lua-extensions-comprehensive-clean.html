@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comprehensive Lua Extensions Test</title>
+    <style>
+        body { fon                const testSin = L.execute('retu                const testSin = L.execute('return type(Math.Sin)');
+                console.log('Type of Math.Sin function:', testSin);
+                
+                const testDivMod = L.execute('return type(Math.DivMod)');
+                console.log('Type of Math.DivMod function:', testDivMod);
+                
+                // Try to actually call a function
+                try {
+                    const sinResult = L.execute('return Math.Sin(0)');
+                    console.log('Math.Sin(0) result:', sinResult);
+                } catch (e) {
+                    console.log('Math.Sin(0) error:', e.message);
+                }
+                
+                try {
+                    const divmodResult = L.execute('local div, mod = Math.DivMod(10, 3); return div, mod');
+                    console.log('Math.DivMod(10, 3) result:', divmodResult);
+                } catch (e) {
+                    console.log('Math.DivMod(10, 3) error:', e.message);
+                }Sin)');
+                console.log('Type of Math.Sin function:', testSin);
+                
+                const testDivMod = L.execute('return type(Math.DivMod)');
+                console.log('Type of Math.DivMod function:', testDivMod);
+                
+                // Try to actually call a function
+                try {
+                    const sinResult = L.execute('return Math.Sin(0)');
+                    console.log('Math.Sin(0) result:', sinResult);
+                } catch (e) {
+                    console.log('Math.Sin(0) error:', e.message);
+                }ospace; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .pass { color: green; }
+        .fail { color: red; }
+        .section-title { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Comprehensive Lua Extensions Test</h1>
+    <div id="results"></div>
+
+    <!-- Load Lua.js first -->
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+
+    <!-- Conditional script loading to avoid redeclaration -->
+    <script>
+        function loadScriptOnce(src, checkGlobal) {
+            if (checkGlobal && window[checkGlobal]) {
+                console.log(`${checkGlobal} already loaded, skipping ${src}`);
+                return Promise.resolve();
+            }
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+            });
+        }
+
+        async function loadAllScripts() {
+            try {
+                await loadScriptOnce('scripts/lua/base-lua-extension.js', 'BaseLuaExtension');
+                await loadScriptOnce('scripts/graphics/sprite-manager.js', 'SpriteManager');
+                await loadScriptOnce('scripts/lua/input.js', 'LuaInputExtensions');
+                await loadScriptOnce('scripts/lua/math.js', 'LuaMathExtensions');
+                await loadScriptOnce('scripts/lua/music.js', 'LuaMusicExtensions');
+                await loadScriptOnce('scripts/lua/sfx.js', 'LuaSFXExtensions');
+                await loadScriptOnce('scripts/lua/sprite.js', 'LuaSpriteExtensions');
+                await loadScriptOnce('scripts/lua/system.js', 'LuaSystemExtensions');
+                await loadScriptOnce('scripts/lua/time.js', 'LuaTimeExtensions');
+                
+                // Now run the tests
+                runTests();
+            } catch (error) {
+                console.error('Failed to load scripts:', error);
+                document.getElementById('results').innerHTML = '<div class="fail">Failed to load scripts: ' + error.message + '</div>';
+            }
+        }
+
+        async function runTests() {
+            const results = document.getElementById('results');
+            let html = '';
+            
+            // Create mock SpriteManager class if it doesn't exist
+            if (typeof SpriteManager === 'undefined') {
+                window.SpriteManager = class SpriteManager {
+                    constructor(d2Graphics, resourceManager) {
+                        this.d2Graphics = d2Graphics;
+                        this.resourceManager = resourceManager;
+                        this.sprites = new Map();
+                        this.nextId = 1;
+                    }
+                    
+                    createSprite(name, width, height) {
+                        const id = this.nextId++;
+                        this.sprites.set(id, {
+                            id,
+                            name,
+                            width,
+                            height,
+                            x: 0,
+                            y: 0,
+                            visible: true,
+                            texture: null
+                        });
+                        return id;
+                    }
+                    
+                    setPosition(id, x, y) {
+                        const sprite = this.sprites.get(id);
+                        if (sprite) {
+                            sprite.x = x;
+                            sprite.y = y;
+                        }
+                    }
+                    
+                    getPosition(id) {
+                        const sprite = this.sprites.get(id);
+                        return sprite ? [sprite.x, sprite.y] : [0, 0];
+                    }
+                    
+                    setSize(id, width, height) {
+                        const sprite = this.sprites.get(id);
+                        if (sprite) {
+                            sprite.width = width;
+                            sprite.height = height;
+                        }
+                    }
+                    
+                    getSize(id) {
+                        const sprite = this.sprites.get(id);
+                        return sprite ? [sprite.width, sprite.height] : [32, 32];
+                    }
+                    
+                    setVisible(id, visible) {
+                        const sprite = this.sprites.get(id);
+                        if (sprite) {
+                            sprite.visible = visible;
+                        }
+                    }
+                    
+                    isVisible(id) {
+                        const sprite = this.sprites.get(id);
+                        return sprite ? sprite.visible : true;
+                    }
+                    
+                    setTexture(id, texture) {
+                        const sprite = this.sprites.get(id);
+                        if (sprite) {
+                            sprite.texture = texture;
+                        }
+                    }
+                    
+                    deleteSprite(id) {
+                        this.sprites.delete(id);
+                    }
+                };
+            }
+            
+            // Create mock gameEmulator if it doesn't exist
+            if (!window.gameEmulator) {
+                // Create a simple mock for d2Graphics and resourceManager
+                const mockD2Graphics = {
+                    createSprite: () => ({ id: Math.floor(Math.random() * 1000) + 1 }),
+                    updateSprite: () => {},
+                    deleteSprite: () => {},
+                    setPosition: () => {},
+                    getPosition: () => [0, 0]
+                };
+                
+                const mockResourceManager = {
+                    get: (id) => null,
+                    load: (id) => Promise.resolve(null),
+                    exists: (id) => false
+                };
+                
+                window.gameEmulator = {
+                    d2Graphics: mockD2Graphics,
+                    resourceManager: mockResourceManager,
+                    audioManager: {
+                        playMusic: () => console.log('Playing music'),
+                        stopMusic: () => console.log('Stopping music'),
+                        playSFX: () => console.log('Playing SFX'),
+                        setMusicVolume: () => console.log('Setting music volume'),
+                        setSFXVolume: () => console.log('Setting SFX volume')
+                    },
+                    inputManager: {
+                        isKeyPressed: () => false,
+                        getMousePosition: () => ({ x: 100, y: 100 })
+                    }
+                };
+            }
+            
+            // Use the gameEmulator for easier reference
+            const gameEmulator = window.gameEmulator;
+
+            // Initialize Lua state
+            let L;
+            try {
+                // Create Lua state the same way as working math test
+                L = new Lua.State();
+                console.log('✓ Lua state created');
+                
+                L.execute(`
+                    js = {}
+                    js.global = {}
+                `);
+                
+                // Set up the JavaScript bridge properly - make js.global point to window
+                L.execute(`
+                    -- Set up js.global to be able to call JavaScript functions
+                    local mt = {
+                        __index = function(t, k)
+                            -- This will be called when Lua tries to access js.global.functionName
+                            return function(...)
+                                -- Call the actual global JavaScript function
+                                return _G[k](...)
+                            end
+                        end
+                    }
+                    setmetatable(js.global, mt)
+                `);
+                
+                // Test that we can actually execute Lua code
+                const testResult = L.execute('return 42');
+                console.log('Lua test result:', testResult);
+                
+            } catch (error) {
+                html += `<div class="fail">Failed to initialize Lua state: ${error.message}</div>`;
+                results.innerHTML = html;
+                return;
+            }
+
+            // Initialize all extensions
+            const extensions = {
+                input: new LuaInputExtensions(gameEmulator),
+                math: new LuaMathExtensions(),
+                music: new LuaMusicExtensions(),
+                sfx: new LuaSFXExtensions(),
+                sprite: new LuaSpriteExtensions(gameEmulator),
+                system: new LuaSystemExtensions(),
+                time: new LuaTimeExtensions()
+            };
+
+            // Use the same manual registration approach as the working math test
+            const mathExt = extensions.math;
+            mathExt.setLuaState(L);
+            
+            // Manual registration like the working test
+            mathExt.registerMethod('Sin', mathExt.Sin.bind(mathExt), 'Math');
+            mathExt.registerMethod('Cos', mathExt.Cos.bind(mathExt), 'Math');
+            mathExt.registerMethod('Abs', mathExt.Abs.bind(mathExt), 'Math');
+            mathExt.registerMethod('Min', mathExt.Min.bind(mathExt), 'Math');
+            mathExt.registerMethod('Max', mathExt.Max.bind(mathExt), 'Math');
+            mathExt.registerMethod('Floor', mathExt.Floor.bind(mathExt), 'Math');
+            mathExt.registerMethod('Ceil', mathExt.Ceil.bind(mathExt), 'Math');
+            mathExt.registerMethod('Round', mathExt.Round.bind(mathExt), 'Math');
+            mathExt.registerMethod('Sqrt', mathExt.Sqrt.bind(mathExt), 'Math');
+            mathExt.registerMethod('DivMod', mathExt.DivMod.bind(mathExt), 'Math');
+            mathExt.registerMethod('SinCos', mathExt.SinCos.bind(mathExt), 'Math');
+            console.log('✓ Math functions manually registered like working test');
+            
+            // Debug: Check if the JavaScript implementation functions were created
+            console.log('=== Checking JavaScript Functions ===');
+            console.log('Math_Sin_Impl exists:', typeof window['Math_Sin_Impl']);
+            console.log('Math_DivMod_Impl exists:', typeof window['Math_DivMod_Impl']);
+            console.log('Input_IsKeyPressed_Impl exists:', typeof window['Input_IsKeyPressed_Impl']);
+            
+            // List all functions that start with extension names
+            const globalFunctions = Object.getOwnPropertyNames(window).filter(name => 
+                name.includes('_Impl') || name.startsWith('Math_') || name.startsWith('Input_') || name.startsWith('Sprite_')
+            );
+            console.log('Global implementation functions:', globalFunctions);
+            console.log('=== End JavaScript Function Check ===');
+
+            // Debug: Check if functions are actually registered
+            console.log('=== Debugging function registration ===');
+            try {
+                // Manual function registration test
+                L.execute(`
+                    function TestFunc()
+                        return 123
+                    end
+                `);
+                
+                const manualTest = L.execute('return TestFunc()');
+                console.log('Manual function test result:', manualTest);
+                
+                // Test our manually registered math functions (WITH NAMESPACE)
+                const testMathSin = L.execute('return type(Math.Sin)');
+                console.log('Type of Math.Sin function:', testMathSin);
+                
+                const testMathDivMod = L.execute('return type(Math.DivMod)');
+                console.log('Type of Math.DivMod function:', testMathDivMod);
+                
+                // Try to actually call a Math namespace function
+                try {
+                    const sinResult = L.execute('return Math.Sin(0)');
+                    console.log('Math.Sin(0) result:', sinResult);
+                } catch (e) {
+                    console.log('Math.Sin(0) error:', e.message);
+                }
+                
+                // List all global functions
+                const globals = L.execute(`
+                    local funcs = {}
+                    for k,v in pairs(_G) do
+                        if type(v) == "function" and not string.match(k, "^[a-z]") then
+                            table.insert(funcs, k)
+                        end
+                    end
+                    return table.concat(funcs, ", ")
+                `);
+                console.log('Available custom global functions:', globals);
+            } catch (error) {
+                console.error('Debug failed:', error.message);
+            }
+            console.log('=== End debugging ===');
+
+            // Test definitions - using correct namespaces
+            const tests = {
+                'Input Extensions': [
+                    { name: 'IsKeyPressed', lua: 'return Input.IsKeyPressed("w")', expected: 'boolean' },
+                    { name: 'GetMousePosition', lua: 'local x, y = Input.GetMousePosition(); return x, y', expected: 'multiple' },
+                    { name: 'IsMouseButtonPressed', lua: 'return Input.IsMouseButtonPressed(0)', expected: 'boolean' }
+                ],
+                'Math Extensions': [
+                    { name: 'Abs', lua: 'return Math.Abs(-5)', expected: 5 },
+                    { name: 'Min', lua: 'return Math.Min(3, 7)', expected: 3 },
+                    { name: 'Max', lua: 'return Math.Max(3, 7)', expected: 7 },
+                    { name: 'Floor', lua: 'return Math.Floor(3.7)', expected: 3 },
+                    { name: 'Ceil', lua: 'return Math.Ceil(3.2)', expected: 4 },
+                    { name: 'Round', lua: 'return Math.Round(3.6)', expected: 4 },
+                    { name: 'Sqrt', lua: 'return Math.Sqrt(16)', expected: 4 },
+                    { name: 'Sin', lua: 'return Math.Sin(0)', expected: 0 },
+                    { name: 'Cos', lua: 'return Math.Cos(0)', expected: 1 },
+                    { name: 'Tan', lua: 'return Math.Tan(0)', expected: 0 },
+                    { name: 'DivMod', lua: 'local div, mod = Math.DivMod(10, 3); return div, mod', expected: 'multiple' },
+                    { name: 'SinCos', lua: 'local s, c = Math.SinCos(0); return s, c', expected: 'multiple' }
+                ],
+                'Sprite Extensions': [
+                    { name: 'CreateSprite', lua: 'return Sprite.CreateSprite("test", 32, 32)', expected: 'number' },
+                    { name: 'SetSpritePosition', lua: 'Sprite.SetSpritePosition(1, 100, 200); return true', expected: true },
+                    { name: 'GetSpritePosition', lua: 'local x, y = Sprite.GetSpritePosition(1); return x, y', expected: 'multiple' }
+                ]
+            };
+
+            let totalTests = 0;
+            let passedTests = 0;
+
+            // Run all tests
+            for (const [sectionName, sectionTests] of Object.entries(tests)) {
+                html += `<div class="test-section">`;
+                html += `<div class="section-title">${sectionName} (${sectionTests.length} tests)</div>`;
+                
+                for (const test of sectionTests) {
+                    totalTests++;
+                    try {
+                        // Execute the Lua code directly without wrapping in return
+                        const result = L.execute(test.lua);
+                        let passed = false;
+                        
+                        if (test.expected === 'boolean') {
+                            passed = typeof result === 'boolean';
+                        } else if (test.expected === 'number') {
+                            passed = typeof result === 'number';
+                        } else if (test.expected === 'multiple') {
+                            passed = Array.isArray(result) && result.length >= 2;
+                        } else {
+                            passed = result === test.expected;
+                        }
+                        
+                        if (passed) {
+                            passedTests++;
+                            html += `<div class="pass">✓ ${test.name}: PASS</div>`;
+                        } else {
+                            html += `<div class="fail">✗ ${test.name}: FAIL (got ${JSON.stringify(result)}, expected ${JSON.stringify(test.expected)})</div>`;
+                        }
+                    } catch (error) {
+                        html += `<div class="fail">✗ ${test.name}: ERROR - ${error.message}</div>`;
+                    }
+                }
+                html += `</div>`;
+            }
+
+            // Summary
+            html += `<div class="test-section">`;
+            html += `<div class="section-title">Summary</div>`;
+            html += `<div>Total Tests: ${totalTests}</div>`;
+            html += `<div class="${passedTests === totalTests ? 'pass' : 'fail'}">Passed: ${passedTests}</div>`;
+            html += `<div class="${passedTests === totalTests ? 'pass' : 'fail'}">Failed: ${totalTests - passedTests}</div>`;
+            if (passedTests === totalTests) {
+                html += `<div class="pass"><strong>🎉 ALL TESTS PASSED! 🎉</strong></div>`;
+            }
+            html += `</div>`;
+
+            results.innerHTML = html;
+        }
+
+        // Start loading when page loads
+        document.addEventListener('DOMContentLoaded', loadAllScripts);
+    </script>
+</body>
+</html>

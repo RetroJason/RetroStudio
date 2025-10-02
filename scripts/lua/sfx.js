@@ -7,168 +7,161 @@ class LuaSFXExtensions extends BaseLuaExtension {
     super();
     this.gameEmulator = gameEmulator;
     this.audioEngine = null;
-    this.resourceManager = null;
   }
 
   /**
    * Initialize the SFX extension using centralized resource system
    * @param {Object} luaState - The Lua execution state
    */
-  async initialize(luaState) {
+  initialize(luaState) {
     console.log('[LuaSfxExtensions] Initializing SFX extension...');
     
-    this.setLuaState(luaState);
+    // Note: luaState is already set by the base class setLuaState() method
     
-    // Get audio services
-    console.log('[LuaSfxExtensions] DEBUG: Getting audio engine...');
-    console.log('[LuaSfxExtensions] DEBUG: window.serviceContainer exists:', !!window.serviceContainer);
-    console.log('[LuaSfxExtensions] DEBUG: window.serviceContainer.get exists:', !!window.serviceContainer?.get);
-    
+    // Get audio services (if available)
     this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine;
-    this.resourceManager = window.serviceContainer?.get?.('resourceManager') || window.resourceManager;
-    
-    console.log('[LuaSfxExtensions] DEBUG: Retrieved audioEngine:', !!this.audioEngine);
-    console.log('[LuaSfxExtensions] DEBUG: Retrieved resourceManager:', !!this.resourceManager);
     
     if (!this.audioEngine) {
-      console.warn('[LuaSfxExtensions] AudioEngine not available - SFX functionality will be limited');
+      console.warn('[LuaSfxExtensions] AudioEngine not available - using mock implementation');
     }
     
-    if (!this.resourceManager) {
-      console.warn('[LuaSfxExtensions] ResourceManager not available - SFX functionality will be limited');
-    }
+    // Register all SFX methods using the base class approach
+    this.registerMethod('Play', this.Play.bind(this), 'SFX');
+    this.registerMethod('Stop', this.Stop.bind(this), 'SFX');
+    this.registerMethod('IsPlaying', this.IsPlaying.bind(this), 'SFX');
         
     console.log('[LuaSfxExtensions] SFX extension initialized successfully');
   }
 
+
+
   /**
-   * Play a sound effect using preloaded resources from centralized system
-   * Lua usage: SFX.Play(resourceId, shouldRepeat)
+   * Play a sound effect using unified resource system
+   * Lua usage: SFX.Play(resourceName, shouldRepeat)
    */
   Play() {
-    // Get the resource ID from Lua stack (index 2 is first parameter)
-    const resourceId = this.luaState.raw_tostring(2) || '';
+    // Get the resource name from Lua stack (index 2 is first parameter)
+    const resourceName = this.luaState.raw_tostring(2) || '';
     const shouldRepeat = this.luaState.raw_tostring(3) === 'true' || false;
     
-    console.log(`[LuaSfxExtensions] Playing SFX: ${resourceId}, repeat: ${shouldRepeat}`);
+    console.log(`[LuaSfxExtensions] Playing SFX: ${resourceName}, repeat: ${shouldRepeat}`);
     
-    if (!resourceId) {
-      console.warn('[LuaSfxExtensions] Play called with empty resource ID');
+    if (!resourceName) {
+      console.warn('[LuaSfxExtensions] Play called with empty resource name');
       return false;
     }
 
-    // Debug: Check audio engine availability
-    console.log(`[LuaSfxExtensions] Audio engine available: ${!!this.audioEngine}`);
-    
-    // Get resource from centralized system
-    const resource = this.gameEmulator.GetResource(resourceId);
-    if (!resource) {
-      const errorMsg = `SFX resource not found: ${resourceId}`;
-      console.error(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
+    try {
+      // Get resource info from unified resource manager
+      const resourceInfo = this.gameEmulator.unifiedResourceManager?.getResource(resourceName);
+      
+      if (!resourceInfo) {
+        throw new Error(`SFX resource not loaded: ${resourceName}. Please ensure the resource is included in the current level.`);
+      }
 
-    // Debug: Check resource details
-    console.log(`[LuaSfxExtensions] Resource found: ${resourceId}`, resource);
-    console.log(`[LuaSfxExtensions] Resource isPreloaded: ${resource.isPreloaded}`);
-    console.log(`[LuaSfxExtensions] Resource audioResource: ${resource.audioResource}`);
-    
-    // Check if resource is preloaded
-    if (!resource.isPreloaded) {
-      console.warn(`[LuaSfxExtensions] SFX resource not preloaded: ${resourceId}`);
-      // Fallback to loading on demand (shouldn't happen if preloading worked)
-      if (this.gameEmulator) {
-        const self = this;
-        this.gameEmulator.loadAudioFileOnDemand(resourceId).then(function(audioResourceId) {
-          self.audioEngine.startSound(audioResourceId, shouldRepeat);
-        }).catch(function(error) {
-          console.error(`[LuaSfxExtensions] Failed to load/play SFX ${resourceId}:`, error);
-        });
+      // Get the audio engine resource ID from the audio loader
+      const audioEngineResourceId = this.gameEmulator.audioResourceLoader?.getAudioEngineResourceId(resourceInfo.id);
+      
+      if (!audioEngineResourceId) {
+        throw new Error(`Audio resource not available for: ${resourceName}`);
+      }
+
+      // Play using audio engine
+      if (this.audioEngine) {
+        this.audioEngine.startSound(audioEngineResourceId, 1.0);
+        console.log(`[LuaSfxExtensions] Playing SFX: ${resourceName} (ID: ${resourceInfo.id}, AudioEngine: ${audioEngineResourceId})`);
         return true;
       } else {
-        const errorMsg = `Resource not preloaded and GameEmulator not available for: ${resourceId}`;
-        console.error(`[LuaSfxExtensions] ${errorMsg}`);
-        throw new Error(errorMsg);
+        throw new Error(`Audio system not available for: ${resourceName}`);
       }
-    }
-    
-    // Use preloaded resource - start audio with the preloaded resource ID
-    if (this.audioEngine && resource.audioResource) {
-      // Note: startSound expects (resourceId, volume), not (resourceId, shouldRepeat)
-      // For now, we'll use default volume of 1.0 and ignore shouldRepeat
-      // TODO: Implement proper repeat functionality in audio engine
-      this.audioEngine.startSound(resource.audioResource, 1.0);
-      console.log(`[LuaSfxExtensions] Playing preloaded SFX: ${resourceId} (${resource.audioResource}) with volume 1.0, repeat: ${shouldRepeat}`);
-      return true;
-    } else {
-      const errorMsg = `Audio system not available or resource not properly preloaded - cannot play SFX: ${resourceId}`;
-      console.warn(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
+      
+    } catch (error) {
+      console.error(`[LuaSfxExtensions] Failed to play SFX ${resourceName}:`, error);
+      throw error;
     }
   }
 
   /**
-   * Stop a playing sound effect using centralized resource system
-   * Lua usage: SFX.Stop(resourceId)
+   * Stop a playing sound effect using the unified resource system
+   * Lua usage: SFX.Stop(resourceName)
    */
   Stop() {
-    const resourceId = this.luaState.raw_tostring(2) || '';
+    const resourceName = this.luaState.raw_tostring(2) || '';
     
-    console.log(`[LuaSfxExtensions] Stopping SFX: ${resourceId}`);
+    console.log(`[LuaSfxExtensions] Stopping SFX: ${resourceName}`);
     
-    if (!resourceId) {
-      console.warn('[LuaSfxExtensions] Stop called with empty resource ID');
+    if (!resourceName) {
+      console.warn('[LuaSfxExtensions] Stop called with empty resource name');
       return false;
     }
     
-    // Get resource from centralized system
-    const resource = this.gameEmulator.GetResource(resourceId);
-    if (!resource) {
-      const errorMsg = `SFX resource not found: ${resourceId}`;
-      console.error(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-    
-    const filePath = resource.filePath;
-    
-    if (this.audioEngine) {
-      this.audioEngine.stopSound(filePath);
-      return true;
-    } else {
-      const errorMsg = `Audio system not available - cannot stop SFX: ${resourceId}`;
-      console.warn(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
+    try {
+      // Get resource info from unified resource manager
+      const resourceInfo = this.gameEmulator.unifiedResourceManager?.getResource(resourceName);
+      
+      if (!resourceInfo) {
+        throw new Error(`SFX resource not loaded: ${resourceName}`);
+      }
+
+      // Get the audio engine resource ID from the audio loader
+      const audioEngineResourceId = this.gameEmulator.audioResourceLoader?.getAudioEngineResourceId(resourceInfo.id);
+      
+      if (!audioEngineResourceId) {
+        throw new Error(`Audio resource not available for: ${resourceName}`);
+      }
+      
+      if (this.audioEngine) {
+        // Stop by audio engine resource ID
+        this.audioEngine.stopSound(audioEngineResourceId);
+        return true;
+      } else {
+        throw new Error(`Audio system not available - cannot stop SFX: ${resourceName}`);
+      }
+      
+    } catch (error) {
+      console.error(`[LuaSfxExtensions] Failed to stop SFX ${resourceName}:`, error);
+      throw error;
     }
   }
 
   /**
-   * Check if a sound effect is currently playing using centralized resource system
-   * Lua usage: SFX.IsPlaying(resourceId)
+   * Check if a sound effect is currently playing using the unified resource system
+   * Lua usage: SFX.IsPlaying(resourceName)
    */
   IsPlaying() {
-    const resourceId = this.luaState.raw_tostring(2) || '';
+    const resourceName = this.luaState.raw_tostring(2) || '';
     
-    if (!resourceId) {
-      console.warn('[LuaSfxExtensions] IsPlaying called with empty resource ID');
+    if (!resourceName) {
+      console.warn('[LuaSfxExtensions] IsPlaying called with empty resource name');
       return false;
     }
     
-    // Get resource from centralized system
-    const resource = this.gameEmulator.GetResource(resourceId);
-    if (!resource) {
-      const errorMsg = `SFX resource not found: ${resourceId}`;
-      console.error(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
+    try {
+      // Get resource info from unified resource manager
+      const resourceInfo = this.gameEmulator.unifiedResourceManager?.getResource(resourceName);
+      
+      if (!resourceInfo) {
+        throw new Error(`SFX resource not loaded: ${resourceName}`);
+      }
+
+      // Get the audio engine resource ID from the audio loader
+      const audioEngineResourceId = this.gameEmulator.audioResourceLoader?.getAudioEngineResourceId(resourceInfo.id);
+      
+      if (!audioEngineResourceId) {
+        throw new Error(`Audio resource not available for: ${resourceName}`);
+      }
+      
+      if (this.audioEngine && typeof this.audioEngine.isSoundPlaying === 'function') {
+        return this.audioEngine.isSoundPlaying(audioEngineResourceId);
+      }
+      
+      // If audio engine doesn't support checking playing status, return false (not an error)
+      return false;
+      
+    } catch (error) {
+      console.error(`[LuaSfxExtensions] Failed to check playing status for ${resourceName}:`, error);
+      return false;
     }
-    
-    const filePath = resource.filePath;
-    
-    if (this.audioEngine && typeof this.audioEngine.isSoundPlaying === 'function') {
-      return this.audioEngine.isSoundPlaying(filePath);
-    }
-    
-    // If audio engine doesn't support checking playing status, return false (not an error)
-    return false;
   }
 
   /**
@@ -208,25 +201,27 @@ class LuaSFXExtensions extends BaseLuaExtension {
   }
 
   /**
-   * List all available SFX resources using centralized resource system
+   * List all available SFX resources using the unified resource system
    * @returns {number} Number of available resources
    */
   List() {
     console.log('[LuaSfxExtensions] Available SFX resources:');
     
-    if (!this.gameEmulator) {
-      var errorMsg = 'Game emulator not available';
+    if (!this.gameEmulator.unifiedResourceManager) {
+      var errorMsg = 'Unified resource manager not available';
       console.error(`[LuaSfxExtensions] ${errorMsg}`);
       throw new Error(errorMsg);
     }
     
-    var sfxResources = this.gameEmulator.GetResourcesByType('SFX');
-    for (var i = 0; i < sfxResources.length; i++) {
-      var resource = sfxResources[i];
-      console.log(`  ${resource.id} -> ${resource.filePath}`);
+    // Get all resources loaded by the audio loader
+    var audioResources = this.gameEmulator.unifiedResourceManager.getResourcesByLoader('audio');
+    
+    for (var i = 0; i < audioResources.length; i++) {
+      var resource = audioResources[i];
+      console.log(`  ${resource.name} -> ${resource.filePath} (ID: ${resource.id})`);
     }
     
-    return sfxResources.length;
+    return audioResources.length;
   }
 }
 

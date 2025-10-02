@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html>
+<head>
+        <title>Math Extension Auto-Registration Test</title>
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/math.js"></script>
+</head>
+<body>
+    <h1>Math Extension Auto-Registration Test</h1>
+    <button onclick="testMathAPI()">Test Math API</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <pre id="output"></pre>
+
+    <script>
+        function log(message) {
+            const output = document.getElementById('output');
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('output').textContent = '';
+        }
+
+        async function testMathAPI() {
+            try {
+                log('=== Testing Math Stack-based API (Validation) ===');
+                
+                // Create Lua state
+                const L = new Lua.State();
+                log('✓ Lua state created');
+                
+                // Create math extension
+                const mathExt = new LuaMathExtensions(null); // Pass null for gameEmulator since we don't need it for math
+                mathExt.setLuaState(L);
+                log('✓ Math extension created and Lua state set');
+                
+                // Debug: Check if luaState is properly set
+                log('Debug: mathExt.luaState exists: ' + !!mathExt.luaState);
+                
+                // Test auto-registration - just call setLuaState() and it should register all functions
+                log('Testing auto-registration...');
+                mathExt.setLuaState(L);
+                log('✓ setLuaState() called - all Math functions should now be auto-registered');
+                
+                // Verify auto-registration worked
+                log('=== Verifying Auto-Registration ===');
+                const functionTests = [
+                    'Sin', 'Cos', 'Sqrt', 'Pow', 'Min', 'Max', 'Abs', 
+                    'Clamp', 'DivMod', 'SinCos', 'Ceil', 'Floor', 'Round'
+                ];
+                
+                let registeredCount = 0;
+                for (const funcName of functionTests) {
+                    try {
+                        const funcType = L.execute(`return type(Math.${funcName})`);
+                        if (funcType[0] === 'function') {
+                            log(`✓ Math.${funcName} auto-registered successfully`);
+                            registeredCount++;
+                        } else {
+                            log(`✗ Math.${funcName} not registered (type: ${funcType[0]})`);
+                        }
+                    } catch (e) {
+                        log(`✗ Math.${funcName} registration test failed: ${e.message}`);
+                    }
+                }
+                
+                log(`=== Auto-Registration Summary: ${registeredCount}/${functionTests.length} functions registered ===`);
+                
+                // Test that all auto-registered functions actually work
+                log('=== Testing Auto-Registered Function Execution ===');
+                const functionCallTests = [
+                    { name: 'Math.Sin(0)', expected: 0, tolerance: 0.0001 },
+                    { name: 'Math.Cos(0)', expected: 1, tolerance: 0.0001 },
+                    { name: 'Math.Sqrt(16)', expected: 4, tolerance: 0.0001 },
+                    { name: 'Math.Abs(-5)', expected: 5, tolerance: 0.0001 },
+                    { name: 'Math.Min(3, 7)', expected: 3, tolerance: 0.0001 },
+                    { name: 'Math.Max(3, 7)', expected: 7, tolerance: 0.0001 },
+                    { name: 'Math.Floor(3.7)', expected: 3, tolerance: 0.0001 },
+                    { name: 'Math.Ceil(3.2)', expected: 4, tolerance: 0.0001 },
+                    { name: 'Math.Round(3.6)', expected: 4, tolerance: 0.0001 },
+                    { name: 'Math.Pow(2, 3)', expected: 8, tolerance: 0.0001 }
+                ];
+                
+                let passedCallTests = 0;
+                for (const test of functionCallTests) {
+                    try {
+                        const result = L.execute(`return ${test.name}`);
+                        const actualValue = result[0];
+                        const passed = Math.abs(actualValue - test.expected) < test.tolerance;
+                        
+                        if (passed) {
+                            log(`✓ ${test.name} = ${actualValue} (expected: ${test.expected})`);
+                            passedCallTests++;
+                        } else {
+                            log(`✗ ${test.name} = ${actualValue} (expected: ${test.expected})`);
+                        }
+                    } catch (e) {
+                        log(`✗ ${test.name} failed: ${e.message}`);
+                    }
+                }
+                
+                // Test multiple return value functions
+                log('=== Testing Multiple Return Value Functions ===');
+                try {
+                    const divModResult = L.execute('local q, r = Math.DivMod(10, 3); return q, r');
+                    if (divModResult.length >= 2 && divModResult[0] === 3 && divModResult[1] === 1) {
+                        log(`✓ Math.DivMod(10, 3) = ${divModResult[0]}, ${divModResult[1]} (multiple return values work!)`);
+                        passedCallTests++;
+                    } else {
+                        log(`✗ Math.DivMod(10, 3) = ${divModResult.join(', ')} (expected: 3, 1)`);
+                    }
+                } catch (e) {
+                    log(`✗ Math.DivMod test failed: ${e.message}`);
+                }
+                
+                try {
+                    const sinCosResult = L.execute('local s, c = Math.SinCos(0); return s, c');
+                    if (sinCosResult.length >= 2 && Math.abs(sinCosResult[0] - 0) < 0.0001 && Math.abs(sinCosResult[1] - 1) < 0.0001) {
+                        log(`✓ Math.SinCos(0) = ${sinCosResult[0]}, ${sinCosResult[1]} (multiple return values work!)`);
+                        passedCallTests++;
+                    } else {
+                        log(`✗ Math.SinCos(0) = ${sinCosResult.join(', ')} (expected: 0, 1)`);
+                    }
+                } catch (e) {
+                    log(`✗ Math.SinCos test failed: ${e.message}`);
+                }
+                
+                log(`=== Function Execution Summary: ${passedCallTests}/${functionCallTests.length + 2} tests passed ===`);
+                
+                if (registeredCount === functionTests.length && passedCallTests === functionCallTests.length + 2) {
+                    log('🎉 AUTO-REGISTRATION FULLY WORKING! All functions registered and executable! 🎉');
+                } else {
+                    log(`⚠️ Some issues detected: ${registeredCount}/${functionTests.length} registered, ${passedCallTests}/${functionCallTests.length + 2} working`);
+                }
+
+                // Override print function to capture output
+                L.execute(`
+                    local outputs = {}
+                    function print(...)
+                        local args = {...}
+                        local str = ""
+                        for i = 1, #args do
+                            if i > 1 then str = str .. "\\t" end
+                            str = str .. tostring(args[i])
+                        end
+                        table.insert(outputs, str)
+                        js.global.luaPrint(str)
+                    end
+                    
+                    function getOutputs()
+                        return table.concat(outputs, "\\n")
+                    end
+                `);
+                
+                // Create global function to receive print output
+                window.luaPrint = function(message) {
+                    // Filter out undefined messages
+                    if (message !== undefined && message !== 'undefined' && message !== null) {
+                        log('[Lua] ' + message);
+                    }
+                };
+
+                // Test Lua script using stack-based Math API
+                const testScript = `
+                    print("=== Testing Math Stack-based Functions ===")
+                    
+                    -- Test single parameter functions
+                    print("--- Single Parameter Tests ---")
+                    local sinResult = Math.Sin(1.5708)  -- π/2, should be ~1
+                    print("Math.Sin(π/2) = " .. string.format("%.4f", sinResult))
+                    
+                    local cosResult = Math.Cos(0)  -- cos(0), should be 1
+                    print("Math.Cos(0) = " .. string.format("%.4f", cosResult))
+                    
+                    local sqrtResult = Math.Sqrt(16)  -- sqrt(16), should be 4
+                    print("Math.Sqrt(16) = " .. string.format("%.4f", sqrtResult))
+                    
+                    local absResult = Math.Abs(-7.5)  -- abs(-7.5), should be 7.5
+                    print("Math.Abs(-7.5) = " .. string.format("%.4f", absResult))
+                    
+                    -- Test two parameter functions (stack-based approach with multiple params)
+                    print("--- Two Parameter Tests ---")
+                    local powResult = Math.Pow(2, 3)  -- 2^3, should be 8
+                    print("Math.Pow(2, 3) = " .. string.format("%.4f", powResult))
+                    
+                    local minResult = Math.Min(5.7, 10.2)  -- min(5.7, 10.2), should be 5.7
+                    print("Math.Min(5.7, 10.2) = " .. string.format("%.4f", minResult))
+                    
+                    local maxResult = Math.Max(5.7, 10.2)  -- max(5.7, 10.2), should be 10.2
+                    print("Math.Max(5.7, 10.2) = " .. string.format("%.4f", maxResult))
+                    
+                    -- Test three parameter function (stack-based with 3 params)
+                    print("--- Three Parameter Tests ---")
+                    local clampResult = Math.Clamp(15, 0, 10)  -- clamp(15, 0, 10), should be 10
+                    print("Math.Clamp(15, 0, 10) = " .. string.format("%.4f", clampResult))
+                    
+                    local clampResult2 = Math.Clamp(-5, 0, 10)  -- clamp(-5, 0, 10), should be 0
+                    print("Math.Clamp(-5, 0, 10) = " .. string.format("%.4f", clampResult2))
+                    
+                    local clampResult3 = Math.Clamp(7, 0, 10)  -- clamp(7, 0, 10), should be 7
+                    print("Math.Clamp(7, 0, 10) = " .. string.format("%.4f", clampResult3))
+                    
+                    -- Test function that returns multiple values
+                    print("--- Multiple Return Value Tests ---")
+                    local quotient, remainder = Math.DivMod(17, 5)  -- 17 ÷ 5 = 3 remainder 2
+                    print("Math.DivMod(17, 5) = " .. tostring(quotient) .. " remainder " .. tostring(remainder))
+                    print("quotient type: " .. type(quotient) .. ", remainder type: " .. type(remainder))
+                    
+                    local quotient2, remainder2 = Math.DivMod(20, 4)  -- 20 ÷ 4 = 5 remainder 0
+                    print("Math.DivMod(20, 4) = " .. tostring(quotient2) .. " remainder " .. tostring(remainder2))
+                    print("quotient2 type: " .. type(quotient2) .. ", remainder2 type: " .. type(remainder2))
+                    
+                    local sinVal, cosVal = Math.SinCos(0)  -- sin(0) = 0, cos(0) = 1
+                    print("Math.SinCos(0) = sin:" .. string.format("%.4f", sinVal) .. " cos:" .. string.format("%.4f", cosVal))
+                    print("sinVal type: " .. type(sinVal) .. ", cosVal type: " .. type(cosVal))
+                    
+                    local sinVal2, cosVal2 = Math.SinCos(1.5708)  -- sin(π/2) ≈ 1, cos(π/2) ≈ 0
+                    print("Math.SinCos(π/2) = sin:" .. string.format("%.4f", sinVal2) .. " cos:" .. string.format("%.4f", cosVal2))
+                    
+                    -- Validation checks
+                    print("--- Validation ---")
+                    local success = true
+                    
+                    if math.abs(sinResult - 1.0) > 0.01 then
+                        print("❌ Sin test failed")
+                        success = false
+                    else
+                        print("✓ Sin test passed")
+                    end
+                    
+                    if cosResult ~= 1.0 then
+                        print("❌ Cos test failed")
+                        success = false
+                    else
+                        print("✓ Cos test passed")
+                    end
+                    
+                    if sqrtResult ~= 4.0 then
+                        print("❌ Sqrt test failed")
+                        success = false
+                    else
+                        print("✓ Sqrt test passed")
+                    end
+                    
+                    if powResult ~= 8.0 then
+                        print("❌ Pow test failed")
+                        success = false
+                    else
+                        print("✓ Pow test passed")
+                    end
+                    
+                    if minResult ~= 5.7 then
+                        print("❌ Min test failed")
+                        success = false
+                    else
+                        print("✓ Min test passed")
+                    end
+                    
+                    if maxResult ~= 10.2 then
+                        print("❌ Max test failed")
+                        success = false
+                    else
+                        print("✓ Max test passed")
+                    end
+                    
+                    if clampResult ~= 10.0 then
+                        print("❌ Clamp test 1 failed")
+                        success = false
+                    else
+                        print("✓ Clamp test 1 passed")
+                    end
+                    
+                    if clampResult2 ~= 0.0 then
+                        print("❌ Clamp test 2 failed")
+                        success = false
+                    else
+                        print("✓ Clamp test 2 passed")
+                    end
+                    
+                    if clampResult3 ~= 7.0 then
+                        print("❌ Clamp test 3 failed")
+                        success = false
+                    else
+                        print("✓ Clamp test 3 passed")
+                    end
+                    
+                    if quotient ~= 3 or remainder ~= 2 then
+                        print("❌ DivMod test 1 failed: expected 3, 2 but got " .. tostring(quotient) .. ", " .. tostring(remainder))
+                        success = false
+                    else
+                        print("✓ DivMod test 1 passed")
+                    end
+                    
+                    if quotient2 ~= 5 or remainder2 ~= 0 then
+                        print("❌ DivMod test 2 failed: expected 5, 0 but got " .. tostring(quotient2) .. ", " .. tostring(remainder2))
+                        success = false
+                    else
+                        print("✓ DivMod test 2 passed")
+                    end
+                    
+                    if math.abs(sinVal - 0.0) > 0.01 or math.abs(cosVal - 1.0) > 0.01 then
+                        print("❌ SinCos test 1 failed: expected ~0, ~1 but got " .. tostring(sinVal) .. ", " .. tostring(cosVal))
+                        success = false
+                    else
+                        print("✓ SinCos test 1 passed")
+                    end
+                    
+                    if math.abs(sinVal2 - 1.0) > 0.01 or math.abs(cosVal2 - 0.0) > 0.01 then
+                        print("❌ SinCos test 2 failed: expected ~1, ~0 but got " .. tostring(sinVal2) .. ", " .. tostring(cosVal2))
+                        success = false
+                    else
+                        print("✓ SinCos test 2 passed")
+                    end
+                    
+                    print("=== Math API Test Complete ===")
+                    
+                    if success then
+                        print("🎉 ALL TESTS PASSED - Stack-based approach working!")
+                        return "SUCCESS"
+                    else
+                        print("💥 SOME TESTS FAILED")
+                        return "FAILED"
+                    end
+                `;
+
+                log('--- Executing Lua math test script ---');
+                const testResult = L.execute(testScript);
+                log('--- Lua execution completed ---');
+                
+                // Extract the actual result if it's an array
+                const actualResult = Array.isArray(testResult) ? testResult[0] : testResult;
+                
+                log('Test Result: ' + actualResult);
+                log('Test Result type: ' + typeof actualResult);
+                log('Test Result length: ' + (actualResult ? actualResult.length : 'null/undefined'));
+                log('Test Result === "SUCCESS": ' + (actualResult === "SUCCESS"));
+                log('Test Result == "SUCCESS": ' + (actualResult == "SUCCESS"));
+                
+                // Get any captured output
+                try {
+                    const luaOutput = L.execute('return getOutputs()');
+                    if (luaOutput) {
+                        log('--- Captured Lua output ---');
+                        if (Array.isArray(luaOutput)) {
+                            // Handle array output
+                            luaOutput.forEach(output => {
+                                if (output && output.trim) {
+                                    const lines = output.split('\n');
+                                    lines.forEach(line => {
+                                        if (line.trim()) {
+                                            log(line);
+                                        }
+                                    });
+                                }
+                            });
+                        } else if (typeof luaOutput === 'string') {
+                            // Handle string output
+                            const outputs = luaOutput.split('\n');
+                            outputs.forEach(output => {
+                                if (output.trim()) {
+                                    log(output);
+                                }
+                            });
+                        } else {
+                            log('luaOutput: ' + JSON.stringify(luaOutput));
+                        }
+                    } else {
+                        log('--- No Lua output captured ---');
+                    }
+                } catch (outputError) {
+                    log('Error getting Lua output: ' + outputError.message);
+                }
+                
+                if (actualResult === "SUCCESS") {
+                    log('🎉 === Math test framework VALIDATED! ===');
+                    log('✓ Stack-based approach works correctly');
+                    log('✓ Multiple parameter functions work');
+                    log('✓ Manual registration with .bind() works');
+                    log('✓ Test framework is ready for Sprite conversion');
+                } else {
+                    log('Test result was: "' + actualResult + '" (expected "SUCCESS")');
+                    log('Test result JSON: ' + JSON.stringify(testResult));
+                    log('💥 === Math test framework FAILED ===');
+                    log('❌ Issue with test setup or stack-based approach');
+                }
+                
+            } catch (error) {
+                log('❌ ERROR: ' + error.message);
+                log('Stack: ' + error.stack);
+                console.error('Math test failed:', error);
+            }
+        }
+
+        // Auto-run test when page loads
+        window.addEventListener('load', () => {
+            log('Page loaded. Click "Test Math API" to validate test framework.');
+        });
+    </script>
+</body>
+</html>

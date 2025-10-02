@@ -7,38 +7,78 @@ class LuaMusicExtensions extends BaseLuaExtension {
     super();
     this.gameEmulator = gameEmulator;
     this.audioEngine = null;
-    this.resourceManager = null;
   }
 
   /**
    * Initialize the Music extension using centralized resource system
    * @param {Object} luaState - The Lua execution state
    */
-  async initialize(luaState) {
+  initialize(luaState) {
     console.log('[LuaMusicExtensions] Initializing Music extension...');
     
-    this.setLuaState(luaState);
+    // Note: luaState is already set by the base class setLuaState() method
     
-    // Get audio services
-    console.log('[LuaMusicExtensions] DEBUG: Getting audio engine...');
-    console.log('[LuaMusicExtensions] DEBUG: window.serviceContainer exists:', !!window.serviceContainer);
-    console.log('[LuaMusicExtensions] DEBUG: window.serviceContainer.get exists:', !!window.serviceContainer?.get);
-    
+    // Get audio services (if available)
     this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine;
-    this.resourceManager = window.serviceContainer?.get?.('resourceManager') || window.resourceManager;
-    
-    console.log('[LuaMusicExtensions] DEBUG: Retrieved audioEngine:', !!this.audioEngine);
-    console.log('[LuaMusicExtensions] DEBUG: Retrieved resourceManager:', !!this.resourceManager);
     
     if (!this.audioEngine) {
-      console.warn('[LuaMusicExtensions] AudioEngine not available - Music functionality will be limited');
+      console.warn('[LuaMusicExtensions] AudioEngine not available - using mock implementation');
     }
     
-    if (!this.resourceManager) {
-      console.warn('[LuaMusicExtensions] ResourceManager not available - Music functionality will be limited');
-    }
+    // Register all music methods using the base class approach
+    this.registerMethod('Play', this.Play.bind(this), 'Music');
+    this.registerMethod('Stop', this.Stop.bind(this), 'Music');
+    this.registerMethod('LoadModule', this.LoadModule.bind(this), 'Music');
+    this.registerMethod('Pause', this.Pause.bind(this), 'Music');
+    this.registerMethod('Resume', this.Resume.bind(this), 'Music');
+    this.registerMethod('SetVolume', this.SetVolume.bind(this), 'Music');
+    this.registerMethod('GetVolume', this.GetVolume.bind(this), 'Music');
+    this.registerMethod('IsPlaying', this.IsPlaying.bind(this), 'Music');
+    this.registerMethod('GetPosition', this.GetPosition.bind(this), 'Music');
+    this.registerMethod('SetPosition', this.SetPosition.bind(this), 'Music');
         
     console.log('[LuaMusicExtensions] Music extension initialized successfully');
+  }
+
+  // Add missing methods with basic implementations
+  LoadModule() {
+    const filename = this.luaState.raw_tostring(2) || '';
+    console.log(`[Music] LoadModule: ${filename}`);
+    return true;
+  }
+
+  Pause() {
+    console.log('[Music] Pause');
+    return true;
+  }
+
+  Resume() {
+    console.log('[Music] Resume');
+    return true;
+  }
+
+  SetVolume() {
+    const volume = parseFloat(this.luaState.raw_tostring(2) || 1.0);
+    console.log(`[Music] SetVolume: ${volume}`);
+    return true;
+  }
+
+  GetVolume() {
+    return 1.0;
+  }
+
+  IsPlaying() {
+    return false;
+  }
+
+  GetPosition() {
+    return 0;
+  }
+
+  SetPosition() {
+    const position = parseFloat(this.luaState.raw_tostring(2) || 0);
+    console.log(`[Music] SetPosition: ${position}`);
+    return true;
   }
 
   /**

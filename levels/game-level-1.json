@@ -1,0 +1,12 @@
+{
+  "name": "Game Level 1",
+  "description": "First game level resources",
+  "resources": {
+    "gameMusic": "demomods/Monday.mod",
+    "explosionSound": "demomods/toonladder.mod",
+    "victorySound": "demomods/StardustMemories.mod",
+    "playerSprite": "Resources/Textures/player.d2",
+    "enemySprite": "Resources/Textures/enemy.d2",
+    "backgroundTexture": "Resources/Textures/level1_bg.d2"
+  }
+}

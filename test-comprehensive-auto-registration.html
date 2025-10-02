@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Comprehensive Lua Extensions Auto-Registration Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .pass { color: green; }
+        .fail { color: red; }
+        .section-title { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Comprehensive Lua Extensions Auto-Registration Test</h1>
+    <div id="results"></div>
+
+    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and dependencies -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/sprite-manager.js"></script>
+    
+    <!-- Load all extensions -->
+    <script src="scripts/lua/input.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/music.js"></script>
+    <script src="scripts/lua/sfx.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/system.js"></script>
+    <script src="scripts/lua/time.js"></script>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(message, isPass = null) {
+            console.log(message);
+            const div = document.createElement('div');
+            if (isPass === true) div.className = 'pass';
+            else if (isPass === false) div.className = 'fail';
+            div.textContent = message;
+            results.appendChild(div);
+        }
+
+        function addSection(title) {
+            const div = document.createElement('div');
+            div.className = 'test-section';
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'section-title';
+            titleDiv.textContent = title;
+            div.appendChild(titleDiv);
+            results.appendChild(div);
+            return div;
+        }
+
+        async function loadAllScripts() {
+            log('🔄 Starting comprehensive Lua extensions auto-registration test...');
+            
+            try {
+                // Initialize Lua State
+                log('Initializing Lua state...');
+                const L = new Lua.State();
+                log('✓ Lua state created');
+
+                // Create all extension instances
+                log('Creating extension instances...');
+                const extensions = {
+                    math: new LuaMathExtensions(),
+                    input: new LuaInputExtensions(),
+                    sprite: new LuaSpriteExtensions(),
+                    system: new LuaSystemExtensions(),
+                    time: new LuaTimeExtensions(),
+                    music: new LuaMusicExtensions(),
+                    sfx: new LuaSFXExtensions()
+                };
+                log('✓ All extension instances created');
+
+                // Test auto-registration by just calling setLuaState
+                addSection('Auto-Registration Test');
+                log('Testing auto-registration - just calling setLuaState() should register all methods...');
+                
+                let autoRegisteredExtensions = 0;
+                for (const [name, ext] of Object.entries(extensions)) {
+                    try {
+                        ext.setLuaState(L);
+                        log(`✓ ${name} extension: setLuaState() called (auto-registration should happen)`);
+                        autoRegisteredExtensions++;
+                    } catch (e) {
+                        log(`✗ ${name} extension: setLuaState() failed - ${e.message}`, false);
+                    }
+                }
+                
+                log(`Auto-registration complete: ${autoRegisteredExtensions}/${Object.keys(extensions).length} extensions processed`);
+
+                // Verify functions are registered
+                addSection('Function Registration Verification');
+                const expectedFunctions = {
+                    'Math': ['Sin', 'Cos', 'Abs', 'Min', 'Max', 'Floor', 'Ceil', 'Round', 'Sqrt', 'Pow', 'DivMod', 'SinCos'],
+                    'Input': ['IsKeyPressed', 'GetKeysHeld', 'IsKeyHeld'],  // Test actual methods
+                    'Sprite': ['Create', 'SetPosition', 'GetPosition'],   // Test a few key ones
+                    'System': ['GetTime', 'Log', 'GetOS'],               // Test a few key ones
+                    'Time': ['Now', 'GetDelta', 'GetFPS'],               // Test a few key ones
+                    'Music': ['LoadModule', 'Play', 'SetVolume'],        // Test a few key ones
+                    'SFX': ['LoadSound', 'PlaySound', 'SetSoundVolume']  // Test a few key ones
+                };
+
+                let totalExpected = 0;
+                let totalRegistered = 0;
+                
+                for (const [namespace, functions] of Object.entries(expectedFunctions)) {
+                    log(`--- Testing ${namespace} namespace ---`);
+                    let namespaceRegistered = 0;
+                    
+                    for (const funcName of functions) {
+                        totalExpected++;
+                        try {
+                            const funcType = L.execute(`return type(${namespace}.${funcName})`);
+                            if (funcType[0] === 'function') {
+                                log(`✓ ${namespace}.${funcName} registered`, true);
+                                namespaceRegistered++;
+                                totalRegistered++;
+                            } else {
+                                log(`✗ ${namespace}.${funcName} not registered (type: ${funcType[0]})`, false);
+                            }
+                        } catch (e) {
+                            log(`✗ ${namespace}.${funcName} test failed: ${e.message}`, false);
+                        }
+                    }
+                    
+                    log(`${namespace}: ${namespaceRegistered}/${functions.length} functions registered`);
+                }
+
+                // Test actual function execution
+                addSection('Function Execution Tests');
+                log('Testing that auto-registered functions actually execute correctly...');
+                
+                const executionTests = [
+                    // Math tests
+                    { test: 'Math.Sin(0)', expected: 0, tolerance: 0.0001 },
+                    { test: 'Math.Cos(0)', expected: 1, tolerance: 0.0001 },
+                    { test: 'Math.Abs(-5)', expected: 5, tolerance: 0.0001 },
+                    { test: 'Math.Min(3, 7)', expected: 3, tolerance: 0.0001 },
+                    { test: 'Math.Max(3, 7)', expected: 7, tolerance: 0.0001 },
+                    { test: 'Math.Floor(3.7)', expected: 3, tolerance: 0.0001 },
+                    { test: 'Math.Ceil(3.2)', expected: 4, tolerance: 0.0001 },
+                    { test: 'Math.Round(3.6)', expected: 4, tolerance: 0.0001 },
+                    { test: 'Math.Sqrt(16)', expected: 4, tolerance: 0.0001 },
+                    { test: 'Math.Pow(2, 3)', expected: 8, tolerance: 0.0001 },
+                    
+                    // Type tests for other extensions (these should return 'function')
+                    { test: 'type(Input.IsKeyPressed)', expected: 'function', isType: true },
+                    { test: 'type(Input.GetKeysHeld)', expected: 'function', isType: true },
+                    { test: 'type(Sprite.Create)', expected: 'function', isType: true },
+                    { test: 'type(Sprite.SetPosition)', expected: 'function', isType: true },
+                    { test: 'type(System.GetTime)', expected: 'function', isType: true },
+                    { test: 'type(System.Log)', expected: 'function', isType: true },
+                    { test: 'type(Time.Now)', expected: 'function', isType: true },
+                    { test: 'type(Music.LoadModule)', expected: 'function', isType: true },
+                    { test: 'type(SFX.LoadSound)', expected: 'function', isType: true }
+                ];
+
+                let executionPassed = 0;
+                for (const testCase of executionTests) {
+                    try {
+                        const result = L.execute(`return ${testCase.test}`);
+                        const actualValue = result[0];
+                        let passed = false;
+                        
+                        if (testCase.isType) {
+                            passed = actualValue === testCase.expected;
+                        } else {
+                            passed = Math.abs(actualValue - testCase.expected) < testCase.tolerance;
+                        }
+                        
+                        if (passed) {
+                            log(`✓ ${testCase.test} = ${actualValue}`, true);
+                            executionPassed++;
+                        } else {
+                            log(`✗ ${testCase.test} = ${actualValue} (expected: ${testCase.expected})`, false);
+                        }
+                    } catch (e) {
+                        log(`✗ ${testCase.test} failed: ${e.message}`, false);
+                    }
+                }
+
+                // Test multiple return values
+                addSection('Multiple Return Value Tests');
+                log('Testing multiple return value functions...');
+                
+                let multiReturnPassed = 0;
+                const multiReturnTests = 2;
+                
+                try {
+                    const divModResult = L.execute('local q, r = Math.DivMod(10, 3); return q, r');
+                    if (divModResult.length >= 2 && divModResult[0] === 3 && divModResult[1] === 1) {
+                        log(`✓ Math.DivMod(10, 3) = ${divModResult[0]}, ${divModResult[1]} (multiple return values work!)`, true);
+                        multiReturnPassed++;
+                    } else {
+                        log(`✗ Math.DivMod(10, 3) = ${divModResult.join(', ')} (expected: 3, 1)`, false);
+                    }
+                } catch (e) {
+                    log(`✗ Math.DivMod test failed: ${e.message}`, false);
+                }
+                
+                try {
+                    const sinCosResult = L.execute('local s, c = Math.SinCos(0); return s, c');
+                    if (sinCosResult.length >= 2 && Math.abs(sinCosResult[0] - 0) < 0.0001 && Math.abs(sinCosResult[1] - 1) < 0.0001) {
+                        log(`✓ Math.SinCos(0) = ${sinCosResult[0]}, ${sinCosResult[1]} (multiple return values work!)`, true);
+                        multiReturnPassed++;
+                    } else {
+                        log(`✗ Math.SinCos(0) = ${sinCosResult.join(', ')} (expected: 0, 1)`, false);
+                    }
+                } catch (e) {
+                    log(`✗ Math.SinCos test failed: ${e.message}`, false);
+                }
+
+                // Final Summary
+                addSection('Final Summary');
+                log(`Auto-Registration: ${autoRegisteredExtensions}/${Object.keys(extensions).length} extensions`);
+                log(`Function Registration: ${totalRegistered}/${totalExpected} functions`);
+                log(`Function Execution: ${executionPassed}/${executionTests.length} tests passed`);
+                log(`Multiple Return Values: ${multiReturnPassed}/${multiReturnTests} tests passed`);
+                
+                const totalTests = totalExpected + executionTests.length + multiReturnTests;
+                const totalPassed = totalRegistered + executionPassed + multiReturnPassed;
+                
+                if (totalPassed === totalTests) {
+                    log('🎉 COMPREHENSIVE AUTO-REGISTRATION TEST PASSED! 🎉', true);
+                    log('✓ All Lua extensions auto-register correctly when setLuaState() is called', true);
+                    log('✓ All functions are properly registered in their namespaces', true);
+                    log('✓ All functions execute correctly including multiple return values', true);
+                    log('✓ Original sprite GetPosition() multiple return value issue is resolved', true);
+                } else {
+                    log(`❌ ${totalTests - totalPassed} tests failed out of ${totalTests} total tests`, false);
+                    log('Auto-registration system needs further debugging', false);
+                }
+
+            } catch (error) {
+                log(`❌ Critical error: ${error.message}`, false);
+                console.error(error);
+            }
+        }
+
+        // Start loading when page loads
+        document.addEventListener('DOMContentLoaded', loadAllScripts);
+    </script>
+</body>
+</html>

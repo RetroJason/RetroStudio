@@ -7,6 +7,38 @@ class LuaMathExtensions extends BaseLuaExtension {
     this.gameEmulator = gameEmulator;
   }
 
+  initialize(luaState) {
+    console.log('[LuaMathExtensions] Initializing Math extension...');
+    
+    // Note: luaState is already set by the base class setLuaState() method
+    // Register all methods using the base class approach
+    this.registerMethod('Sin', this.Sin.bind(this), 'Math');
+    this.registerMethod('Cos', this.Cos.bind(this), 'Math');
+    this.registerMethod('Sqrt', this.Sqrt.bind(this), 'Math');
+    this.registerMethod('Pow', this.Pow.bind(this), 'Math');
+    this.registerMethod('Atan2', this.Atan2.bind(this), 'Math');
+    this.registerMethod('Min', this.Min.bind(this), 'Math');
+    this.registerMethod('Max', this.Max.bind(this), 'Math');
+    this.registerMethod('Clamp', this.Clamp.bind(this), 'Math');
+    this.registerMethod('Ceil', this.Ceil.bind(this), 'Math');
+    this.registerMethod('Floor', this.Floor.bind(this), 'Math');
+    this.registerMethod('Round', this.Round.bind(this), 'Math');
+    this.registerMethod('Abs', this.Abs.bind(this), 'Math');
+    this.registerMethod('And', this.And.bind(this), 'Math');
+    this.registerMethod('Not', this.Not.bind(this), 'Math');
+    this.registerMethod('Or', this.Or.bind(this), 'Math');
+    this.registerMethod('Xor', this.Xor.bind(this), 'Math');
+    this.registerMethod('LShift', this.LShift.bind(this), 'Math');
+    this.registerMethod('RShift', this.RShift.bind(this), 'Math');
+    this.registerMethod('Random', this.Random.bind(this), 'Math');
+    this.registerMethod('RadiansToDegrees', this.RadiansToDegrees.bind(this), 'Math');
+    this.registerMethod('DegreesToRadians', this.DegreesToRadians.bind(this), 'Math');
+    this.registerMethod('DivMod', this.DivMod.bind(this), 'Math');
+    this.registerMethod('SinCos', this.SinCos.bind(this), 'Math');
+    
+    console.log('[LuaMathExtensions] Math extension initialized successfully');
+  }
+
   /**
    * Sin function - uses Lua state to get parameters
    * Lua usage: Math.Sin(x)
@@ -91,7 +123,6 @@ class LuaMathExtensions extends BaseLuaExtension {
     const max = parseFloat(this.luaState.raw_tostring(4) || 100);
     
     const result = Math.min(Math.max(value, min), max);
-    
     return result;
   }
 
@@ -229,6 +260,40 @@ class LuaMathExtensions extends BaseLuaExtension {
     const degrees = parseFloat(this.luaState.raw_tostring(2) || 0);
     const result = degrees * (Math.PI / 180);
     return result;
+  }
+
+  /**
+   * Division with remainder function - returns quotient and remainder
+   * Lua usage: local quotient, remainder = Math.DivMod(dividend, divisor)
+   */
+  DivMod() {
+    const dividend = parseFloat(this.luaState.raw_tostring(2) || 0);
+    const divisor = parseFloat(this.luaState.raw_tostring(3) || 1);
+    
+    if (divisor === 0) {
+      throw new Error("Division by zero in DivMod");
+    }
+    
+    const quotient = Math.floor(dividend / divisor);
+    const remainder = dividend % divisor;
+    
+    // Return multiple values by returning an array
+    // Lua will receive this as two separate return values
+    return [quotient, remainder];
+  }
+
+  /**
+   * Sine and Cosine function - returns both sin and cos of angle
+   * Lua usage: local sinValue, cosValue = Math.SinCos(angle)
+   */
+  SinCos() {
+    const angle = parseFloat(this.luaState.raw_tostring(2) || 0);
+    
+    const sinValue = Math.sin(angle);
+    const cosValue = Math.cos(angle);
+    
+    // Return multiple values by returning an array
+    return [sinValue, cosValue];
   }
 }
 

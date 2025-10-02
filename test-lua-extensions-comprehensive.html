@@ -1,0 +1,270 @@
+    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and dependencies -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/sprite-manager.js"></script>
+    
+    <!-- Load all extensions -->
+    <script src="scripts/lua/input.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/music.js"></script>
+    <script src="scripts/lua/sfx.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/system.js"></script>
+    <script src="scripts/lua/time.js"></script>    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and dependencies -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/sprite-manager.js"></script>
+    
+    <!-- Load all extensions -->
+    <script src="scripts/lua/input.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/music.js"></script>
+    <script src="scripts/lua/sfx.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/system.js"></script>
+    <script src="scripts/lua/time.js"></script>ad>
+    <title>Comprehensive Lua Extensions Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .pass { color: green; }
+        .fail { color: red; }
+        .section-title { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Comprehensive Lua Extensions Test</h1>
+    <div id="results"></div>
+
+    <!-- Load Lua.js first -->
+    <script src="lua.vm.js/dist/lua.vm.js"></script>
+
+    <!-- Load BaseLuaExtension and dependencies -->
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/graphics/sprite-manager.js"></script>
+    
+    <!-- Load all extensions -->
+    <script src="scripts/lua/input.js"></script>
+    <script src="scripts/lua/math.js"></script>
+    <script src="scripts/lua/music.js"></script>
+    <script src="scripts/lua/sfx.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    <script src="scripts/lua/system.js"></script>
+    <script src="scripts/lua/time.js"></script>
+
+    <script>
+        // Guard against multiple executions
+        if (window.luaExtensionsTestInProgress) {
+            console.log('Test already running, please wait...');
+            // Don't use return here as we're not in a function
+        } else {
+            window.luaExtensionsTestInProgress = true;
+
+            const results = document.getElementById('results');
+            
+            function log(message, isPass = null) {
+                const div = document.createElement('div');
+                if (isPass === true) div.className = 'pass';
+                else if (isPass === false) div.className = 'fail';
+                div.textContent = message;
+                results.appendChild(div);
+            }
+
+        function addSection(title) {
+            const div = document.createElement('div');
+            div.className = 'test-section';
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'section-title';
+            titleDiv.textContent = title;
+            div.appendChild(titleDiv);
+            results.appendChild(div);
+            return div;
+        }
+
+        function testExtension(extensionName, extensionClass, expectedMethods) {
+            const section = addSection(`${extensionName} Extension Tests`);
+            let passCount = 0;
+            let totalTests = 0;
+
+            try {
+                // Test each expected method
+                expectedMethods.forEach(methodName => {
+                    totalTests++;
+                    try {
+                        // Test if function exists in Lua by trying to call type() on it
+                        try {
+                            L.execute(`local funcType = type(${methodName}); if funcType ~= "function" then error("not a function") end`);
+                            log(`✓ ${methodName}() - function exists`, true);
+                            passCount++;
+                        } catch (e) {
+                            log(`✗ ${methodName}() - function not found`, false);
+                        }
+                    } catch (error) {
+                        log(`✗ ${methodName}() - Exception: ${error.message}`, false);
+                    }
+                });
+
+                const sectionResult = `${passCount}/${totalTests} methods registered correctly`;
+                log(sectionResult, passCount === totalTests);
+
+            } catch (error) {
+                log(`✗ Extension testing failed: ${error.message}`, false);
+            }
+
+            return { passCount, totalTests };
+        }
+
+        // Test all extensions
+        async function runTests() {
+            try {
+                log("Starting comprehensive Lua extensions test...\n");
+
+                // Create mock gameEmulator for testing
+                const mockGameEmulator = {
+                    inputManager: {
+                        getKeysHeld: () => 0,
+                        getKeysPressed: () => 0,
+                        getKeysReleased: () => 0,
+                        isKeyHeld: (keyMask) => false,
+                        isKeyPressed: (keyMask) => false,
+                        isKeyReleased: (keyMask) => false
+                    },
+                    d2Graphics: {
+                        // Mock D2Graphics API
+                        createSprite: () => ({ id: 1 }),
+                        updateSprite: () => {},
+                        deleteSprite: () => {},
+                        setPosition: () => {},
+                        getPosition: () => [0, 0]
+                    },
+                    resourceManager: {
+                        // Mock Resource Manager
+                        get: (id) => null,
+                        load: (id) => Promise.resolve(null),
+                        exists: (id) => false
+                    }
+                };
+
+                // Initialize all extensions with the global L state (handle redeclaration gracefully)
+                try {
+                    // Only initialize if not already done
+                    if (!window.extensionsInitialized) {
+                        const inputExt = new (window.LuaInputExtensions || LuaInputExtensions)(mockGameEmulator);
+                        await inputExt.initialize(L);
+
+                        const mathExt = new (window.LuaMathExtensions || LuaMathExtensions)(null);
+                        await mathExt.initialize(L);
+
+                        const musicExt = new (window.LuaMusicExtensions || LuaMusicExtensions)(null);
+                        await musicExt.initialize(L);
+
+                        const sfxExt = new (window.LuaSFXExtensions || LuaSFXExtensions)(null);
+                        await sfxExt.initialize(L);
+
+                        const spriteExt = new (window.LuaSpriteExtensions || LuaSpriteExtensions)(mockGameEmulator);
+                        await spriteExt.initialize(L);
+
+                        const systemExt = new (window.LuaSystemExtensions || LuaSystemExtensions)(null);
+                        await systemExt.initialize(L);
+
+                        const timeExt = new (window.LuaTimeExtensions || LuaTimeExtensions)(null);
+                        await timeExt.initialize(L);
+
+                        window.extensionsInitialized = true;
+                        log("✓ All extensions initialized successfully!\n");
+                    } else {
+                        log("✓ Extensions already initialized, proceeding with tests...\n");
+                    }
+                } catch (error) {
+                    log(`Extension initialization error: ${error.message}`, false);
+                    console.error(error);
+                    // Continue with tests anyway to see what's working
+                }
+
+                let totalPassed = 0;
+                let totalTests = 0;
+
+            // Input Extension
+            const inputResult = testExtension('Input', null, [
+                'GetKeysHeld', 'GetKeysPressed', 'GetKeysReleased', 'IsKeyHeld', 'IsKeyPressed', 'IsKeyReleased'
+            ]);
+            totalPassed += inputResult.passCount;
+            totalTests += inputResult.totalTests;
+
+            // Math Extension (testing a representative sample)
+            const mathResult = testExtension('Math', null, [
+                'Sin', 'Cos', 'Sqrt', 'Pow', 'Atan2', 'Min', 'Max', 'Clamp', 'Ceil', 'Floor', 
+                'Round', 'Abs', 'And', 'Not', 'Or', 'Xor', 'LShift', 'RShift', 'Random', 
+                'RadiansToDegrees', 'DegreesToRadians', 'DivMod', 'SinCos'
+            ]);
+            totalPassed += mathResult.passCount;
+            totalTests += mathResult.totalTests;
+
+            // Music Extension
+            const musicResult = testExtension('Music', null, [
+                'Play', 'Stop'
+            ]);
+            totalPassed += musicResult.passCount;
+            totalTests += musicResult.totalTests;
+
+            // SFX Extension
+            const sfxResult = testExtension('SFX', null, [
+                'Play', 'Stop', 'IsPlaying', 'SetVolume', 'List'
+            ]);
+            totalPassed += sfxResult.passCount;
+            totalTests += sfxResult.totalTests;
+
+            // Sprite Extension (testing a representative sample)
+            const spriteResult = testExtension('Sprite', null, [
+                'Create', 'Destroy', 'SetPosition', 'GetPosition', 'SetVisible', 'GetVisible',
+                'SetRotation', 'GetRotation', 'SetScale', 'GetScale', 'SetColor', 'GetColor',
+                'SetCenter', 'GetCenter', 'SetSize', 'GetSize', 'SetAnimation', 'SetFrameIndex',
+                'UpdateAnimation', 'IsHit', 'SetPaletteSlot', 'GetPaletteSlot'
+            ]);
+            totalPassed += spriteResult.passCount;
+            totalTests += spriteResult.totalTests;
+
+            // System Extension
+            const systemResult = testExtension('System', null, [
+                'LogLua'
+            ]);
+            totalPassed += systemResult.passCount;
+            totalTests += systemResult.totalTests;
+
+            // Time Extension
+            const timeResult = testExtension('Time', null, [
+                'HoursToDegrees', 'MinutesToDegrees', 'SecondsToDegrees', 'Hours', 'Minutes', 
+                'Seconds', 'Day', 'Month', 'Year', 'DayOfWeek', 'ToString'
+            ]);
+            totalPassed += timeResult.passCount;
+            totalTests += timeResult.totalTests;
+
+            // Final summary
+            log(`\n${'='.repeat(50)}`);
+            log(`FINAL RESULTS: ${totalPassed}/${totalTests} methods registered correctly`);
+            
+            if (totalPassed === totalTests) {
+                log("🎉 ALL EXTENSIONS FULLY FUNCTIONAL! 🎉", true);
+            } else {
+                log(`❌ ${totalTests - totalPassed} methods failed registration`, false);
+            }
+
+        } catch (error) {
+            log(`Critical error: ${error.message}`, false);
+            console.error(error);
+        } finally {
+            window.luaExtensionsTestInProgress = false;
+        }
+        }
+
+        // Run the tests
+        runTests();
+        
+        } // End of else block for execution guard
+    </script>
+</body>
+</html>

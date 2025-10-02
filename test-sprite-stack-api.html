@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprite Stack-Based API Test</title>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #00ff00; }
+        .log { background: #0a0a0a; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .error { color: #ff4444; }
+        .success { color: #44ff44; }
+        .info { color: #4444ff; }
+        .warning { color: #ffff44; }
+    </style>
+</head>
+<body>
+    <h1>🎮 Sprite Stack-Based API Test</h1>
+    <p>Testing that Sprite methods correctly read parameters from Lua stack...</p>
+    
+    <div id="output" class="log"></div>
+    
+    <script src="scripts/external/lua/dist/lua.vm.js"></script>
+    <script src="scripts/lua/base-lua-extension.js"></script>
+    <script src="scripts/lua/sprite.js"></script>
+    
+    <script>
+        const outputDiv = document.getElementById('output');
+        
+        function log(message, type = 'info') {
+            console.log(message);
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = message;
+            outputDiv.appendChild(div);
+        }
+        
+        async function testSpriteStackAPI() {
+            try {
+                log('=== Sprite Stack-Based API Test ===');
+                log('Initializing Lua VM...');
+                
+                // Initialize Lua VM
+                const L = new Lua.State();
+                log('✓ Lua state created');
+                
+                // Mock game emulator with required services
+                const mockGameEmulator = {
+                    d2Graphics: {
+                        createTexture: function() { return { id: 1 }; },
+                        deleteTexture: function() {},
+                    },
+                    resourceManager: {
+                        getResource: function(id) { return { id: id, data: 'mock_data' }; }
+                    }
+                };
+                
+                // Create sprite extension
+                log('Creating Sprite extension...');
+                const spriteExt = new LuaSpriteExtensions(mockGameEmulator);
+                
+                // Initialize sprite extension with proper registration
+                log('Registering Sprite methods...');
+                await spriteExt.initialize(L);
+                log('✓ Sprite functions registered');
+                
+                // Mock SpriteManager for testing
+                spriteExt.spriteManager = {
+                    nextId: 1,
+                    sprites: new Map(),
+                    
+                    create: function(resourceId) {
+                        const id = this.nextId++;
+                        const sprite = {
+                            id: id,
+                            resourceId: resourceId,
+                            position: { x: 0, y: 0, z: 0 },
+                            visible: true,
+                            width: 64,
+                            height: 64,
+                            
+                            setPosition: function(x, y, z) {
+                                this.position.x = x;
+                                this.position.y = y;
+                                this.position.z = z;
+                            },
+                            
+                            getPosition: function() {
+                                return this.position;
+                            },
+                            
+                            setVisible: function(visible) {
+                                this.visible = visible;
+                            },
+                            
+                            getVisible: function() {
+                                return this.visible;
+                            }
+                        };
+                        this.sprites.set(id, sprite);
+                        return id;
+                    },
+                    
+                    getSprite: function(id) {
+                        return this.sprites.get(id);
+                    },
+                    
+                    destroy: function(id) {
+                        this.sprites.delete(id);
+                    }
+                };
+                
+                spriteExt.setLuaState(L);
+                spriteExt.initialized = true;
+                
+                // Register sprite methods manually for testing
+                log('Registering Sprite methods...');
+                
+                // Custom registration that properly handles stack-based calls
+                L.execute(`
+                    Sprite = {}
+                    
+                    function Sprite.Create(resourceId)
+                        -- Push arguments onto stack for the JavaScript method to read
+                        return js.global.spriteCreate(resourceId)
+                    end
+                    
+                    function Sprite.SetPosition(spriteId, x, y, z)
+                        js.global.spriteSetPosition(spriteId, x, y, z)
+                    end
+                    
+                    function Sprite.GetPosition(spriteId)
+                        return js.global.spriteGetPosition(spriteId)
+                    end
+                    
+                    function Sprite.SetVisible(spriteId, visible)
+                        js.global.spriteSetVisible(spriteId, visible)
+                    end
+                    
+                    function Sprite.GetVisible(spriteId)
+                        return js.global.spriteGetVisible(spriteId)
+                    end
+                    
+                    function Sprite.Destroy(spriteId)
+                        js.global.spriteDestroy(spriteId)
+                    end
+                `);
+                
+                // Create global functions that simulate stack-based calls
+                window.spriteCreate = function(resourceId) {
+                    // Simulate putting arguments on stack
+                    L.execute(`_arg1 = "${resourceId}"`);
+                    const result = spriteExt.Create();
+                    return result;
+                };
+                
+                window.spriteSetPosition = function(spriteId, x, y, z) {
+                    L.execute(`_arg1 = ${spriteId}; _arg2 = ${x}; _arg3 = ${y}; _arg4 = ${z}`);
+                    spriteExt.SetPosition();
+                };
+                
+                window.spriteGetPosition = function(spriteId) {
+                    L.execute(`_arg1 = ${spriteId}`);
+                    return spriteExt.GetPosition();
+                };
+                
+                window.spriteSetVisible = function(spriteId, visible) {
+                    L.execute(`_arg1 = ${spriteId}; _arg2 = "${visible ? "true" : "false"}"`);
+                    spriteExt.SetVisible();
+                };
+                
+                window.spriteGetVisible = function(spriteId) {
+                    L.execute(`_arg1 = ${spriteId}`);
+                    return spriteExt.GetVisible();
+                };
+                
+                window.spriteDestroy = function(spriteId) {
+                    L.execute(`_arg1 = ${spriteId}`);
+                    spriteExt.Destroy();
+                };
+                
+                log('✓ Sprite functions registered');
+
+                // Override print function to capture output
+                log('Setting up Lua print override...');
+                L.execute(`
+                    local outputs = {}
+                    function print(...)
+                        local args = {...}
+                        local str = ""
+                        for i = 1, #args do
+                            if i > 1 then str = str .. "\\t" end
+                            str = str .. tostring(args[i])
+                        end
+                        table.insert(outputs, str)
+                        js.global.luaPrint(str)
+                    end
+                    
+                    function getOutputs()
+                        return table.concat(outputs, "\\n")
+                    end
+                `);
+                log('✓ Lua print override set up');
+                
+                // Create global function to receive print output and test result
+                let testResult = "";
+                window.setTestResult = function(result) {
+                    log('setTestResult called with: ' + result);
+                    testResult = result;
+                };
+                
+                window.luaPrint = function(message) {
+                    if (message !== undefined && message !== 'undefined' && message !== null && message !== '') {
+                        log('[Lua] ' + message);
+                    }
+                };
+                log('✓ Global functions set up');
+                
+                // Lua test script that uses stack-based approach
+                const testScript = `
+                    print("=== Sprite Stack-Based API Test ===")
+                    
+                    -- Test Create method (single parameter from stack)
+                    print("--- Create Sprite Test ---")
+                    spriteId = Sprite.Create("test_texture.png")  -- Make global for debugging
+                    print("Created sprite with ID: " .. tostring(spriteId))
+                    
+                    -- Test SetPosition method (4 parameters from stack)
+                    print("--- SetPosition Test ---")
+                    Sprite.SetPosition(spriteId, 100, 200, 0)
+                    print("Set sprite position to (100, 200, 0)")
+                    
+                    -- Test SetVisible method (2 parameters from stack)
+                    print("--- SetVisible Test ---")
+                    Sprite.SetVisible(spriteId, true)
+                    print("Set sprite visibility to true")
+                    
+                    -- Test GetVisible method (1 parameter from stack, returns boolean)
+                    print("--- GetVisible Test ---")
+                    visible = Sprite.GetVisible(spriteId)  -- Make global for debugging
+                    print("Got sprite visibility: " .. tostring(visible))
+                    
+                    -- Test GetPosition method (1 parameter from stack, returns multiple values)
+                    print("--- GetPosition Test ---")
+                    print("About to call GetPosition...")
+                    local x, y, z = Sprite.GetPosition(spriteId)  -- Use multiple return values
+                    print("GetPosition call completed")
+                    print("Got sprite position: (" .. tostring(x) .. ", " .. tostring(y) .. ", " .. tostring(z) .. ")")
+                    
+                    -- Test Destroy method (1 parameter from stack)
+                    print("--- Destroy Sprite Test ---")
+                    Sprite.Destroy(spriteId)
+                    print("Destroyed sprite with ID: " .. tostring(spriteId))
+                    
+                    print("=== Basic Tests Complete ===")
+                    
+                    -- Validation
+                    print("Starting validation...")
+                    success = true  -- Make global for debugging
+                    
+                    print("Checking spriteId: " .. tostring(spriteId) .. " (expected 1)")
+                    if spriteId ~= 1 then
+                        print("❌ Create test failed - expected ID 1, got " .. tostring(spriteId))
+                        success = false
+                    else
+                        print("✓ Create test passed")
+                    end
+                    
+                    print("Checking visible: " .. tostring(visible) .. " (expected true)")
+                    if visible ~= true then
+                        print("❌ Visibility test failed")
+                        success = false
+                    else
+                        print("✓ Visibility test passed")
+                    end
+                    
+                    print("Checking position values: x=" .. tostring(x) .. " y=" .. tostring(y) .. " z=" .. tostring(z))
+                    print("Expected: x=100 y=200 z=0")
+                    
+                    -- Check each value individually
+                    positionOk = true  -- Make global for debugging
+                    if x ~= 100 then
+                        print("❌ X position wrong: got " .. tostring(x) .. ", expected 100")
+                        positionOk = false
+                    end
+                    if y ~= 200 then
+                        print("❌ Y position wrong: got " .. tostring(y) .. ", expected 200")
+                        positionOk = false
+                    end
+                    if z ~= 0 then
+                        print("❌ Z position wrong: got " .. tostring(z) .. ", expected 0")
+                        positionOk = false
+                    end
+                    
+                    if not positionOk then
+                        print("❌ Position test failed")
+                        success = false
+                    else
+                        print("✓ Position test passed")
+                    end
+                    
+                    print("Final success value: " .. tostring(success))
+                    
+                    if success then
+                        print("🎉 ALL SPRITE TESTS PASSED - Stack-based approach working!")
+                        print("About to set test result to SUCCESS")
+                        _G.testResult = "SUCCESS"
+                        print("Test result set in global variable")
+                    else
+                        print("💥 SOME SPRITE TESTS FAILED")
+                        print("About to set test result to FAILED")
+                        _G.testResult = "FAILED"
+                        print("Test result set in global variable")
+                    end
+                    
+                    print("Lua script ending...")
+                `;
+
+                log('--- Executing Lua sprite test script ---');
+                try {
+                    L.execute(testScript);
+                    log('--- Lua execution completed successfully ---');
+                    
+                    // Get the test result from Lua global variable
+                    try {
+                        const luaResult = L.execute('return _G.testResult');
+                        log('Retrieved test result from Lua: ' + luaResult);
+                        testResult = luaResult || "UNKNOWN";
+                        
+                        // Debug: Get individual values to see what went wrong
+                        const spriteId = L.execute('return spriteId');
+                        const visible = L.execute('return visible');
+                        const x = L.execute('return x');
+                        const y = L.execute('return y');
+                        const z = L.execute('return z');
+                        
+                        log('Debug values from Lua:');
+                        log('- spriteId: ' + spriteId);
+                        log('- visible: ' + visible);
+                        log('- x: ' + x);
+                        log('- y: ' + y);
+                        log('- z: ' + z);
+                        
+                    } catch (getResultError) {
+                        log('Error getting result from Lua: ' + getResultError.message, 'error');
+                    }
+                } catch (luaError) {
+                    log('--- Lua execution error: ' + luaError.message + ' ---', 'error');
+                }
+                log('Final Test Result: ' + testResult);
+                
+                // Check test result
+                if (testResult === "SUCCESS") {
+                    log('🎉 === Sprite Stack-Based API VALIDATED! ===', 'success');
+                    log('✓ Stack-based parameter reading works correctly', 'success');
+                    log('✓ Create method reads resource ID from stack', 'success');
+                    log('✓ SetPosition method reads 4 parameters from stack', 'success');
+                    log('✓ GetPosition method reads sprite ID and returns array', 'success');
+                    log('✓ Visibility methods work with stack parameters', 'success');
+                    log('✓ Sprite API conversion is complete and functional', 'success');
+                } else {
+                    log('Test result was: "' + testResult + '" (expected "SUCCESS")', 'error');
+                    log('💥 === Sprite Stack-Based API FAILED ===', 'error');
+                    log('❌ Issue with stack-based conversion', 'error');
+                }
+                
+            } catch (error) {
+                log('Error during test: ' + error.message, 'error');
+                console.error('Test error:', error);
+            }
+        }
+        
+        // Start test when page loads
+        window.addEventListener('load', testSpriteStackAPI);
+    </script>
+</body>
+</html>

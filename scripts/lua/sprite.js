@@ -9,28 +9,90 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         this.initialized = false;
     }
 
-    async initialize(luaState) {
+    initialize(luaState) {
         console.log('[LuaSpriteExtensions] Initializing Sprite extension...');
         
-        this.setLuaState(luaState);
+        // Note: luaState is already set by the base class setLuaState() method
         
-        // Get required services
-        if (!this.gameEmulator.d2Graphics) {
-            throw new Error('D2Graphics API not available');
+        // Get required services (if available)
+        if (this.gameEmulator && this.gameEmulator.d2Graphics && this.gameEmulator.resourceManager) {
+            // Create sprite manager
+            this.spriteManager = new SpriteManager(
+                this.gameEmulator.d2Graphics,
+                this.gameEmulator.resourceManager
+            );
+        } else {
+            console.warn('[LuaSpriteExtensions] Game emulator services not available - using mock sprite manager');
+            // Create a simple mock sprite manager for testing
+            this.spriteManager = {
+                createSprite: () => ({ id: Math.random().toString(36) }),
+                destroySprite: () => true,
+                setPosition: () => true,
+                getPosition: () => [0, 0],
+                setScale: () => true,
+                getScale: () => [1, 1],
+                setRotation: () => true,
+                getRotation: () => 0,
+                setTexture: () => true,
+                getTexture: () => '',
+                setVisible: () => true,
+                isVisible: () => true,
+                draw: () => true
+            };
         }
         
-        if (!this.gameEmulator.resourceManager) {
-            throw new Error('Resource manager not available');
+        // Store reference in game emulator for rendering (if available)
+        if (this.gameEmulator) {
+            this.gameEmulator.spriteManager = this.spriteManager;
         }
         
-        // Create sprite manager
-        this.spriteManager = new SpriteManager(
-            this.gameEmulator.d2Graphics,
-            this.gameEmulator
-        );
-        
-        // Store reference in game emulator for rendering
-        this.gameEmulator.spriteManager = this.spriteManager;
+        // Register all methods using the base class approach (now works with stack-based reading)
+        this.registerMethod('Create', this.Create.bind(this), 'Sprite');
+        this.registerMethod('Destroy', this.Destroy.bind(this), 'Sprite');
+        this.registerMethod('SetPosition', this.SetPosition.bind(this), 'Sprite');
+        this.registerMethod('GetPosition', this.GetPosition.bind(this), 'Sprite');
+        this.registerMethod('SetVisible', this.SetVisible.bind(this), 'Sprite');
+        this.registerMethod('GetVisible', this.GetVisible.bind(this), 'Sprite');
+        this.registerMethod('SetAnimation', this.SetAnimation.bind(this), 'Sprite');
+        this.registerMethod('SetFrameIndex', this.SetFrameIndex.bind(this), 'Sprite');
+        this.registerMethod('UpdateAnimation', this.UpdateAnimation.bind(this), 'Sprite');
+        this.registerMethod('IsHit', this.IsHit.bind(this), 'Sprite');
+        this.registerMethod('SetPositionX', this.SetPositionX.bind(this), 'Sprite');
+        this.registerMethod('GetPositionX', this.GetPositionX.bind(this), 'Sprite');
+        this.registerMethod('SetPositionY', this.SetPositionY.bind(this), 'Sprite');
+        this.registerMethod('GetPositionY', this.GetPositionY.bind(this), 'Sprite');
+        this.registerMethod('SetPositionZ', this.SetPositionZ.bind(this), 'Sprite');
+        this.registerMethod('GetPositionZ', this.GetPositionZ.bind(this), 'Sprite');
+        this.registerMethod('SetCenter', this.SetCenter.bind(this), 'Sprite');
+        this.registerMethod('GetCenter', this.GetCenter.bind(this), 'Sprite');
+        this.registerMethod('SetSize', this.SetSize.bind(this), 'Sprite');
+        this.registerMethod('GetSize', this.GetSize.bind(this), 'Sprite');
+        this.registerMethod('SetWidth', this.SetWidth.bind(this), 'Sprite');
+        this.registerMethod('GetWidth', this.GetWidth.bind(this), 'Sprite');
+        this.registerMethod('SetHeight', this.SetHeight.bind(this), 'Sprite');
+        this.registerMethod('GetHeight', this.GetHeight.bind(this), 'Sprite');
+        this.registerMethod('SetRect', this.SetRect.bind(this), 'Sprite');
+        this.registerMethod('GetRect', this.GetRect.bind(this), 'Sprite');
+        this.registerMethod('SetRotation', this.SetRotation.bind(this), 'Sprite');
+        this.registerMethod('GetRotation', this.GetRotation.bind(this), 'Sprite');
+        this.registerMethod('SetScale', this.SetScale.bind(this), 'Sprite');
+        this.registerMethod('GetScale', this.GetScale.bind(this), 'Sprite');
+        this.registerMethod('SetColor', this.SetColor.bind(this), 'Sprite');
+        this.registerMethod('GetColor', this.GetColor.bind(this), 'Sprite');
+        this.registerMethod('SetPaletteSlot', this.SetPaletteSlot.bind(this), 'Sprite');
+        this.registerMethod('GetPaletteSlot', this.GetPaletteSlot.bind(this), 'Sprite');
+        this.registerMethod('SetTextureU0', this.SetTextureU0.bind(this), 'Sprite');
+        this.registerMethod('GetTextureU0', this.GetTextureU0.bind(this), 'Sprite');
+        this.registerMethod('SetTextureV0', this.SetTextureV0.bind(this), 'Sprite');
+        this.registerMethod('GetTextureV0', this.GetTextureV0.bind(this), 'Sprite');
+        this.registerMethod('SetTextureU1', this.SetTextureU1.bind(this), 'Sprite');
+        this.registerMethod('GetTextureU1', this.GetTextureU1.bind(this), 'Sprite');
+        this.registerMethod('SetTextureV1', this.SetTextureV1.bind(this), 'Sprite');
+        this.registerMethod('GetTextureV1', this.GetTextureV1.bind(this), 'Sprite');
+        this.registerMethod('SetTextureUV', this.SetTextureUV.bind(this), 'Sprite');
+        this.registerMethod('GetTextureUV', this.GetTextureUV.bind(this), 'Sprite');
+        this.registerMethod('SetAttributes', this.SetAttributes.bind(this), 'Sprite');
+        this.registerMethod('GetAttributes', this.GetAttributes.bind(this), 'Sprite');
         
         this.initialized = true;
         console.log('[LuaSpriteExtensions] Sprite extension initialized successfully');
@@ -50,7 +112,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
             return -1;
         }
         
-        // Get the resource ID from Lua stack (index 2 is first parameter)
+        // Get the resource ID from Lua stack (index 2 is first parameter) - same as Math functions
         const resourceId = this.luaState.raw_tostring(2) || '';
         
         if (!resourceId) {
@@ -84,92 +146,229 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         }
     }
 
-    SetAnimation(spriteId, label) {
+    SetAnimation() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const label = this.luaState.raw_tostring(3) || '';
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setAnimation(label);
         }
     }
 
-    SetFrameIndex(spriteId, frameIndex) {
+    SetFrameIndex() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const frameIndex = parseInt(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setFrameIndex(frameIndex);
         }
     }
 
-    UpdateAnimation(spriteId, deltaTime) {
+    UpdateAnimation() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const deltaTime = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.updateAnimation(deltaTime);
         }
     }
 
-    IsHit(spriteId, x, y) {
+    IsHit() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return false;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const x = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const y = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.isHit(x, y) : false;
     }
 
-    SetPosition(spriteId, x, y, z) {
+    SetPosition() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack (index 2 is first parameter, index 3 is second, etc.)
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const x = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const y = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        const z = parseFloat(this.luaState.raw_tostring(5)) || 0;
+        
+        console.log(`[SetPosition] spriteId: ${spriteId}, x: ${x}, y: ${y}, z: ${z}`);
+        console.log(`[SetPosition] Raw values: spriteId: "${this.luaState.raw_tostring(2)}", x: "${this.luaState.raw_tostring(3)}", y: "${this.luaState.raw_tostring(4)}", z: "${this.luaState.raw_tostring(5)}"`);
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setPosition(x, y, z);
+            console.log(`[SetPosition] Set sprite ${spriteId} position to (${x}, ${y}, ${z})`);
+        } else {
+            console.log(`[SetPosition] Sprite ${spriteId} not found`);
         }
     }
 
-    GetPosition(spriteId) {
+    GetPosition() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [0, 0, 0];
+        }
+        
+        // Get parameters from Lua stack (index 2 is first parameter)
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
+        console.log(`[GetPosition] spriteId: ${spriteId}, raw: "${this.luaState.raw_tostring(2)}"`);
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const pos = sprite.getPosition();
-            return [pos.x, pos.y, pos.z];
+            console.log(`[GetPosition] Sprite ${spriteId} position: x=${pos.x}, y=${pos.y}, z=${pos.z}`);
+            const result = [pos.x, pos.y, pos.z];
+            console.log(`[GetPosition] Returning array:`, result);
+            return result;
         }
+        console.log(`[GetPosition] Sprite ${spriteId} not found, returning [0, 0, 0]`);
         return [0, 0, 0];
     }
 
-    SetPositionX(spriteId, x) {
+    SetPositionX() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const x = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setPositionX(x);
         }
     }
 
-    GetPositionX(spriteId) {
+    GetPositionX() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getPositionX() : 0;
     }
 
-    SetPositionY(spriteId, y) {
+    SetPositionY() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const y = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setPositionY(y);
         }
     }
 
-    GetPositionY(spriteId) {
+    GetPositionY() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getPositionY() : 0;
     }
 
-    SetPositionZ(spriteId, z) {
+    SetPositionZ() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const z = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setPositionZ(z);
         }
     }
 
-    GetPositionZ(spriteId) {
+    GetPositionZ() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getPositionZ() : 0;
     }
 
-    SetCenter(spriteId, x, y) {
+    SetCenter() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const x = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const y = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setCenter(x, y);
         }
     }
 
-    GetCenter(spriteId) {
+    GetCenter() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [0, 0];
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const center = sprite.getCenter();
@@ -178,14 +377,32 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         return [0, 0];
     }
 
-    SetSize(spriteId, width, height) {
+    SetSize() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const width = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const height = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setSize(width, height);
         }
     }
 
-    GetSize(spriteId) {
+    GetSize() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [0, 0];
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const size = sprite.getSize();
@@ -194,38 +411,92 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         return [0, 0];
     }
 
-    SetWidth(spriteId, width) {
+    SetWidth() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const width = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setWidth(width);
         }
     }
 
-    GetWidth(spriteId) {
+    GetWidth() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getWidth() : 0;
     }
 
-    SetHeight(spriteId, height) {
+    SetHeight() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const height = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setHeight(height);
         }
     }
 
-    GetHeight(spriteId) {
+    GetHeight() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getHeight() : 0;
     }
 
-    SetRect(spriteId, x, y, width, height) {
+    SetRect() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const x = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const y = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        const width = parseFloat(this.luaState.raw_tostring(5)) || 0;
+        const height = parseFloat(this.luaState.raw_tostring(6)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setRect(x, y, width, height);
         }
     }
 
-    GetRect(spriteId) {
+    GetRect() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [0, 0, 0, 0];
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const rect = sprite.getRect();
@@ -234,26 +505,61 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         return [0, 0, 0, 0];
     }
 
-    SetRotation(spriteId, angle) {
+    SetRotation() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const angle = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setRotation(angle);
         }
     }
 
-    GetRotation(spriteId) {
+    GetRotation() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getRotation() : 0;
     }
 
-    SetScale(spriteId, scaleX, scaleY) {
+    SetScale() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const scaleX = parseFloat(this.luaState.raw_tostring(3)) || 1.0;
+        const scaleY = parseFloat(this.luaState.raw_tostring(4)) || 1.0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setScale(scaleX, scaleY);
         }
     }
 
-    GetScale(spriteId) {
+    GetScale() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [1.0, 1.0];
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const scale = sprite.getScale();
@@ -262,98 +568,254 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         return [1.0, 1.0];
     }
 
-    SetColor(spriteId, color) {
+    SetColor() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const color = parseInt(this.luaState.raw_tostring(3)) || 0xFFFFFFFF;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setColor(color);
         }
     }
 
-    GetColor(spriteId) {
+    GetColor() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0xFFFFFFFF;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getColor() : 0xFFFFFFFF;
     }
 
-    SetPaletteSlot(spriteId, slot) {
+    SetPaletteSlot() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const slot = parseInt(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setPaletteSlot(slot);
         }
     }
 
-    GetPaletteSlot(spriteId) {
+    GetPaletteSlot() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getPaletteSlot() : 0;
     }
 
-    SetVisible(spriteId, visible) {
+    SetVisible() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack (index 2 is first parameter, index 3 is second)
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const visibleStr = this.luaState.raw_tostring(3);
+        
+        // Handle different boolean representations
+        let visible = false;
+        if (visibleStr === 'true' || visibleStr === '1') {
+            visible = true;
+        } else if (visibleStr === 'false' || visibleStr === '0') {
+            visible = false;
+        } else {
+            // Try to get as boolean directly if raw_tostring didn't work
+            // Check if there's a raw_toboolean or similar method
+            visible = visibleStr !== 'null' && visibleStr !== 'nil' && visibleStr !== '';
+        }
+        
+        console.log(`[SetVisible] spriteId: ${spriteId}, visibleStr: "${visibleStr}", visible: ${visible}`);
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setVisible(visible);
+            console.log(`[SetVisible] Set sprite ${spriteId} visibility to ${visible}`);
+        } else {
+            console.log(`[SetVisible] Sprite ${spriteId} not found`);
         }
     }
 
-    GetVisible(spriteId) {
+    GetVisible() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return false;
+        }
+        
+        // Get parameters from Lua stack (index 2 is first parameter)
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getVisible() : false;
     }
 
-    SetTextureU0(spriteId, u0) {
+    SetTextureU0() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const u0 = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setTextureU0(u0);
         }
     }
 
-    GetTextureU0(spriteId) {
+    GetTextureU0() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getTextureU0() : 0;
     }
 
-    SetTextureV0(spriteId, v0) {
+    SetTextureV0() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const v0 = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setTextureV0(v0);
         }
     }
 
-    GetTextureV0(spriteId) {
+    GetTextureV0() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getTextureV0() : 0;
     }
 
-    SetTextureU1(spriteId, u1) {
+    SetTextureU1() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const u1 = parseFloat(this.luaState.raw_tostring(3)) || 1;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setTextureU1(u1);
         }
     }
 
-    GetTextureU1(spriteId) {
+    GetTextureU1() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 1;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getTextureU1() : 1;
     }
 
-    SetTextureV1(spriteId, v1) {
+    SetTextureV1() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const v1 = parseFloat(this.luaState.raw_tostring(3)) || 1;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setTextureV1(v1);
         }
     }
 
-    GetTextureV1(spriteId) {
+    GetTextureV1() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 1;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getTextureV1() : 1;
     }
 
-    SetTextureUV(spriteId, u0, v0, u1, v1) {
+    SetTextureUV() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const u0 = parseFloat(this.luaState.raw_tostring(3)) || 0;
+        const v0 = parseFloat(this.luaState.raw_tostring(4)) || 0;
+        const u1 = parseFloat(this.luaState.raw_tostring(5)) || 1;
+        const v1 = parseFloat(this.luaState.raw_tostring(6)) || 1;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setTextureUV(u0, v0, u1, v1);
         }
     }
 
-    GetTextureUV(spriteId) {
+    GetTextureUV() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return [0, 0, 1, 1];
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             const uv = sprite.getTextureUV();
@@ -362,14 +824,31 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         return [0, 0, 1, 1];
     }
 
-    SetAttributes(spriteId, attributes) {
+    SetAttributes() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        const attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         if (sprite) {
             sprite.setAttributes(attributes);
         }
     }
 
-    GetAttributes(spriteId) {
+    GetAttributes() {
+        if (!this.initialized) {
+            console.error('[LuaSpriteExtensions] Not initialized');
+            return 0;
+        }
+        
+        // Get parameters from Lua stack
+        const spriteId = parseInt(this.luaState.raw_tostring(2)) || 0;
+        
         const sprite = this.spriteManager?.getSprite(spriteId);
         return sprite ? sprite.getAttributes() : 0;
     }
