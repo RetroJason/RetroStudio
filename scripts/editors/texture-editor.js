@@ -20,7 +20,7 @@ class TextureData extends EventTarget {
     this.format = options.format || 'RGBA';
     this.name = options.name || 'texture';
     this.sourceImage = options.sourceImage || null;
-    this.rotation = options.rotation || 0;
+    this.rotation = options.rotation || 90; // Default to 90 (pre-rotated); || also converts 0 → 90 so old files get migrated
     
     // Metadata for .texture file format with auto-population
     this._metadata = {
@@ -44,6 +44,8 @@ class TextureData extends EventTarget {
   updateMetadata(property, value) {
     if (this._metadata.hasOwnProperty(property)) {
       const oldValue = this._metadata[property];
+      // Skip if value hasn't actually changed — prevents infinite event loops
+      if (oldValue === value) return;
       this._metadata[property] = value;
       
       // Emit event for metadata change
@@ -130,9 +132,9 @@ class TextureData extends EventTarget {
       format: data.format,
       name: data.name,
       sourceImage: data.sourceImage,
-      rotation: data.rotation,
-      sourceImagePath: data.sourceImagePath,
-      palettePath: data.palettePath,
+      rotation: data.rotation || 90,
+      sourceImagePath: data.sourceImagePath || data.metadata?.sourceImagePath || '',
+      palettePath: data.palettePath || data.metadata?.palettePath || '',
       outputPixelFormat: data.metadata?.outputPixelFormat,
       scale: data.metadata?.scale,
       paletteOffset: data.metadata?.paletteOffset
@@ -237,6 +239,12 @@ class TextureEditor extends EditorBase {
   }
 
   setupMetadataEventListeners() {
+    // Remove listener from any previous textureData instance
+    if (this._prevTextureData && this.metadataChangeHandler) {
+      this._prevTextureData.removeEventListener('metadataChanged', this.metadataChangeHandler);
+    }
+    this._prevTextureData = this.textureData;
+
     // Listen for metadata changes from TextureData
     this.metadataChangeHandler = (event) => {
       console.log('[TextureEditor] Metadata changed:', event.detail);
@@ -257,13 +265,22 @@ class TextureEditor extends EditorBase {
           this.colorDepthSelect.value = selectedFormat.bitsPerPixel;
         }
         
-        // Refresh palette display to show format-appropriate chunking
-        if (this.currentPalette) {
-          this.displayPalette(this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette);
-        }
-        
         // Reset palette offset when format changes
         this.textureData.metadata.paletteOffset = 0;
+        
+        // Refresh palette display to show format-appropriate slot selection
+        if (this.currentPalette) {
+          const colors = this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette;
+          this.displayPalette(colors);
+        } else if (this.textureData.palette && this.textureData.palette.length > 0) {
+          this.displayPalette(this.textureData.palette);
+        }
+        
+        // Update options visibility (e.g. RLE only for i8)
+        this.updateOptionsVisibility();
+        
+        // Re-apply palette with new format settings
+        this.checkAndAutoGenerateTexture();
       }
       
       // Auto-load palette when palettePath changes
@@ -308,16 +325,30 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Auto-generation check - Source Image:', hasSourceImage, 'Palette:', hasPalette);
     
     if (hasSourceImage && hasPalette) {
+      // Debounce: cancel any pending auto-generation and schedule a new one
+      if (this._autoGenTimer) {
+        clearTimeout(this._autoGenTimer);
+      }
       console.log('[TextureEditor] Auto-generating texture output...');
-      // Small delay to ensure UI is updated
-      setTimeout(() => {
-        this.applyPaletteToImage();
-      }, 100);
+      this._autoGenTimer = setTimeout(() => {
+        this._autoGenTimer = null;
+        this.applyPaletteToImage(false); // false = auto-generation, don't auto-save palette
+      }, 150);
     }
   }
 
   // Override destroy method to clean up event listeners
   destroy() {
+    // Clean up GPU resources
+    if (this._gpuTex && this._gpu) {
+      this._gpu.deleteTexture(this._gpuTex);
+      this._gpuTex = null;
+    }
+    if (this._gpu) {
+      this._gpu.destroy();
+      this._gpu = null;
+    }
+
     if (this.fileListRefreshHandler) {
       document.removeEventListener('projectFileListRefresh', this.fileListRefreshHandler);
       document.removeEventListener('projectFileAdded', this.paletteFileChangeHandler);
@@ -327,6 +358,186 @@ class TextureEditor extends EditorBase {
     
     if (super.destroy) {
       super.destroy();
+    }
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
+     GPU (D2Canvas) rendering helpers
+     ────────────────────────────────────────────────────────────────── */
+
+  /** Lazy-init the D2Canvas WebGL 2 renderer on the output canvas. */
+  _initGpu() {
+    if (this._gpu) return;
+    if (!this.outputCanvas) return;
+    try {
+      this._gpu = new D2Canvas(this.outputCanvas, { alpha: true, premultiplied: false });
+      console.log('[TextureEditor] D2Canvas GPU renderer initialised');
+    } catch (e) {
+      console.error('[TextureEditor] D2Canvas init failed, falling back to CPU:', e);
+      this._gpu = null;
+    }
+  }
+
+  /**
+   * Convert an array of hex colour strings (#RRGGBB) to a 256×RGBA8 Uint8Array
+   * suitable for D2Canvas.setPalette().
+   */
+  _hexPaletteToRGBA8(hexColors) {
+    const rgba = new Uint8Array(1024); // 256 × 4
+    for (let i = 0; i < hexColors.length && i < 256; i++) {
+      const color = hexColors[i];
+      let r = 0, g = 0, b = 0;
+      if (typeof color === 'string' && color.startsWith('#')) {
+        r = parseInt(color.substring(1, 3), 16);
+        g = parseInt(color.substring(3, 5), 16);
+        b = parseInt(color.substring(5, 7), 16);
+      } else if (typeof color === 'object' && color.r !== undefined) {
+        r = color.r; g = color.g; b = color.b;
+      }
+      const off = i * 4;
+      rgba[off]     = r;
+      rgba[off + 1] = g;
+      rgba[off + 2] = b;
+      rgba[off + 3] = 255;
+    }
+    return rgba;
+  }
+
+  /**
+   * Build the actual game-resource .d2 binary via D2File, upload it to the
+   * GPU, and render — identical path to how the D2 Viewer displays a .d2.
+   *
+   * This is the SINGLE code path for preview rendering.  The same .d2 is
+   * saved to storage so the D2 Viewer, build system, and preview all
+   * operate on the exact same binary.
+   *
+   * @param {Uint8Array} indexedData  Per-pixel 8-bit palette indices.
+   * @param {number} width   Source image width (before any rotation).
+   * @param {number} height  Source image height (before any rotation).
+   */
+  _buildD2Preview(indexedData, width, height) {
+    this._initGpu();
+    if (!this._gpu) return;
+
+    // Build the real .d2 binary (packing, rotation, RLE — all applied)
+    const textureCfg = this.textureData.toJSON();
+    const d2Bytes = D2File.build(textureCfg, indexedData, width, height);
+
+    // Upload the complete .d2 to D2Canvas — same as D2 Viewer does
+    if (this._gpuTex) {
+      this._gpu.deleteTexture(this._gpuTex);
+      this._gpuTex = null;
+    }
+    this._gpuTex = this._gpu.createTexture(d2Bytes);
+
+    // Set palette (shader handles paletteOffset uniform)
+    this._updateGpuPalette();
+
+    // Blit with un-rotation when the .d2 is pre-rotated (flags byte 13, bit 1)
+    const isPreRotated = !!(d2Bytes[13] & 0x02);
+    this._d2PreRotated = isPreRotated;
+    this._gpuBlit(isPreRotated);
+
+    // Persist .d2 alongside .texture (async, non-blocking)
+    this._saveD2File(d2Bytes);
+
+    const formatStr = this.textureData.outputPixelFormat;
+    console.log(`[TextureEditor] D2 preview: ${width}×${height} ${formatStr} (${d2Bytes.length} bytes)`);
+  }
+
+  /**
+   * Upload the FULL current palette to the GPU and set the palette offset.
+   * Always reads from this.currentPalette so the shader's paletteOffset
+   * uniform correctly selects the sub-palette window for sub-8-bit formats.
+   * (Uploading a pre-sliced palette + non-zero offset would double-apply the
+   * offset, causing a blank image.)
+   */
+  _updateGpuPalette() {
+    if (!this._gpu) return;
+    const allColors = this.currentPalette
+      ? (this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette)
+      : [];
+    const rgba = this._hexPaletteToRGBA8(allColors);
+    this._gpu.setPalette(rgba);
+    const offset = this.textureData.metadata.paletteOffset || 0;
+    this._gpu.setPaletteOffset(offset);
+  }
+
+  /**
+   * Clear, blit the current GPU texture, and present.
+   * Handles un-rotation for pre-rotated .d2 files — identical to D2 Viewer.
+   * @param {boolean} [isPreRotated=false]
+   */
+  _gpuBlit(isPreRotated) {
+    if (!this._gpu || !this._gpuTex) return;
+    const tex = this._gpuTex;
+    if (isPreRotated) {
+      // Display un-rotated: swap width/height and rotate −90°
+      const displayW = tex.height;
+      const displayH = tex.width;
+      this._gpu.resize(displayW, displayH);
+      this._gpu.clear(0, 0, 0, 0);
+      this._gpu.blit(tex, {
+        x: (displayW - tex.width) / 2,
+        y: (displayH - tex.height) / 2,
+        rotation: -90,
+        pivotX: 0.5,
+        pivotY: 0.5,
+      });
+    } else {
+      this._gpu.resize(tex.width, tex.height);
+      this._gpu.clear(0, 0, 0, 0);
+      this._gpu.blit(tex);
+    }
+    this._gpu.present();
+  }
+
+  /**
+   * Persist the .d2 binary AND the .texture JSON alongside each other.
+   * The .texture JSON is always saved so that palettePath, paletteOffset,
+   * transparentColor, and the embedded palette are on disk for the D2 Viewer.
+   * @param {Uint8Array} d2Bytes
+   */
+  async _saveD2File(d2Bytes) {
+    try {
+      if (!this.path) return;
+
+      // Derive full path with project context (same logic as autoSaveLinkedTextureFile)
+      let fullPath = this.path;
+      const pe = window.gameEmulator?.projectExplorer;
+      let project = window.gameEmulator?.currentProject;
+      if (!project && pe) project = pe.getCurrentProject?.() || pe.getFocusedProjectName?.();
+      if (project && !fullPath.startsWith(project + '/')) {
+        fullPath = `${project}/${fullPath}`;
+      }
+
+      const d2Path = D2File.d2PathFrom(fullPath);
+      await D2File.save(d2Path, d2Bytes);
+
+      // Also persist the .texture JSON so palettePath/paletteOffset/transparentColor are on disk
+      await this._saveTextureJson();
+    } catch (e) {
+      console.warn('[TextureEditor] .d2 save failed (non-fatal):', e.message);
+    }
+  }
+
+  /**
+   * Persist the current .texture JSON to storage.
+   * Ensures palettePath, paletteOffset, transparentColor, and the embedded
+   * palette array are on disk — the D2 Viewer depends on these.
+   */
+  async _saveTextureJson() {
+    try {
+      if (!this.path || !this.textureData) return;
+      const content = this.getContent();
+      if (!content) return;
+      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+      if (fileService) {
+        await fileService.saveFile(this.path, content);
+        console.log(`[TextureEditor] Persisted .texture JSON: ${this.path}`);
+      }
+    } catch (e) {
+      console.warn('[TextureEditor] .texture auto-save failed:', e.message);
     }
   }
 
@@ -376,7 +587,8 @@ class TextureEditor extends EditorBase {
         const nameWithoutExt = filename.replace(/\.[^/.]+$/, ''); // Remove extension
         this.textureData = new TextureData({
           name: nameWithoutExt || 'new_texture',
-          sourceImage: this.path
+          sourceImage: this.path,
+          sourceImagePath: this.path
         });
         this.isCreatingFromImage = true;
         this.markDirty(); // Mark as needing save since we're creating a new texture
@@ -493,7 +705,7 @@ class TextureEditor extends EditorBase {
           this.updateOriginalImageCanvas();
           
           // Trigger auto-generation check
-          this.checkAutoGeneration();
+          this.checkAndAutoGenerateTexture();
         });
       };
       
@@ -897,7 +1109,10 @@ class TextureEditor extends EditorBase {
     
     this.outputCanvas = document.createElement('canvas');
     this.outputCanvas.className = 'preview-canvas';
-    this.outputCtx = this.outputCanvas.getContext('2d');
+    // D2Canvas (WebGL 2) is initialized lazily on first render via _initGpu()
+    this.outputCtx = null;
+    this._gpu = null;
+    this._gpuTex = null;
     console.log('[TextureEditor] Texture output canvas created:', !!this.outputCanvas);
     processedSection.appendChild(this.outputCanvas);
     
@@ -1332,6 +1547,77 @@ class TextureEditor extends EditorBase {
     // Store the format label for updates
     this.formatLabel = formatLabel;
 
+    // Options Section (Compression + Pre-Rotation)
+    const optionsSection = document.createElement('div');
+    optionsSection.className = 'options-section';
+    optionsSection.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #444;
+    `;
+
+    // RLE Compression checkbox
+    const compressionRow = document.createElement('label');
+    compressionRow.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ddd;
+      font-size: 12px;
+      cursor: pointer;
+    `;
+    this.compressionCheckbox = document.createElement('input');
+    this.compressionCheckbox.type = 'checkbox';
+    this.compressionCheckbox.checked = false;
+    this.compressionCheckbox.style.cssText = 'accent-color: #4a9eff; cursor: pointer;';
+    this.compressionCheckbox.addEventListener('change', () => {
+      this.textureData.compressionType = this.compressionCheckbox.checked ? 'rle' : 'none';
+      this.onSettingsChanged();
+    });
+    const compressionLabel = document.createElement('span');
+    compressionLabel.textContent = 'RLE Compression (TGA-style)';
+    compressionRow.appendChild(this.compressionCheckbox);
+    compressionRow.appendChild(compressionLabel);
+
+    // Pre-rotation checkbox
+    const rotationRow = document.createElement('label');
+    rotationRow.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ddd;
+      font-size: 12px;
+      cursor: pointer;
+    `;
+    this.preRotateCheckbox = document.createElement('input');
+    this.preRotateCheckbox.type = 'checkbox';
+    this.preRotateCheckbox.checked = true; // Default ON — always start checked
+    this.preRotateCheckbox.style.cssText = 'accent-color: #4a9eff; cursor: pointer;';
+    this.preRotateCheckbox.addEventListener('change', () => {
+      if (!this.preRotateCheckbox.checked) {
+        // User is trying to uncheck — show confirmation popup
+        if (!confirm('Without pre-rotation, textures draw slower on hardware.\n\nAre you sure you want to disable it?')) {
+          this.preRotateCheckbox.checked = true;
+          return; // User cancelled — keep pre-rotation on
+        }
+      }
+      this.textureData.rotation = this.preRotateCheckbox.checked ? 90 : 0;
+      this.onSettingsChanged();
+    });
+    const rotationLabel = document.createElement('span');
+    rotationLabel.textContent = 'Pre-rotate 90° (faster draw)';
+    rotationRow.appendChild(this.preRotateCheckbox);
+    rotationRow.appendChild(rotationLabel);
+
+    optionsSection.appendChild(compressionRow);
+    optionsSection.appendChild(rotationRow);
+
+    // Set initial visibility of options based on current format
+    this.updateOptionsVisibility();
+
     // Action Buttons Section
     const actionSection = document.createElement('div');
     actionSection.className = 'action-section';
@@ -1424,7 +1710,7 @@ class TextureEditor extends EditorBase {
     this.applyBtn.className = 'apply-btn';
     this.applyBtn.disabled = true;
     this.applyBtn.style.cssText = `
-      width: 100%;
+      flex: 1;
       padding: 12px;
       background: #2a7f2a;
       color: white;
@@ -1437,7 +1723,7 @@ class TextureEditor extends EditorBase {
       opacity: 0.5;
     `;
 
-    this.applyBtn.addEventListener('click', () => this.applyPaletteToImage());
+    this.applyBtn.addEventListener('click', () => this.applyPaletteToImage(true));
     
     // Apply button hover effect
     this.applyBtn.addEventListener('mouseenter', () => {
@@ -1451,6 +1737,47 @@ class TextureEditor extends EditorBase {
         this.applyBtn.style.background = '#2a7f2a';
       }
     });
+
+    // Best Fit Button — re-matches all pixels to the current palette slice
+    this.bestFitBtn = document.createElement('button');
+    this.bestFitBtn.textContent = 'Best Fit';
+    this.bestFitBtn.className = 'best-fit-btn';
+    this.bestFitBtn.disabled = true;
+    this.bestFitBtn.style.cssText = `
+      flex: 1;
+      padding: 12px;
+      background: #4a5a8a;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 14px;
+      transition: all 0.2s;
+      opacity: 0.5;
+    `;
+    this.bestFitBtn.title = 'Re-match all pixel indices to best-fit the current palette';
+
+    this.bestFitBtn.addEventListener('click', () => {
+      // Force a full re-match by clearing cached reduction result
+      this.lastReductionResult = null;
+      this.applyPaletteToImage(true);
+    });
+
+    this.bestFitBtn.addEventListener('mouseenter', () => {
+      if (!this.bestFitBtn.disabled) {
+        this.bestFitBtn.style.background = '#5a6a9a';
+      }
+    });
+    this.bestFitBtn.addEventListener('mouseleave', () => {
+      if (!this.bestFitBtn.disabled) {
+        this.bestFitBtn.style.background = '#4a5a8a';
+      }
+    });
+
+    // Container for Apply + Best Fit buttons (side-by-side)
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;gap:8px;width:100%;';
 
     // Metadata Display Section
     const metadataSection = document.createElement('div');
@@ -1490,10 +1817,13 @@ class TextureEditor extends EditorBase {
 
     // Assemble the panel
     panel.appendChild(formatSection);
+    panel.appendChild(optionsSection);
     panel.appendChild(actionSection);
     panel.appendChild(this.paletteDisplay);
     panel.appendChild(metadataSection);
-    panel.appendChild(this.applyBtn);
+    btnRow.appendChild(this.applyBtn);
+    btnRow.appendChild(this.bestFitBtn);
+    panel.appendChild(btnRow);
 
     // Initialize state
     this.currentPaletteMode = null; // 'load' or 'extract'
@@ -1511,7 +1841,9 @@ class TextureEditor extends EditorBase {
       `Palette: ${metadata.palettePath || 'None'}`,
       `Format: ${metadata.outputPixelFormat}`,
       `Scale: ${metadata.scale}x`,
-      `Palette Offset: ${metadata.paletteOffset || 0}`
+      `Palette Offset: ${metadata.paletteOffset || 0}`,
+      `Compression: ${this.textureData.compressionType || 'none'}`,
+      `Pre-rotate: ${this.textureData.rotation ? this.textureData.rotation + '°' : 'off'}`
     ];
 
     this.metadataDisplay.innerHTML = metadataItems.map(item => 
@@ -1609,8 +1941,13 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] setImageToCanvas - loading image into custom ImageData class');
     
     this.sourceImage = img;
-    this.textureData.sourceImage = this.filename || 'unknown';
-    this.textureData.sourceImagePath = this.filePath || this.filename || 'unknown';
+    // Only update source references if not already set (e.g. loaded from .texture JSON)
+    if (!this.textureData.sourceImage || this.textureData.sourceImage === 'unknown') {
+      this.textureData.sourceImage = this.getFileName() || 'unknown';
+    }
+    if (!this.textureData.sourceImagePath || this.textureData.sourceImagePath === 'unknown') {
+      this.textureData.sourceImagePath = this.path || this.getFileName() || 'unknown';
+    }
     this.textureData.width = img.width;
     this.textureData.height = img.height;
     
@@ -1704,15 +2041,59 @@ class TextureEditor extends EditorBase {
       this.textureData.colorDepth = parseInt(this.colorDepthSelect.value);
     }
     if (this.compressionCheckbox) {
-      this.textureData.compression = this.compressionCheckbox.checked ? 'tga' : 'none';
+      this.textureData.compressionType = this.compressionCheckbox.checked ? 'rle' : 'none';
+    }
+    if (this.preRotateCheckbox) {
+      this.textureData.rotation = this.preRotateCheckbox.checked ? 90 : 0;
     }
     
-    // Reprocess if we have source data
-    if (this.textureData.sourceImageData) {
-      this.processTexture();
-    }
+    // Update metadata display to reflect new settings
+    this.updateMetadataDisplay();
+    
+    // Re-apply the palette with the new settings so the output canvas
+    // reflects the change immediately (e.g. rotation, compression).
+    // This is better than processTexture() which only does color-depth
+    // reduction and leaves the output canvas stale.
+    this.checkAndAutoGenerateTexture();
     
     this.markDirty();
+  }
+
+  updateRotationWarning() {
+    // No-op: rotation warning is now a confirm() popup on uncheck, not a persistent label
+  }
+
+  /**
+   * Show/hide options based on the current output pixel format.
+   * RLE compression is only supported for 8-bit indexed (d2_mode_i8).
+   */
+  updateOptionsVisibility() {
+    if (!this.compressionCheckbox) return;
+    const format = this.textureData.outputPixelFormat;
+    const rleSupported = (format === 'd2_mode_i8');
+    const row = this.compressionCheckbox.closest('label');
+    if (row) {
+      row.style.display = rleSupported ? 'flex' : 'none';
+    }
+    // If hiding RLE, also uncheck it so it doesn't persist
+    if (!rleSupported && this.compressionCheckbox.checked) {
+      this.compressionCheckbox.checked = false;
+      this.textureData.compressionType = 'none';
+    }
+  }
+
+  /**
+   * Refresh the palette display for the current format.
+   * Called directly from showFormatSelectionModal as a safety net
+   * (in case the metadataChanged event handler is orphaned).
+   */
+  refreshPaletteForFormat() {
+    if (this.currentPalette) {
+      const colors = this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette;
+      this.displayPalette(colors);
+    } else if (this.textureData.palette && this.textureData.palette.length > 0) {
+      this.displayPalette(this.textureData.palette);
+    }
   }
 
   updatePaletteVisibility() {
@@ -1947,6 +2328,8 @@ class TextureEditor extends EditorBase {
 
   updatePreview() {
     if (!this.textureData.processedImageData) return;
+    // GPU handles rendering; this method is only needed for 2D fallback
+    if (this._gpu) return;
     if (!this.outputCanvas || !this.outputCtx) return;
     
     const processed = this.textureData.processedImageData;
@@ -2019,6 +2402,10 @@ class TextureEditor extends EditorBase {
     try {
       const data = JSON.parse(content);
       this.textureData = TextureData.fromJSON(data);
+      
+      // Re-register metadata event listener on the new textureData instance
+      this.setupMetadataEventListeners();
+      
       this.updateUIFromData();
       
       // If there's a source image path, load the source image
@@ -2075,12 +2462,16 @@ class TextureEditor extends EditorBase {
     
     // Update controls
     if (this.colorDepthSelect) this.colorDepthSelect.value = this.textureData.colorDepth;
-    if (this.compressionSelect) this.compressionSelect.value = this.textureData.compression;
-    if (this.rotationSlider) this.rotationSlider.value = this.textureData.rotation;
+    if (this.compressionCheckbox) this.compressionCheckbox.checked = (this.textureData.compressionType === 'rle');
+    if (this.preRotateCheckbox) {
+      this.preRotateCheckbox.checked = (this.textureData.rotation === 90);
+      this.updateRotationWarning();
+    }
     if (this.paletteSizeSelect) this.paletteSizeSelect.value = this.textureData.paletteSize;
     if (this.paletteOffsetSlider) this.paletteOffsetSlider.value = this.textureData.paletteOffset;
     
     this.updatePaletteVisibility();
+    this.updateOptionsVisibility();
   }
 
   // Override save method to handle image-to-texture conversion
@@ -2098,6 +2489,7 @@ class TextureEditor extends EditorBase {
       
       // Update the texture data with the source image reference
       this.textureData.sourceImage = originalPath;
+      this.textureData.sourceImagePath = originalPath;
       this.textureData.name = baseName;
       
       // Use the file service to save the texture file
@@ -2187,6 +2579,7 @@ class TextureEditor extends EditorBase {
       
       // Update the texture data with the source image reference
       this.textureData.sourceImage = originalPath;
+      this.textureData.sourceImagePath = originalPath;
       this.textureData.name = baseName;
       
       // Create the texture content
@@ -2612,11 +3005,16 @@ class TextureEditor extends EditorBase {
       const actFile = new File([actBlob], fullFileName, { lastModified: Date.now() });
       
       // Add to project (this will handle the file correctly)
-      const paletteFolder = projectExplorer.getCurrentProject() + '/Sources/Palettes';
+      const paletteFolder = projectExplorer.getFocusedProjectName() + '/Sources/Palettes';
       await projectExplorer.addFileToProject(actFile, paletteFolder, false, false);
       
       console.log(`[TextureEditor] Saved palette as ${fullFileName}`);
       
+      // Update palettePath metadata to point to the newly saved palette file
+      const savedPalettePath = `Sources/Palettes/${fullFileName}`;
+      this.textureData.palettePath = savedPalettePath;
+      console.log(`[TextureEditor] Updated palettePath to: ${savedPalettePath}`);
+
       // Update the palette dropdown
       this.populatePaletteOptions();
       
@@ -2676,95 +3074,8 @@ class TextureEditor extends EditorBase {
     }
   }
 
-  displayPalette(palette) {
-    // Display palette colors in the palette display area
-    this.paletteDisplay.innerHTML = '';
-    this.paletteDisplay.className = 'palette-display active';
-    
-    if (!palette || palette.length === 0) {
-      this.paletteDisplay.innerHTML = '<div class="empty-palette">No palette loaded</div>';
-      return;
-    }
-    
-    const paletteGrid = document.createElement('div');
-    paletteGrid.className = 'palette-grid';
-    paletteGrid.style.cssText = `
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(20px, 1fr));
-      gap: 2px;
-      max-height: 200px;
-      overflow-y: auto;
-      padding: 5px;
-      background: #1a1a1a;
-      border-radius: 4px;
-      border: 1px solid #444;
-    `;
-    
-    palette.forEach((color, index) => {
-      const colorSwatch = document.createElement('div');
-      colorSwatch.className = 'palette-swatch';
-      colorSwatch.style.cssText = `
-        width: 20px;
-        height: 20px;
-        background-color: ${color};
-        border: 1px solid #666;
-        border-radius: 2px;
-        cursor: pointer;
-        transition: transform 0.2s;
-      `;
-      colorSwatch.title = `Color ${index}: ${color}`;
-      
-      // Add hover effect
-      colorSwatch.addEventListener('mouseenter', () => {
-        colorSwatch.style.transform = 'scale(1.2)';
-        colorSwatch.style.zIndex = '10';
-        colorSwatch.style.border = '2px solid #fff';
-      });
-      
-      colorSwatch.addEventListener('mouseleave', () => {
-        colorSwatch.style.transform = 'scale(1)';
-        colorSwatch.style.zIndex = '1';
-        colorSwatch.style.border = '1px solid #666';
-      });
-      
-      // Copy color to clipboard on click
-      colorSwatch.addEventListener('click', () => {
-        navigator.clipboard.writeText(color).then(() => {
-          console.log(`[TextureEditor] Copied color ${color} to clipboard`);
-          // Visual feedback
-          const originalBg = colorSwatch.style.backgroundColor;
-          colorSwatch.style.backgroundColor = '#fff';
-          setTimeout(() => {
-            colorSwatch.style.backgroundColor = originalBg;
-          }, 150);
-        }).catch(err => {
-          console.warn('[TextureEditor] Could not copy color to clipboard:', err);
-        });
-      });
-      
-      paletteGrid.appendChild(colorSwatch);
-    });
-    
-    // Add palette info
-    const paletteInfo = document.createElement('div');
-    paletteInfo.className = 'palette-info';
-    paletteInfo.style.cssText = `
-      margin-top: 10px;
-      padding: 5px;
-      background: #333;
-      border-radius: 4px;
-      font-size: 12px;
-      color: #ccc;
-      text-align: center;
-    `;
-    paletteInfo.textContent = `${palette.length} colors - Click to copy color value`;
-    
-    this.paletteDisplay.appendChild(paletteGrid);
-    this.paletteDisplay.appendChild(paletteInfo);
-    
-    // Show save button if this is an extracted palette
-    this.showSavePaletteButton();
-  }
+  // NOTE: The active displayPalette() with slot-selector support is defined
+  // further below (near displayFullPaletteGrid / displaySlotSelector).
 
   showSavePaletteButton() {
     // Show save button for extracted palettes
@@ -2980,7 +3291,7 @@ class TextureEditor extends EditorBase {
       );
 
       if (result) {
-        // Update the format in texture data
+        // Update the format in texture data (triggers metadataChanged event)
         this.textureData.outputPixelFormat = result;
         
         // Update the UI label
@@ -2988,6 +3299,19 @@ class TextureEditor extends EditorBase {
         if (format && this.formatLabel) {
           this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${format.label}</span>`;
         }
+        
+        // Also update color depth for backward compatibility
+        if (this.colorDepthSelect && format) {
+          this.colorDepthSelect.value = format.bitsPerPixel;
+        }
+        
+        // Direct UI refresh so these work even if the metadata handler
+        // isn't registered on the current textureData instance.
+        this.textureData.metadata.paletteOffset = 0;
+        this.refreshPaletteForFormat();
+        this.updateOptionsVisibility();
+        this.updateMetadataDisplay();
+        this.checkAndAutoGenerateTexture();
         
         console.log('[TextureEditor] Selected format:', result);
       }
@@ -2997,25 +3321,26 @@ class TextureEditor extends EditorBase {
   }
 
   showExtractPaletteModal() {
-    console.log('[TextureEditor] Show Extract Palette Modal');
+    console.log('[TextureEditor] Extract Palette — using Auto mode directly');
     
     // Set button states
     this.setButtonState('extract');
     
-    // Get color count from color depth setting
-    const selectedDepth = parseInt(this.colorDepthSelect.value);
-    let maxColors;
-    
-    switch (selectedDepth) {
-      case 1: maxColors = 2; break;
-      case 2: maxColors = 4; break;
-      case 4: maxColors = 16; break;
-      case 8: maxColors = 256; break;
-      default: maxColors = 256; break;
+    // Check if source image is available
+    if (!this.textureData.sourceImageData) {
+      alert('No source image available for palette extraction');
+      return;
     }
     
-    // Show our existing extraction modal
-    this.showExtractPaletteModalWithAlgorithms(maxColors);
+    // Go directly to Auto extraction without showing algorithm selection dialog.
+    // Always extract a full 256-color palette; the paletteOffset mechanism
+    // selects which slice to use at build time for sub-8-bit modes.
+    this.extractPaletteWithAlgorithm(256, 'auto', (progress, message) => {
+      console.log(`[TextureEditor] Progress: ${Math.round(progress * 100)}% - ${message}`);
+    }).catch(error => {
+      console.error('[TextureEditor] Error extracting palette:', error);
+      alert('Failed to extract palette: ' + error.message);
+    });
   }
 
   async showExtractPaletteModalWithAlgorithms(colorCount) {
@@ -3108,6 +3433,12 @@ class TextureEditor extends EditorBase {
       // Store the palette and the reduction result (including indexed frames)
       this.currentPalette = palette;
       this.lastReductionResult = result;  // Store for later application
+
+      // Persist palette colors into textureData so they are serialized into .texture JSON
+      // This ensures the TextureBuilder uses the extracted palette, not the default palette file
+      this.textureData.palette = palette.getColors();
+      console.log(`[TextureEditor] Embedded ${palette.getColors().length} extracted palette colors into textureData`);
+
       this.displayPalette(palette.getColors());
       this.enableApplyButton();
       
@@ -3132,11 +3463,20 @@ class TextureEditor extends EditorBase {
       
       // Store the palette and display it
       this.currentPalette = palette;
+
+      // Persist palette colors into textureData so they are serialized into .texture JSON
+      this.textureData.palette = palette.getColors();
+      // Also update the palettePath metadata to point to this palette file
+      this.textureData.palettePath = `Sources/Palettes/${filename}`;
+      console.log(`[TextureEditor] Embedded ${palette.getColors().length} loaded palette colors into textureData, palettePath: Sources/Palettes/${filename}`);
+
       this.displayPalette(palette.getColors());
       this.enableApplyButton();
       
-      // Check if we can auto-generate texture output now that palette is loaded
-      this.checkAndAutoGenerateTexture();
+      // When loading a new palette, keep existing pixel indices and just
+      // recolor with the new palette (don't re-match).
+      // Use full match only if no indexed data exists yet.
+      this.recolorExistingIndices();
       
       console.log(`[TextureEditor] Loaded palette: ${filename}`);
       
@@ -3184,7 +3524,8 @@ class TextureEditor extends EditorBase {
     // Clear the default state
     this.paletteDisplay.innerHTML = '';
     this.paletteDisplay.style.cssText = `
-      min-height: 120px;
+      min-height: 60px;
+      max-height: 320px;
       background: #1a1a1a;
       border: 2px solid #4a9eff;
       border-radius: 4px;
@@ -3198,19 +3539,161 @@ class TextureEditor extends EditorBase {
       return;
     }
 
-    // Get current format and its color limit
+    // Pad palette to 256 colors (standard .act palette size)
+    const fullPalette = [...palette];
+    while (fullPalette.length < 256) {
+      fullPalette.push('#000000');
+    }
+
+    // Get current format info
     const currentFormat = this.textureData.outputPixelFormat;
     const isIndexed = TextureData.isIndexedFormat(currentFormat);
     const formatColorCount = ImageData.getTextureFormatColorCount(currentFormat);
     const currentOffset = this.textureData.metadata.paletteOffset || 0;
-    
-    if (isIndexed && palette.length > formatColorCount) {
-      // Show palette in selectable chunks for indexed formats
-      this.displayIndexedPalette(palette, formatColorCount, currentOffset);
+    const needsSlotSelector = isIndexed && formatColorCount < 256;
+
+    if (needsSlotSelector) {
+      // Sub-8-bit indexed: show clickable grouped rows (e.g. 16 rows of 16 for i4)
+      this.displayIndexedPalette(fullPalette, formatColorCount, currentOffset);
     } else {
-      // Show full palette for true color formats
-      this.displayFullPalette(palette);
+      // 8-bit or non-indexed: compact 16×16 grid
+      this.displayFullPaletteGrid(fullPalette, 0, 0);
     }
+  }
+
+  displayFullPaletteGrid(palette, chunkSize, currentOffset) {
+    // Info header
+    const infoHeader = document.createElement('div');
+    infoHeader.style.cssText = `
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 6px;
+      text-align: center;
+    `;
+    infoHeader.textContent = `${palette.length} colors`;
+    this.paletteDisplay.appendChild(infoHeader);
+
+    // 16x16 grid of all 256 colors
+    const grid = document.createElement('div');
+    grid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 1px;
+      margin-bottom: 8px;
+    `;
+
+    palette.forEach((color, index) => {
+      const swatch = document.createElement('div');
+      swatch.style.cssText = `
+        width: 100%;
+        aspect-ratio: 1;
+        background-color: ${color};
+        border: 1px solid #333;
+        border-radius: 1px;
+        cursor: pointer;
+        transition: transform 0.1s;
+        box-sizing: border-box;
+      `;
+      swatch.title = `#${index}: ${color}`;
+
+      swatch.addEventListener('mouseenter', () => {
+        swatch.style.transform = 'scale(1.3)';
+        swatch.style.zIndex = '10';
+        swatch.style.border = '2px solid #fff';
+      });
+      swatch.addEventListener('mouseleave', () => {
+        swatch.style.transform = 'scale(1)';
+        swatch.style.zIndex = '1';
+        swatch.style.border = '1px solid #333';
+      });
+      swatch.addEventListener('click', () => {
+        navigator.clipboard.writeText(color).then(() => {
+          console.log(`[TextureEditor] Copied color ${color} to clipboard`);
+        }).catch(() => {});
+      });
+
+      grid.appendChild(swatch);
+    });
+
+    this.paletteDisplay.appendChild(grid);
+  }
+
+  displaySlotSelector(palette, colorsPerSlot, currentOffset) {
+    const totalSlots = Math.ceil(256 / colorsPerSlot);
+
+    const selectorContainer = document.createElement('div');
+    selectorContainer.style.cssText = `
+      border-top: 1px solid #444;
+      padding-top: 8px;
+      margin-top: 4px;
+    `;
+
+    const label = document.createElement('div');
+    label.style.cssText = `
+      font-size: 11px;
+      color: #4a9eff;
+      margin-bottom: 6px;
+      text-align: center;
+      font-weight: 600;
+    `;
+    label.textContent = `Palette Slot (${colorsPerSlot} colors each) — click to select`;
+    selectorContainer.appendChild(label);
+
+    const slotsRow = document.createElement('div');
+    slotsRow.style.cssText = `
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+    `;
+
+    for (let slot = 0; slot < totalSlots; slot++) {
+      const startIdx = slot * colorsPerSlot;
+      const isSelected = startIdx === currentOffset;
+
+      const slotBtn = document.createElement('button');
+      slotBtn.style.cssText = `
+        padding: 4px 8px;
+        font-size: 11px;
+        font-family: 'Courier New', monospace;
+        background: ${isSelected ? '#4a9eff' : '#333'};
+        color: ${isSelected ? '#fff' : '#aaa'};
+        border: 1px solid ${isSelected ? '#4a9eff' : '#555'};
+        border-radius: 3px;
+        cursor: pointer;
+        min-width: 36px;
+        font-weight: ${isSelected ? 'bold' : 'normal'};
+      `;
+      slotBtn.textContent = `${startIdx}`;
+      slotBtn.title = `Colors ${startIdx}–${startIdx + colorsPerSlot - 1}`;
+
+      slotBtn.addEventListener('click', () => {
+        this.textureData.metadata.paletteOffset = startIdx;
+        const colors = this.currentPalette?.getColors ? this.currentPalette.getColors() : this.currentPalette;
+        this.displayPalette(colors || palette);
+        // Keep existing pixel indices — just re-render with the new palette slice
+        this.recolorExistingIndices();
+        console.log(`[TextureEditor] Selected palette slot offset: ${startIdx}`);
+      });
+
+      slotBtn.addEventListener('mouseenter', () => {
+        if (!isSelected) {
+          slotBtn.style.background = '#444';
+          slotBtn.style.borderColor = '#888';
+        }
+      });
+      slotBtn.addEventListener('mouseleave', () => {
+        if (!isSelected) {
+          slotBtn.style.background = '#333';
+          slotBtn.style.borderColor = '#555';
+        }
+      });
+
+      slotsRow.appendChild(slotBtn);
+    }
+
+    selectorContainer.appendChild(slotsRow);
+    this.paletteDisplay.appendChild(selectorContainer);
   }
 
   displayIndexedPalette(palette, colorsPerChunk, currentOffset) {
@@ -3298,8 +3781,9 @@ class TextureEditor extends EditorBase {
         // Refresh display to show new selection
         this.displayPalette(palette);
         
-        // Trigger auto-generation if enabled
-        this.checkAndAutoGenerateTexture();
+        // Keep existing pixel indices — just re-render with the new palette slice
+        // (use recolorExistingIndices if we have indexed data, otherwise match)
+        this.recolorExistingIndices();
         
         console.log(`[TextureEditor] Selected palette offset: ${startIndex}`);
       });
@@ -3400,15 +3884,56 @@ class TextureEditor extends EditorBase {
   enableApplyButton() {
     this.applyBtn.disabled = false;
     this.applyBtn.style.opacity = '1';
+    if (this.bestFitBtn) {
+      this.bestFitBtn.disabled = false;
+      this.bestFitBtn.style.opacity = '1';
+    }
   }
 
-  async applyPaletteToImage() {
+  /**
+   * Re-render the preview using existing pixel indices but a new palette slice.
+   * This is the DEFAULT behaviour when changing palette offset/slot — it keeps
+   * the colour indices the same and only swaps which palette colours are visible.
+   * If no indexed data exists yet, falls back to a full best-fit match.
+   */
+  recolorExistingIndices() {
+    if (!this.currentPalette || !this.originalCanvas) return;
+
+    // Build the effective palette slice for the current format + offset
+    const format = this.textureData.outputPixelFormat;
+    const formatColorCount = ImageData.getTextureFormatColorCount(format);
+    const offset = this.textureData.metadata.paletteOffset || 0;
+    const allColors = this.currentPalette.getColors();
+    let sliceColors = allColors;
+    if (formatColorCount < 256 && allColors.length > offset) {
+      sliceColors = allColors.slice(offset, offset + formatColorCount);
+    }
+
+    // If we have stored indexed data, re-render with the new palette slice
+    if (this.lastReductionResult && this.lastReductionResult.indexedFrames) {
+      console.log('[TextureEditor] Recolouring existing indices with new palette slice');
+      // Build a modified reduction result that uses the new palette colours
+      const recoloredResult = {
+        ...this.lastReductionResult,
+        palette: sliceColors
+      };
+      this.applyReductionResult(recoloredResult, true); // paletteOnly — skip D2 rebuild
+      this.markDirty();
+      return;
+    }
+
+    // No existing indexed data — fall back to a full match
+    console.log('[TextureEditor] No existing indexed data — running full match');
+    this.checkAndAutoGenerateTexture();
+  }
+
+  async applyPaletteToImage(userInitiated = false) {
     if (!this.currentPalette) {
       alert('No palette selected');
       return;
     }
     
-    console.log('[TextureEditor] Applying palette to image');
+    console.log('[TextureEditor] Applying palette to image (userInitiated:', userInitiated, ')');
     console.log('[TextureEditor] Debug - outputCanvas exists:', !!this.outputCanvas);
     console.log('[TextureEditor] Debug - originalCanvas exists:', !!this.originalCanvas);
     
@@ -3422,6 +3947,12 @@ class TextureEditor extends EditorBase {
         console.log('[TextureEditor] Applying palette using matchToPalette');
         await this.matchImageToPalette();
       }
+
+      // Auto-save the palette only when user explicitly clicks Apply,
+      // not during auto-generation when the editor first loads.
+      if (userInitiated) {
+        await this.autoSavePaletteOnApply();
+      }
       
       console.log('[TextureEditor] Palette application completed');
       
@@ -3431,8 +3962,80 @@ class TextureEditor extends EditorBase {
     }
   }
 
-  applyReductionResult(result) {
-    console.log('[TextureEditor] applyReductionResult called with:', result);
+  /**
+   * Auto-save the current palette as an .act file in Sources/Palettes/ when the
+   * user applies a palette.  This makes the palette a reusable build object and
+   * records its path in the .texture metadata so the TextureBuilder can look it up.
+   */
+  async autoSavePaletteOnApply() {
+    if (!this.currentPalette) return;
+
+    try {
+      const projectExplorer = window.gameEmulator?.projectExplorer;
+      if (!projectExplorer) {
+        console.warn('[TextureEditor] Project explorer not available — skipping palette auto-save');
+        return;
+      }
+
+      // Derive filename from the source image (e.g. "retrowatch_analogue.png" → "retrowatch_analogue.act")
+      // Try multiple sources in order of reliability:
+      //   1. sourceImagePath from .texture metadata (e.g. "retrowatch_analogue.png")
+      //   2. sourceImage property
+      //   3. The .texture file's own path (strip .texture to get base name)
+      //   4. textureData.name
+      // Prefer this.path (the .texture file path, always available) — strip .texture extension later.
+      // sourceImagePath/sourceImage may be stale or 'unknown' from setImageToCanvas.
+      const srcPath = this.path
+        || this.textureData.sourceImagePath
+        || this.textureData.sourceImage
+        || this.textureData.name
+        || '';
+      console.log(`[TextureEditor] autoSavePaletteOnApply: srcPath=${srcPath}`);
+      const srcFileName = srcPath.split('/').pop() || 'palette';
+      const dotIdx = srcFileName.lastIndexOf('.');
+      const baseName = (dotIdx > 0 ? srcFileName.substring(0, dotIdx) : srcFileName) || 'palette';
+      const fullFileName = `${baseName}.act`;
+
+      const project = projectExplorer.getFocusedProjectName();
+      if (!project) {
+        console.warn('[TextureEditor] No active project — skipping palette auto-save');
+        return;
+      }
+      const paletteFolder = project + '/Sources/Palettes';
+      const palettePath = `Sources/Palettes/${fullFileName}`;
+      const storagePath = `${project}/${palettePath}`;
+
+      // Export palette to ACT binary format
+      const actData = this.currentPalette.exportToACT();
+
+      // Save via fileIOService (IndexedDB)
+      const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
+      if (fileService) {
+        await fileService.saveFile(storagePath, actData, { binaryData: true });
+        console.log(`[TextureEditor] Auto-saved palette: ${storagePath}`);
+      }
+
+      // Add to the project explorer tree so it's visible & buildable
+      // skipAutoOpen = true (don't open in a new tab), skipRender = false (refresh tree)
+      const actBlob = new Blob([actData], { type: 'application/octet-stream' });
+      const actFile = new File([actBlob], fullFileName, { lastModified: Date.now() });
+      await projectExplorer.addFileToProject(actFile, paletteFolder, true, false);
+
+      // Update textureData metadata so .texture JSON references this palette
+      this.textureData.palettePath = palettePath;
+      this.textureData.palette = this.currentPalette.getColors();
+      console.log(`[TextureEditor] Updated palettePath → ${palettePath} (${this.currentPalette.getColors().length} colors)`);
+
+      // Persist the .texture file with the new palettePath
+      await this.autoSaveLinkedTextureFile();
+
+    } catch (error) {
+      console.error('[TextureEditor] Auto-save palette failed (non-fatal):', error);
+    }
+  }
+
+  applyReductionResult(result, paletteOnly = false) {
+    console.log('[TextureEditor] applyReductionResult called (paletteOnly:', paletteOnly, ')');
     
     if (!result.indexedFrames || result.indexedFrames.length === 0) {
       throw new Error('No indexed frames in reduction result');
@@ -3454,7 +4057,7 @@ class TextureEditor extends EditorBase {
     console.log('[TextureEditor] Using dimensions:', width, 'x', height);
     console.log('[TextureEditor] Expected pixel count:', width * height);
     
-    // Create a new canvas for the reduced image
+    // Create a new canvas for the reduced image (for processedImageData / export)
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -3468,7 +4071,6 @@ class TextureEditor extends EditorBase {
     for (let i = 0; i < indexedData.length; i++) {
       const paletteIndex = indexedData[i];
       if (paletteIndex >= palette.length) {
-        console.error('[TextureEditor] Invalid palette index:', paletteIndex, 'max:', palette.length - 1);
         continue;
       }
       
@@ -3487,7 +4089,6 @@ class TextureEditor extends EditorBase {
         g = color.g;
         b = color.b;
       } else {
-        console.error('[TextureEditor] Unknown color format:', color);
         r = g = b = 0; // Default to black
       }
       
@@ -3501,8 +4102,16 @@ class TextureEditor extends EditorBase {
     // Put the reconstructed image data to canvas
     ctx.putImageData(imageData, 0, 0);
     
-    // Update the preview canvas with the reduced image
+    // Ensure GPU is initialised BEFORE updateCanvasFromImage so it knows to
+    // skip the 2D context path (a canvas can only have one context type).
+    this._initGpu();
+
+    // Update processedImageData for save/export (GPU handles canvas display)
     this.updateCanvasFromImage(canvas);
+
+    // GPU rendering — always rebuild the real .d2 so preview, D2 Viewer,
+    // and build output are guaranteed identical.
+    this._buildD2Preview(indexedData, width, height);
   }
 
   async matchImageToPalette() {
@@ -3527,8 +4136,24 @@ class TextureEditor extends EditorBase {
     
     console.log('[TextureEditor] Working with fresh copy for palette application');
     
-    // Match to the current palette
-    const result = workingImageData.matchToPalette(null, this.currentPalette);
+    // Determine effective palette — for sub-8-bit formats, use only the
+    // color slice at the current paletteOffset so the preview matches what
+    // the build will produce.
+    let effectivePalette = this.currentPalette;
+    const format = this.textureData.outputPixelFormat;
+    const formatColorCount = ImageData.getTextureFormatColorCount(format);
+    if (formatColorCount < 256 && this.currentPalette) {
+      const offset = this.textureData.metadata.paletteOffset || 0;
+      const allColors = this.currentPalette.getColors();
+      if (allColors && allColors.length > offset) {
+        const slice = allColors.slice(offset, offset + formatColorCount);
+        effectivePalette = Palette.fromColors(slice, `Slice@${offset}`);
+        console.log(`[TextureEditor] Using palette slice [${offset}..${offset + formatColorCount - 1}] (${slice.length} colors)`);
+      }
+    }
+    
+    // Match to the effective palette
+    const result = workingImageData.matchToPalette(null, effectivePalette);
     
     if (!result) {
       throw new Error('Failed to match image to palette');
@@ -3539,38 +4164,31 @@ class TextureEditor extends EditorBase {
   }
 
   updateCanvasFromImage(sourceCanvas) {
-    // Debug this context
-    console.log('[TextureEditor] updateCanvasFromImage - this:', this);
-    console.log('[TextureEditor] updateCanvasFromImage - this.constructor.name:', this.constructor.name);
-    
     // Check if outputCanvas exists
     if (!this.outputCanvas) {
       console.error('[TextureEditor] outputCanvas is null - cannot update output');
-      console.log('[TextureEditor] All canvas properties:', {
-        originalCanvas: !!this.originalCanvas,
-        outputCanvas: !!this.outputCanvas,
-        originalCtx: !!this.originalCtx,
-        outputCtx: !!this.outputCtx
-      });
       throw new Error('Texture output canvas not initialized');
     }
-    
-    // Clear and resize the processed output canvas
-    const ctx = this.outputCanvas.getContext('2d');
-    this.outputCanvas.width = sourceCanvas.width;
-    this.outputCanvas.height = sourceCanvas.height;
-    ctx.clearRect(0, 0, this.outputCanvas.width, this.outputCanvas.height);
-    
-    // Draw the processed image to the output canvas
-    ctx.drawImage(sourceCanvas, 0, 0);
-    
-    console.log('[TextureEditor] Successfully updated texture output canvas');
-    
-    // Update processed texture data (not the original source)
+
+    // Update processed texture data from the source canvas (for save/export)
     const newImageData = new ImageData();
     newImageData.loadFromCanvas(sourceCanvas);
     this.textureData.processedImageData = newImageData;
-    
+
+    if (this._gpu) {
+      // GPU handles canvas display — skip 2D context draw.
+      // The caller (applyReductionResult) invokes _buildD2Preview or _gpuBlit.
+      console.log('[TextureEditor] updateCanvasFromImage: GPU active, processedImageData updated');
+    } else {
+      // Fallback: 2D canvas rendering (no WebGL available)
+      const ctx = this.outputCanvas.getContext('2d');
+      this.outputCanvas.width = sourceCanvas.width;
+      this.outputCanvas.height = sourceCanvas.height;
+      ctx.clearRect(0, 0, this.outputCanvas.width, this.outputCanvas.height);
+      ctx.drawImage(sourceCanvas, 0, 0);
+      console.log('[TextureEditor] Successfully updated texture output canvas (2D fallback)');
+    }
+
     // Mark as modified
     this.markDirty();
   }

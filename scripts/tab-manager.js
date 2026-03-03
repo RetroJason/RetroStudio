@@ -1215,6 +1215,8 @@ class TabManager {
       return 'mod';
     } else if (['.wav'].includes(ext)) {
       return 'wav';
+    } else if (['.d2'].includes(ext)) {
+      return 'd2';
     } else {
       return 'hex';
     }
