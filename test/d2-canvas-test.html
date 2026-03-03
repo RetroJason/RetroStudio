@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>D2Canvas — Format Test Harness</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Consolas, monospace;
+    background: #1e1e1e;
+    color: #ddd;
+    padding: 16px;
+  }
+  h1 { font-size: 18px; margin-bottom: 12px; color: #4a9eff; }
+  h2 { font-size: 14px; margin: 12px 0 6px; color: #ccc; border-bottom: 1px solid #333; padding-bottom: 4px; }
+  .controls {
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+    background: #252525; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
+  }
+  .controls label { font-size: 12px; color: #aaa; }
+  .controls select, .controls input {
+    background: #333; color: #ddd; border: 1px solid #555; padding: 3px 6px;
+    border-radius: 3px; font-size: 12px;
+  }
+  .controls button {
+    background: #4a9eff; color: #fff; border: none; padding: 5px 14px;
+    border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .controls button:hover { background: #6ab4ff; }
+  #results {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .test-card {
+    background: #252525; border: 1px solid #333; border-radius: 6px; padding: 10px;
+    position: relative;
+  }
+  .test-card.pass  { border-color: #4caf50; }
+  .test-card.fail  { border-color: #f44336; }
+  .test-card h3 {
+    font-size: 12px; margin-bottom: 6px; color: #ccc;
+    display: flex; justify-content: space-between;
+  }
+  .test-card h3 .status { font-weight: bold; }
+  .test-card h3 .status.pass { color: #4caf50; }
+  .test-card h3 .status.fail { color: #f44336; }
+  .canvases { display: flex; gap: 8px; align-items: flex-start; }
+  .canvases canvas {
+    image-rendering: pixelated;
+    border: 1px solid #444;
+    background: repeating-conic-gradient(#333 0% 25%, #282828 0% 50%) 50% / 8px 8px;
+  }
+  .legend { font-size: 10px; color: #888; margin-top: 4px; }
+  #log {
+    margin-top: 16px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 11px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: Consolas, monospace;
+  }
+  #log .err { color: #f44; }
+  #log .ok  { color: #4caf50; }
+  #summary {
+    margin-bottom: 8px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: bold;
+  }
+  #summary.all-pass { background: #1b3a1b; color: #4caf50; border: 1px solid #4caf50; }
+  #summary.has-fail { background: #3a1b1b; color: #f44336; border: 1px solid #f44336; }
+</style>
+</head>
+<body>
+
+<h1>D2Canvas — GPU Format Test Harness</h1>
+
+<div class="controls">
+  <label>Test Size:
+    <select id="testSize">
+      <option value="8">8×8</option>
+      <option value="16" selected>16×16</option>
+      <option value="32">32×32</option>
+    </select>
+  </label>
+  <label>Scale:
+    <input id="scaleFactor" type="number" value="8" min="1" max="32" style="width:50px">
+  </label>
+  <label>Filter:
+    <select id="filterMode">
+      <option value="nearest" selected>Nearest</option>
+      <option value="bilinear">Bilinear</option>
+    </select>
+  </label>
+  <label>
+    <input type="checkbox" id="aaMode"> 4× AA
+  </label>
+  <label>Color Key:
+    <input id="colorKeyInput" type="text" value="-1" style="width:60px" placeholder="-1 or 0xF800">
+  </label>
+  <button id="runBtn">Run All Tests</button>
+  <button id="runBlitBtn">Run Blit Tests</button>
+</div>
+
+<div id="summary" style="display:none"></div>
+<div id="results"></div>
+<div id="log"></div>
+
+<script src="../scripts/graphics/d2-canvas.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   Test Harness  (D2TX_HEADER_SIZE, D2_FORMAT, D2Canvas come from d2-canvas.js)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// ── Logging ──────────────────────────────────────────────────────
+const logEl = document.getElementById('log');
+function log(msg, cls) {
+  const span = document.createElement('span');
+  span.className = cls || '';
+  span.textContent = msg + '\n';
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── D2TX builder ─────────────────────────────────────────────────
+function buildD2TX(format, width, height, pixelData, opts = {}) {
+  const flags = (opts.rle ? 0x01 : 0) | (opts.preRotated ? 0x02 : 0);
+  const paletteIndex = opts.paletteIndex || 0;
+  const paletteOffset = opts.paletteOffset || 0;
+
+  const header = new Uint8Array(D2TX_HEADER_SIZE);
+  const view = new DataView(header.buffer);
+  // Magic "D2TX"
+  header[0] = 0x44; header[1] = 0x32; header[2] = 0x54; header[3] = 0x58;
+  view.setUint8(4, 2);               // version
+  view.setUint8(5, format);          // format enum
+  view.setUint16(6, width, true);    // width
+  view.setUint16(8, height, true);   // height
+  view.setUint16(10, paletteIndex, true);
+  view.setUint8(12, paletteOffset);
+  view.setUint8(13, flags);
+
+  const result = new Uint8Array(D2TX_HEADER_SIZE + pixelData.length);
+  result.set(header);
+  result.set(pixelData, D2TX_HEADER_SIZE);
+  return result;
+}
+
+// ── Test palette: 256 entries with distinguishable colours ────────
+function makeTestPalette() {
+  const pal = new Uint8Array(1024); // 256 × 4 RGBA
+  for (let i = 0; i < 256; i++) {
+    const off = i * 4;
+    // Hue-ramp through the palette
+    const h = (i / 256) * 360;
+    const [r, g, b] = hslToRgb(h, 100, 50);
+    pal[off]     = r;
+    pal[off + 1] = g;
+    pal[off + 2] = b;
+    pal[off + 3] = 255;
+  }
+  // Ensure index 0 = black, 1 = white for i1 tests
+  pal[0] = 0;   pal[1] = 0;   pal[2] = 0;   pal[3] = 255;
+  pal[4] = 255; pal[5] = 255; pal[6] = 255; pal[7] = 255;
+  return pal;
+}
+
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = n => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+// ── Pixel generators ─────────────────────────────────────────────
+// Each returns { pixelData: Uint8Array, referenceRGBA: Uint8Array (w*h*4) }
+// so we can compare GPU output against CPU reference.
+
+function generateI1(w, h, pal) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 8);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const idx = (i + (Math.floor(i / w))) & 1; // checkerboard
+    const byteIdx = i >> 3;
+    const bitIdx = 7 - (i & 7);
+    pixels[byteIdx] |= (idx << bitIdx);
+    const po = idx * 4;
+    ref[i * 4]     = pal[po];
+    ref[i * 4 + 1] = pal[po + 1];
+    ref[i * 4 + 2] = pal[po + 2];
+    ref[i * 4 + 3] = pal[po + 3];
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateI2(w, h, pal) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 4);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const idx = ((px >> 1) + (py >> 1)) & 3; // 2×2 block pattern
+    const byteIdx = i >> 2;
+    const shift = 6 - (i & 3) * 2;
+    pixels[byteIdx] |= (idx << shift);
+    const po = idx * 4;
+    ref[i * 4]     = pal[po];
+    ref[i * 4 + 1] = pal[po + 1];
+    ref[i * 4 + 2] = pal[po + 2];
+    ref[i * 4 + 3] = pal[po + 3];
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateI4(w, h, pal) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 2);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const idx = (px + py) & 0xF; // diagonal ramp
+    const byteIdx = i >> 1;
+    if ((i & 1) === 0) {
+      pixels[byteIdx] |= (idx << 4);
+    } else {
+      pixels[byteIdx] |= idx;
+    }
+    const po = idx * 4;
+    ref[i * 4]     = pal[po];
+    ref[i * 4 + 1] = pal[po + 1];
+    ref[i * 4 + 2] = pal[po + 2];
+    ref[i * 4 + 3] = pal[po + 3];
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateI8(w, h, pal) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const idx = (px * 16 + py * 16) & 0xFF;
+    pixels[i] = idx;
+    const po = idx * 4;
+    ref[i * 4]     = pal[po];
+    ref[i * 4 + 1] = pal[po + 1];
+    ref[i * 4 + 2] = pal[po + 2];
+    ref[i * 4 + 3] = pal[po + 3];
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateAI44(w, h, pal) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const idx = (px + py) & 0xF;
+    const alpha4 = px & 0xF; // gradient alpha
+    pixels[i] = (alpha4 << 4) | idx;
+    const po = idx * 4;
+    const alpha8 = Math.round(alpha4 * 255 / 15);
+    ref[i * 4]     = pal[po];
+    ref[i * 4 + 1] = pal[po + 1];
+    ref[i * 4 + 2] = pal[po + 2];
+    ref[i * 4 + 3] = alpha8;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGB565(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r5 = Math.floor(px / w * 31);
+    const g6 = Math.floor(py / h * 63);
+    const b5 = Math.floor((px + py) / (w + h) * 31);
+    const v = (r5 << 11) | (g6 << 5) | b5;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = Math.round(r5 * 255 / 31);
+    ref[i * 4 + 1] = Math.round(g6 * 255 / 63);
+    ref[i * 4 + 2] = Math.round(b5 * 255 / 31);
+    ref[i * 4 + 3] = 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateARGB1555(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r5 = Math.floor(px / w * 31);
+    const g5 = Math.floor(py / h * 31);
+    const b5 = 15;
+    const a1 = (px + py) % 2; // checkerboard alpha
+    const v = (a1 << 15) | (r5 << 10) | (g5 << 5) | b5;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = Math.round(r5 * 255 / 31);
+    ref[i * 4 + 1] = Math.round(g5 * 255 / 31);
+    ref[i * 4 + 2] = Math.round(b5 * 255 / 31);
+    ref[i * 4 + 3] = a1 ? 255 : 0;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGBA5551(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r5 = Math.floor(px / w * 31);
+    const g5 = Math.floor(py / h * 31);
+    const b5 = 20;
+    const a1 = 1;
+    const v = (r5 << 11) | (g5 << 6) | (b5 << 1) | a1;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = Math.round(r5 * 255 / 31);
+    ref[i * 4 + 1] = Math.round(g5 * 255 / 31);
+    ref[i * 4 + 2] = Math.round(b5 * 255 / 31);
+    ref[i * 4 + 3] = 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGB555(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r5 = Math.floor(px / w * 31);
+    const g5 = Math.floor(py / h * 31);
+    const b5 = 10;
+    const v = (r5 << 10) | (g5 << 5) | b5;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = Math.round(r5 * 255 / 31);
+    ref[i * 4 + 1] = Math.round(g5 * 255 / 31);
+    ref[i * 4 + 2] = Math.round(b5 * 255 / 31);
+    ref[i * 4 + 3] = 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateARGB4444(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const a4 = Math.floor(px / w * 15);
+    const r4 = Math.floor(py / h * 15);
+    const g4 = 8;
+    const b4 = 4;
+    const v = (a4 << 12) | (r4 << 8) | (g4 << 4) | b4;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = r4 * 17;
+    ref[i * 4 + 1] = g4 * 17;
+    ref[i * 4 + 2] = b4 * 17;
+    ref[i * 4 + 3] = a4 * 17;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGBA4444(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r4 = Math.floor(px / w * 15);
+    const g4 = Math.floor(py / h * 15);
+    const b4 = 10;
+    const a4 = 15;
+    const v = (r4 << 12) | (g4 << 8) | (b4 << 4) | a4;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = r4 * 17;
+    ref[i * 4 + 1] = g4 * 17;
+    ref[i * 4 + 2] = b4 * 17;
+    ref[i * 4 + 3] = a4 * 17;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGB444(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 2);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r4 = Math.floor(px / w * 15);
+    const g4 = Math.floor(py / h * 15);
+    const b4 = 7;
+    const v = (r4 << 8) | (g4 << 4) | b4;
+    pixels[i * 2]     = v & 0xFF;
+    pixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    ref[i * 4]     = r4 * 17;
+    ref[i * 4 + 1] = g4 * 17;
+    ref[i * 4 + 2] = b4 * 17;
+    ref[i * 4 + 3] = 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGB888(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 3);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r = Math.floor(px / w * 255);
+    const g = Math.floor(py / h * 255);
+    const b = 128;
+    pixels[i * 3]     = r;
+    pixels[i * 3 + 1] = g;
+    pixels[i * 3 + 2] = b;
+    ref[i * 4]     = r;
+    ref[i * 4 + 1] = g;
+    ref[i * 4 + 2] = b;
+    ref[i * 4 + 3] = 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateRGBA8888(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 4);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r = Math.floor(px / w * 255);
+    const g = Math.floor(py / h * 255);
+    const b = 100;
+    const a = Math.floor(((px + py) / (w + h)) * 255);
+    pixels[i * 4]     = r;
+    pixels[i * 4 + 1] = g;
+    pixels[i * 4 + 2] = b;
+    pixels[i * 4 + 3] = a;
+    ref[i * 4]     = r;
+    ref[i * 4 + 1] = g;
+    ref[i * 4 + 2] = b;
+    ref[i * 4 + 3] = a;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateARGB8888(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels * 4);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const r = Math.floor(px / w * 255);
+    const g = Math.floor(py / h * 255);
+    const b = 80;
+    const a = 200;
+    // ARGB byte order
+    pixels[i * 4]     = a;
+    pixels[i * 4 + 1] = r;
+    pixels[i * 4 + 2] = g;
+    pixels[i * 4 + 3] = b;
+    ref[i * 4]     = r;
+    ref[i * 4 + 1] = g;
+    ref[i * 4 + 2] = b;
+    ref[i * 4 + 3] = a;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateAlpha1(w, h) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 8);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const a = (px + py) & 1;
+    const byteIdx = i >> 3;
+    const bitIdx = 7 - (i & 7);
+    pixels[byteIdx] |= (a << bitIdx);
+    ref[i * 4]     = 255;
+    ref[i * 4 + 1] = 255;
+    ref[i * 4 + 2] = 255;
+    ref[i * 4 + 3] = a * 255;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateAlpha2(w, h) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 4);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w, py = Math.floor(i / w);
+    const a2 = ((px >> 1) + (py >> 1)) & 3;
+    const byteIdx = i >> 2;
+    const shift = 6 - (i & 3) * 2;
+    pixels[byteIdx] |= (a2 << shift);
+    ref[i * 4]     = 255;
+    ref[i * 4 + 1] = 255;
+    ref[i * 4 + 2] = 255;
+    ref[i * 4 + 3] = Math.round(a2 * 255 / 3);
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateAlpha4(w, h) {
+  const totalPixels = w * h;
+  const byteLen = Math.ceil(totalPixels / 2);
+  const pixels = new Uint8Array(byteLen);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w;
+    const a4 = px & 0xF;
+    const byteIdx = i >> 1;
+    if ((i & 1) === 0) {
+      pixels[byteIdx] |= (a4 << 4);
+    } else {
+      pixels[byteIdx] |= a4;
+    }
+    ref[i * 4]     = 255;
+    ref[i * 4 + 1] = 255;
+    ref[i * 4 + 2] = 255;
+    ref[i * 4 + 3] = Math.round(a4 * 255 / 15);
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+function generateAlpha8(w, h) {
+  const totalPixels = w * h;
+  const pixels = new Uint8Array(totalPixels);
+  const ref = new Uint8Array(totalPixels * 4);
+  for (let i = 0; i < totalPixels; i++) {
+    const px = i % w;
+    const a = Math.floor(px / w * 255);
+    pixels[i] = a;
+    ref[i * 4]     = 255;
+    ref[i * 4 + 1] = 255;
+    ref[i * 4 + 2] = 255;
+    ref[i * 4 + 3] = a;
+  }
+  return { pixelData: pixels, referenceRGBA: ref };
+}
+
+
+// ── Format test definitions ──────────────────────────────────────
+const FORMAT_TESTS = [
+  { name: 'I1 (1-bit indexed)',    format: 0x01, indexed: true,  gen: generateI1 },
+  { name: 'I2 (2-bit indexed)',    format: 0x02, indexed: true,  gen: generateI2 },
+  { name: 'I4 (4-bit indexed)',    format: 0x04, indexed: true,  gen: generateI4 },
+  { name: 'I8 (8-bit indexed)',    format: 0x08, indexed: true,  gen: generateI8 },
+  { name: 'AI44 (alpha+index)',    format: 0x09, indexed: true,  gen: generateAI44 },
+  { name: 'RGB565',                format: 0x10, indexed: false, gen: generateRGB565 },
+  { name: 'ARGB1555',              format: 0x11, indexed: false, gen: generateARGB1555 },
+  { name: 'RGBA5551',              format: 0x12, indexed: false, gen: generateRGBA5551 },
+  { name: 'RGB555',                format: 0x13, indexed: false, gen: generateRGB555 },
+  { name: 'ARGB4444',              format: 0x14, indexed: false, gen: generateARGB4444 },
+  { name: 'RGBA4444',              format: 0x15, indexed: false, gen: generateRGBA4444 },
+  { name: 'RGB444',                format: 0x16, indexed: false, gen: generateRGB444 },
+  { name: 'RGB888',                format: 0x20, indexed: false, gen: generateRGB888 },
+  { name: 'RGBA8888',              format: 0x21, indexed: false, gen: generateRGBA8888 },
+  { name: 'ARGB8888',              format: 0x22, indexed: false, gen: generateARGB8888 },
+  { name: 'Alpha1',                format: 0x30, indexed: false, gen: generateAlpha1 },
+  { name: 'Alpha2',                format: 0x31, indexed: false, gen: generateAlpha2 },
+  { name: 'Alpha4',                format: 0x32, indexed: false, gen: generateAlpha4 },
+  { name: 'Alpha8',                format: 0x33, indexed: false, gen: generateAlpha8 },
+];
+
+
+// ── CPU reference renderer (for comparison) ──────────────────────
+function renderReferenceCPU(refRGBA, w, h, scale) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w * scale;
+  canvas.height = h * scale;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(w, h);
+  imgData.data.set(refRGBA);
+  // Draw at 1:1 then scale
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  const tmpCtx = tmp.getContext('2d');
+  tmpCtx.putImageData(imgData, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tmp, 0, 0, w * scale, h * scale);
+  return canvas;
+}
+
+
+// ── Compare GPU output against CPU reference ─────────────────────
+// Note: The shader discards alpha=0 pixels, leaving clear color (0,0,0,0).
+// So for reference pixels with alpha=0, we expect (0,0,0,0) in the GPU output.
+function comparePixels(gpuRGBA, refRGBA, w, h, tolerance = 1) {
+  let maxDiff = 0;
+  let mismatchCount = 0;
+  let firstMismatch = null;
+
+  for (let i = 0; i < w * h; i++) {
+    const off = i * 4;
+
+    // If the reference alpha is 0, the shader discards and the result is clear color (0,0,0,0)
+    const refAlpha = refRGBA[off + 3];
+    const expectedR = refAlpha === 0 ? 0 : refRGBA[off];
+    const expectedG = refAlpha === 0 ? 0 : refRGBA[off + 1];
+    const expectedB = refAlpha === 0 ? 0 : refRGBA[off + 2];
+    const expectedA = refAlpha === 0 ? 0 : refRGBA[off + 3];
+    const expected = [expectedR, expectedG, expectedB, expectedA];
+
+    for (let c = 0; c < 4; c++) {
+      const diff = Math.abs(gpuRGBA[off + c] - expected[c]);
+      if (diff > maxDiff) maxDiff = diff;
+      if (diff > tolerance) {
+        mismatchCount++;
+        if (!firstMismatch) {
+          firstMismatch = {
+            pixel: i,
+            x: i % w,
+            y: Math.floor(i / w),
+            gpu: [gpuRGBA[off], gpuRGBA[off+1], gpuRGBA[off+2], gpuRGBA[off+3]],
+            ref: expected,
+          };
+        }
+      }
+    }
+  }
+
+  return { pass: mismatchCount === 0, maxDiff, mismatchCount, firstMismatch };
+}
+
+
+// ── Main test runner ─────────────────────────────────────────────
+function runAllTests() {
+  logEl.innerHTML = '';
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '';
+  const summaryEl = document.getElementById('summary');
+
+  const size = parseInt(document.getElementById('testSize').value);
+  const scale = parseInt(document.getElementById('scaleFactor').value);
+  const w = size, h = size;
+
+  const pal = makeTestPalette();
+
+  let passCount = 0;
+  let failCount = 0;
+
+  log(`=== Running ${FORMAT_TESTS.length} format tests (${w}×${h}, scale ${scale}×) ===`);
+
+  // Reuse a single D2Canvas for 1:1 comparison (avoids exceeding WebGL context limit)
+  const gpuCanvas1x = document.createElement('canvas');
+  gpuCanvas1x.width = w;
+  gpuCanvas1x.height = h;
+  const gpu = new D2Canvas(gpuCanvas1x, { premultiplied: false });
+  gpu.resize(w, h);
+
+  for (const test of FORMAT_TESTS) {
+    const card = document.createElement('div');
+    card.className = 'test-card';
+
+    try {
+      // Generate test data
+      const { pixelData, referenceRGBA } = test.indexed
+        ? test.gen(w, h, pal)
+        : test.gen(w, h);
+
+      // Build D2TX file
+      const d2File = buildD2TX(test.format, w, h, pixelData);
+
+      // Render at 1:1 for pixel-accurate comparison
+      gpu.setBlending(false);
+      gpu.clear(0, 0, 0, 0);
+      if (test.indexed) {
+        gpu.setPalette(pal);
+      }
+      gpu.setPaletteOffset(0);
+
+      const tex = gpu.createTexture(d2File);
+      gpu.blit(tex, { x: 0, y: 0, scaleX: 1, scaleY: 1 });
+      gpu.present();
+
+      // Read back GPU pixels
+      const gpuPixels = gpu.readPixels();
+      // WebGL readPixels gives bottom-up, flip to top-down
+      const gpuFlipped = new Uint8Array(w * h * 4);
+      for (let row = 0; row < h; row++) {
+        const src = (h - 1 - row) * w * 4;
+        const dst = row * w * 4;
+        gpuFlipped.set(gpuPixels.subarray(src, src + w * 4), dst);
+      }
+
+      // Compare
+      const result = comparePixels(gpuFlipped, referenceRGBA, w, h, 1);
+
+      // Build scaled display canvases using 2D context (no extra WebGL contexts)
+      const gpuDisplayCanvas = renderReferenceCPU(gpuFlipped, w, h, scale);
+      const cpuCanvas = renderReferenceCPU(referenceRGBA, w, h, scale);
+
+      // Build card
+      const status = result.pass ? 'pass' : 'fail';
+      card.classList.add(status);
+      card.innerHTML = `
+        <h3>
+          <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
+          <span class="status ${status}">${status.toUpperCase()}${result.pass ? '' : ` (${result.mismatchCount} mismatches, max Δ${result.maxDiff})`}</span>
+        </h3>
+        <div class="canvases"></div>
+        <div class="legend">Left: GPU (D2Canvas) &nbsp;|&nbsp; Right: CPU Reference</div>
+      `;
+      const canvases = card.querySelector('.canvases');
+      canvases.appendChild(gpuDisplayCanvas);
+      canvases.appendChild(cpuCanvas);
+
+      if (result.pass) {
+        passCount++;
+        log(`  ✓ ${test.name}`, 'ok');
+      } else {
+        failCount++;
+        const fm = result.firstMismatch;
+        log(`  ✗ ${test.name}: ${result.mismatchCount} mismatches, max Δ${result.maxDiff}. First @ (${fm.x},${fm.y}): GPU=${JSON.stringify(fm.gpu)} REF=${JSON.stringify(fm.ref)}`, 'err');
+      }
+
+      // Clean up texture (reuse D2Canvas instance)
+      gpu.deleteTexture(tex);
+
+    } catch (err) {
+      failCount++;
+      card.classList.add('fail');
+      card.innerHTML = `
+        <h3>
+          <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
+          <span class="status fail">ERROR</span>
+        </h3>
+        <div style="color:#f44;font-size:11px;word-break:break-all">${err.message}</div>
+      `;
+      log(`  ✗ ${test.name}: ${err.message}`, 'err');
+    }
+
+    resultsEl.appendChild(card);
+  }
+
+  // Destroy the single shared D2Canvas
+  gpu.destroy();
+
+  // Summary
+  const totalTests = FORMAT_TESTS.length;
+  summaryEl.style.display = 'block';
+  if (failCount === 0) {
+    summaryEl.className = 'all-pass';
+    summaryEl.textContent = `All ${totalTests} format tests PASSED`;
+  } else {
+    summaryEl.className = 'has-fail';
+    summaryEl.textContent = `${failCount} of ${totalTests} tests FAILED — ${passCount} passed`;
+  }
+
+  log(`\n=== Result: ${passCount}/${totalTests} passed, ${failCount} failed ===`, failCount ? 'err' : 'ok');
+}
+
+// ── Blit feature tests (scale, rotate, filter, AA, color key) ────
+function runBlitTests() {
+  logEl.innerHTML = '';
+  const resultsEl = document.getElementById('results');
+  resultsEl.innerHTML = '';
+  const summaryEl = document.getElementById('summary');
+  summaryEl.style.display = 'none';
+
+  const size = 16;
+  const pal = makeTestPalette();
+  const scale = parseInt(document.getElementById('scaleFactor').value);
+  const filterMode = document.getElementById('filterMode').value;
+  const aaMode = document.getElementById('aaMode').checked;
+  const colorKeyStr = document.getElementById('colorKeyInput').value.trim();
+  const colorKey = colorKeyStr.startsWith('0x') ? parseInt(colorKeyStr, 16) : parseInt(colorKeyStr);
+
+  log(`=== Blit Tests (filter=${filterMode}, AA=${aaMode}, colorKey=${colorKey}) ===`);
+
+  // Generate an i8 test texture
+  const { pixelData: i8Pixels } = generateI8(size, size, pal);
+  const i8D2 = buildD2TX(0x08, size, size, i8Pixels);
+
+  // Generate a special RGB565 texture for color key test:
+  // Checkerboard of magenta (0xF81F) and cyan (0x07FF) — key = magenta → punches holes
+  const COLOR_KEY_VAL = 0xF81F; // magenta in RGB565
+  const ckPixels = new Uint8Array(size * size * 2);
+  const ckRefBeforeKey = new Uint8Array(size * size * 4); // all pixels, no key applied
+  const ckRefAfterKey  = new Uint8Array(size * size * 4); // keyed pixels → (0,0,0,0)
+  for (let i = 0; i < size * size; i++) {
+    const px = i % size, py = Math.floor(i / size);
+    const isMagenta = ((px + py) & 1) === 0;
+    const v = isMagenta ? 0xF81F : 0x07FF; // magenta or cyan
+    ckPixels[i * 2]     = v & 0xFF;
+    ckPixels[i * 2 + 1] = (v >> 8) & 0xFF;
+    // Decode colors
+    const r8 = isMagenta ? 255 : 0;
+    const g8 = isMagenta ? 0   : 255;
+    const b8 = isMagenta ? 255 : 255;
+    // Before key — all pixels visible
+    ckRefBeforeKey[i * 4] = r8; ckRefBeforeKey[i * 4 + 1] = g8;
+    ckRefBeforeKey[i * 4 + 2] = b8; ckRefBeforeKey[i * 4 + 3] = 255;
+    // After key — magenta pixels become transparent (discarded → clear 0,0,0,0)
+    if (isMagenta) {
+      ckRefAfterKey[i * 4] = 0; ckRefAfterKey[i * 4 + 1] = 0;
+      ckRefAfterKey[i * 4 + 2] = 0; ckRefAfterKey[i * 4 + 3] = 0;
+    } else {
+      ckRefAfterKey[i * 4] = r8; ckRefAfterKey[i * 4 + 1] = g8;
+      ckRefAfterKey[i * 4 + 2] = b8; ckRefAfterKey[i * 4 + 3] = 255;
+    }
+  }
+  const ckD2 = buildD2TX(0x10, size, size, ckPixels);
+
+  const blitTests = [
+    {
+      name: '1:1 Blit (no transform)',
+      d2: i8D2, indexed: true,
+      canvasW: size * scale, canvasH: size * scale,
+      blitOpts: { x: 0, y: 0, scaleX: scale, scaleY: scale, filter: 'nearest' },
+    },
+    {
+      name: `${scale*2}× Scale`,
+      d2: i8D2, indexed: true,
+      canvasW: size * scale * 2, canvasH: size * scale * 2,
+      blitOpts: { x: 0, y: 0, scaleX: scale * 2, scaleY: scale * 2, filter: 'nearest' },
+    },
+    {
+      name: '45° Rotation',
+      d2: i8D2, indexed: true,
+      canvasW: size * scale * 2, canvasH: size * scale * 2,
+      blitOpts: {
+        x: size * scale * 0.3, y: size * scale * 0.3,
+        scaleX: scale, scaleY: scale,
+        rotation: 45, pivotX: 0.5, pivotY: 0.5,
+        filter: 'nearest',
+      },
+    },
+    {
+      name: 'Bilinear Filter',
+      d2: i8D2, indexed: true,
+      canvasW: size * scale * 2, canvasH: size * scale * 2,
+      blitOpts: {
+        x: 0, y: 0,
+        scaleX: scale * 1.5, scaleY: scale * 1.5,
+        filter: 'bilinear',
+      },
+    },
+    {
+      name: '4× SSAA',
+      d2: i8D2, indexed: true,
+      canvasW: size * scale * 2, canvasH: size * scale * 2,
+      blitOpts: {
+        x: size * scale * 0.25, y: size * scale * 0.25,
+        scaleX: scale, scaleY: scale,
+        rotation: 30, pivotX: 0.5, pivotY: 0.5,
+        filter: 'nearest', aa: true,
+      },
+    },
+    {
+      name: 'Color Key (magenta→transparent)',
+      d2: ckD2, indexed: false,
+      canvasW: size, canvasH: size,          // 1:1 for comparison
+      displayScale: scale,                   // scale up for display
+      blitOpts: { x: 0, y: 0, scaleX: 1, scaleY: 1, filter: 'nearest' },
+      colorKey: COLOR_KEY_VAL,
+      verify: true,
+      referenceRGBA: ckRefAfterKey,          // expected GPU output (keyed pixels = 0,0,0,0)
+      referenceBeforeKey: ckRefBeforeKey,     // for display: all pixels visible
+    },
+  ];
+
+  // Reuse a single D2Canvas — snapshot to 2D canvas for display
+  const gpuCanvas = document.createElement('canvas');
+  const gpu = new D2Canvas(gpuCanvas, { premultiplied: false });
+
+  for (const bt of blitTests) {
+    const card = document.createElement('div');
+    card.className = 'test-card pass';
+
+    try {
+      gpuCanvas.width = bt.canvasW;
+      gpuCanvas.height = bt.canvasH;
+      gpu.resize(bt.canvasW, bt.canvasH);
+      gpu.setColorKey(-1); // reset
+      gpu.setBlending(bt.verify ? false : true);
+      gpu.clear(bt.verify ? 0 : 0.12, bt.verify ? 0 : 0.12, bt.verify ? 0 : 0.12, bt.verify ? 0 : 1);
+
+      if (bt.indexed) gpu.setPalette(pal);
+      if (bt.colorKey !== undefined) gpu.setColorKey(bt.colorKey);
+
+      const tex = gpu.createTexture(bt.d2);
+      gpu.blit(tex, bt.blitOpts);
+      gpu.present();
+
+      let status = 'pass';
+      let statusText = 'RENDERED';
+      let legendHTML = '';
+
+      // If this test has pixel verification
+      if (bt.verify && bt.referenceRGBA) {
+        const w = bt.canvasW, h = bt.canvasH;
+        const gpuPixels = gpu.readPixels();
+        const gpuFlipped = new Uint8Array(w * h * 4);
+        for (let row = 0; row < h; row++) {
+          const src = (h - 1 - row) * w * 4;
+          const dst = row * w * 4;
+          gpuFlipped.set(gpuPixels.subarray(src, src + w * 4), dst);
+        }
+        const result = comparePixels(gpuFlipped, bt.referenceRGBA, w, h, 1);
+        status = result.pass ? 'pass' : 'fail';
+        statusText = result.pass ? 'PASS' : `FAIL (${result.mismatchCount} mismatches, max Δ${result.maxDiff})`;
+        if (!result.pass) {
+          const fm = result.firstMismatch;
+          log(`  ✗ ${bt.name}: ${result.mismatchCount} mismatches, max Δ${result.maxDiff}. First @ (${fm.x},${fm.y}): GPU=${JSON.stringify(fm.gpu)} REF=${JSON.stringify(fm.ref)}`, 'err');
+        }
+      }
+
+      // Build display canvases
+      const ds = bt.displayScale || 1;
+      const displayCanvas = document.createElement('canvas');
+      displayCanvas.width = bt.canvasW * ds;
+      displayCanvas.height = bt.canvasH * ds;
+      displayCanvas.style.imageRendering = 'pixelated';
+      const ctx2d = displayCanvas.getContext('2d');
+      ctx2d.imageSmoothingEnabled = false;
+      ctx2d.drawImage(gpuCanvas, 0, 0, bt.canvasW * ds, bt.canvasH * ds);
+
+      card.classList.remove('pass', 'fail');
+      card.classList.add(status);
+
+      // For verified tests, also show reference side-by-side
+      if (bt.verify && bt.referenceRGBA) {
+        const refDisplay = bt.referenceBeforeKey || bt.referenceRGBA;
+        const refCanvas = renderReferenceCPU(refDisplay, bt.canvasW, bt.canvasH, ds);
+        legendHTML = '<div class="legend">Left: GPU (color-keyed) &nbsp;|&nbsp; Right: CPU Reference (before key)</div>';
+        card.innerHTML = `
+          <h3>
+            <span>${bt.name}</span>
+            <span class="status ${status}">${statusText}</span>
+          </h3>
+          <div class="canvases"></div>
+          ${legendHTML}
+        `;
+        const canvases = card.querySelector('.canvases');
+        canvases.appendChild(displayCanvas);
+        canvases.appendChild(refCanvas);
+      } else {
+        card.innerHTML = `
+          <h3><span>${bt.name}</span><span class="status ${status}">${statusText}</span></h3>
+          <div class="canvases"></div>
+        `;
+        card.querySelector('.canvases').appendChild(displayCanvas);
+      }
+
+      gpu.deleteTexture(tex);
+
+      if (status === 'pass') log(`  ✓ ${bt.name}`, 'ok');
+    } catch (err) {
+      card.classList.remove('pass');
+      card.classList.add('fail');
+      card.innerHTML = `
+        <h3><span>${bt.name}</span><span class="status fail">ERROR</span></h3>
+        <div style="color:#f44;font-size:11px">${err.message}</div>
+      `;
+      log(`  ✗ ${bt.name}: ${err.message}`, 'err');
+    }
+
+    resultsEl.appendChild(card);
+  }
+
+  gpu.destroy();
+}
+
+// ── Wire up buttons ──────────────────────────────────────────────
+document.getElementById('runBtn').addEventListener('click', runAllTests);
+document.getElementById('runBlitBtn').addEventListener('click', runBlitTests);
+
+// Auto-run on load
+window.addEventListener('load', () => {
+  try { runAllTests(); } catch (e) { log('FATAL: ' + e.message, 'err'); }
+});
+</script>
+</body>
+</html>

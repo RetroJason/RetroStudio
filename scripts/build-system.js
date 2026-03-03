@@ -23,6 +23,9 @@ class BuildSystem {
   this.registerBuilder('.act', new PalBuilder());
   this.registerBuilder('.aco', new PalBuilder());
 
+  // NOTE: TextureBuilder is registered via scripts/builders/texture-builder.js
+  // (loaded after build-system.js so BaseBuilder is available)
+
   // Also index by IDs for explicit selection
   this.builderById.set('copy', new CopyBuilder());
   this.builderById.set('sfx', new SfxBuilder());
@@ -52,6 +55,8 @@ class BuildSystem {
       case '.act':
       case '.aco':
         return 'pal';
+      case '.texture':
+        return 'texture';
       default: return 'copy';
     }
   }
@@ -78,9 +83,25 @@ class BuildSystem {
         await window.gameEditor.projectExplorer.clearBuildFolder();
       }
       
+      // Reset the palette registry so texture builds can register palettes
+      if (typeof TextureBuilder !== 'undefined' && TextureBuilder.resetPaletteRegistry) {
+        TextureBuilder.resetPaletteRegistry();
+      }
+
       // Get all resource file paths from project explorer (storage-first approach)
       const resourceFilePaths = this.getAllResourceFilePaths();
       console.log(`[BuildSystem] Found ${resourceFilePaths.length} resource files to process`);
+
+      // Build a set of image base names that have a companion .texture file,
+      // so we can skip copying the raw source images for those.
+      const textureBaseNames = new Set();
+      const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp']);
+      for (const fp of resourceFilePaths) {
+        if (fp.toLowerCase().endsWith('.texture')) {
+          // Strip .texture to get the base name (e.g. "proj/Sources/Images/player")
+          textureBaseNames.add(fp.substring(0, fp.length - '.texture'.length).toLowerCase());
+        }
+      }
       
       const buildResults = [];
       let successCount = 0;
@@ -89,6 +110,18 @@ class BuildSystem {
       // Process each file path by loading from storage
       for (const filePath of resourceFilePaths) {
         try {
+          // Skip source images and .d2 files that have a companion .texture file
+          // (the TextureBuilder will produce the .d2 output from the .texture file)
+          const ext = this.getFileExtension(filePath);
+          if (imageExtensions.has(ext) || ext === '.d2') {
+            const baseName = filePath.substring(0, filePath.length - ext.length).toLowerCase();
+            if (textureBaseNames.has(baseName)) {
+              console.log(`[BuildSystem] Skipping ${filePath} (has companion .texture)`);
+              buildResults.push({ success: true, inputPath: filePath, skipped: true });
+              successCount++;
+              continue;
+            }
+          }
           const result = await this.buildFileFromPath(filePath);
           buildResults.push(result);
           
@@ -121,6 +154,39 @@ class BuildSystem {
       
       const totalTime = Date.now() - startTime;
       console.log(`[BuildSystem] Build completed: ${successCount} success, ${errorCount} errors`);
+
+      // ── Generate palette map (PMAP) from the palette registry ─────
+      // TextureBuilder.getPaletteIndex() was called during each texture build,
+      // so the registry now contains every palette referenced by a .d2 file.
+      try {
+        if (typeof TextureBuilder !== 'undefined' && TextureBuilder.buildPaletteMap) {
+          const pmap = TextureBuilder.buildPaletteMap();
+          if (pmap.entries.length > 0) {
+            const pmapPath = (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
+              ? window.ProjectPaths.getBuildStoragePrefix() + 'palette_map.pmap'
+              : 'build/palette_map.pmap';
+
+            const pmapData = new Uint8Array(pmap.buffer);
+            const fileManager = window.serviceContainer?.get('fileManager');
+            if (fileManager) {
+              await fileManager.saveFile(pmapPath, pmapData, { binaryData: true });
+            } else if (window.fileIOService) {
+              await window.fileIOService.saveFile(pmapPath, pmapData, { binaryData: true });
+            }
+            console.log(`[BuildSystem] Saved palette map: ${pmapPath} (${pmap.entries.length} palettes, ${pmapData.length} bytes)`);
+
+            // Add to project explorer
+            const projectExplorer = window.serviceContainer?.get('projectExplorer');
+            if (projectExplorer) {
+              await this.addBuiltFileToExplorer(pmapPath, 'palette_map.pmap');
+            }
+          } else {
+            console.log('[BuildSystem] No palettes registered — skipping palette map');
+          }
+        }
+      } catch (pmapError) {
+        console.error('[BuildSystem] Palette map generation failed (non-fatal):', pmapError);
+      }
       
       // Invalidate ALL cached resources after any build operation
       const gameEmulator = window.serviceContainer?.get('gameEmulator') || window.gameEmulator;
@@ -341,6 +407,7 @@ class BuildSystem {
   const ext = this.getFileExtension(filePath);
     const builderId = explicitId || this.getBuilderIdForExtension(ext);
     const builder = this.builderById.get(builderId) || this.getBuilderForFile(legacyFile.name);
+    console.log(`[BuildSystem] Builder resolution: ext=${ext}, builderId=${builderId}, found=${builder?.constructor?.name || 'none'}`);
     if (!builder) {
       throw new Error(`No builder available for ${filePath}`);
     }

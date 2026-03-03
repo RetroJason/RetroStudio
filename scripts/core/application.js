@@ -177,6 +177,7 @@ class RetroStudioApplication {
       'scripts/viewers/mod-viewer.js',
       'scripts/viewers/wav-viewer.js',
       'scripts/viewers/hex-viewer.js',
+      'scripts/viewers/d2-viewer.js',
       'scripts/viewers/simple-image-viewer.js',
       'scripts/viewers/simple-text-viewer.js',
       'scripts/viewers/viewer-plugins.js'

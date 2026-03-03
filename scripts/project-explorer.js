@@ -208,6 +208,7 @@ class ProjectExplorer {
       
       const imageFiles = {};
       const textureFiles = {};
+      const d2Files = {};
       const otherFiles = {};
       
       // First pass: categorize files
@@ -218,6 +219,8 @@ class ProjectExplorer {
             imageFiles[name] = data;
           } else if (ext === '.texture') {
             textureFiles[name] = data;
+          } else if (ext === '.d2') {
+            d2Files[name] = data;
           } else {
             otherFiles[name] = data;
           }
@@ -234,32 +237,43 @@ class ProjectExplorer {
       // Add non-image files first
       Object.assign(newChildren, otherFiles);
       
-      // Process image files and their linked textures
+      // Process image files and their linked textures / d2 files
       for (const [imageName, imageData] of Object.entries(imageFiles)) {
         const baseName = imageName.substring(0, imageName.lastIndexOf('.'));
         const linkedTextureName = baseName + '.texture';
+        const linkedD2Name = baseName + '.d2';
         
-        if (textureFiles[linkedTextureName]) {
-          // Create image with texture as child
+        const hasLinked = textureFiles[linkedTextureName] || d2Files[linkedD2Name];
+        if (hasLinked) {
+          // Create image with linked files as children
           const imageWithChild = JSON.parse(JSON.stringify(imageData));
-          const textureData = JSON.parse(JSON.stringify(textureFiles[linkedTextureName]));
-          // Preserve the original path for file operations
-          const originalTexturePath = currentPath ? `${currentPath}/${linkedTextureName}` : linkedTextureName;
-          textureData.originalPath = originalTexturePath;
-          imageWithChild.children = {
-            [linkedTextureName]: textureData
-          };
+          imageWithChild.children = {};
+
+          if (textureFiles[linkedTextureName]) {
+            const textureData = JSON.parse(JSON.stringify(textureFiles[linkedTextureName]));
+            const originalTexturePath = currentPath ? `${currentPath}/${linkedTextureName}` : linkedTextureName;
+            textureData.originalPath = originalTexturePath;
+            imageWithChild.children[linkedTextureName] = textureData;
+            delete textureFiles[linkedTextureName];
+          }
+
+          if (d2Files[linkedD2Name]) {
+            const d2Data = JSON.parse(JSON.stringify(d2Files[linkedD2Name]));
+            const originalD2Path = currentPath ? `${currentPath}/${linkedD2Name}` : linkedD2Name;
+            d2Data.originalPath = originalD2Path;
+            imageWithChild.children[linkedD2Name] = d2Data;
+            delete d2Files[linkedD2Name];
+          }
+
           newChildren[imageName] = imageWithChild;
-          // Remove texture from main level (it's now a child)
-          delete textureFiles[linkedTextureName];
         } else {
-          // No linked texture, add image normally
           newChildren[imageName] = imageData;
         }
       }
       
-      // Add any remaining unlinked texture files
+      // Add any remaining unlinked texture / d2 files
       Object.assign(newChildren, textureFiles);
+      Object.assign(newChildren, d2Files);
       
       return {
         ...folderData,

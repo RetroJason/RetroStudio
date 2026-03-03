@@ -1214,7 +1214,51 @@ class ImageData {
   }
 
   // ===== TEXTURE PROCESSING METHODS =====
-  
+
+  /**
+   * Rotate the image data in place (90° or 270°).
+   * After rotation, width and height are swapped.
+   * @param {number} degrees - 90 or 270
+   */
+  rotateInPlace(degrees) {
+    if (degrees !== 90 && degrees !== 270) return;
+
+    const frame = this.getCurrentFrame();
+    if (!frame || !frame.colors) return;
+
+    const oldW = this.width;
+    const oldH = this.height;
+    const newW = oldH;
+    const newH = oldW;
+    const newColors = new Array(newW * newH);
+
+    for (let y = 0; y < oldH; y++) {
+      for (let x = 0; x < oldW; x++) {
+        const si = y * oldW + x;
+        let dx, dy;
+        if (degrees === 90) {
+          dx = oldH - 1 - y;
+          dy = x;
+        } else { // 270
+          dx = y;
+          dy = oldW - 1 - x;
+        }
+        newColors[dy * newW + dx] = frame.colors[si];
+      }
+    }
+
+    // Update dimensions and frame data
+    this.width = newW;
+    this.height = newH;
+    frame.width = newW;
+    frame.height = newH;
+    frame.colors = newColors;
+
+    // Clear texture caches since dimensions changed
+    this.clearTextureCache();
+    console.log(`[ImageData] Rotated ${degrees}°: ${oldW}x${oldH} → ${newW}x${newH}`);
+  }
+
   /**
    * Get or generate binary data for a specific texture format
    * @param {string} format - The texture format (e.g., 'd2_mode_i8', 'd2_mode_i4')
@@ -1486,9 +1530,10 @@ class ImageData {
       // Find closest palette color (limited to 4 colors)
       const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x03;
       
-      const byteIndex = Math.floor(i / 4);
-      const bitShift = (i % 4) * 2;
-      indexData[byteIndex] |= paletteIndex << bitShift;
+      // MSB-first: pixel 0 in bits 7-6, pixel 1 in bits 5-4, etc.
+      const byteIndex = i >> 2;
+      const shift = 6 - ((i & 3) * 2);
+      indexData[byteIndex] |= paletteIndex << shift;
     }
     
     return indexData;
@@ -1512,10 +1557,11 @@ class ImageData {
       // Find closest palette color (limited to 2 colors)
       const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x01;
       
-      const byteIndex = Math.floor(i / 8);
-      const bitShift = i % 8;
+      // MSB-first: pixel 0 in bit 7, pixel 1 in bit 6, etc.
+      const byteIndex = i >> 3;
+      const bitIdx = 7 - (i & 7);
       if (paletteIndex) {
-        indexData[byteIndex] |= 1 << bitShift;
+        indexData[byteIndex] |= 1 << bitIdx;
       }
     }
     
@@ -1679,9 +1725,10 @@ class ImageData {
     const rgbaData = new Uint8ClampedArray(pixelCount * 4);
     
     for (let i = 0; i < pixelCount; i++) {
-      const byteIndex = Math.floor(i / 4);
-      const bitShift = (i % 4) * 2;
-      const paletteIndex = (((indexData[byteIndex] >> bitShift) & 0x03) + paletteOffset) % (palette?.length || 4);
+      // MSB-first: pixel 0 in bits 7-6, pixel 1 in bits 5-4, etc.
+      const byteIndex = i >> 2;
+      const shift = 6 - ((i & 3) * 2);
+      const paletteIndex = (((indexData[byteIndex] >> shift) & 0x03) + paletteOffset) % (palette?.length || 4);
       
       const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
       
@@ -1703,9 +1750,10 @@ class ImageData {
     const rgbaData = new Uint8ClampedArray(pixelCount * 4);
     
     for (let i = 0; i < pixelCount; i++) {
-      const byteIndex = Math.floor(i / 8);
-      const bitShift = i % 8;
-      const paletteIndex = (((indexData[byteIndex] >> bitShift) & 0x01) + paletteOffset) % (palette?.length || 2);
+      // MSB-first: pixel 0 in bit 7, pixel 1 in bit 6, etc.
+      const byteIndex = i >> 3;
+      const bitIdx = 7 - (i & 7);
+      const paletteIndex = (((indexData[byteIndex] >> bitIdx) & 0x01) + paletteOffset) % (palette?.length || 2);
       
       const color = this.parseColor(palette?.[paletteIndex]) || { r: 0, g: 0, b: 0, a: 255 };
       
@@ -1954,6 +2002,96 @@ class ImageData {
         colorCount: '2 levels'
       }
     ];
+  }
+
+  // ===== TGA-STYLE RLE COMPRESSION =====
+
+  /**
+   * Encode data using TGA-style RLE compression.
+   * Packet format:
+   *   - Run-length packet: byte[0] bit 7 = 1, count = (byte[0] & 0x7F) + 1, byte[1] = repeated value
+   *   - Raw packet:        byte[0] bit 7 = 0, count = (byte[0] & 0x7F) + 1, followed by count raw bytes
+   * Max run/raw length per packet: 128 bytes.
+   * @param {Uint8Array} data - raw pixel index data (1 byte per pixel for i8)
+   * @returns {Uint8Array} RLE-compressed data
+   */
+  static rleEncode(data) {
+    if (!data || data.length === 0) return new Uint8Array(0);
+
+    const out = [];
+    let i = 0;
+    const len = data.length;
+
+    while (i < len) {
+      // Count identical bytes (run)
+      let runLen = 1;
+      while (i + runLen < len && runLen < 128 && data[i + runLen] === data[i]) {
+        runLen++;
+      }
+
+      if (runLen >= 3) {
+        // RLE packet: bit 7 set, count - 1 in lower 7 bits
+        out.push(0x80 | (runLen - 1));
+        out.push(data[i]);
+        i += runLen;
+      } else {
+        // Raw packet: accumulate non-repeating bytes
+        const rawStart = i;
+        let rawLen = 0;
+
+        while (i + rawLen < len && rawLen < 128) {
+          // Look ahead for a run of 3+
+          if (i + rawLen + 2 < len &&
+              data[i + rawLen] === data[i + rawLen + 1] &&
+              data[i + rawLen] === data[i + rawLen + 2]) {
+            break; // Stop raw, let next iteration do an RLE packet
+          }
+          rawLen++;
+        }
+
+        if (rawLen === 0) rawLen = 1; // Safety: always advance
+
+        out.push(rawLen - 1); // bit 7 clear
+        for (let j = 0; j < rawLen; j++) {
+          out.push(data[i + j]);
+        }
+        i += rawLen;
+      }
+    }
+
+    return new Uint8Array(out);
+  }
+
+  /**
+   * Decode TGA-style RLE compressed data.
+   * @param {Uint8Array} data - RLE-compressed data
+   * @param {number} expectedLength - expected decompressed size in bytes
+   * @returns {Uint8Array} decompressed data
+   */
+  static rleDecode(data, expectedLength) {
+    const out = new Uint8Array(expectedLength);
+    let si = 0; // source index
+    let di = 0; // destination index
+
+    while (si < data.length && di < expectedLength) {
+      const header = data[si++];
+      const count = (header & 0x7F) + 1;
+
+      if (header & 0x80) {
+        // RLE packet: repeat single byte
+        const value = data[si++];
+        for (let j = 0; j < count && di < expectedLength; j++) {
+          out[di++] = value;
+        }
+      } else {
+        // Raw packet: copy count bytes
+        for (let j = 0; j < count && di < expectedLength; j++) {
+          out[di++] = data[si++];
+        }
+      }
+    }
+
+    return out;
   }
 
   // Get the number of colors supported by a texture format

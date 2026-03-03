@@ -16,6 +16,14 @@ if (typeof HexViewer !== 'undefined') {
   console.error('[ViewerPlugins] HexViewer class not found!');
 }
 
+// Register D2 texture viewer
+if (typeof D2Viewer !== 'undefined') {
+  window.ViewerPlugins.d2 = D2Viewer;
+  console.log('[ViewerPlugins] D2Viewer registered successfully');
+} else {
+  console.warn('[ViewerPlugins] D2Viewer class not yet available (will be loaded dynamically)');
+}
+
 // Plugin registration system for future extensibility
 window.ViewerPlugins.register = function(type, viewerClass) {
   if (typeof viewerClass !== 'function') {
