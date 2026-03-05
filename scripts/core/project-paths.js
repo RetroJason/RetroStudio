@@ -45,6 +45,7 @@
       if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return this.getSourcesSubfolder('Music');
       if (ext === '.wav' || ext === '.sfx') return this.getSourcesSubfolder('SFX');
       if (['.pal', '.act', '.aco'].includes(ext)) return this.getSourcesSubfolder('Palettes');
+      if (ext === '.sprite') return this.getSourcesSubfolder('Sprites');
       return this.getSourcesSubfolder('Binary');
     },
 
