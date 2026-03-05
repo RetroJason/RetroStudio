@@ -337,7 +337,11 @@ class EditorBase extends ViewerBase {
       const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
       targetPath = `${sourcesRoot}/Binary`; // Default fallback
       
-      if (extension === '.lua') {
+      // Check if the editor's class provides a default folder (e.g. 'Sprites')
+      const editorDefaultFolder = this.constructor.getDefaultFolder ? this.constructor.getDefaultFolder() : null;
+      if (editorDefaultFolder) {
+        targetPath = `${sourcesRoot}/${editorDefaultFolder}`;
+      } else if (extension === '.lua') {
         targetPath = `${sourcesRoot}/Lua`;
       } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
         targetPath = `${sourcesRoot}/Music`;
@@ -345,6 +349,8 @@ class EditorBase extends ViewerBase {
         targetPath = `${sourcesRoot}/SFX`;
       } else if (['.pal', '.act', '.aco'].includes(extension)) {
         targetPath = `${sourcesRoot}/Palettes`;
+      } else if (extension === '.sprite') {
+        targetPath = `${sourcesRoot}/Sprites`;
       }
       
       uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
@@ -529,6 +535,8 @@ class EditorBase extends ViewerBase {
       targetPath = `${sourcesRoot}/SFX`;
     } else if (['.pal', '.act', '.aco'].includes(extension)) {
       targetPath = `${sourcesRoot}/Palettes`;
+    } else if (extension === '.sprite') {
+      targetPath = `${sourcesRoot}/Sprites`;
     }
     
     const uiFolderPath = window.ProjectPaths?.withProjectPrefix ? window.ProjectPaths.withProjectPrefix(project, targetPath) : (project ? `${project}/${targetPath}` : targetPath);
