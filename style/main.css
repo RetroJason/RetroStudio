@@ -2,6 +2,8 @@
 
 /* Import editor-specific styles */
 @import url('texture-editor.css');
+@import url('sprite-editor.css');
+@import url('frameset-editor.css');
 
 /* Custom Modal Dialog */
 .modal-overlay {

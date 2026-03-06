@@ -108,6 +108,17 @@ class TextureBuilder extends BaseBuilder {
       // Offset 12: paletteOffset (uint8)
       output[12] = paletteOffset & 0xFF;
 
+      // Patch color key from .texture metadata into D2TX header
+      if (textureJson.useColorKey) {
+        const hex = textureJson.transparentColor || '#FF00FF';
+        const r = parseInt(hex.substring(1, 3), 16) || 0;
+        const g = parseInt(hex.substring(3, 5), 16) || 0;
+        const b = parseInt(hex.substring(5, 7), 16) || 0;
+        const rgb565 = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
+        output[13] = output[13] | 0x04;                    // flag bit 2 = color key enabled
+        headerView.setUint16(14, rgb565 & 0xFFFF, true);   // RGB565 color key LE
+      }
+
       const hWidth  = headerView.getUint16(6, true);
       const hHeight = headerView.getUint16(8, true);
       const hFormat = output[5];
@@ -219,8 +230,8 @@ class TextureBuilder extends BaseBuilder {
    * 8       2     Height (uint16 LE)
    * 10      2     Palette index (uint16 LE) — index into palette map (0 = none)
    * 12      1     Palette offset (uint8)
-   * 13      1     Flags (bit 0 = RLE compressed, bit 1 = pre-rotated 90° CW)
-   * 14      2     Reserved
+   * 13      1     Flags (bit 0 = RLE, bit 1 = pre-rotated 90° CW, bit 2 = color key)
+   * 14      2     Color key (uint16 LE, RGB565) — valid when flag bit 2 set
    * 16      16    Reserved (future: animation frame count, etc.)
    */
   buildD2Header(width, height, format, paletteIndex, paletteOffset, flags = 0) {

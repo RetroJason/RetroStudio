@@ -10,9 +10,274 @@
       "functions": []
     },
     {
-      "name": "Graphics",
-      "description": "Graphics and rendering functions",
-      "functions": []
+      "name": "Sprite",
+      "description": "Sprite creation, animation, and transform functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a sprite instance by name (loads .d2s/.d2f from build)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite asset name (matches d2s_header_t.name)"}
+          ],
+          "returns": {"type": "string", "description": "The sprite name (handle for all other calls)"},
+          "example": "local hero = Sprite.Create(\"hero\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove a sprite from the scene",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "example": "Sprite.Destroy(\"hero\")"
+        },
+        {
+          "name": "Clone",
+          "description": "Deep-clone a sprite instance under a new name",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Source sprite name"},
+            {"name": "newName", "type": "string", "description": "New sprite name"}
+          ],
+          "returns": {"type": "string", "description": "The new sprite name"},
+          "example": "Sprite.Clone(\"hero\", \"hero2\")"
+        },
+        {
+          "name": "SetPosition",
+          "description": "Set sprite position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "x", "type": "int32", "description": "X position"},
+            {"name": "y", "type": "int32", "description": "Y position"}
+          ],
+          "example": "Sprite.SetPosition(\"hero\", 100, 200)"
+        },
+        {
+          "name": "GetPosition",
+          "description": "Get sprite position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32, int32", "description": "X and Y position"},
+          "example": "local x, y = Sprite.GetPosition(\"hero\")"
+        },
+        {
+          "name": "SetPositionX",
+          "description": "Set sprite X position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "x", "type": "int32", "description": "X position"}
+          ],
+          "example": "Sprite.SetPositionX(\"hero\", 100)"
+        },
+        {
+          "name": "GetPositionX",
+          "description": "Get sprite X position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "X position"},
+          "example": "local x = Sprite.GetPositionX(\"hero\")"
+        },
+        {
+          "name": "SetPositionY",
+          "description": "Set sprite Y position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "y", "type": "int32", "description": "Y position"}
+          ],
+          "example": "Sprite.SetPositionY(\"hero\", 200)"
+        },
+        {
+          "name": "GetPositionY",
+          "description": "Get sprite Y position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "Y position"},
+          "example": "local y = Sprite.GetPositionY(\"hero\")"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set sprite center of rotation",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "centerX", "type": "int32", "description": "Center X"},
+            {"name": "centerY", "type": "int32", "description": "Center Y"}
+          ],
+          "example": "Sprite.SetCenter(\"hero\", 8, 16)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get sprite center of rotation",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Center X and Y"},
+          "example": "local cx, cy = Sprite.GetCenter(\"hero\")"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set sprite display size",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "width", "type": "int32", "description": "Width"},
+            {"name": "height", "type": "int32", "description": "Height"}
+          ],
+          "example": "Sprite.SetSize(\"hero\", 32, 32)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get sprite display size",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height"},
+          "example": "local w, h = Sprite.GetSize(\"hero\")"
+        },
+        {
+          "name": "SetRotation",
+          "description": "Set sprite rotation in degrees",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "angle", "type": "int32", "description": "Rotation angle in degrees"}
+          ],
+          "example": "Sprite.SetRotation(\"hero\", 45)"
+        },
+        {
+          "name": "GetRotation",
+          "description": "Get sprite rotation in degrees",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "Rotation in degrees"},
+          "example": "local angle = Sprite.GetRotation(\"hero\")"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set sprite scale",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "Sprite.SetScale(\"hero\", 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get sprite scale",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = Sprite.GetScale(\"hero\")"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set sprite tint color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "Sprite.SetColor(\"hero\", 0x00FF0000)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get sprite tint color",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = Sprite.GetColor(\"hero\")"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this sprite uses",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "Sprite.SetPaletteSlot(\"hero\", 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get sprite palette slot",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = Sprite.GetPaletteSlot(\"hero\")"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set sprite visibility",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "Sprite.SetVisible(\"hero\", false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get sprite visibility",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = Sprite.GetVisible(\"hero\")"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set sprite attribute flags (mirror, repeat, etc.)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "Sprite.SetAttributes(\"hero\", 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get sprite attribute flags",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = Sprite.GetAttributes(\"hero\")"
+        },
+        {
+          "name": "SetAnimation",
+          "description": "Set the active animation by name (does not auto-play)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "animName", "type": "string", "description": "Animation name (e.g. \"idle\", \"run\")"}
+          ],
+          "example": "Sprite.SetAnimation(\"hero\", \"run\")"
+        },
+        {
+          "name": "Play",
+          "description": "Start native auto-animation (ticked by engine, no Lua calls needed per frame)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "animName", "type": "string", "description": "Animation name (optional, uses current if omitted)"}
+          ],
+          "example": "Sprite.Play(\"hero\", \"run\")"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop native auto-animation (freeze on current frame)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"}
+          ],
+          "example": "Sprite.Stop(\"hero\")"
+        },
+        {
+          "name": "UpdateAnimation",
+          "description": "Manual animation tick (for frame-level control from Lua)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite name"},
+            {"name": "deltaTime", "type": "float", "description": "Time elapsed in seconds"}
+          ],
+          "example": "Sprite.UpdateAnimation(\"hero\", dt)"
+        }
+      ]
     },
     {
       "name": "Music",

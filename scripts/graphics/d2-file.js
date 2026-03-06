@@ -73,16 +73,216 @@ class D2File {
       }
     }
 
-    // 4. Assemble D2TX binary (header + pixel data)
+    // 4. Resolve color key → RGB565
+    let colorKey = -1;
+    if (textureCfg.useColorKey) {
+      const hex = textureCfg.transparentColor || '#FF00FF';
+      const r = parseInt(hex.substring(1, 3), 16) || 0;
+      const g = parseInt(hex.substring(3, 5), 16) || 0;
+      const b = parseInt(hex.substring(5, 7), 16) || 0;
+      colorKey = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
+    }
+
+    // 5. Assemble D2TX binary (header + pixel data)
     const d2 = buildD2TX(buildW, buildH, fmtEnum, packed, {
       paletteOffset: palOff,
       rle: isRLE,
       preRotated: rotation === 90,
+      colorKey,
     });
 
     console.log(`[D2File] Built ${format} ${buildW}×${buildH} → ${d2.length} bytes` +
                 `${isRLE ? ' (RLE)' : ''}${rotation === 90 ? ' (rot90)' : ''}`);
     return d2;
+  }
+
+  /**
+   * Convert RGBA8888 pixel data to any target D2 format.
+   *
+   * Input:  Uint8ClampedArray | Uint8Array of RGBA bytes (4 per pixel).
+   * Output: Uint8Array of format-encoded bytes ready for buildD2TX().
+   *
+   * For indexed formats this is NOT the right path — use palette matching +
+   * packIndexedPixels instead.  This handles direct-colour & alpha-only modes.
+   *
+   * @param {Uint8Array|Uint8ClampedArray} rgba  Source pixels (R,G,B,A,…).
+   * @param {string} formatStr  D2 format string e.g. 'd2_mode_rgba8888'.
+   * @returns {Uint8Array}
+   */
+  static convertRGBAToFormat(rgba, formatStr) {
+    const pixelCount = rgba.length / 4;
+    const fmtEnum = FORMAT_STRING_TO_ENUM[formatStr];
+
+    switch (fmtEnum) {
+      // ── 32-bit ────────────────────────────────────────
+      case D2_FORMAT.RGBA8888:
+        return new Uint8Array(rgba.buffer ? rgba : new Uint8Array(rgba));
+
+      case D2_FORMAT.ARGB8888: {
+        const out = new Uint8Array(pixelCount * 4);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 4) {
+          out[o]     = rgba[i + 3]; // A
+          out[o + 1] = rgba[i];     // R
+          out[o + 2] = rgba[i + 1]; // G
+          out[o + 3] = rgba[i + 2]; // B
+        }
+        return out;
+      }
+
+      // ── 24-bit ────────────────────────────────────────
+      case D2_FORMAT.RGB888: {
+        const out = new Uint8Array(pixelCount * 3);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 3) {
+          out[o]     = rgba[i];
+          out[o + 1] = rgba[i + 1];
+          out[o + 2] = rgba[i + 2];
+        }
+        return out;
+      }
+
+      // ── 16-bit ────────────────────────────────────────
+      case D2_FORMAT.RGB565: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const r5 = (rgba[i]     >> 3) & 0x1F;
+          const g6 = (rgba[i + 1] >> 2) & 0x3F;
+          const b5 = (rgba[i + 2] >> 3) & 0x1F;
+          const v = (r5 << 11) | (g6 << 5) | b5;
+          out[o]     = v & 0xFF;         // low byte
+          out[o + 1] = (v >> 8) & 0xFF;  // high byte
+        }
+        return out;
+      }
+
+      case D2_FORMAT.ARGB1555: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const a1 = rgba[i + 3] >= 128 ? 1 : 0;
+          const r5 = (rgba[i]     >> 3) & 0x1F;
+          const g5 = (rgba[i + 1] >> 3) & 0x1F;
+          const b5 = (rgba[i + 2] >> 3) & 0x1F;
+          const v = (a1 << 15) | (r5 << 10) | (g5 << 5) | b5;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.RGBA5551: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const r5 = (rgba[i]     >> 3) & 0x1F;
+          const g5 = (rgba[i + 1] >> 3) & 0x1F;
+          const b5 = (rgba[i + 2] >> 3) & 0x1F;
+          const a1 = rgba[i + 3] >= 128 ? 1 : 0;
+          const v = (r5 << 11) | (g5 << 6) | (b5 << 1) | a1;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.RGB555: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const r5 = (rgba[i]     >> 3) & 0x1F;
+          const g5 = (rgba[i + 1] >> 3) & 0x1F;
+          const b5 = (rgba[i + 2] >> 3) & 0x1F;
+          const v = (r5 << 10) | (g5 << 5) | b5;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.ARGB4444: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const a4 = (rgba[i + 3] >> 4) & 0xF;
+          const r4 = (rgba[i]     >> 4) & 0xF;
+          const g4 = (rgba[i + 1] >> 4) & 0xF;
+          const b4 = (rgba[i + 2] >> 4) & 0xF;
+          const v = (a4 << 12) | (r4 << 8) | (g4 << 4) | b4;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.RGBA4444: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const r4 = (rgba[i]     >> 4) & 0xF;
+          const g4 = (rgba[i + 1] >> 4) & 0xF;
+          const b4 = (rgba[i + 2] >> 4) & 0xF;
+          const a4 = (rgba[i + 3] >> 4) & 0xF;
+          const v = (r4 << 12) | (g4 << 8) | (b4 << 4) | a4;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.RGB444: {
+        const out = new Uint8Array(pixelCount * 2);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 2) {
+          const r4 = (rgba[i]     >> 4) & 0xF;
+          const g4 = (rgba[i + 1] >> 4) & 0xF;
+          const b4 = (rgba[i + 2] >> 4) & 0xF;
+          const v = (r4 << 8) | (g4 << 4) | b4;
+          out[o]     = v & 0xFF;
+          out[o + 1] = (v >> 8) & 0xFF;
+        }
+        return out;
+      }
+
+      // ── Alpha-only ────────────────────────────────────
+      case D2_FORMAT.ALPHA8: {
+        const out = new Uint8Array(pixelCount);
+        for (let i = 0; i < pixelCount; i++) out[i] = rgba[i * 4 + 3];
+        return out;
+      }
+
+      case D2_FORMAT.ALPHA4: {
+        const out = new Uint8Array(Math.ceil(pixelCount / 2));
+        for (let i = 0; i < pixelCount; i++) {
+          const a4 = (rgba[i * 4 + 3] >> 4) & 0xF;
+          const byteIdx = i >> 1;
+          if ((i & 1) === 0) {
+            out[byteIdx] = a4 << 4;
+          } else {
+            out[byteIdx] |= a4;
+          }
+        }
+        return out;
+      }
+
+      case D2_FORMAT.ALPHA2: {
+        const out = new Uint8Array(Math.ceil(pixelCount / 4));
+        for (let i = 0; i < pixelCount; i++) {
+          const a2 = (rgba[i * 4 + 3] >> 6) & 0x3;
+          const byteIdx = i >> 2;
+          const shift = 6 - ((i & 3) * 2);
+          out[byteIdx] |= a2 << shift;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.ALPHA1: {
+        const out = new Uint8Array(Math.ceil(pixelCount / 8));
+        for (let i = 0; i < pixelCount; i++) {
+          const a1 = rgba[i * 4 + 3] >= 128 ? 1 : 0;
+          const byteIdx = i >> 3;
+          const bitIdx = 7 - (i & 7);
+          if (a1) out[byteIdx] |= 1 << bitIdx;
+        }
+        return out;
+      }
+
+      default:
+        console.warn(`[D2File] convertRGBAToFormat: unknown format ${formatStr}, returning RGBA8888`);
+        return new Uint8Array(rgba.buffer ? rgba : new Uint8Array(rgba));
+    }
   }
 
   // ── Path helpers ──────────────────────────────────────────────────
@@ -158,6 +358,32 @@ class D2File {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         out[x * h + (h - 1 - y)] = indices[y * w + x];
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Rotate format-encoded pixel bytes 90° clockwise.
+   * Works for any bpp ≥ 8 where each pixel is an integral number of bytes.
+   * For sub-byte formats this is NOT used (indices are rotated before packing).
+   *
+   * @param {Uint8Array} data  Format-encoded bytes.
+   * @param {number} w         Source width in pixels.
+   * @param {number} h         Source height in pixels.
+   * @param {number} bpp       Bits per pixel (must be multiple of 8).
+   * @returns {Uint8Array}     Rotated bytes in H×W layout.
+   */
+  static _rotateDirectBytes90CW(data, w, h, bpp) {
+    const bytesPerPixel = bpp / 8;
+    const out = new Uint8Array(w * h * bytesPerPixel);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const srcOff = (y * w + x) * bytesPerPixel;
+        const dstOff = (x * h + (h - 1 - y)) * bytesPerPixel;
+        for (let b = 0; b < bytesPerPixel; b++) {
+          out[dstOff + b] = data[srcOff + b];
+        }
       }
     }
     return out;

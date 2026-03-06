@@ -63,7 +63,7 @@ class SimpleImageViewer extends ViewerBase {
         
         <!-- Canvas Container -->
         <div style="flex: 1; overflow: auto; background: #1a1a1a; position: relative; display: flex; align-items: center; justify-content: center;">
-          <canvas id="imageCanvas" style="border: 1px solid #555; background: #fff;"></canvas>
+          <canvas id="imageCanvas" style="border: 1px solid #555; background-color: #fff; background-image: linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0;"></canvas>
         </div>
         
         <!-- Status Bar -->

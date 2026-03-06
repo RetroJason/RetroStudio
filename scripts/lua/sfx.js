@@ -15,30 +15,17 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * @param {Object} luaState - The Lua execution state
    */
   async initialize(luaState) {
-    console.log('[LuaSfxExtensions] Initializing SFX extension...');
-    
     this.setLuaState(luaState);
-    
-    // Get audio services
-    console.log('[LuaSfxExtensions] DEBUG: Getting audio engine...');
-    console.log('[LuaSfxExtensions] DEBUG: window.serviceContainer exists:', !!window.serviceContainer);
-    console.log('[LuaSfxExtensions] DEBUG: window.serviceContainer.get exists:', !!window.serviceContainer?.get);
     
     this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine;
     this.resourceManager = window.serviceContainer?.get?.('resourceManager') || window.resourceManager;
     
-    console.log('[LuaSfxExtensions] DEBUG: Retrieved audioEngine:', !!this.audioEngine);
-    console.log('[LuaSfxExtensions] DEBUG: Retrieved resourceManager:', !!this.resourceManager);
-    
     if (!this.audioEngine) {
-      console.warn('[LuaSfxExtensions] AudioEngine not available - SFX functionality will be limited');
+      console.warn('[SFX] AudioEngine not available');
     }
-    
     if (!this.resourceManager) {
-      console.warn('[LuaSfxExtensions] ResourceManager not available - SFX functionality will be limited');
+      console.warn('[SFX] ResourceManager not available');
     }
-        
-    console.log('[LuaSfxExtensions] SFX extension initialized successfully');
   }
 
   /**
@@ -50,28 +37,16 @@ class LuaSFXExtensions extends BaseLuaExtension {
     const resourceId = this.luaState.raw_tostring(2) || '';
     const shouldRepeat = this.luaState.raw_tostring(3) === 'true' || false;
     
-    console.log(`[LuaSfxExtensions] Playing SFX: ${resourceId}, repeat: ${shouldRepeat}`);
-    
     if (!resourceId) {
-      console.warn('[LuaSfxExtensions] Play called with empty resource ID');
+      console.warn('[SFX] Play called with empty resource ID');
       return false;
     }
 
-    // Debug: Check audio engine availability
-    console.log(`[LuaSfxExtensions] Audio engine available: ${!!this.audioEngine}`);
-    
-    // Get resource from centralized system
     const resource = this.gameEmulator.GetResource(resourceId);
     if (!resource) {
-      const errorMsg = `SFX resource not found: ${resourceId}`;
-      console.error(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
+      console.error(`[SFX] Resource not found: ${resourceId}`);
+      throw new Error(`SFX resource not found: ${resourceId}`);
     }
-
-    // Debug: Check resource details
-    console.log(`[LuaSfxExtensions] Resource found: ${resourceId}`, resource);
-    console.log(`[LuaSfxExtensions] Resource isPreloaded: ${resource.isPreloaded}`);
-    console.log(`[LuaSfxExtensions] Resource audioResource: ${resource.audioResource}`);
     
     // Check if resource is preloaded
     if (!resource.isPreloaded) {
@@ -98,7 +73,6 @@ class LuaSFXExtensions extends BaseLuaExtension {
       // For now, we'll use default volume of 1.0 and ignore shouldRepeat
       // TODO: Implement proper repeat functionality in audio engine
       this.audioEngine.startSound(resource.audioResource, 1.0);
-      console.log(`[LuaSfxExtensions] Playing preloaded SFX: ${resourceId} (${resource.audioResource}) with volume 1.0, repeat: ${shouldRepeat}`);
       return true;
     } else {
       const errorMsg = `Audio system not available or resource not properly preloaded - cannot play SFX: ${resourceId}`;
@@ -113,8 +87,6 @@ class LuaSFXExtensions extends BaseLuaExtension {
    */
   Stop() {
     const resourceId = this.luaState.raw_tostring(2) || '';
-    
-    console.log(`[LuaSfxExtensions] Stopping SFX: ${resourceId}`);
     
     if (!resourceId) {
       console.warn('[LuaSfxExtensions] Stop called with empty resource ID');
@@ -180,8 +152,6 @@ class LuaSFXExtensions extends BaseLuaExtension {
     const volume = parseFloat(this.luaState.raw_tostring(3) || 1.0);
     const volumeLevel = Math.max(0.0, Math.min(1.0, volume));
     
-    console.log(`[LuaSfxExtensions] Setting volume for ${resourceId}: ${volumeLevel}`);
-    
     if (!resourceId) {
       console.warn('[LuaSfxExtensions] SetVolume called with empty resource ID');
       return false;
@@ -212,21 +182,10 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * @returns {number} Number of available resources
    */
   List() {
-    console.log('[LuaSfxExtensions] Available SFX resources:');
-    
     if (!this.gameEmulator) {
-      var errorMsg = 'Game emulator not available';
-      console.error(`[LuaSfxExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
+      throw new Error('Game emulator not available');
     }
-    
-    var sfxResources = this.gameEmulator.GetResourcesByType('SFX');
-    for (var i = 0; i < sfxResources.length; i++) {
-      var resource = sfxResources[i];
-      console.log(`  ${resource.id} -> ${resource.filePath}`);
-    }
-    
-    return sfxResources.length;
+    return this.gameEmulator.GetResourcesByType('SFX').length;
   }
 }
 

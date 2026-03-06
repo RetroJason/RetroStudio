@@ -505,23 +505,16 @@ class GameEmulator {
     try {
       this.resourceMap.clear();
       
-      // Get all build files
-      console.log('[GameEmulator] DEBUG: Getting all build files...');
       const buildFiles = this.getAllBuildFiles();
-      console.log(`[GameEmulator] DEBUG: Found ${buildFiles.length} total build files:`, buildFiles);
       
       // Process all build files and create resource mappings based on folder structure
       for (const file of buildFiles) {
         const resourceMapping = this.createResourceMapping(file);
         if (resourceMapping) {
           this.resourceMap.set(resourceMapping.id, resourceMapping);
-          console.log(`[GameEmulator] DEBUG: Mapped resource: ${resourceMapping.id} -> ${file.path}`);
         }
       }
-      
-      console.log(`[GameEmulator] DEBUG: Final resource map size: ${this.resourceMap.size}`);
-      console.log(`[GameEmulator] DEBUG: All resource IDs:`, Array.from(this.resourceMap.keys()));
-      
+
       // Preload all resources into memory
       await this.preloadResources();
       
@@ -560,7 +553,6 @@ class GameEmulator {
     }
 
     if (!folderMatch) {
-      console.log(`[GameEmulator] DEBUG: Skipping file with no recognized folder structure: ${file.path}`);
       return null;
     }
 
@@ -584,11 +576,8 @@ class GameEmulator {
     // Check if this file type is supported for this folder
     const supportedExtensions = resourceTypeMap[folderMatch] || [];
     if (supportedExtensions.length > 0 && !supportedExtensions.includes(fileExtension)) {
-      console.log(`[GameEmulator] DEBUG: Skipping unsupported file type .${fileExtension} in ${folderMatch} folder: ${file.path}`);
       return null;
     }
-
-    console.log(`[GameEmulator] DEBUG: Creating ${folderMatch} resource: ${resourceId} (.${fileExtension})`);
 
     return {
       type: folderMatch,
@@ -656,52 +645,30 @@ class GameEmulator {
    * Create Lua constants for all resource types
    */
   async createAllLuaConstants() {
-    console.log('[GameEmulator] DEBUG: Creating Lua constants for all resource types...');
-    
     if (!this.luaState) {
-      console.error('[GameEmulator] DEBUG: Lua state not available - skipping constant creation');
+      console.error('[GameEmulator] Lua state not available - skipping constant creation');
       return;
     }
     
-    console.log('[GameEmulator] DEBUG: Lua state is available, proceeding with constant creation');
-    
     try {
-      // Create SFX constants
-      console.log('[GameEmulator] DEBUG: Getting SFX resource constants...');
       const sfxConstants = this.GetResourceConstants('SFX');
-      console.log(`[GameEmulator] DEBUG: Got ${Object.keys(sfxConstants).length} SFX constants:`, sfxConstants);
       
       if (Object.keys(sfxConstants).length > 0) {
         let luaCode = 'SFX = SFX or {}\n';
         
         for (const [constantName, resourceId] of Object.entries(sfxConstants)) {
           luaCode += `SFX.${constantName} = "${resourceId}"\n`;
-          console.log(`[GameEmulator] DEBUG: Adding constant: SFX.${constantName} = "${resourceId}"`);
         }
         
-        console.log(`[GameEmulator] DEBUG: About to execute Lua code:\n${luaCode}`);
         this.luaState.execute(luaCode);
-        console.log(`[GameEmulator] DEBUG: Successfully executed Lua constants creation`);
-        
-        // Verify the constants were created
-        try {
-          const verifyCode = 'return type(SFX), SFX';
-          const result = this.luaState.execute(verifyCode);
-          console.log(`[GameEmulator] DEBUG: Verification - SFX type and value:`, result);
-        } catch (verifyError) {
-          console.error('[GameEmulator] DEBUG: Failed to verify SFX constants:', verifyError);
-        }
         
         console.log(`[GameEmulator] Created ${Object.keys(sfxConstants).length} SFX constants in Lua`);
-        console.log('[GameEmulator] SFX constants:', Object.keys(sfxConstants));
-      } else {
-        console.warn('[GameEmulator] DEBUG: No SFX constants to create');
       }
       
       // TODO: Add other resource type constants here (Graphics, Music, etc.)
       
     } catch (error) {
-      console.error('[GameEmulator] DEBUG: Failed to create Lua constants:', error);
+      console.error('[GameEmulator] Failed to create Lua constants:', error);
     }
   }
 
@@ -714,7 +681,6 @@ class GameEmulator {
     const resource = this.resourceMap.get(resourceId);
     if (!resource) {
       console.warn(`[GameEmulator] Resource not found: ${resourceId}`);
-      console.log('[GameEmulator] Available resources:', Array.from(this.resourceMap.keys()));
       return null;
     }
     
@@ -747,27 +713,15 @@ class GameEmulator {
    * @returns {Object} Map of constant names to resource IDs
    */
   GetResourceConstants(type = null) {
-    console.log(`[GameEmulator] DEBUG: GetResourceConstants called with type: ${type}`);
-    console.log(`[GameEmulator] DEBUG: Current resourceMap size: ${this.resourceMap.size}`);
-    console.log(`[GameEmulator] DEBUG: All resources in map:`, Array.from(this.resourceMap.entries()));
-    
     const constants = {};
     for (const [resourceId, resource] of this.resourceMap) {
-      console.log(`[GameEmulator] DEBUG: Processing resource: ${resourceId}, type: ${resource.type}`);
       if (!type || resource.type === type) {
-        // Extract constant name from resource ID (e.g., "SFX.COOL" -> "COOL")
         const parts = resourceId.split('.');
         if (parts.length === 2) {
-          const constantName = parts[1];
-          constants[constantName] = resourceId;
-          console.log(`[GameEmulator] DEBUG: Added constant: ${constantName} = ${resourceId}`);
-        } else {
-          console.warn(`[GameEmulator] DEBUG: Invalid resource ID format: ${resourceId}`);
+          constants[parts[1]] = resourceId;
         }
       }
     }
-    
-    console.log(`[GameEmulator] DEBUG: Final constants object:`, constants);
     return constants;
   }
   
@@ -1516,9 +1470,7 @@ class GameEmulator {
       `);
       
       // Initialize centralized resource mappings
-      console.log('[GameEmulator] DEBUG: About to initialize resource mappings...');
       await this.initializeResourceMappings();
-      console.log('[GameEmulator] DEBUG: Resource mappings initialization completed');
       
       // Load and initialize Lua extensions
       console.log('[GameEmulator] Loading Lua extensions...');
@@ -1638,6 +1590,39 @@ class GameEmulator {
       console.log('[GameEmulator] Script loaded and validated successfully');
       this.updateStatus('Script loaded successfully', 'success');
       
+      // ── Initialize D2Canvas GPU renderer on the game canvas ──────
+      try {
+        const root = this.contentContainer || document;
+        const gameCanvas = root.querySelector('#game-canvas');
+        if (gameCanvas && window.D2Canvas) {
+          // Set canvas to RetroWatch LCD resolution (448 wide × 368 tall)
+          gameCanvas.width = 448;
+          gameCanvas.height = 368;
+          this._gpu = new D2Canvas(gameCanvas);
+          this._gpu.resize(448, 368);
+          console.log('[GameEmulator] D2Canvas GPU renderer initialized (448×368)');
+
+          // Load palette map (PMAP) and push first palette to GPU
+          const spriteExt = this.extensionLoader?.getExtension('Sprite');
+          if (spriteExt) {
+            await spriteExt.initGpu(this._gpu);
+          }
+        } else {
+          console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
+          this._gpu = null;
+        }
+      } catch (gpuError) {
+        console.error('[GameEmulator] GPU init failed:', gpuError);
+        this._gpu = null;
+        // Lose the broken WebGL context to prevent cascading failures
+        try {
+          const root = this.contentContainer || document;
+          const gameCanvas = root.querySelector('#game-canvas');
+          const loseCtx = gameCanvas?.getContext('webgl2')?.getExtension('WEBGL_lose_context');
+          if (loseCtx) loseCtx.loseContext();
+        } catch (_) { /* best effort */ }
+      }
+      
       // Start the game loop
       console.log('[GameEmulator] About to start game loop...');
       this.startGameLoop();
@@ -1691,16 +1676,25 @@ class GameEmulator {
           this.luaState.execute(`Update(${deltaTime})`);
         }
         
+        // ── Render pass ──────────────────────────────────────────────
+        // Clear the GPU canvas and let each renderable extension draw.
+        // Sprite extension uses D2Canvas.blit() for hardware-accurate rendering.
+        if (this._gpu) {
+          this._gpu.clear(0, 0, 0, 1);
+          const spriteExt = this.extensionLoader?.getExtension('Sprite');
+          if (spriteExt) {
+            spriteExt.renderFrame(this._gpu, deltaTime);
+          }
+          this._gpu.present();
+        }
+        
         // Always check for new print output from Lua (even when paused, to capture any buffered output)
         this.captureLuaPrintOutput();
         
         // Debug input state every second (only when there's actual input)
         if (this.frameCount % 60 === 0) {
           if (this.inputManager && this.inputManager.isActive) {
-            const debugInfo = this.inputManager.getDebugInfo();
-            if (debugInfo.buttonsHeld !== 'none') {
-              console.log('[GameEmulator] Input debug:', debugInfo);
-            }
+            // Input debug available via inputManager.getDebugInfo() if needed
           }
         }
       } catch (error) {
@@ -1743,6 +1737,12 @@ class GameEmulator {
     // Reset all extensions (clear old state)
     if (this.extensionLoader) {
       this.extensionLoader.resetExtensions();
+    }
+    
+    // Destroy GPU renderer (WebGL context will be reclaimed)
+    if (this._gpu) {
+      this._gpu.destroy();
+      this._gpu = null;
     }
     
     // Stop all audio
@@ -1883,19 +1883,20 @@ class GameEmulator {
    * Update pause/resume button appearance
    */
   updatePauseResumeButton() {
-    const pauseResumeBtn = document.querySelector('#pauseResumeBtn');
+    const root = this.contentContainer || document;
+    const pauseResumeBtn = root.querySelector('#pauseResumeBtn');
     if (pauseResumeBtn) {
       const icon = pauseResumeBtn.querySelector('.btn-icon');
       const text = pauseResumeBtn.querySelector('.btn-text');
       
       if (this.isPaused) {
-        icon.textContent = '▶️';
-        text.textContent = 'Resume';
+        if (icon) icon.textContent = '▶️';
+        if (text) text.textContent = 'Resume';
         pauseResumeBtn.classList.add('paused');
         pauseResumeBtn.title = 'Resume Game';
       } else {
-        icon.textContent = '⏸️';
-        text.textContent = 'Pause';
+        if (icon) icon.textContent = '⏸️';
+        if (text) text.textContent = 'Pause';
         pauseResumeBtn.classList.remove('paused');
         pauseResumeBtn.title = 'Pause Game';
       }
@@ -1903,28 +1904,29 @@ class GameEmulator {
   }
 
   updatePlayPauseButton() {
-    const playPauseBtn = document.querySelector('#playPauseBtn');
+    const root = this.contentContainer || document;
+    const playPauseBtn = root.querySelector('#playPauseBtn');
     if (playPauseBtn) {
       const icon = playPauseBtn.querySelector('.btn-icon');
       const text = playPauseBtn.querySelector('.btn-text');
       
       if (!this.isRunning) {
         // Not running - show play
-        icon.textContent = '▶️';
-        text.textContent = 'Play';
+        if (icon) icon.textContent = '▶️';
+        if (text) text.textContent = 'Play';
         playPauseBtn.classList.remove('paused', 'running');
         playPauseBtn.title = 'Play Game';
       } else if (this.isPaused) {
         // Running but paused - show play
-        icon.textContent = '▶️';
-        text.textContent = 'Resume';
+        if (icon) icon.textContent = '▶️';
+        if (text) text.textContent = 'Resume';
         playPauseBtn.classList.add('paused');
         playPauseBtn.classList.remove('running');
         playPauseBtn.title = 'Resume Game';
       } else {
         // Running and not paused - show pause
-        icon.textContent = '⏸️';
-        text.textContent = 'Pause';
+        if (icon) icon.textContent = '⏸️';
+        if (text) text.textContent = 'Pause';
         playPauseBtn.classList.add('running');
         playPauseBtn.classList.remove('paused');
         playPauseBtn.title = 'Pause Game';
@@ -2223,7 +2225,7 @@ class GameEmulator {
       
       <div class="game-main-area">
         <div class="game-canvas-container">
-          <canvas id="game-canvas" width="800" height="600"></canvas>
+          <canvas id="game-canvas" width="448" height="368"></canvas>
           <div class="game-info">Game running... (simulated)</div>
         </div>
         

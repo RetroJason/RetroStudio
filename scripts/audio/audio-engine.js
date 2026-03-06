@@ -36,8 +36,8 @@ function setupModWorker() {
       const status = document.getElementById('status');
       
       if (e.data.type === 'log') {
-        console.log(e.data.message);
-        status.textContent = e.data.message.replace('[ModWorker] ', '');
+        // Worker log silenced
+        if (status) status.textContent = e.data.message.replace('[ModWorker] ', '');
       } else if (e.data.type === 'error') {
         console.error('MOD Worker Error:', e.data.message);
         status.textContent = `Error: ${e.data.message}`;

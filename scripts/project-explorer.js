@@ -210,6 +210,7 @@ class ProjectExplorer {
       const imageFiles = {};
       const textureFiles = {};
       const d2Files = {};
+      const framesetFiles = {};
       const otherFiles = {};
       
       // First pass: categorize files
@@ -222,6 +223,8 @@ class ProjectExplorer {
             textureFiles[name] = data;
           } else if (ext === '.d2') {
             d2Files[name] = data;
+          } else if (ext === '.frameset') {
+            framesetFiles[name] = data;
           } else {
             otherFiles[name] = data;
           }
@@ -243,8 +246,9 @@ class ProjectExplorer {
         const baseName = imageName.substring(0, imageName.lastIndexOf('.'));
         const linkedTextureName = baseName + '.texture';
         const linkedD2Name = baseName + '.d2';
+        const linkedFramesetName = baseName + '.frameset';
         
-        const hasLinked = textureFiles[linkedTextureName] || d2Files[linkedD2Name];
+        const hasLinked = textureFiles[linkedTextureName] || d2Files[linkedD2Name] || framesetFiles[linkedFramesetName];
         if (hasLinked) {
           // Create image with linked files as children
           const imageWithChild = JSON.parse(JSON.stringify(imageData));
@@ -256,6 +260,14 @@ class ProjectExplorer {
             textureData.originalPath = originalTexturePath;
             imageWithChild.children[linkedTextureName] = textureData;
             delete textureFiles[linkedTextureName];
+          }
+
+          if (framesetFiles[linkedFramesetName]) {
+            const framesetData = JSON.parse(JSON.stringify(framesetFiles[linkedFramesetName]));
+            const originalFramesetPath = currentPath ? `${currentPath}/${linkedFramesetName}` : linkedFramesetName;
+            framesetData.originalPath = originalFramesetPath;
+            imageWithChild.children[linkedFramesetName] = framesetData;
+            delete framesetFiles[linkedFramesetName];
           }
 
           if (d2Files[linkedD2Name]) {
@@ -272,8 +284,9 @@ class ProjectExplorer {
         }
       }
       
-      // Add any remaining unlinked texture / d2 files
+      // Add any remaining unlinked texture / frameset / d2 files
       Object.assign(newChildren, textureFiles);
+      Object.assign(newChildren, framesetFiles);
       Object.assign(newChildren, d2Files);
       
       return {
@@ -1066,12 +1079,13 @@ class ProjectExplorer {
     // Emit file addition event for other components to listen to
     this.emitFileAddedEvent({ ...file, name: finalFileName }, path);
     
-    // Auto-create texture file for image files (after file is added to project)
+    // Auto-create texture and frameset files for image files (after file is added to project)
     if (this.isImageFile(finalFileName)) {
-      console.log('[ProjectExplorer] Image file detected, will create texture file:', finalFileName);
+      console.log('[ProjectExplorer] Image file detected, will create texture + frameset files:', finalFileName);
       persistDone.then(() => {
-        console.log('[ProjectExplorer] Persistence done, creating texture file for:', finalFileName);
+        console.log('[ProjectExplorer] Persistence done, creating companion files for:', finalFileName);
         this.createTextureFileForImage(uiFullPath, path, finalFileName);
+        this.createFramesetFileForImage(uiFullPath, path, finalFileName);
       });
     }
     
@@ -3206,6 +3220,88 @@ class ProjectExplorer {
     }
   }
 
+  // Auto-create frameset file for image files
+  async createFramesetFileForImage(imageUIPath, imagePath, imageFileName) {
+    try {
+      const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
+      const framesetFileName = baseName + '.frameset';
+
+      const imageStoragePath = window.ProjectPaths?.normalizeStoragePath
+        ? window.ProjectPaths.normalizeStoragePath(imageUIPath)
+        : imageUIPath;
+      const framesetStoragePath = imageStoragePath.replace(imageFileName, framesetFileName);
+      const framesetUIPath = imagePath + '/' + framesetFileName;
+
+      // Check if frameset file already exists
+      if (window.fileIOService) {
+        try {
+          const existing = await window.fileIOService.loadFile(framesetStoragePath);
+          if (existing) {
+            console.log('[ProjectExplorer] Frameset file already exists, skipping:', framesetFileName);
+            return;
+          }
+        } catch (e) {
+          // File doesn't exist, proceed
+        }
+      }
+
+      // Load image to get dimensions
+      let imageWidth = 32;
+      let imageHeight = 32;
+      try {
+        const imageFile = await window.fileIOService.loadFile(imageStoragePath);
+        if (imageFile && imageFile.fileContent) {
+          const img = new Image();
+          const dims = await new Promise((resolve) => {
+            img.onload = () => resolve({ width: img.width, height: img.height });
+            img.onerror = () => resolve({ width: 32, height: 32 });
+            img.src = imageFile.fileContent.startsWith('data:')
+              ? imageFile.fileContent
+              : `data:image/png;base64,${imageFile.fileContent}`;
+          });
+          imageWidth = dims.width;
+          imageHeight = dims.height;
+        }
+      } catch (error) {
+        console.warn('[ProjectExplorer] Could not load image for frameset dimensions:', error);
+      }
+
+      // Build frameset JSON — single frame covering the whole image
+      const framesetData = {
+        name: baseName,
+        imagePath: imageFileName,
+        imageWidth: imageWidth,
+        imageHeight: imageHeight,
+        frames: [
+          { id: 0, name: 'frame_0', x: 0, y: 0, w: imageWidth, h: imageHeight }
+        ],
+        metadata: {
+          created: new Date().toISOString(),
+          autoGenerated: true
+        }
+      };
+
+      const framesetContent = JSON.stringify(framesetData, null, 2);
+
+      if (window.fileIOService) {
+        await window.fileIOService.saveFile(framesetStoragePath, framesetContent);
+        console.log('[ProjectExplorer] Auto-created frameset file:', framesetStoragePath);
+
+        this.addFileToProject({
+          name: framesetFileName,
+          size: framesetContent.length,
+          lastModified: Date.now(),
+          originalPath: framesetUIPath
+        }, imagePath, true, true);
+
+        this.renderTree();
+        console.log('[ProjectExplorer] Frameset file created and tree refreshed');
+      }
+    } catch (error) {
+      console.error('[ProjectExplorer] Failed to auto-create frameset file:', error);
+    }
+  }
+
   // Public method to refresh the project explorer display
   refresh() {
     console.log('[ProjectExplorer] Refreshing display...');
@@ -3229,6 +3325,15 @@ class ProjectExplorer {
 
     // "Make Sprite" — shown for raw image files (not .texture)
     if (isFile && ['png', 'gif', 'jpg', 'jpeg', 'bmp'].includes(ext)) {
+      const makeFrameset = document.createElement('div');
+      makeFrameset.className = 'context-item';
+      makeFrameset.innerHTML = '<span>🖼️</span><span>Make Frameset</span>';
+      makeFrameset.addEventListener('click', () => {
+        this._hideContextMenu();
+        this._makeFrameset(nodePath);
+      });
+      menu.appendChild(makeFrameset);
+
       const makeSprite = document.createElement('div');
       makeSprite.className = 'context-item';
       makeSprite.innerHTML = '<span>🎞️</span><span>Make Sprite</span>';
@@ -3314,6 +3419,49 @@ class ProjectExplorer {
     } catch (error) {
       console.error('[ProjectExplorer] Failed to create sprite:', error);
       alert('Failed to create sprite: ' + error.message);
+    }
+  }
+
+  /**
+   * Create a .frameset file pre-linked to the given image path
+   * and open it in the Frameset Editor.
+   */
+  async _makeFrameset(imagePath) {
+    try {
+      console.log('[ProjectExplorer] Make Frameset from:', imagePath);
+
+      const baseName = imagePath.split('/').pop().replace(/\.[^.]+$/, '');
+      const framesetName = baseName + '.frameset';
+
+      const framesetJSON = (window.FramesetEditor && window.FramesetEditor.createFromImage)
+        ? window.FramesetEditor.createFromImage(imagePath)
+        : JSON.stringify({ name: baseName, imagePath }, null, 2);
+
+      const fm = window.fileManager || window.serviceContainer?.get('fileManager');
+      const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+        ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+      const storagePath = `${sourcesRoot}/Sprites/${framesetName}`;
+
+      if (fm) {
+        await fm.saveFile(storagePath, framesetJSON);
+      } else if (window.fileIOService) {
+        await window.fileIOService.saveFile(storagePath, framesetJSON);
+      }
+
+      this.addFileToProjectByName(framesetName, true, false);
+      this.renderTree();
+
+      if (window.tabManager) {
+        const componentInfo = this._getComponentForFile(storagePath, true);
+        if (componentInfo) {
+          window.tabManager.openInTab(storagePath, componentInfo, { isReadOnly: false });
+        }
+      }
+
+      console.log('[ProjectExplorer] Frameset created:', storagePath);
+    } catch (error) {
+      console.error('[ProjectExplorer] Failed to create frameset:', error);
+      alert('Failed to create frameset: ' + error.message);
     }
   }
 }
