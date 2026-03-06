@@ -1,0 +1,125 @@
+/* frameset-editor.css */
+/* Styles for the Frameset Editor */
+
+/* ===== Layout ===== */
+.frameset-editor-container {
+  height: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Segoe UI', sans-serif;
+  padding: 0;
+  overflow: hidden;
+}
+
+.frameset-editor-layout {
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ===== Sidebar ===== */
+.frameset-sidebar {
+  width: 280px;
+  min-width: 220px;
+  max-width: 380px;
+  background: #252526;
+  border-right: 1px solid #3c3c3c;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ===== Main area ===== */
+.frameset-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: 12px;
+  gap: 12px;
+}
+
+/* ===== Sections ===== */
+.frameset-section {
+  background: #2d2d30;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.frameset-section h3 {
+  margin: 0 0 6px 0;
+  color: #9cdcfe;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ===== Section header with inline button ===== */
+.frameset-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.frameset-section-header h3 {
+  margin: 0;
+}
+
+/* ===== Image preview (sidebar) ===== */
+.frameset-image-preview {
+  display: block;
+  margin: 0 auto;
+  image-rendering: pixelated;
+  border: 1px solid #3c3c3c;
+  border-radius: 3px;
+  background: #1a1a1a;
+  max-width: 100%;
+}
+
+/* ===== Filename label ===== */
+.frameset-tex-path {
+  font-size: 11px;
+  color: #9cdcfe;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  margin-top: 4px;
+}
+
+/* ===== Frame count ===== */
+.frameset-frame-count {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ===== Dimensions label ===== */
+.frameset-dim-label {
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ===== Gallery panel (main area) ===== */
+.frameset-gallery-panel {
+  background: #252526;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  padding: 10px;
+  flex: 1 1 0;
+  min-height: 80px;
+  overflow: auto;
+}
+
+.frameset-gallery-panel h4 {
+  margin: 0 0 8px 0;
+  color: #9cdcfe;
+  font-size: 13px;
+  font-weight: 500;
+}
