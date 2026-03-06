@@ -5,42 +5,39 @@ console.log('[SpriteEditor] Class definition loading');
 
 /**
  * SpriteEditorData — Serialisable data model for .sprite files.
- * Keeps a reference texture, a set of named frames (grid-sliced regions)
- * and a list of named animations built from those frames.
+ * References one or more .frameset files; animations are built from their frames.
  */
 class SpriteEditorData {
   constructor(options = {}) {
     this.name = options.name || 'untitled_sprite';
-    /** Path to the raw source image (PNG, GIF, etc.) inside the project.
-     *  We always work from the original artwork — .texture is a derived asset. */
+
+    /**
+     * Frameset references — array of { path } where path points to a .frameset file.
+     * At runtime the editor loads each frameset's JSON and caches its frames/image.
+     */
+    this.framesets = options.framesets || [];
+
+    // --- Legacy fields (kept for backward-compat with old .sprite files) ---
     this.imagePath = options.imagePath || '';
-    /** Pixel dimensions of the source image (set when loaded) */
     this.imageWidth = options.imageWidth || 0;
     this.imageHeight = options.imageHeight || 0;
-
-    // --- Frame grid settings ---
-    this.frameWidth = options.frameWidth || 0;   // 0 = full-texture (single frame)
+    this.frameWidth = options.frameWidth || 0;
     this.frameHeight = options.frameHeight || 0;
     this.gridOffsetX = options.gridOffsetX || 0;
     this.gridOffsetY = options.gridOffsetY || 0;
     this.gridSpacingX = options.gridSpacingX || 0;
     this.gridSpacingY = options.gridSpacingY || 0;
-
-    /**
-     * Extracted frames — array of { id, name, x, y, w, h }
-     * By default one entry covering the whole texture.
-     */
     this.frames = options.frames || [];
 
     /**
      * Animations — array of {
      *   name, frameIds:[], frameDuration (ms), loop,
-     *   dx, dy,                          // default per-frame motion (float, px/frame)
+     *   dx, dy,
      *   frameOverrides: { [seqIdx]: { duration?, dx?, dy?, offsetX?, offsetY? } }
      * }
      *
-     * dx/dy   = per-frame motion in pixels (float) — checkerboard scrolls to show it
-     * offsetX/offsetY = per-frame rendering offset (for uneven frame sizes)
+     * frameIds use the format "framesetIdx:localFrameId" (string) for frameset-based
+     * sprites, or plain integer ids for legacy sprites.
      */
     this.animations = options.animations || [];
 
@@ -53,22 +50,27 @@ class SpriteEditorData {
   /*  Serialisation                                                      */
   /* ------------------------------------------------------------------ */
   toJSON() {
-    return {
+    const out = {
       name: this.name,
-      imagePath: this.imagePath,
-      imageWidth: this.imageWidth,
-      imageHeight: this.imageHeight,
-      frameWidth: this.frameWidth,
-      frameHeight: this.frameHeight,
-      gridOffsetX: this.gridOffsetX,
-      gridOffsetY: this.gridOffsetY,
-      gridSpacingX: this.gridSpacingX,
-      gridSpacingY: this.gridSpacingY,
-      frames: this.frames,
+      framesets: this.framesets,
       animations: this.animations,
       originX: this.originX,
       originY: this.originY,
     };
+    // Persist legacy fields only if they were set (backward compat)
+    if (this.imagePath) {
+      out.imagePath = this.imagePath;
+      out.imageWidth = this.imageWidth;
+      out.imageHeight = this.imageHeight;
+      out.frameWidth = this.frameWidth;
+      out.frameHeight = this.frameHeight;
+      out.gridOffsetX = this.gridOffsetX;
+      out.gridOffsetY = this.gridOffsetY;
+      out.gridSpacingX = this.gridSpacingX;
+      out.gridSpacingY = this.gridSpacingY;
+      out.frames = this.frames;
+    }
+    return out;
   }
 
   static fromJSON(data) {
@@ -78,8 +80,7 @@ class SpriteEditorData {
   /* ------------------------------------------------------------------ */
   /*  Frame helpers                                                      */
   /* ------------------------------------------------------------------ */
-  /** Rebuild the frame list from current grid settings.
-   *  If frameWidth/Height are 0 the whole texture is one frame. */
+  /** Rebuild the frame list from current grid settings (legacy path). */
   rebuildFramesFromGrid() {
     this.frames = [];
     const tw = this.imageWidth;
@@ -92,21 +93,16 @@ class SpriteEditorData {
     let id = 0;
     for (let y = this.gridOffsetY; y + fh <= th; y += fh + this.gridSpacingY) {
       for (let x = this.gridOffsetX; x + fw <= tw; x += fw + this.gridSpacingX) {
-        this.frames.push({
-          id: id,
-          name: `frame_${id}`,
-          x, y, w: fw, h: fh
-        });
+        this.frames.push({ id, name: `frame_${id}`, x, y, w: fw, h: fh });
         id++;
       }
     }
-    // Always guarantee at least one frame
     if (this.frames.length === 0) {
       this.frames.push({ id: 0, name: 'frame_0', x: 0, y: 0, w: tw, h: th });
     }
   }
 
-  /** Ensure a default "idle" animation exists using the first frame */
+  /** Ensure a default "idle" animation exists using the first available frame */
   ensureDefaultAnimation() {
     if (this.animations.length === 0 && this.frames.length > 0) {
       this.animations.push({
@@ -119,6 +115,11 @@ class SpriteEditorData {
         frameOverrides: {},
       });
     }
+  }
+
+  /** Check if this sprite uses the new frameset-based workflow */
+  get usesFramesets() {
+    return this.framesets.length > 0;
   }
 }
 
@@ -142,7 +143,7 @@ class SpriteEditor extends EditorBase {
 
     this.spriteData = SpriteEditor._pendingData || new SpriteEditorData();
     SpriteEditor._pendingData = null;
-    this._sourceImage = null;        // HTMLImageElement of the raw source artwork
+    this._sourceImage = null;        // HTMLImageElement — legacy single-image mode
     this._sourceCanvas = null;       // Off-screen canvas for pixel reads
     this._animTimer = null;          // requestAnimationFrame id
     this._animFrame = 0;             // current animation frame index
@@ -152,6 +153,18 @@ class SpriteEditor extends EditorBase {
     this._selectedStripIdx = -1;     // selected frame index within animation strip
     this._selectedFrameIds = new Set();
     this._pendingImagePath = null;   // used when created from context menu
+
+    /**
+     * Loaded frameset data cache — Map<framesetIdx, { data: FramesetEditorData, image: HTMLImageElement }>
+     * Populated when framesets are loaded. Used by _drawFrameToCanvas.
+     */
+    this._loadedFramesets = new Map();
+
+    /**
+     * Merged frame list — flattened from all loaded framesets.
+     * Each entry: { id (string "fsIdx:localId"), name, x, y, w, h, framesetIdx, localId, image }
+     */
+    this._mergedFrames = [];
 
     this.initializeContent();
   }
@@ -200,6 +213,9 @@ class SpriteEditor extends EditorBase {
       if (this.spriteData.imagePath) {
         this._loadSourceImage(this.spriteData.imagePath);
       }
+      if (this.spriteData.usesFramesets) {
+        this._loadAllFramesets();
+      }
     } catch (err) {
       console.error('[SpriteEditor] Failed to parse content:', err);
     }
@@ -212,7 +228,6 @@ class SpriteEditor extends EditorBase {
       let content = this.file.fileContent;
       if (typeof content === 'string') {
         try {
-          // Might be base64-encoded
           if (content.charAt(0) !== '{') {
             content = atob(content);
           }
@@ -221,11 +236,14 @@ class SpriteEditor extends EditorBase {
       this.setContent(content);
     } else if (this._pendingImagePath) {
       // Created from "Make Sprite" context menu — image path was injected
+      // Legacy path: set imagePath directly
       this.spriteData.imagePath = this._pendingImagePath;
       this._pendingImagePath = null;
       this._loadSourceImage(this.spriteData.imagePath);
       this.markDirty();
     }
+    // Load any referenced framesets
+    this._loadAllFramesets();
   }
 
   destroy() {
@@ -266,52 +284,72 @@ class SpriteEditor extends EditorBase {
   /*  SIDEBAR — image preview, animations list                           */
   /* ================================================================== */
   _buildSidebar(container) {
-    // --- Source Image Preview ---
-    const imgSection = document.createElement('div');
-    imgSection.className = 'sprite-section';
+    // --- Framesets Section ---
+    const fsSection = document.createElement('div');
+    fsSection.className = 'sprite-section';
 
-    // Header row: "SOURCE IMAGE" label + Browse button
+    const fsHeaderRow = document.createElement('div');
+    fsHeaderRow.className = 'sprite-section-header';
+    const fsH = document.createElement('h3');
+    fsH.textContent = 'Framesets';
+    fsHeaderRow.appendChild(fsH);
+    const addFsBtn = document.createElement('button');
+    addFsBtn.className = 'sprite-btn sprite-btn-primary sprite-btn-sm';
+    addFsBtn.textContent = '+ Add\u2026';
+    addFsBtn.addEventListener('click', () => this._showFramesetPicker());
+    fsHeaderRow.appendChild(addFsBtn);
+    fsSection.appendChild(fsHeaderRow);
+
+    // Frameset list
+    this._framesetListEl = document.createElement('div');
+    this._framesetListEl.className = 'sprite-anim-list';
+    fsSection.appendChild(this._framesetListEl);
+
+    this._frameCountLabel = document.createElement('div');
+    this._frameCountLabel.className = 'sprite-frame-count';
+    this._frameCountLabel.textContent = '0 frames';
+    fsSection.appendChild(this._frameCountLabel);
+    container.appendChild(fsSection);
+
+    // --- Legacy Source Image Section (shown only for old .sprite files) ---
+    this._legacySection = document.createElement('div');
+    this._legacySection.className = 'sprite-section';
+    this._legacySection.style.display = 'none';
+
     const headerRow = document.createElement('div');
     headerRow.className = 'sprite-section-header';
     const h = document.createElement('h3');
-    h.textContent = 'Source Image';
+    h.textContent = 'Source Image (Legacy)';
     headerRow.appendChild(h);
     const browseBtn = document.createElement('button');
     browseBtn.className = 'sprite-btn sprite-btn-primary sprite-btn-sm';
     browseBtn.textContent = 'Browse\u2026';
     browseBtn.addEventListener('click', () => this._showImagePicker());
     headerRow.appendChild(browseBtn);
-    imgSection.appendChild(headerRow);
-    container.appendChild(imgSection);
+    this._legacySection.appendChild(headerRow);
 
-    // Canvas showing scaled-down source image
     this._imagePreviewCanvas = document.createElement('canvas');
     this._imagePreviewCanvas.className = 'sprite-image-preview';
     this._imagePreviewCanvas.width = 200;
     this._imagePreviewCanvas.height = 200;
-    imgSection.appendChild(this._imagePreviewCanvas);
+    this._legacySection.appendChild(this._imagePreviewCanvas);
 
-    // Filename only (no path)
     this._texPathLabel = document.createElement('div');
     this._texPathLabel.className = 'sprite-tex-path';
     this._texPathLabel.textContent = '(none)';
-    imgSection.appendChild(this._texPathLabel);
+    this._legacySection.appendChild(this._texPathLabel);
 
-    // Slice Frames button (disabled until image is loaded)
-    const actionRow = document.createElement('div');
-    actionRow.className = 'sprite-row';
     this._sliceBtn = document.createElement('button');
     this._sliceBtn.className = 'sprite-btn sprite-btn-primary';
     this._sliceBtn.textContent = 'Slice Frames\u2026';
     this._sliceBtn.disabled = true;
     this._sliceBtn.addEventListener('click', () => this._showSlicerModal());
+    const actionRow = document.createElement('div');
+    actionRow.className = 'sprite-row';
     actionRow.appendChild(this._sliceBtn);
-    imgSection.appendChild(actionRow);
+    this._legacySection.appendChild(actionRow);
 
-    this._frameCountLabel = document.createElement('div');
-    this._frameCountLabel.className = 'sprite-frame-count';
-    this._frameCountLabel.textContent = '0 frames';
-    imgSection.appendChild(this._frameCountLabel);
+    container.appendChild(this._legacySection);
 
     // --- Animations Section ---
     const animSection = this._makeSection('Animations', container);
@@ -827,19 +865,32 @@ class SpriteEditor extends EditorBase {
   _syncUIFromData() {
     if (!this.spriteData) return;
 
-    // Frame count
-    if (this._frameCountLabel) {
-      this._frameCountLabel.textContent = `${this.spriteData.frames.length} frame(s)`;
+    const isLegacy = !this.spriteData.usesFramesets && this.spriteData.imagePath;
+
+    // Show/hide legacy section
+    if (this._legacySection) {
+      this._legacySection.style.display = isLegacy ? '' : 'none';
     }
 
-    // Filename only (not full path)
+    // Frame count — aggregate from framesets or legacy frames
+    const totalFrames = this.spriteData.usesFramesets
+      ? this._mergedFrames.length
+      : this.spriteData.frames.length;
+    if (this._frameCountLabel) {
+      this._frameCountLabel.textContent = `${totalFrames} frame(s)`;
+    }
+
+    // Legacy: filename label
     if (this._texPathLabel) {
       const path = this.spriteData.imagePath || '';
       this._texPathLabel.textContent = path ? path.split('/').pop() : '(none)';
     }
 
-    // Image preview (sidebar)
+    // Legacy: image preview (sidebar)
     this._updateImagePreview();
+
+    // Frameset list (sidebar)
+    this._renderFramesetList();
 
     // Frame gallery (main area)
     this._renderFrameGallery();
@@ -871,6 +922,307 @@ class SpriteEditor extends EditorBase {
     const dy = (canvas.height - dh) / 2;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(img, dx, dy, dw, dh);
+  }
+
+  /* ================================================================== */
+  /*  Frameset management                                                */
+  /* ================================================================== */
+
+  /** Load all referenced framesets from storage and rebuild merged frame list. */
+  onFocus() {
+    super.onFocus();
+    // Reload framesets from storage so we pick up any external edits
+    if (this.spriteData && this.spriteData.usesFramesets) {
+      this._loadAllFramesets();
+    }
+  }
+
+  async _loadAllFramesets() {
+    if (!this.spriteData.usesFramesets) return;
+
+    for (let i = 0; i < this.spriteData.framesets.length; i++) {
+      await this._loadFrameset(i);
+    }
+    this._rebuildMergedFrames();
+    this._syncUIFromData();
+    this._startAnimation();
+  }
+
+  /** Load a single frameset by index into the cache. */
+  async _loadFrameset(fsIdx) {
+    const fsRef = this.spriteData.framesets[fsIdx];
+    if (!fsRef || !fsRef.path) return;
+
+    try {
+      let content = null;
+
+      // Prefer live editor content (unsaved changes) over storage
+      const tm = window.tabManager;
+      if (tm && tm.dedicatedTabs) {
+        for (const [, tabInfo] of tm.dedicatedTabs.entries()) {
+          if (tabInfo.fullPath === fsRef.path && tabInfo.viewer && typeof tabInfo.viewer.getContent === 'function') {
+            content = tabInfo.viewer.getContent();
+            break;
+          }
+        }
+        // Also check the preview tab
+        if (!content && tm.previewPath === fsRef.path && tm.previewViewer && typeof tm.previewViewer.getContent === 'function') {
+          content = tm.previewViewer.getContent();
+        }
+      }
+
+      // Fall back to storage
+      if (!content) {
+        const fm = window.fileManager || window.serviceContainer?.get('fileManager');
+        if (!fm) return;
+        const file = await fm.loadFile(fsRef.path);
+        if (!file || !file.fileContent) {
+          console.warn('[SpriteEditor] Could not load frameset:', fsRef.path);
+          return;
+        }
+        content = file.fileContent;
+        if (typeof content === 'string') {
+          try { if (content.charAt(0) !== '{') content = atob(content); } catch (_) {}
+        }
+      }
+
+      const fsData = JSON.parse(content);
+
+      // Load the source image for this frameset
+      let img = null;
+      if (fsData.imagePath) {
+        const imgSrc = await this._loadImageSrc(fsData.imagePath);
+        if (imgSrc) {
+          img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = imgSrc;
+          });
+        }
+      }
+
+      this._loadedFramesets.set(fsIdx, { data: fsData, image: img });
+    } catch (err) {
+      console.error('[SpriteEditor] Error loading frameset:', fsRef.path, err);
+    }
+  }
+
+  /** Rebuild the merged frame list from all loaded framesets. */
+  _rebuildMergedFrames() {
+    this._mergedFrames = [];
+
+    for (let fsIdx = 0; fsIdx < this.spriteData.framesets.length; fsIdx++) {
+      const cached = this._loadedFramesets.get(fsIdx);
+      if (!cached || !cached.data || !cached.data.frames) continue;
+
+      for (const frame of cached.data.frames) {
+        this._mergedFrames.push({
+          id: `${fsIdx}:${frame.id}`,
+          name: frame.name || `frame_${frame.id}`,
+          x: frame.x,
+          y: frame.y,
+          w: frame.w,
+          h: frame.h,
+          framesetIdx: fsIdx,
+          localId: frame.id,
+          image: cached.image,
+        });
+      }
+    }
+  }
+
+  /** Show picker listing .frameset files in the project. */
+  async _showFramesetPicker() {
+    let candidates = [];
+
+    // Use project explorer tree to find .frameset files
+    const projectExplorer = window.serviceContainer?.get('projectExplorer');
+    if (projectExplorer && typeof projectExplorer.GetSourceFiles === 'function') {
+      // Search all source files — framesets may be in Sprites or alongside images
+      const allSrc = projectExplorer.GetSourceFiles();
+      candidates = allSrc
+        .filter(f => /\.frameset$/i.test(f.name))
+        .map(f => ({ label: f.name, path: f.fullPath }));
+    }
+
+    // Fallback: try fileIOService.listFiles (returns record objects)
+    if (candidates.length === 0) {
+      try {
+        const fio = window.fileIOService;
+        if (fio) {
+          const allFiles = await fio.listFiles('');
+          candidates = allFiles
+            .filter(r => /\.frameset$/i.test(r.path || r.name || ''))
+            .map(r => {
+              const p = r.path || r.name || '';
+              return { label: p.split('/').pop(), path: p };
+            });
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    if (candidates.length === 0) {
+      alert('No .frameset files found in the project.\nCreate one first by right-clicking an image \u2192 Make Frameset.');
+      return;
+    }
+
+    // Filter out already-added framesets
+    const existingPaths = new Set(this.spriteData.framesets.map(fs => fs.path));
+    candidates = candidates.filter(c => !existingPaths.has(c.path));
+
+    if (candidates.length === 0) {
+      alert('All available framesets are already added to this sprite.');
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'sprite-modal-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'sprite-modal';
+    modal.innerHTML = `<h3>Add Frameset</h3>`;
+    const list = document.createElement('ul');
+    list.className = 'sprite-tex-list';
+    for (const item of candidates) {
+      const li = document.createElement('li');
+      li.textContent = item.label;
+      li.title = item.path;
+      li.addEventListener('click', async () => {
+        overlay.remove();
+        await this._addFrameset(item.path);
+      });
+      list.appendChild(li);
+    }
+    modal.appendChild(list);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'sprite-btn';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => overlay.remove());
+    modal.appendChild(cancelBtn);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
+  /** Add a frameset reference and load it. */
+  async _addFrameset(framesetPath) {
+    const fsIdx = this.spriteData.framesets.length;
+    this.spriteData.framesets.push({ path: framesetPath });
+    await this._loadFrameset(fsIdx);
+    this._rebuildMergedFrames();
+
+    // Auto-create default animation if this is the first frameset and no animations exist
+    if (this._mergedFrames.length > 0 && this.spriteData.animations.length === 0) {
+      this.spriteData.animations.push({
+        name: 'idle',
+        frameIds: [this._mergedFrames[0].id],
+        frameDuration: 100,
+        loop: true,
+        dx: 0,
+        dy: 0,
+        frameOverrides: {},
+      });
+    }
+
+    this._syncUIFromData();
+    this._restartAnimation();
+    this.markDirty();
+  }
+
+  /** Remove a frameset by index. */
+  _removeFrameset(fsIdx) {
+    this.spriteData.framesets.splice(fsIdx, 1);
+
+    // Rebuild loaded frameset cache (indices shift)
+    const newCache = new Map();
+    for (let i = 0; i < this.spriteData.framesets.length; i++) {
+      const oldIdx = i >= fsIdx ? i + 1 : i;
+      if (this._loadedFramesets.has(oldIdx)) {
+        newCache.set(i, this._loadedFramesets.get(oldIdx));
+      }
+    }
+    this._loadedFramesets = newCache;
+    this._rebuildMergedFrames();
+
+    // Clean up animation references to removed frameset
+    const removedPrefix = `${fsIdx}:`;
+    for (const anim of this.spriteData.animations) {
+      // Remap frame IDs: remove the deleted frameset's frames, shift higher indices
+      anim.frameIds = anim.frameIds
+        .filter(id => !String(id).startsWith(removedPrefix))
+        .map(id => {
+          const str = String(id);
+          const colonIdx = str.indexOf(':');
+          if (colonIdx === -1) return id;
+          const fsi = parseInt(str.substring(0, colonIdx), 10);
+          if (fsi > fsIdx) {
+            return `${fsi - 1}:${str.substring(colonIdx + 1)}`;
+          }
+          return id;
+        });
+    }
+
+    this._syncUIFromData();
+    this._restartAnimation();
+    this.markDirty();
+  }
+
+  /** Render the frameset list in the sidebar. */
+  _renderFramesetList() {
+    const el = this._framesetListEl;
+    if (!el) return;
+    el.innerHTML = '';
+
+    if (this.spriteData.framesets.length === 0) {
+      const hint = document.createElement('div');
+      hint.className = 'sprite-hint';
+      hint.textContent = 'No framesets added yet. Click "+ Add" to add one.';
+      el.appendChild(hint);
+      return;
+    }
+
+    this.spriteData.framesets.forEach((fsRef, idx) => {
+      const item = document.createElement('div');
+      item.className = 'sprite-anim-item';
+
+      // Thumbnail: first frame of frameset
+      const thumb = document.createElement('canvas');
+      thumb.width = 32;
+      thumb.height = 32;
+      thumb.className = 'sprite-frame-thumb';
+      const cached = this._loadedFramesets.get(idx);
+      if (cached && cached.image && cached.data && cached.data.frames && cached.data.frames.length > 0) {
+        const f = cached.data.frames[0];
+        const ctx = thumb.getContext('2d');
+        const scale = Math.min(32 / f.w, 32 / f.h);
+        const dw = f.w * scale;
+        const dh = f.h * scale;
+        const dx = (32 - dw) / 2;
+        const dy = (32 - dh) / 2;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(cached.image, f.x, f.y, f.w, f.h, dx, dy, dw, dh);
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'sprite-anim-name';
+      const fileName = fsRef.path.split('/').pop();
+      const frameCount = cached && cached.data ? cached.data.frames.length : '?';
+      nameSpan.textContent = `${fileName} (${frameCount})`;
+      nameSpan.title = fsRef.path;
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'sprite-btn sprite-btn-danger sprite-btn-sm';
+      delBtn.textContent = '\u2715';
+      delBtn.title = 'Remove frameset';
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this._removeFrameset(idx);
+      });
+
+      item.appendChild(thumb);
+      item.appendChild(nameSpan);
+      item.appendChild(delBtn);
+      el.appendChild(item);
+    });
   }
 
   /* ================================================================== */
@@ -919,9 +1271,11 @@ class SpriteEditor extends EditorBase {
     }
   }
 
-  /** Draw a single frame region onto a thumbnail canvas */
+  /** Draw a single frame region onto a thumbnail canvas.
+   *  Supports both legacy frames (uses _sourceImage) and merged frameset frames (have .image). */
   _drawFrameToCanvas(canvas, frame) {
-    if (!this._sourceImage) return;
+    const img = frame.image || this._sourceImage;
+    if (!img) return;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     // Scale to fit
@@ -931,7 +1285,7 @@ class SpriteEditor extends EditorBase {
     const dx = (canvas.width - dw) / 2;
     const dy = (canvas.height - dh) / 2;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(this._sourceImage, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
+    ctx.drawImage(img, frame.x, frame.y, frame.w, frame.h, dx, dy, dw, dh);
   }
 
   /* ================================================================== */
@@ -954,7 +1308,7 @@ class SpriteEditor extends EditorBase {
       thumb.className = 'sprite-frame-thumb';
       if (anim.frameIds.length > 0) {
         const firstId = anim.frameIds[0];
-        const frame = this.spriteData.frames.find(f => f.id === firstId);
+        const frame = this._findFrame(firstId);
         if (frame) this._drawFrameToCanvas(thumb, frame);
       }
 
@@ -998,8 +1352,9 @@ class SpriteEditor extends EditorBase {
 
   _addAnimation() {
     const name = (this._animNameInput.value || '').trim() || `anim_${this.spriteData.animations.length}`;
-    // Start with just the first frame (user drags more from gallery)
-    const firstId = this.spriteData.frames.length > 0 ? this.spriteData.frames[0].id : 0;
+    // Start with just the first available frame
+    const frames = this.spriteData.usesFramesets ? this._mergedFrames : this.spriteData.frames;
+    const firstId = frames.length > 0 ? frames[0].id : 0;
     this.spriteData.animations.push({
       name,
       frameIds: [firstId],
@@ -1018,6 +1373,20 @@ class SpriteEditor extends EditorBase {
   /* ================================================================== */
   /*  Animation detail — frame sequence editing (main area)              */
   /* ================================================================== */
+
+  /** Find a frame by ID — checks merged framesets first, then legacy frames. */
+  _findFrame(fid) {
+    // Try merged frames (frameset mode)
+    const merged = this._mergedFrames.find(f => f.id === fid || String(f.id) === String(fid));
+    if (merged) return merged;
+    // Legacy: numeric ID lookup
+    const numId = typeof fid === 'number' ? fid : parseInt(fid, 10);
+    if (!isNaN(numId)) {
+      return this.spriteData.frames.find(f => f.id === numId);
+    }
+    return null;
+  }
+
   _renderAnimationDetail() {
     const el = this._animDetailEl;
     if (!el) return;
@@ -1079,8 +1448,8 @@ class SpriteEditor extends EditorBase {
           this.markDirty();
         }
       } else if (frameIdStr !== '') {
-        // Insert from gallery (allows duplicates)
-        const frameId = parseInt(frameIdStr, 10);
+        // Insert from gallery (allows duplicates) — keep as string for frameset IDs
+        const frameId = frameIdStr.includes(':') ? frameIdStr : parseInt(frameIdStr, 10);
         anim.frameIds.splice(insertIdx, 0, frameId);
         this._renderAnimationDetail();
         this._restartAnimation();
@@ -1089,7 +1458,7 @@ class SpriteEditor extends EditorBase {
     });
 
     anim.frameIds.forEach((fid, seqIdx) => {
-      const frame = this.spriteData.frames.find(f => f.id === fid);
+      const frame = this._findFrame(fid);
       if (!frame) return;
 
       const cell = document.createElement('div');
@@ -1360,15 +1729,20 @@ class SpriteEditor extends EditorBase {
     if (!el) return;
     el.innerHTML = '';
 
-    if (this.spriteData.frames.length === 0) {
+    // Use merged frames from framesets, or legacy frames
+    const frames = this.spriteData.usesFramesets ? this._mergedFrames : this.spriteData.frames;
+
+    if (frames.length === 0) {
       const hint = document.createElement('div');
       hint.className = 'sprite-hint';
-      hint.textContent = 'No frames yet \u2014 use Slice Frames to extract from the source image.';
+      hint.textContent = this.spriteData.usesFramesets
+        ? 'No frames yet \u2014 add a frameset to populate frames.'
+        : 'No frames yet \u2014 use Slice Frames to extract from the source image.';
       el.appendChild(hint);
       return;
     }
 
-    for (const frame of this.spriteData.frames) {
+    for (const frame of frames) {
       const cell = document.createElement('div');
       cell.className = 'sprite-gallery-cell';
       if (this._selectedFrameIds.has(frame.id)) cell.classList.add('selected');
@@ -2048,7 +2422,8 @@ class SpriteEditor extends EditorBase {
     const ctx = canvas.getContext('2d');
 
     const anim = this.spriteData.animations[this._selectedAnimIndex];
-    if (!anim || anim.frameIds.length === 0 || !this._sourceImage) {
+    const hasImage = this._sourceImage || this._loadedFramesets.size > 0;
+    if (!anim || anim.frameIds.length === 0 || !hasImage) {
       canvas.width = 128;
       canvas.height = 128;
       ctx.clearRect(0, 0, 128, 128);
@@ -2064,7 +2439,7 @@ class SpriteEditor extends EditorBase {
     // Max frame dimensions across this animation
     let maxW = 0, maxH = 0;
     for (const fid of anim.frameIds) {
-      const f = this.spriteData.frames.find(fr => fr.id === fid);
+      const f = this._findFrame(fid);
       if (f) { maxW = Math.max(maxW, f.w); maxH = Math.max(maxH, f.h); }
     }
     if (maxW === 0 || maxH === 0) return;
@@ -2085,13 +2460,12 @@ class SpriteEditor extends EditorBase {
     const pixScale = Math.max(1, Math.floor(fitScale));
 
     const frameId = anim.frameIds[this._animFrame] ?? anim.frameIds[0];
-    const frame = this.spriteData.frames.find(f => f.id === frameId);
+    const frame = this._findFrame(frameId);
     if (!frame) return;
 
     ctx.clearRect(0, 0, cw, ch);
 
-    // Scrolling checkerboard — positive dx = sprite moves right = ground scrolls left
-    // Uses a repeating canvas pattern so the scroll is perfectly smooth & infinite
+    // Scrolling checkerboard
     const checkerScrollX = (this._checkerOffsetX || 0) * pixScale;
     const checkerScrollY = (this._checkerOffsetY || 0) * pixScale;
     this._drawCheckerboard(ctx, cw, ch, checkerScrollX, checkerScrollY, 32);
@@ -2104,13 +2478,17 @@ class SpriteEditor extends EditorBase {
     const offX = (frameOv.offsetX || 0) * pixScale;
     const offY = (frameOv.offsetY || 0) * pixScale;
 
+    // Use the frame's own image (frameset mode) or the legacy source image
+    const img = frame.image || this._sourceImage;
+    if (!img) return;
+
     // Center the frame within the canvas, then apply per-frame offset
     const fw = frame.w * pixScale;
     const fh = frame.h * pixScale;
     const dx = Math.floor((cw - fw) / 2) + offX;
     const dy = Math.floor((ch - fh) / 2) + offY;
     ctx.drawImage(
-      this._sourceImage,
+      img,
       frame.x, frame.y, frame.w, frame.h,
       dx, dy, fw, fh
     );

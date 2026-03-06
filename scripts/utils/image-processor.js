@@ -456,8 +456,9 @@ class ImageProcessor {
     // Decode LZW data
     const indices = this.decodeLZW(compressedData, lzwMinimumCodeSize);
     
-    // Convert color indices to RGBA pixels
-    const imageData = new ImageData(width, height);
+    // Convert color indices to RGBA pixels (use native ImageData for canvas compatibility)
+    const NID = window.NativeImageData || window.ImageData;
+    const imageData = new NID(width, height);
     const pixels = imageData.data;
     
     for (let i = 0; i < indices.length && i < width * height; i++) {

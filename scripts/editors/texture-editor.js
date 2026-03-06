@@ -15,6 +15,7 @@ class TextureData extends EventTarget {
     this.colorDepth = options.colorDepth || 8;
     this.palette = options.palette || null;
     this.transparentColor = options.transparentColor || '#FF00FF';
+    this.useColorKey = options.useColorKey !== undefined ? !!options.useColorKey : false;
     this.compressionType = options.compressionType || 'none';
     this.mipmaps = options.mipmaps || false;
     this.format = options.format || 'RGBA';
@@ -77,6 +78,11 @@ class TextureData extends EventTarget {
       return; // Already has a palette path
     }
 
+    // Only auto-populate palette for indexed (paletted) formats
+    if (!TextureData.isIndexedFormat(this.outputPixelFormat)) {
+      return;
+    }
+
     try {
       const projectExplorer = window.gameEmulator?.projectExplorer;
       if (projectExplorer && typeof projectExplorer.getDefaultPalettePath === 'function') {
@@ -109,6 +115,7 @@ class TextureData extends EventTarget {
       colorDepth: this.colorDepth,
       palette: this.palette,
       transparentColor: this.transparentColor,
+      useColorKey: this.useColorKey,
       compressionType: this.compressionType,
       mipmaps: this.mipmaps,
       format: this.format,
@@ -127,6 +134,7 @@ class TextureData extends EventTarget {
       colorDepth: data.colorDepth,
       palette: data.palette,
       transparentColor: data.transparentColor,
+      useColorKey: data.useColorKey,
       compressionType: data.compressionType,
       mipmaps: data.mipmaps,
       format: data.format,
@@ -276,10 +284,11 @@ class TextureEditor extends EditorBase {
           this.displayPalette(this.textureData.palette);
         }
         
-        // Update options visibility (e.g. RLE only for i8)
+        // Update options visibility (e.g. RLE only for i8, palette panel only for indexed)
         this.updateOptionsVisibility();
+        this.updatePaletteVisibility();
         
-        // Re-apply palette with new format settings
+        // Re-apply palette / generate output with new format settings
         this.checkAndAutoGenerateTexture();
       }
       
@@ -318,13 +327,18 @@ class TextureEditor extends EditorBase {
 
   // Check if texture is ready for auto-generation and trigger it
   checkAndAutoGenerateTexture() {
-    // Only auto-generate if we have both source image and palette
     const hasSourceImage = this.sourceImage && this.originalCanvas;
     const hasPalette = this.currentPalette && this.currentPalette.colors;
-    
-    console.log('[TextureEditor] Auto-generation check - Source Image:', hasSourceImage, 'Palette:', hasPalette);
-    
-    if (hasSourceImage && hasPalette) {
+    const isIndexed = TextureData.isIndexedFormat(this.textureData.outputPixelFormat);
+
+    console.log('[TextureEditor] Auto-generation check - Source Image:', hasSourceImage,
+                'Palette:', hasPalette, 'Indexed:', isIndexed);
+
+    // For indexed formats: need both source image and palette
+    // For direct-colour formats: need only the source image
+    const canGenerate = hasSourceImage && (isIndexed ? hasPalette : true);
+
+    if (canGenerate) {
       // Debounce: cancel any pending auto-generation and schedule a new one
       if (this._autoGenTimer) {
         clearTimeout(this._autoGenTimer);
@@ -332,7 +346,11 @@ class TextureEditor extends EditorBase {
       console.log('[TextureEditor] Auto-generating texture output...');
       this._autoGenTimer = setTimeout(() => {
         this._autoGenTimer = null;
-        this.applyPaletteToImage(false); // false = auto-generation, don't auto-save palette
+        if (isIndexed) {
+          this.applyPaletteToImage(false); // palette matching path
+        } else {
+          this.generateDirectColorOutput(); // direct-colour path (no palette)
+        }
       }, 150);
     }
   }
@@ -445,12 +463,14 @@ class TextureEditor extends EditorBase {
     console.log(`[TextureEditor] D2 preview: ${width}×${height} ${formatStr} (${d2Bytes.length} bytes)`);
   }
 
-  /**
-   * Upload the FULL current palette to the GPU and set the palette offset.
+  /**\n   * Upload the FULL current palette to the GPU and set the palette offset.
    * Always reads from this.currentPalette so the shader's paletteOffset
    * uniform correctly selects the sub-palette window for sub-8-bit formats.
    * (Uploading a pre-sliced palette + non-zero offset would double-apply the
    * offset, causing a blank image.)
+   *
+   * When color key is enabled, sets alpha=0 on index 0 of each palette chunk
+   * so the GPU renders those pixels as transparent.
    */
   _updateGpuPalette() {
     if (!this._gpu) return;
@@ -458,6 +478,19 @@ class TextureEditor extends EditorBase {
       ? (this.currentPalette.getColors ? this.currentPalette.getColors() : this.currentPalette)
       : [];
     const rgba = this._hexPaletteToRGBA8(allColors);
+
+    // Color key: punch alpha=0 on index 0 of every sub-palette chunk
+    const format = this.textureData.outputPixelFormat;
+    if (this.textureData.useColorKey && TextureData.isIndexedFormat(format) && format !== 'd2_mode_ai44') {
+      let chunkSize = 256;
+      if (format === 'd2_mode_i4')  chunkSize = 16;
+      else if (format === 'd2_mode_i2')  chunkSize = 4;
+      else if (format === 'd2_mode_i1')  chunkSize = 2;
+      for (let base = 0; base < 256; base += chunkSize) {
+        rgba[base * 4 + 3] = 0;
+      }
+    }
+
     this._gpu.setPalette(rgba);
     const offset = this.textureData.metadata.paletteOffset || 0;
     this._gpu.setPaletteOffset(offset);
@@ -471,24 +504,13 @@ class TextureEditor extends EditorBase {
   _gpuBlit(isPreRotated) {
     if (!this._gpu || !this._gpuTex) return;
     const tex = this._gpuTex;
-    if (isPreRotated) {
-      // Display un-rotated: swap width/height and rotate −90°
-      const displayW = tex.height;
-      const displayH = tex.width;
-      this._gpu.resize(displayW, displayH);
-      this._gpu.clear(0, 0, 0, 0);
-      this._gpu.blit(tex, {
-        x: (displayW - tex.width) / 2,
-        y: (displayH - tex.height) / 2,
-        rotation: -90,
-        pivotX: 0.5,
-        pivotY: 0.5,
-      });
-    } else {
-      this._gpu.resize(tex.width, tex.height);
-      this._gpu.clear(0, 0, 0, 0);
-      this._gpu.blit(tex);
-    }
+
+    // Logical display dimensions (pre-rotation is handled inside blit)
+    const displayW = isPreRotated ? tex.height : tex.width;
+    const displayH = isPreRotated ? tex.width  : tex.height;
+    this._gpu.resize(displayW, displayH);
+    this._gpu.clear(0, 0, 0, 0);
+    this._gpu.blit(tex);
     this._gpu.present();
   }
 
@@ -1612,8 +1634,62 @@ class TextureEditor extends EditorBase {
     rotationRow.appendChild(this.preRotateCheckbox);
     rotationRow.appendChild(rotationLabel);
 
+    // Color Key checkbox + color picker
+    const colorKeyRow = document.createElement('label');
+    colorKeyRow.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ddd;
+      font-size: 12px;
+      cursor: pointer;
+    `;
+    this.colorKeyCheckbox = document.createElement('input');
+    this.colorKeyCheckbox.type = 'checkbox';
+    this.colorKeyCheckbox.checked = this.textureData.useColorKey;
+    this.colorKeyCheckbox.style.cssText = 'accent-color: #4a9eff; cursor: pointer;';
+    this.colorKeyCheckbox.addEventListener('change', () => {
+      this.textureData.useColorKey = this.colorKeyCheckbox.checked;
+      this._updateColorKeyPickerVisibility();
+      this.onSettingsChanged();
+    });
+    const colorKeyLabel = document.createElement('span');
+    colorKeyLabel.textContent = 'Color Key (index 0 = transparent)';
+    colorKeyRow.appendChild(this.colorKeyCheckbox);
+    colorKeyRow.appendChild(colorKeyLabel);
+
+    // Color key color picker (inline, shown when checkbox is checked)
+    this.colorKeyPickerRow = document.createElement('div');
+    this.colorKeyPickerRow.style.cssText = `
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding-left: 24px;
+      font-size: 12px;
+      color: #ddd;
+    `;
+    const colorKeyPickerLabel = document.createElement('span');
+    colorKeyPickerLabel.textContent = 'Key Color:';
+    this.colorKeyPicker = document.createElement('input');
+    this.colorKeyPicker.type = 'color';
+    this.colorKeyPicker.value = this.textureData.transparentColor || '#FF00FF';
+    this.colorKeyPicker.style.cssText = 'width:32px;height:22px;border:1px solid #555;border-radius:3px;cursor:pointer;padding:0;background:none;';
+    this.colorKeyPicker.addEventListener('input', () => {
+      this.textureData.transparentColor = this.colorKeyPicker.value;
+    });
+    this.colorKeyPicker.addEventListener('change', () => {
+      this.textureData.transparentColor = this.colorKeyPicker.value;
+      this.onSettingsChanged();
+    });
+    this.colorKeyPickerRow.appendChild(colorKeyPickerLabel);
+    this.colorKeyPickerRow.appendChild(this.colorKeyPicker);
+
     optionsSection.appendChild(compressionRow);
     optionsSection.appendChild(rotationRow);
+    optionsSection.appendChild(colorKeyRow);
+    optionsSection.appendChild(this.colorKeyPickerRow);
+
+    this._updateColorKeyPickerVisibility();
 
     // Set initial visibility of options based on current format
     this.updateOptionsVisibility();
@@ -2015,8 +2091,12 @@ class TextureEditor extends EditorBase {
       this.processTexture();
     }
 
-    // Auto-load default palette if available
-    this.autoLoadDefaultPalette();
+    // Auto-load default palette if available AND format is indexed
+    if (TextureData.isIndexedFormat(this.textureData.outputPixelFormat)) {
+      this.autoLoadDefaultPalette();
+    } else {
+      console.log('[TextureEditor] Skipping palette auto-load — format is not indexed:', this.textureData.outputPixelFormat);
+    }
     
     // Check if we can auto-generate texture output now that image is loaded
     setTimeout(() => {
@@ -2080,6 +2160,27 @@ class TextureEditor extends EditorBase {
       this.compressionCheckbox.checked = false;
       this.textureData.compressionType = 'none';
     }
+
+    // Color key is only meaningful for indexed (paletted) formats without
+    // a native alpha channel.  Hide for RGB/RGBA and alpha-only formats.
+    const isIndexed = TextureData.isIndexedFormat(format) && format !== 'd2_mode_ai44';
+    if (this.colorKeyCheckbox) {
+      const ckRow = this.colorKeyCheckbox.closest('label');
+      if (ckRow) ckRow.style.display = isIndexed ? 'flex' : 'none';
+      if (!isIndexed) {
+        this.colorKeyPickerRow.style.display = 'none';
+      } else {
+        this._updateColorKeyPickerVisibility();
+      }
+    }
+  }
+
+  /**
+   * Show/hide the color key color picker based on the checkbox state.
+   */
+  _updateColorKeyPickerVisibility() {
+    if (!this.colorKeyPickerRow || !this.colorKeyCheckbox) return;
+    this.colorKeyPickerRow.style.display = this.colorKeyCheckbox.checked ? 'flex' : 'none';
   }
 
   /**
@@ -2099,7 +2200,7 @@ class TextureEditor extends EditorBase {
   updatePaletteVisibility() {
     // Only update if DOM elements exist
     if (this.paletteContainer) {
-      const isIndexed = this.textureData?.colorDepth <= 8;
+      const isIndexed = TextureData.isIndexedFormat(this.textureData?.outputPixelFormat);
       this.paletteContainer.style.display = isIndexed ? 'block' : 'none';
     }
   }
@@ -2169,8 +2270,9 @@ class TextureEditor extends EditorBase {
   processTexture() {
     if (!this.textureData.sourceImageData) return;
     
-    // Start with source image data
-    let imageData = new ImageData(
+    // Start with source image data — use NativeImageData for canvas putImageData() compatibility
+    const NID = window.NativeImageData || window.ImageData;
+    let imageData = new NID(
       new Uint8ClampedArray(this.textureData.sourceImageData.data),
       this.textureData.sourceImageData.width,
       this.textureData.sourceImageData.height
@@ -2267,7 +2369,8 @@ class TextureEditor extends EditorBase {
       data[i + 3] = a;
     }
     
-    return new ImageData(data, imageData.width, imageData.height);
+    const NID = window.NativeImageData || window.ImageData;
+    return new NID(data, imageData.width, imageData.height);
   }
 
   convertTo4Bit(imageData) {
@@ -2282,7 +2385,8 @@ class TextureEditor extends EditorBase {
       // Alpha unchanged
     }
     
-    return new ImageData(data, imageData.width, imageData.height);
+    const NID = window.NativeImageData || window.ImageData;
+    return new NID(data, imageData.width, imageData.height);
   }
 
   convertTo8Bit(imageData) {
@@ -2297,7 +2401,8 @@ class TextureEditor extends EditorBase {
       // Alpha unchanged
     }
     
-    return new ImageData(data, imageData.width, imageData.height);
+    const NID = window.NativeImageData || window.ImageData;
+    return new NID(data, imageData.width, imageData.height);
   }
 
   convertTo16Bit(imageData) {
@@ -2312,7 +2417,8 @@ class TextureEditor extends EditorBase {
       data[i + 3] = 255; // No alpha in 16-bit
     }
     
-    return new ImageData(data, imageData.width, imageData.height);
+    const NID = window.NativeImageData || window.ImageData;
+    return new NID(data, imageData.width, imageData.height);
   }
 
   convertTo24Bit(imageData) {
@@ -2323,7 +2429,8 @@ class TextureEditor extends EditorBase {
       data[i + 3] = 255; // Full opacity
     }
     
-    return new ImageData(data, imageData.width, imageData.height);
+    const NID = window.NativeImageData || window.ImageData;
+    return new NID(data, imageData.width, imageData.height);
   }
 
   updatePreview() {
@@ -2466,6 +2573,13 @@ class TextureEditor extends EditorBase {
     if (this.preRotateCheckbox) {
       this.preRotateCheckbox.checked = (this.textureData.rotation === 90);
       this.updateRotationWarning();
+    }
+    if (this.colorKeyCheckbox) {
+      this.colorKeyCheckbox.checked = !!this.textureData.useColorKey;
+      this._updateColorKeyPickerVisibility();
+    }
+    if (this.colorKeyPicker) {
+      this.colorKeyPicker.value = this.textureData.transparentColor || '#FF00FF';
     }
     if (this.paletteSizeSelect) this.paletteSizeSelect.value = this.textureData.paletteSize;
     if (this.paletteOffsetSlider) this.paletteOffsetSlider.value = this.textureData.paletteOffset;
@@ -3310,6 +3424,7 @@ class TextureEditor extends EditorBase {
         this.textureData.metadata.paletteOffset = 0;
         this.refreshPaletteForFormat();
         this.updateOptionsVisibility();
+        this.updatePaletteVisibility();
         this.updateMetadataDisplay();
         this.checkAndAutoGenerateTexture();
         
@@ -3426,7 +3541,53 @@ class TextureEditor extends EditorBase {
       }
       
       console.log(`[TextureEditor] Reduced to ${result.palette.length} colors using ${algorithm}`);
-      
+
+      // When color key is enabled, ensure the key color occupies palette index 0.
+      // reduceColors() skips transparent pixels so the key color won't be in the
+      // extracted palette — insert it at index 0 and shift all indices up by one so
+      // transparent pixels (already mapped to index 0) render as the key color.
+      if (this.textureData.useColorKey) {
+        const keyColor = (this.textureData.transparentColor || '#FF00FF').toUpperCase();
+        const palUpper = result.palette.map(c => c.toUpperCase());
+        const existingIdx = palUpper.indexOf(keyColor);
+
+        if (existingIdx === 0) {
+          // Already in the right spot — nothing to do
+          console.log('[TextureEditor] Color key already at index 0');
+        } else if (existingIdx > 0) {
+          // Swap the key color to index 0
+          [result.palette[0], result.palette[existingIdx]] = [result.palette[existingIdx], result.palette[0]];
+          // Fix up indexed frame data so pixel colors stay correct after the swap
+          if (result.indexedFrames) {
+            for (const frame of result.indexedFrames) {
+              for (let i = 0; i < frame.indexedData.length; i++) {
+                if (frame.indexedData[i] === 0) frame.indexedData[i] = existingIdx;
+                else if (frame.indexedData[i] === existingIdx) frame.indexedData[i] = 0;
+              }
+            }
+          }
+          console.log(`[TextureEditor] Swapped color key from index ${existingIdx} to index 0`);
+        } else {
+          // Key color not present — insert at index 0 and bump everything else
+          result.palette.pop();                    // drop last entry to keep count
+          result.palette.unshift(keyColor);        // insert key at front
+          // Shift all existing indices up by one; transparent pixels stay at 0
+          if (result.indexedFrames) {
+            for (const frame of result.indexedFrames) {
+              for (let i = 0; i < frame.indexedData.length; i++) {
+                // Transparent pixels were already mapped to 0 by reduceColors —
+                // they should remain 0 (the color-key index).  Opaque pixels
+                // need their index incremented because the palette shifted right.
+                if (frame.indexedData[i] !== 0) {
+                  frame.indexedData[i] = Math.min(frame.indexedData[i] + 1, result.palette.length - 1);
+                }
+              }
+            }
+          }
+          console.log(`[TextureEditor] Inserted color key ${keyColor} at index 0`);
+        }
+      }
+
       // Create a new Palette instance using the static factory method
       const palette = Palette.fromColors(result.palette, `Generated Palette (${algorithm})`);
       
@@ -3927,6 +4088,129 @@ class TextureEditor extends EditorBase {
     this.checkAndAutoGenerateTexture();
   }
 
+  /**
+   * Generate the D2 output for direct-colour (non-indexed) formats.
+   * Converts the source RGBA pixel data to the target format and builds
+   * the D2 preview — no palette matching is needed.
+   */
+  generateDirectColorOutput() {
+    try {
+      const srcData = this.textureData.sourceImageData;
+      if (!srcData) {
+        console.warn('[TextureEditor] generateDirectColorOutput: no source image data');
+        return;
+      }
+
+      const format = this.textureData.outputPixelFormat;
+      const width  = srcData.width;
+      const height = srcData.height;
+
+      console.log(`[TextureEditor] Generating direct-colour output: ${format} ${width}×${height}`);
+
+      // Convert RGBA pixels to target format bytes
+      const formatBytes = D2File.convertRGBAToFormat(srcData.data, format);
+
+      // Initialise GPU renderer
+      this._initGpu();
+
+      // Update processedImageData for export (keep a canvas-backed copy)
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const nativeImgData = ctx.createImageData(width, height);
+      nativeImgData.data.set(srcData.data);
+      ctx.putImageData(nativeImgData, 0, 0);
+      this.updateCanvasFromImage(canvas);
+
+      // Build the D2 preview using the format-converted bytes
+      this._buildD2PreviewDirect(formatBytes, width, height);
+
+      console.log(`[TextureEditor] Direct-colour output complete (${formatBytes.length} bytes)`);
+    } catch (error) {
+      console.error('[TextureEditor] generateDirectColorOutput failed:', error);
+    }
+  }
+
+  /**
+   * Build & display a D2 preview from pre-encoded format bytes (not indices).
+   * Used for direct-colour formats where the pixel data is already in the
+   * target format (RGB565, RGBA8888, etc.) and does NOT need packIndexedPixels.
+   */
+  _buildD2PreviewDirect(formatBytes, width, height) {
+    this._initGpu();
+    if (!this._gpu) return;
+
+    const textureCfg = this.textureData.toJSON();
+    const meta       = textureCfg.metadata || {};
+    const format     = meta.outputPixelFormat || textureCfg.outputPixelFormat || 'd2_mode_rgba8888';
+    const fmtEnum    = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.RGBA8888;
+    const compress   = textureCfg.compressionType || meta.compressionType || 'none';
+    const rotation   = textureCfg.rotation ?? 0;
+
+    let buildW = width;
+    let buildH = height;
+    let data   = formatBytes;
+
+    // Pre-rotate if needed (for direct-colour we must rotate the raw bytes)
+    if (rotation === 90) {
+      const bpp = BITS_PER_PIXEL[fmtEnum] || 32;
+      data = D2File._rotateDirectBytes90CW(data, width, height, bpp);
+      buildW = height;
+      buildH = width;
+    }
+
+    // RLE compress if requested
+    let isRLE = false;
+    if (compress === 'rle') {
+      const RWImageData = window.ImageData;
+      if (RWImageData && typeof RWImageData.rleEncode === 'function') {
+        data = new Uint8Array(RWImageData.rleEncode(data));
+        isRLE = true;
+      }
+    }
+
+    // Resolve color key → RGB565
+    let colorKey = -1;
+    if (textureCfg.useColorKey) {
+      const hex = textureCfg.transparentColor || '#FF00FF';
+      const r = parseInt(hex.substring(1, 3), 16) || 0;
+      const g = parseInt(hex.substring(3, 5), 16) || 0;
+      const b = parseInt(hex.substring(5, 7), 16) || 0;
+      colorKey = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
+    }
+
+    // Build the D2TX binary
+    const palOff = meta.paletteOffset ?? textureCfg.paletteOffset ?? 0;
+    const d2 = buildD2TX(buildW, buildH, fmtEnum, data, {
+      paletteOffset: palOff,
+      rle: isRLE,
+      preRotated: rotation === 90,
+      colorKey,
+    });
+
+    // Upload to GPU
+    if (this._gpuTex) {
+      this._gpu.deleteTexture(this._gpuTex);
+      this._gpuTex = null;
+    }
+    this._gpuTex = this._gpu.createTexture(d2);
+
+    // No palette needed for direct-colour formats, but set an empty one
+    // to avoid stale palette data from a prior indexed preview
+    this._gpu.setPalette(new Uint8Array(1024));
+    this._gpu.setPaletteOffset(0);
+
+    const isPreRotated = !!(d2[13] & 0x02);
+    this._d2PreRotated = isPreRotated;
+    this._gpuBlit(isPreRotated);
+
+    // Persist .d2
+    this._saveD2File(d2);
+
+    console.log(`[TextureEditor] D2 direct preview: ${buildW}×${buildH} ${format} (${d2.length} bytes)`);
+  }
+
   async applyPaletteToImage(userInitiated = false) {
     if (!this.currentPalette) {
       alert('No palette selected');
@@ -4152,8 +4436,13 @@ class TextureEditor extends EditorBase {
       }
     }
     
+    // Build color key options for the matching function
+    const colorKeyOpts = (this.textureData.useColorKey && TextureData.isIndexedFormat(format) && format !== 'd2_mode_ai44')
+      ? { enabled: true, color: this.textureData.transparentColor || '#FF00FF' }
+      : null;
+
     // Match to the effective palette
-    const result = workingImageData.matchToPalette(null, effectivePalette);
+    const result = workingImageData.matchToPalette(null, effectivePalette, 0, null, colorKeyOpts);
     
     if (!result) {
       throw new Error('Failed to match image to palette');
@@ -4199,52 +4488,102 @@ class TextureEditor extends EditorBase {
     }
     
     try {
-      // Count unique colors in the image
+      // Count unique colors and detect alpha in the image
       const imageData = this.textureData.sourceImageData;
       const colorSet = new Set();
+      let hasAlpha = false;
+      let hasSemiAlpha = false; // any alpha that is not 0 or 255
+      const totalPixels = imageData.data.length / 4;
       
-      for (let i = 0; i < imageData.data.length; i += 4) {
+      // For large images, sample every Nth pixel for speed
+      const sampleStep = totalPixels > 500000 ? Math.floor(totalPixels / 500000) : 1;
+      const pixelStride = sampleStep * 4;
+      
+      for (let i = 0; i < imageData.data.length; i += pixelStride) {
         const r = imageData.data[i];
         const g = imageData.data[i + 1];
         const b = imageData.data[i + 2];
         const a = imageData.data[i + 3];
         
-        // Skip transparent pixels
-        if (a < 255) continue;
+        if (a < 255) {
+          hasAlpha = true;
+          if (a > 0) hasSemiAlpha = true;
+        }
         
-        // Create color key
+        // Create color key (include alpha in uniqueness)
         const colorKey = `${r},${g},${b}`;
         colorSet.add(colorKey);
         
-        // Early exit if we have too many colors for efficient counting
-        if (colorSet.size > 256) break;
+        // Early exit if clearly true-color
+        if (colorSet.size > 256) {
+          // Keep scanning for alpha but stop counting colors
+          if (hasAlpha) break;
+          for (let j = i + pixelStride; j < imageData.data.length; j += pixelStride) {
+            if (imageData.data[j + 3] < 255) {
+              hasAlpha = true;
+              if (imageData.data[j + 3] > 0) hasSemiAlpha = true;
+              break;
+            }
+          }
+          break;
+        }
       }
       
       const uniqueColors = colorSet.size;
       
-      // Determine appropriate color depth based on unique colors
-      let suggestedDepth = 8; // Default to 8-bit
+      // Determine appropriate output format based on image characteristics
+      let suggestedFormat;
+      let suggestedDepth;
+      
       if (uniqueColors <= 2) {
+        suggestedFormat = 'd2_mode_i1';
         suggestedDepth = 1;
       } else if (uniqueColors <= 4) {
+        suggestedFormat = 'd2_mode_i2';
         suggestedDepth = 2;
-      } else if (uniqueColors <= 16) {
-        suggestedDepth = 4;
-      } else {
+      } else if (uniqueColors <= 16 && !hasSemiAlpha) {
+        suggestedFormat = hasAlpha ? 'd2_mode_ai44' : 'd2_mode_i4';
+        suggestedDepth = hasAlpha ? 8 : 4;
+      } else if (uniqueColors <= 256 && !hasSemiAlpha) {
+        suggestedFormat = 'd2_mode_i8';
         suggestedDepth = 8;
+      } else if (hasAlpha) {
+        // True color with alpha
+        suggestedFormat = 'd2_mode_rgba8888';
+        suggestedDepth = 32;
+      } else {
+        // True color without alpha — RGB565 is a good default (small + decent quality)
+        suggestedFormat = 'd2_mode_rgb565';
+        suggestedDepth = 16;
       }
       
-      // Update the dropdown to show the detected depth
+      // Apply the detected format to textureData
+      this.textureData.outputPixelFormat = suggestedFormat;
+      this.textureData.colorDepth = suggestedDepth;
+      
+      // Update the dropdown
       this.colorDepthSelect.value = suggestedDepth;
       
-      // Update the label to show actual color count
+      // Update the format label to show the detected format
+      const formats = ImageData.getTextureFormatOptions();
+      const formatInfo = formats.find(f => f.value === suggestedFormat);
+      if (formatInfo && this.formatLabel) {
+        this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${formatInfo.label}</span>`;
+      }
+      
+      // Update the color depth label
       const paletteControlsPanel = this.element.querySelector('.palette-controls-panel');
       const label = paletteControlsPanel?.querySelector('label');
       if (label && label.innerHTML.includes('Color Depth')) {
         label.innerHTML = `Color Depth: <span style="color: #4a9eff;">${suggestedDepth}-bit</span>`;
       }
       
-      console.log(`[TextureEditor] Detected ${uniqueColors} unique colors, suggested ${suggestedDepth}-bit depth`);
+      // Update visibility of palette/colorkey options to match new format
+      this.updateOptionsVisibility();
+      this.updatePaletteVisibility();
+      
+      const alphaNote = hasAlpha ? (hasSemiAlpha ? ' (with semi-transparent alpha)' : ' (with binary alpha)') : '';
+      console.log(`[TextureEditor] Detected ${uniqueColors > 256 ? '>256' : uniqueColors} unique colors${alphaNote}, auto-selected ${suggestedFormat} (${suggestedDepth}-bit)`);
       
     } catch (error) {
       console.error('[TextureEditor] Error analyzing image colors:', error);

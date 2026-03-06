@@ -57,6 +57,8 @@ class BuildSystem {
         return 'pal';
       case '.texture':
         return 'texture';
+      case '.sprite':
+        return 'sprite';
       default: return 'copy';
     }
   }

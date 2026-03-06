@@ -318,6 +318,31 @@ class ProjectExplorerAdapter {
           }
         });
       }
+
+      // Add image-specific options (Make Frameset / Make Sprite)
+      if (this.isImageFile(filePath)) {
+        if (menuItems.length > 0) {
+          menuItems.push({ separator: true });
+        }
+        menuItems.push({
+          label: 'Make Frameset',
+          icon: '🖼️',
+          action: () => {
+            if (explorer?._makeFrameset) {
+              explorer._makeFrameset(filePath);
+            }
+          }
+        });
+        menuItems.push({
+          label: 'Make Sprite',
+          icon: '🎞️',
+          action: () => {
+            if (explorer?._makeSprite) {
+              explorer._makeSprite(filePath);
+            }
+          }
+        });
+      }
     }
 
     // Add standard items (avoid file operations on project root)
@@ -535,6 +560,12 @@ class ProjectExplorerAdapter {
     if (!filePath) return false;
     const extension = filePath.split('.').pop().toLowerCase();
     return ['pal', 'act', 'aco'].includes(extension);
+  }
+
+  isImageFile(filePath) {
+    if (!filePath) return false;
+    const extension = filePath.split('.').pop().toLowerCase();
+    return ['png', 'jpg', 'jpeg', 'gif', 'bmp'].includes(extension);
   }
 }
 

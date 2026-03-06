@@ -7,8 +7,9 @@
  *  • A fragment shader performs the format decode per-pixel, so sub-byte indexed
  *    formats (i1 / i2 / i4) and packed 16-bit formats are all handled on the GPU.
  *  • Palette lookup is done via a 256×1 RGBA texture (the "palette texture").
- *  • A color-key (RGB-565 value) can be set for non-indexed formats; any pixel
- *    matching the key is discarded (alpha → 0).
+ *  • A color-key (RGB-565 value) can be set; any pixel matching the key
+ *    is discarded (alpha → 0). Works for all formats including indexed.
+ *  • Pre-rotated textures (90° CW) are automatically un-rotated during blit.
  *  • Blit supports translate / scale / rotate with nearest or bilinear filtering
  *    and optional 4× MSAA-style anti-aliasing (super-sample).
  *
@@ -26,7 +27,7 @@
  *  const tex = gpu.createTexture(d2Bytes); // raw .d2 file bytes (with 32-byte header)
  *  gpu.deleteTexture(tex);
  *
- *  // Color key (non-indexed formats only)
+ *  // Color key — global override (per-texture key is read from D2TX header)
  *  gpu.setColorKey(rgb565);                // 0x0000 – 0xFFFF, or -1 to disable
  *
  *  // Blit
@@ -126,8 +127,6 @@ precision highp float;
 uniform vec2  u_dstPos;      // dest top-left in pixels
 uniform vec2  u_dstSize;     // dest size in pixels (after scale)
 uniform vec2  u_canvasSize;  // output canvas size in pixels
-uniform vec2  u_srcUV0;      // source rect min in [0..1]
-uniform vec2  u_srcUV1;      // source rect max in [0..1]
 uniform float u_rotation;    // radians CW
 uniform vec2  u_pivot;       // rotation pivot in [0..1] of dst rect
 
@@ -187,6 +186,7 @@ uniform int   u_palOffset;      // palette offset for sub-8-bit indexed modes
 uniform int   u_colorKey;       // RGB565 color key (-1 = disabled)
 uniform bool  u_filter;         // true = bilinear, false = nearest
 uniform bool  u_aa;             // true = 4× SSAA
+uniform bool  u_preRotated;     // true = texture stored rotated 90° CW
 
 out vec4 fragColor;
 
@@ -407,11 +407,21 @@ int toRGB565(vec4 c) {
   return (r5 << 11) | (g6 << 5) | b5;
 }
 
-// Sample at a given UV in [0..1] of the texture
+// Sample at a given UV in [0..1] of the LOGICAL texture.
+// When the texture is pre-rotated 90° CW, we remap the UV from logical
+// space to stored space so that decodePixel works with stored coordinates.
+//   stored_uv = vec2(1.0 - uv.y, uv.x)
+// This avoids wrapping decodePixel (which would double shader size).
 vec4 sampleTexture(vec2 uv) {
   // Clamp
   uv = clamp(uv, vec2(0.0), vec2(1.0));
 
+  // Remap UV from logical to stored space for pre-rotated textures
+  if (u_preRotated) {
+    uv = vec2(1.0 - uv.y, uv.x);
+  }
+
+  // Sample in stored texture dimensions
   float fx = uv.x * float(u_texWidth)  - 0.5;
   float fy = uv.y * float(u_texHeight) - 0.5;
 
@@ -419,12 +429,7 @@ vec4 sampleTexture(vec2 uv) {
     // Nearest
     int px = clamp(int(fx + 0.5), 0, u_texWidth  - 1);
     int py = clamp(int(fy + 0.5), 0, u_texHeight - 1);
-    vec4 c = decodePixel(px, py);
-    // Color key check for non-indexed
-    if (u_colorKey >= 0 && u_format >= 0x10) {
-      if (toRGB565(c) == u_colorKey) c.a = 0.0;
-    }
-    return c;
+    return decodePixel(px, py);
   }
 
   // Bilinear
@@ -444,12 +449,7 @@ vec4 sampleTexture(vec2 uv) {
   vec4 c01 = decodePixel(x0, y1);
   vec4 c11 = decodePixel(x1, y1);
 
-  vec4 c = mix(mix(c00, c10, sx), mix(c01, c11, sx), sy);
-
-  if (u_colorKey >= 0 && u_format >= 0x10) {
-    if (toRGB565(c) == u_colorKey) c.a = 0.0;
-  }
-  return c;
+  return mix(mix(c00, c10, sx), mix(c01, c11, sx), sy);
 }
 
 void main() {
@@ -490,6 +490,11 @@ void main() {
     fragColor = acc * 0.25;
   } else {
     fragColor = sampleTexture(uv);
+  }
+
+  // Color key check — done once in main() to avoid per-sample overhead
+  if (u_colorKey >= 0) {
+    if (toRGB565(fragColor) == u_colorKey) fragColor.a = 0.0;
   }
 
   if (fragColor.a <= 0.0) discard;
@@ -550,6 +555,7 @@ class D2Canvas {
       'u_rotation', 'u_pivot',
       'u_texData', 'u_palette', 'u_format', 'u_texWidth', 'u_texHeight',
       'u_texStride', 'u_palOffset', 'u_colorKey', 'u_filter', 'u_aa',
+      'u_preRotated',
     ];
     for (const n of names) this._uloc[n] = gl.getUniformLocation(this._program, n);
 
@@ -659,6 +665,8 @@ class D2Canvas {
     const flags       = view.getUint8(13);
     const isRLE       = !!(flags & 0x01);
     const preRotated  = !!(flags & 0x02);
+    const hasColorKey = !!(flags & 0x04);
+    const colorKey    = hasColorKey ? view.getUint16(14, true) : -1;
 
     const bpp = BITS_PER_PIXEL[format] || 8;
 
@@ -713,6 +721,7 @@ class D2Canvas {
       stride,
       preRotated,
       bpp,
+      colorKey,
     };
   }
 
@@ -779,8 +788,8 @@ class D2Canvas {
   /* ──────────────────────────────────────────────────────────────── */
 
   /**
-   * Set the color key for non-indexed formats. Pixels matching this
-   * RGB-565 value will be rendered transparent.
+   * Set the color key. Pixels matching this RGB-565 value will be
+   * rendered transparent. Works for all formats including indexed.
    * @param {number} rgb565  0x0000–0xFFFF, or -1 to disable.
    */
   setColorKey(rgb565) {
@@ -812,15 +821,19 @@ class D2Canvas {
     const filter = opts.filter === 'bilinear';
     const aa     = !!opts.aa;
 
-    // Source rect in texel coords → UV [0..1]
+    // Logical dimensions (for pre-rotated textures, display is swapped)
+    const logW = tex.preRotated ? tex.height : tex.width;
+    const logH = tex.preRotated ? tex.width  : tex.height;
+
+    // Source rect in logical texel coords → UV [0..1]
     const srcX = opts.srcX ?? 0;
     const srcY = opts.srcY ?? 0;
-    const srcW = opts.srcW ?? tex.width;
-    const srcH = opts.srcH ?? tex.height;
-    const u0 = srcX / tex.width;
-    const v0 = srcY / tex.height;
-    const u1 = (srcX + srcW) / tex.width;
-    const v1 = (srcY + srcH) / tex.height;
+    const srcW = opts.srcW ?? logW;
+    const srcH = opts.srcH ?? logH;
+    const u0 = srcX / logW;
+    const v0 = srcY / logH;
+    const u1 = (srcX + srcW) / logW;
+    const v1 = (srcY + srcH) / logH;
 
     const dstW = srcW * scaleX;
     const dstH = srcH * scaleY;
@@ -852,9 +865,10 @@ class D2Canvas {
     gl.uniform1i(u.u_texHeight, tex.height);
     gl.uniform1i(u.u_texStride, tex.stride);
     gl.uniform1i(u.u_palOffset, this._paletteOffset);
-    gl.uniform1i(u.u_colorKey, this._colorKey);
+    gl.uniform1i(u.u_colorKey, tex.colorKey ?? this._colorKey);
     gl.uniform1i(u.u_filter, filter ? 1 : 0);
     gl.uniform1i(u.u_aa, aa ? 1 : 0);
+    gl.uniform1i(u.u_preRotated, tex.preRotated ? 1 : 0);
 
     // Draw fullscreen quad (4 vertices, triangle strip)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -906,11 +920,17 @@ class D2Canvas {
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      const log = gl.getProgramInfoLog(prog);
+      const linkLog = gl.getProgramInfoLog(prog);
+      const vsLog = gl.getShaderInfoLog(vs);
+      const fsLog = gl.getShaderInfoLog(fs);
+      console.error('[D2Canvas] Link failed. Program log:', linkLog || '(empty)');
+      console.error('[D2Canvas] Vertex shader log:', vsLog || '(empty)');
+      console.error('[D2Canvas] Fragment shader log:', fsLog || '(empty)');
+      console.error('[D2Canvas] GL error:', gl.getError());
       gl.deleteProgram(prog);
       gl.deleteShader(vs);
       gl.deleteShader(fs);
-      throw new Error('D2Canvas: Shader link failed:\n' + log);
+      throw new Error('D2Canvas: Shader link failed:\n' + (linkLog || vsLog || fsLog || 'no details'));
     }
     gl.deleteShader(vs);
     gl.deleteShader(fs);
@@ -1028,11 +1048,13 @@ const FORMAT_STRING_TO_ENUM = {
  * @param {number} [opts.paletteOffset=0] Palette offset for sub-8-bit modes.
  * @param {boolean} [opts.rle=false]      Data is RLE-compressed.
  * @param {boolean} [opts.preRotated=false] Content is pre-rotated 90° CW.
+ * @param {number}  [opts.colorKey=-1]     RGB565 color key (-1 = disabled).
  * @returns {Uint8Array} Complete .d2 file bytes.
  */
 function buildD2TX(width, height, format, pixelData, opts = {}) {
   const fmt = typeof format === 'string' ? (FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.I8) : format;
-  const flags = (opts.rle ? 0x01 : 0) | (opts.preRotated ? 0x02 : 0);
+  const colorKey = opts.colorKey ?? -1;
+  const flags = (opts.rle ? 0x01 : 0) | (opts.preRotated ? 0x02 : 0) | (colorKey >= 0 ? 0x04 : 0);
   const paletteIndex = opts.paletteIndex || 0;
   const paletteOffset = opts.paletteOffset || 0;
 
@@ -1046,6 +1068,9 @@ function buildD2TX(width, height, format, pixelData, opts = {}) {
   view.setUint16(10, paletteIndex, true);       // palette index LE
   view.setUint8(12, paletteOffset & 0xFF);
   view.setUint8(13, flags & 0xFF);
+  if (colorKey >= 0) {
+    view.setUint16(14, colorKey & 0xFFFF, true); // RGB565 color key LE
+  }
 
   const result = new Uint8Array(D2TX_HEADER_SIZE + pixelData.length);
   result.set(header);

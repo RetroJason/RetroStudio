@@ -744,9 +744,10 @@ class ImageData {
    * @param {string[]|Object} palette - Palette object or array of hex colors
    * @param {number} offset - Starting index in palette (default: 0)
    * @param {number} colorCount - Number of colors to use from palette (default: all remaining)
+   * @param {Object} [colorKeyOpts] - Color key options { enabled: bool, color: '#RRGGBB' }
    * @returns {Object} Object containing indexed byte array and palette info
    */
-  matchToPalette(frameIndex = null, palette, offset = 0, colorCount = null) {
+  matchToPalette(frameIndex = null, palette, offset = 0, colorCount = null, colorKeyOpts = null) {
     const frame = frameIndex !== null ? this.getFrame(frameIndex) : this.getCurrentFrame();
     if (!frame) {
       console.error('ImageData: Invalid frame for palette matching');
@@ -778,9 +779,24 @@ class ImageData {
 
     console.log(`ImageData: Matching frame to palette (${workingPalette.length} colors, offset: ${offset})`);
 
+    // Color key: when enabled, index 0 (relative to offset) is reserved for
+    // the transparent color.  Force that palette entry to the key color and
+    // exclude it from opaque pixel matching so no opaque pixel accidentally
+    // gets the key index.
+    const ckEnabled = !!(colorKeyOpts && colorKeyOpts.enabled);
+    if (ckEnabled && workingPalette.length > 0) {
+      const keyColor = colorKeyOpts.color || '#FF00FF';
+      workingPalette[0] = keyColor;
+      console.log(`ImageData: Color key enabled — index 0 reserved as ${keyColor}`);
+    }
+
     // Convert palette to RGB for distance calculations
     const rgbPalette = workingPalette.map(hex => this._hexToRgb(hex));
     
+    // The first match index for opaque pixels: skip index 0 when color key
+    // is active so no opaque pixel ever maps to the key index.
+    const matchStart = ckEnabled ? 1 : 0;
+
     // Create indexed array by finding best match for each pixel
     const indexedData = new Uint8Array(frame.colors.length);
     
@@ -788,16 +804,16 @@ class ImageData {
       const colorObj = frame.colors[i];
       
       if (colorObj.alpha < 0.5) {
-        // Transparent pixel - use first palette index or offset
+        // Transparent pixel → color key index (index 0 within chunk)
         indexedData[i] = offset;
         continue;
       }
       
       const pixelRgb = { r: colorObj.r, g: colorObj.g, b: colorObj.b };
-      let bestMatch = 0;
+      let bestMatch = matchStart;
       let bestDistance = Infinity;
       
-      for (let j = 0; j < rgbPalette.length; j++) {
+      for (let j = matchStart; j < rgbPalette.length; j++) {
         const distance = this._colorDistance(pixelRgb, rgbPalette[j]);
         if (distance < bestDistance) {
           bestDistance = distance;
@@ -1461,10 +1477,14 @@ class ImageData {
 
   /**
    * Generate 8-bit indexed data
+   * @param {Uint8Array} sourceData - RGBA pixel data
+   * @param {Array} palette - Array of palette color strings
+   * @param {Object} [colorKeyOpts] - { enabled, color }
    */
-  generateIndexed8Data(sourceData, palette) {
+  generateIndexed8Data(sourceData, palette, colorKeyOpts) {
     const pixelCount = this.width * this.height;
     const indexData = new Uint8Array(pixelCount);
+    const ckEnabled = !!(colorKeyOpts && colorKeyOpts.enabled);
     
     for (let i = 0; i < pixelCount; i++) {
       const offset = i * 4;
@@ -1473,8 +1493,13 @@ class ImageData {
       const b = sourceData[offset + 2];
       const a = sourceData[offset + 3];
       
-      // Find closest palette color
-      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette);
+      if (ckEnabled && a < 128) {
+        indexData[i] = 0;  // color key index
+        continue;
+      }
+      
+      // Find closest palette color (skip index 0 when color key active)
+      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette, ckEnabled ? 1 : 0);
       indexData[i] = paletteIndex;
     }
     
@@ -1483,11 +1508,15 @@ class ImageData {
 
   /**
    * Generate 4-bit indexed data (packed as nibbles)
+   * @param {Uint8Array} sourceData - RGBA pixel data
+   * @param {Array} palette - Array of palette color strings
+   * @param {Object} [colorKeyOpts] - { enabled, color }
    */
-  generateIndexed4Data(sourceData, palette) {
+  generateIndexed4Data(sourceData, palette, colorKeyOpts) {
     const pixelCount = this.width * this.height;
     const byteCount = Math.ceil(pixelCount / 2);
     const indexData = new Uint8Array(byteCount);
+    const ckEnabled = !!(colorKeyOpts && colorKeyOpts.enabled);
     
     for (let i = 0; i < pixelCount; i++) {
       const offset = i * 4;
@@ -1496,8 +1525,12 @@ class ImageData {
       const b = sourceData[offset + 2];
       const a = sourceData[offset + 3];
       
-      // Find closest palette color (limited to 16 colors)
-      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x0F;
+      let paletteIndex;
+      if (ckEnabled && a < 128) {
+        paletteIndex = 0;
+      } else {
+        paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette, ckEnabled ? 1 : 0) & 0x0F;
+      }
       
       const byteIndex = Math.floor(i / 2);
       if (i % 2 === 0) {
@@ -1514,11 +1547,15 @@ class ImageData {
 
   /**
    * Generate 2-bit indexed data
+   * @param {Uint8Array} sourceData - RGBA pixel data
+   * @param {Array} palette - Array of palette color strings
+   * @param {Object} [colorKeyOpts] - { enabled, color }
    */
-  generateIndexed2Data(sourceData, palette) {
+  generateIndexed2Data(sourceData, palette, colorKeyOpts) {
     const pixelCount = this.width * this.height;
     const byteCount = Math.ceil(pixelCount / 4);
     const indexData = new Uint8Array(byteCount);
+    const ckEnabled = !!(colorKeyOpts && colorKeyOpts.enabled);
     
     for (let i = 0; i < pixelCount; i++) {
       const offset = i * 4;
@@ -1527,8 +1564,12 @@ class ImageData {
       const b = sourceData[offset + 2];
       const a = sourceData[offset + 3];
       
-      // Find closest palette color (limited to 4 colors)
-      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x03;
+      let paletteIndex;
+      if (ckEnabled && a < 128) {
+        paletteIndex = 0;
+      } else {
+        paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette, ckEnabled ? 1 : 0) & 0x03;
+      }
       
       // MSB-first: pixel 0 in bits 7-6, pixel 1 in bits 5-4, etc.
       const byteIndex = i >> 2;
@@ -1541,11 +1582,15 @@ class ImageData {
 
   /**
    * Generate 1-bit indexed data
+   * @param {Uint8Array} sourceData - RGBA pixel data
+   * @param {Array} palette - Array of palette color strings
+   * @param {Object} [colorKeyOpts] - { enabled, color }
    */
-  generateIndexed1Data(sourceData, palette) {
+  generateIndexed1Data(sourceData, palette, colorKeyOpts) {
     const pixelCount = this.width * this.height;
     const byteCount = Math.ceil(pixelCount / 8);
     const indexData = new Uint8Array(byteCount);
+    const ckEnabled = !!(colorKeyOpts && colorKeyOpts.enabled);
     
     for (let i = 0; i < pixelCount; i++) {
       const offset = i * 4;
@@ -1554,8 +1599,12 @@ class ImageData {
       const b = sourceData[offset + 2];
       const a = sourceData[offset + 3];
       
-      // Find closest palette color (limited to 2 colors)
-      const paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette) & 0x01;
+      let paletteIndex;
+      if (ckEnabled && a < 128) {
+        paletteIndex = 0;
+      } else {
+        paletteIndex = this.findClosestPaletteColor(r, g, b, a, palette, ckEnabled ? 1 : 0) & 0x01;
+      }
       
       // MSB-first: pixel 0 in bit 7, pixel 1 in bit 6, etc.
       const byteIndex = i >> 3;
@@ -1616,14 +1665,15 @@ class ImageData {
 
   /**
    * Find closest color in palette
+   * @param {number} startIdx - First index to consider (skip 0 for color key)
    */
-  findClosestPaletteColor(r, g, b, a, palette) {
+  findClosestPaletteColor(r, g, b, a, palette, startIdx = 0) {
     if (!palette || palette.length === 0) return 0;
     
-    let closestIndex = 0;
+    let closestIndex = startIdx;
     let closestDistance = Infinity;
     
-    for (let i = 0; i < palette.length; i++) {
+    for (let i = startIdx; i < palette.length; i++) {
       const paletteColor = this.parseColor(palette[i]);
       if (!paletteColor) continue;
       
@@ -2124,6 +2174,8 @@ class ImageData {
 
 // Export for use in other modules
 if (typeof window !== 'undefined') {
+  // Preserve native ImageData for canvas putImageData() compatibility
+  window.NativeImageData = window.ImageData;
   window.ImageData = ImageData;
 }
 

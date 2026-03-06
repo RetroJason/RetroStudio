@@ -112,6 +112,11 @@ class D2Viewer extends ViewerBase {
             <input id="d2PalOffsetInput" type="number" min="0" max="255" value="0" style="background:#333;color:#ccc;border:1px solid #555;border-radius:3px;padding:1px 4px;font-size:11px;font-family:monospace;width:50px;margin-left:4px;" />
           </label>
           <button id="d2PalApply" style="background:#4a9eff;border:none;color:#fff;cursor:pointer;padding:2px 10px;border-radius:3px;margin-left:8px;font-size:11px;">Apply</button>
+          <span style="border-left:1px solid #555;height:16px;margin:0 8px;"></span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+            <input id="d2ColorKeyCheck" type="checkbox" style="accent-color:#4a9eff;cursor:pointer;" />
+            <span>Show Color Key</span>
+          </label>
         </div>
 
         <!-- Canvas area -->
@@ -134,6 +139,13 @@ class D2Viewer extends ViewerBase {
 
     // Palette apply button
     bodyContainer.querySelector('#d2PalApply').addEventListener('click', () => this.applyPaletteOverride());
+
+    // Color key checkbox — toggle transparency for palette index 0
+    this._showColorKey = false;
+    bodyContainer.querySelector('#d2ColorKeyCheck').addEventListener('change', (e) => {
+      this._showColorKey = e.target.checked;
+      this._applyColorKeyToPalette();
+    });
   }
 
   setZoom(z) {
@@ -282,7 +294,11 @@ class D2Viewer extends ViewerBase {
           paletteColorCount = palette.length / 4;
           // Override header paletteOffset with the .texture's authoritative value
           h.paletteOffset = texInfo.paletteOffset;
-          console.log(`[D2Viewer] Loaded palette via .texture → ${texInfo.palettePath} (${paletteColorCount} colors, offset ${texInfo.paletteOffset})`);
+          // Auto-enable "Show Color Key" if the .texture has it enabled
+          this._showColorKey = !!texInfo.useColorKey;
+          const ckBox = this.element.querySelector('#d2ColorKeyCheck');
+          if (ckBox) ckBox.checked = this._showColorKey;
+          console.log(`[D2Viewer] Loaded palette via .texture → ${texInfo.palettePath} (${paletteColorCount} colors, offset ${texInfo.paletteOffset}, colorKey=${this._showColorKey})`);
         }
       }
       // Store on header for convenience
@@ -350,10 +366,19 @@ class D2Viewer extends ViewerBase {
     this._gpuTex = this._gpu.createTexture(this.fileData);
 
     // Set palette if available
+    // Store original palette for color key toggle
+    this._rawPalette = palette ? new Uint8Array(palette) : null;
+    this._currentHeader = h;
+
     if (palette) {
       this._gpu.setPalette(palette);
     }
     this._gpu.setPaletteOffset(h.paletteOffset);
+
+    // Apply color key if checkbox is checked
+    if (this._showColorKey) {
+      this._applyColorKeyToPalette();
+    }
 
     // Blit (with un-rotation for pre-rotated textures)
     this._gpuBlit(isPreRotated);
@@ -367,6 +392,34 @@ class D2Viewer extends ViewerBase {
   }
 
   /**
+   * Toggle color key transparency: set alpha=0 on palette index 0 (and the
+   * first index of each sub-palette chunk for sub-8-bit formats), then re-blit.
+   */
+  _applyColorKeyToPalette() {
+    if (!this._gpu || !this._rawPalette || !this._currentHeader) return;
+
+    const pal = new Uint8Array(this._rawPalette); // copy
+    if (this._showColorKey) {
+      // Determine chunk size from format
+      const fmt = this._currentHeader.formatEnum;
+      let chunkSize = 256; // I8 — one chunk
+      if (fmt === D2_FORMAT.I4)  chunkSize = 16;
+      else if (fmt === D2_FORMAT.I2)  chunkSize = 4;
+      else if (fmt === D2_FORMAT.I1)  chunkSize = 2;
+
+      // Set alpha=0 on index 0 of every chunk
+      for (let base = 0; base < 256; base += chunkSize) {
+        pal[base * 4 + 3] = 0; // alpha byte of this chunk's index 0
+      }
+    }
+    this._gpu.setPalette(pal);
+    this._gpu.setPaletteOffset(this._currentHeader.paletteOffset);
+
+    const isPreRotated = !!(this._currentHeader.flags & 0x02);
+    this._gpuBlit(isPreRotated);
+  }
+
+  /**
    * Clear + blit the current GPU texture. Handles un-rotation if needed.
    * @param {boolean} [isPreRotated]  If true, texture is stored rotated 90° CW.
    */
@@ -374,25 +427,12 @@ class D2Viewer extends ViewerBase {
     if (!this._gpu || !this._gpuTex) return;
     const tex = this._gpuTex;
 
-    if (isPreRotated) {
-      // Display dimensions are height×width (un-rotated)
-      const displayW = tex.height;
-      const displayH = tex.width;
-      this._gpu.resize(displayW, displayH);
-      this._gpu.clear(0, 0, 0, 0);
-      this._gpu.blit(tex, {
-        x: (displayW - tex.width) / 2,
-        y: (displayH - tex.height) / 2,
-        rotation: -90,
-        pivotX: 0.5,
-        pivotY: 0.5,
-      });
-      console.log(`[D2Viewer] GPU blit (un-rotated): ${tex.width}×${tex.height} → ${displayW}×${displayH}`);
-    } else {
-      this._gpu.resize(tex.width, tex.height);
-      this._gpu.clear(0, 0, 0, 0);
-      this._gpu.blit(tex);
-    }
+    // Logical display dimensions (pre-rotation is handled inside blit)
+    const displayW = isPreRotated ? tex.height : tex.width;
+    const displayH = isPreRotated ? tex.width  : tex.height;
+    this._gpu.resize(displayW, displayH);
+    this._gpu.clear(0, 0, 0, 0);
+    this._gpu.blit(tex);
     this._gpu.present();
   }
 
@@ -616,6 +656,7 @@ class D2Viewer extends ViewerBase {
     const palettePath  = json.metadata?.palettePath || json.palettePath || '';
     const paletteOffset = json.metadata?.paletteOffset ?? json.paletteOffset ?? 0;
     const transparentColor = json.transparentColor ?? '#FF00FF';
+    const useColorKey = !!json.useColorKey;
 
     if (!palettePath) {
       throw new Error(`.texture has no palettePath — open in Texture Editor and apply a palette first (${texturePath})`);
@@ -650,7 +691,7 @@ class D2Viewer extends ViewerBase {
       rgba[off + 3] = 255;
     }
 
-    return { palette: rgba, paletteOffset, transparentColor, palettePath };
+    return { palette: rgba, paletteOffset, transparentColor, palettePath, useColorKey };
   }
 
   /**

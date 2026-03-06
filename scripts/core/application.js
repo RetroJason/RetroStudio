@@ -171,6 +171,8 @@ class RetroStudioApplication {
       'scripts/editors/palette-editor.js',
       'scripts/editors/mod-xm-tracker-editor.js',
       'scripts/editors/texture-editor.js',
+      'scripts/editors/sprite-editor.js',
+      'scripts/editors/frameset-editor.js',
       'scripts/editors/editor-registry.js',
       
       // Viewers

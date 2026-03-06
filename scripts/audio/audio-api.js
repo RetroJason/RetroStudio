@@ -412,10 +412,8 @@ class AudioEngine extends EventTarget {
   }
   
   _handleModWorkerMessage(e) {
-    console.log('[AudioEngine] MOD Worker message:', e.data.type);
-    
     if (e.data.type === 'log') {
-      console.log('[MOD Worker]', e.data.message);
+      // MOD Worker log silenced (uncomment for debug): console.log('[MOD Worker]', e.data.message);
     } else if (e.data.type === 'pcm') {
       // Forward PCM data to mixer
       if (e.data.frames > 0) {
@@ -510,12 +508,9 @@ class AudioEngine extends EventTarget {
   }
   
   _handleWorkletMessage(e) {
-    console.log('[AudioEngine] Worklet message:', e.data.type);
-    
     if (e.data.type === 'request-pcm') {
       // Worklet wants more PCM data
       if (this.modWorker && this.activeSongs.size > 0) {
-        console.log('[AudioEngine] Requesting more PCM data');
         this.modWorker.postMessage({ type: 'get-pcm', frames: e.data.frames });
       }
     }
