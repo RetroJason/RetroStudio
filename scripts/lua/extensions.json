@@ -279,6 +279,267 @@
       ]
     },
     {
+      "name": "Image",
+      "description": "Image creation, transform, and frame selection functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create an image instance by asset name (loads .d2 from build)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Image asset name (without extension)"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque image handle"},
+          "example": "local logo = Image.Create(\"logo\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove an image from the scene",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "example": "Image.Destroy(logo)"
+        },
+        {
+          "name": "Clone",
+          "description": "Clone an image instance and return a new handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Source image handle"}
+          ],
+          "returns": {"type": "int32", "description": "New cloned image handle"},
+          "example": "local logo2 = Image.Clone(logo)"
+        },
+        {
+          "name": "SetPosition",
+          "description": "Set image position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "int32", "description": "X position"},
+            {"name": "y", "type": "int32", "description": "Y position"}
+          ],
+          "example": "Image.SetPosition(logo, 100, 120)"
+        },
+        {
+          "name": "GetPosition",
+          "description": "Get image position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "X and Y position"},
+          "example": "local x, y = Image.GetPosition(logo)"
+        },
+        {
+          "name": "SetPositionX",
+          "description": "Set image X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "int32", "description": "X position"}
+          ],
+          "example": "Image.SetPositionX(logo, 100)"
+        },
+        {
+          "name": "GetPositionX",
+          "description": "Get image X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "X position"},
+          "example": "local x = Image.GetPositionX(logo)"
+        },
+        {
+          "name": "SetPositionY",
+          "description": "Set image Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "y", "type": "int32", "description": "Y position"}
+          ],
+          "example": "Image.SetPositionY(logo, 120)"
+        },
+        {
+          "name": "GetPositionY",
+          "description": "Get image Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Y position"},
+          "example": "local y = Image.GetPositionY(logo)"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set image center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "centerX", "type": "int32", "description": "Center X"},
+            {"name": "centerY", "type": "int32", "description": "Center Y"}
+          ],
+          "example": "Image.SetCenter(logo, 8, 8)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get image center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Center X and Y"},
+          "example": "local cx, cy = Image.GetCenter(logo)"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set image display size metadata",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "width", "type": "int32", "description": "Width"},
+            {"name": "height", "type": "int32", "description": "Height"}
+          ],
+          "example": "Image.SetSize(logo, 64, 64)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get image display size metadata",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height"},
+          "example": "local w, h = Image.GetSize(logo)"
+        },
+        {
+          "name": "SetRotation",
+          "description": "Set image rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "angle", "type": "int32", "description": "Rotation angle in degrees"}
+          ],
+          "example": "Image.SetRotation(logo, 45)"
+        },
+        {
+          "name": "GetRotation",
+          "description": "Get image rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Rotation in degrees"},
+          "example": "local angle = Image.GetRotation(logo)"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set image scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "Image.SetScale(logo, 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get image scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = Image.GetScale(logo)"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set image tint color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "Image.SetColor(logo, 0x00FFFFFF)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get image tint color",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = Image.GetColor(logo)"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this image uses",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "Image.SetPaletteSlot(logo, 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get image palette slot",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = Image.GetPaletteSlot(logo)"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set image visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "Image.SetVisible(logo, false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get image visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = Image.GetVisible(logo)"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set image attribute flags (mirror, repeat, etc.)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "Image.SetAttributes(logo, 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get image attribute flags",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = Image.GetAttributes(logo)"
+        },
+        {
+          "name": "SetFrame",
+          "description": "Set active frame index for a multi-frame image",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "frameIndex", "type": "int32", "description": "0-based frame index"}
+          ],
+          "example": "Image.SetFrame(logo, 1)"
+        },
+        {
+          "name": "GetFrame",
+          "description": "Get active frame index",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "0-based frame index"},
+          "example": "local frame = Image.GetFrame(logo)"
+        },
+        {
+          "name": "GetFrameCount",
+          "description": "Get number of frames available on the image",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Frame count"},
+          "example": "local count = Image.GetFrameCount(logo)"
+        }
+      ]
+    },
+    {
       "name": "Music",
       "description": "Background music playback functions", 
       "functions": [

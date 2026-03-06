@@ -1529,28 +1529,61 @@ class ProjectExplorer {
       return;
     }
     
-    // Handle linked files - check for and rename linked texture/image pairs
-    let linkedOldPath = null;
-    let linkedNewPath = null;
+    // Handle linked files for image asset set members (.png/.jpg/.../.texture/.frameset/.d2)
+    const linkedRenames = [];
+    let renamedImageOldPath = null;
+    let renamedImageNewPath = null;
     if (type === 'file') {
-      const linkedFileName = this.getLinkedFileName(currentName);
-      if (linkedFileName) {
-        linkedOldPath = parentPath ? `${parentPath}/${linkedFileName}` : linkedFileName;
-        const linkedNode = this.getNodeByPath(linkedOldPath);
-        if (linkedNode) {
-          // Calculate new name for linked file
-          const newBaseName = newName.substring(0, newName.lastIndexOf('.'));
-          const linkedExt = this.getFileExtension(linkedFileName);
-          const linkedNewName = newBaseName + linkedExt;
-          linkedNewPath = parentPath ? `${parentPath}/${linkedNewName}` : linkedNewName;
-          
-          // Check if linked new name would conflict
-          if (this.getNodeByPath(linkedNewPath)) {
+      const currentExt = this.getFileExtension(currentName).toLowerCase();
+      const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tga'];
+      const companionExtensions = ['.texture', '.frameset', '.d2'];
+      const assetFamilyExtensions = [...imageExtensions, ...companionExtensions];
+      const isImageAssetSetMember = assetFamilyExtensions.includes(currentExt);
+
+      if (isImageAssetSetMember) {
+        const oldBaseName = currentName.substring(0, currentName.lastIndexOf('.'));
+        const newBaseName = newName.substring(0, newName.lastIndexOf('.'));
+        const familyOldPaths = new Set();
+
+        for (const familyExt of assetFamilyExtensions) {
+          const siblingOldName = oldBaseName + familyExt;
+          const siblingOldPath = parentPath ? `${parentPath}/${siblingOldName}` : siblingOldName;
+          if (this.getNodeByPath(siblingOldPath)) {
+            familyOldPaths.add(siblingOldPath);
+          }
+        }
+
+        if (this.isImageFile(currentName)) {
+          renamedImageOldPath = path;
+          renamedImageNewPath = newPath;
+        }
+
+        for (const familyExt of assetFamilyExtensions) {
+          const linkedOldName = oldBaseName + familyExt;
+          const linkedOldPath = parentPath ? `${parentPath}/${linkedOldName}` : linkedOldName;
+          if (linkedOldPath === path) continue;
+
+          const linkedNode = this.getNodeByPath(linkedOldPath);
+          if (!linkedNode) continue;
+
+          const linkedNewName = newBaseName + familyExt;
+          const linkedNewPath = parentPath ? `${parentPath}/${linkedNewName}` : linkedNewName;
+
+          // Check if linked new name would conflict with an unrelated existing file
+          const destinationExists = this.getNodeByPath(linkedNewPath);
+          const destinationIsInRenameSet = familyOldPaths.has(linkedNewPath) || linkedNewPath === newPath;
+          if (linkedNewPath !== linkedOldPath && destinationExists && !destinationIsInRenameSet) {
             alert(`Cannot rename: linked file "${linkedNewName}" would conflict with existing file.`);
             return;
           }
-          
+
+          linkedRenames.push({ oldPath: linkedOldPath, newPath: linkedNewPath, newName: linkedNewName });
           console.log(`[ProjectExplorer] Will also rename linked file: ${linkedOldPath} → ${linkedNewPath}`);
+
+          if (!renamedImageOldPath && imageExtensions.includes(familyExt)) {
+            renamedImageOldPath = linkedOldPath;
+            renamedImageNewPath = linkedNewPath;
+          }
         }
       }
     }
@@ -1571,16 +1604,38 @@ class ProjectExplorer {
       if (type === 'file') {
         await this.renameFileInStorage(path, newPath, nodeData.file);
         
-        // Also rename linked file if it exists
-        if (linkedOldPath && linkedNewPath) {
-          const linkedNodeData = this.getNodeByPath(linkedOldPath);
-          if (linkedNodeData) {
+        // Also rename linked companion files if they exist
+        for (const linkedRename of linkedRenames) {
+          const linkedNodeData = this.getNodeByPath(linkedRename.oldPath);
+          if (!linkedNodeData) continue;
+          try {
+            await this.renameFileInStorage(linkedRename.oldPath, linkedRename.newPath, linkedNodeData.file);
+            console.log(`[ProjectExplorer] Successfully renamed linked file: ${linkedRename.oldPath} → ${linkedRename.newPath}`);
+          } catch (error) {
+            console.error(`[ProjectExplorer] Failed to rename linked file:`, error);
+            // Continue with main file rename even if linked file rename fails
+          }
+        }
+
+        // Keep companion JSON references in sync if this rename set also moved an image.
+        if (renamedImageOldPath && renamedImageNewPath) {
+          const refTargets = new Set();
+          const newPrimaryExt = this.getFileExtension(newPath).toLowerCase();
+          if (['.texture', '.frameset'].includes(newPrimaryExt)) {
+            refTargets.add(newPath);
+          }
+          for (const linkedRename of linkedRenames) {
+            const ext = this.getFileExtension(linkedRename.newPath).toLowerCase();
+            if (['.texture', '.frameset'].includes(ext)) {
+              refTargets.add(linkedRename.newPath);
+            }
+          }
+
+          for (const targetPath of refTargets) {
             try {
-              await this.renameFileInStorage(linkedOldPath, linkedNewPath, linkedNodeData.file);
-              console.log(`[ProjectExplorer] Successfully renamed linked file: ${linkedOldPath} → ${linkedNewPath}`);
+              await this.updateCompanionSourceReferences(targetPath, renamedImageOldPath, renamedImageNewPath);
             } catch (error) {
-              console.error(`[ProjectExplorer] Failed to rename linked file:`, error);
-              // Continue with main file rename even if linked file fails
+              console.warn('[ProjectExplorer] Failed to update companion source references:', error);
             }
           }
         }
@@ -1589,16 +1644,15 @@ class ProjectExplorer {
       // Update the project structure
       this.updateNodePath(path, newPath, nodeData);
       
-      // Update linked file in project structure too
-      if (linkedOldPath && linkedNewPath) {
-        const linkedNodeData = this.getNodeByPath(linkedOldPath);
-        if (linkedNodeData) {
-          try {
-            this.updateNodePath(linkedOldPath, linkedNewPath, linkedNodeData);
-            console.log(`[ProjectExplorer] Updated linked file structure: ${linkedOldPath} → ${linkedNewPath}`);
-          } catch (error) {
-            console.error(`[ProjectExplorer] Failed to update linked file structure:`, error);
-          }
+      // Update linked companion files in project structure too
+      for (const linkedRename of linkedRenames) {
+        const linkedNodeData = this.getNodeByPath(linkedRename.oldPath);
+        if (!linkedNodeData) continue;
+        try {
+          this.updateNodePath(linkedRename.oldPath, linkedRename.newPath, linkedNodeData);
+          console.log(`[ProjectExplorer] Updated linked file structure: ${linkedRename.oldPath} → ${linkedRename.newPath}`);
+        } catch (error) {
+          console.error(`[ProjectExplorer] Failed to update linked file structure:`, error);
         }
       }
       
@@ -1619,10 +1673,9 @@ class ProjectExplorer {
         if (tabManager && typeof tabManager.updateFileReference === 'function') {
           tabManager.updateFileReference(path, newPath, newName);
           
-          // Update linked file tab reference too
-          if (linkedOldPath && linkedNewPath) {
-            const linkedNewName = linkedNewPath.split('/').pop();
-            tabManager.updateFileReference(linkedOldPath, linkedNewPath, linkedNewName);
+          // Update linked companion tab references too
+          for (const linkedRename of linkedRenames) {
+            tabManager.updateFileReference(linkedRename.oldPath, linkedRename.newPath, linkedRename.newName);
           }
         }
       }
@@ -1812,6 +1865,86 @@ class ProjectExplorer {
       console.error('[ProjectExplorer] Failed to rename file in storage:', error);
       throw new Error('Failed to update file storage');
     }
+  }
+
+  _rewriteImageReference(value, oldPath, newPath) {
+    if (typeof value !== 'string' || !value) return value;
+
+    const oldNorm = oldPath.replace(/\\/g, '/');
+    const newNorm = newPath.replace(/\\/g, '/');
+    const oldName = oldNorm.split('/').pop();
+    const newName = newNorm.split('/').pop();
+    const valueNorm = value.replace(/\\/g, '/');
+
+    if (valueNorm === oldNorm) return newNorm;
+    if (valueNorm === oldName) return newName;
+    if (oldName && valueNorm.endsWith('/' + oldName)) {
+      return valueNorm.slice(0, -oldName.length) + newName;
+    }
+    return value;
+  }
+
+  async updateCompanionSourceReferences(companionPath, oldImagePath, newImagePath) {
+    const ext = this.getFileExtension(companionPath).toLowerCase();
+    if (!['.texture', '.frameset'].includes(ext)) return;
+
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm) return;
+
+    const storagePath = window.ProjectPaths?.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(companionPath)
+      : companionPath;
+
+    const record = await fm.loadFile(storagePath);
+    if (!record) return;
+
+    const content = record.content !== undefined ? record.content : (record.fileContent || '');
+    if (typeof content !== 'string') return;
+
+    let data;
+    try {
+      data = JSON.parse(content);
+    } catch (_err) {
+      // Not JSON content; ignore.
+      return;
+    }
+
+    let changed = false;
+    const rewrite = (v) => this._rewriteImageReference(v, oldImagePath, newImagePath);
+
+    if (ext === '.texture') {
+      const nextSourceImagePath = rewrite(data.sourceImagePath);
+      if (nextSourceImagePath !== data.sourceImagePath) {
+        data.sourceImagePath = nextSourceImagePath;
+        changed = true;
+      }
+      const nextSourceImage = rewrite(data.sourceImage);
+      if (nextSourceImage !== data.sourceImage) {
+        data.sourceImage = nextSourceImage;
+        changed = true;
+      }
+      if (data.metadata && typeof data.metadata === 'object') {
+        const nextMetaSource = rewrite(data.metadata.sourceImagePath);
+        if (nextMetaSource !== data.metadata.sourceImagePath) {
+          data.metadata.sourceImagePath = nextMetaSource;
+          changed = true;
+        }
+      }
+    }
+
+    if (ext === '.frameset') {
+      const nextImagePath = rewrite(data.imagePath);
+      if (nextImagePath !== data.imagePath) {
+        data.imagePath = nextImagePath;
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    const metadata = { binaryData: false };
+    if (record.builderId) metadata.builderId = record.builderId;
+    await fm.saveFile(storagePath, JSON.stringify(data, null, 2), metadata);
   }
   
   updateNodePath(oldPath, newPath, nodeData) {
@@ -3079,7 +3212,19 @@ class ProjectExplorer {
       try {
         const existingTexture = await io.loadFile(textureStoragePath);
         if (existingTexture) {
-          console.log('[ProjectExplorer] Texture file already exists, skipping creation:', textureFileName);
+          console.log('[ProjectExplorer] Texture file already exists in storage:', textureFileName);
+          const existingTextureNode = this.getNodeByPath(textureUIPath);
+          if (!existingTextureNode) {
+            // Keep tree/storage in sync when companion already exists but is missing from UI structure.
+            this.addFileToProject({
+              name: textureFileName,
+              size: 0,
+              lastModified: Date.now(),
+              originalPath: textureUIPath
+            }, imagePath, true, true);
+            this.renderTree();
+            console.log('[ProjectExplorer] Re-linked existing texture file into project tree:', textureUIPath);
+          }
           return;
         }
       } catch (e) {
@@ -3194,7 +3339,19 @@ class ProjectExplorer {
       try {
         const existing = await io.loadFile(framesetStoragePath);
         if (existing) {
-          console.log('[ProjectExplorer] Frameset file already exists, skipping:', framesetFileName);
+          console.log('[ProjectExplorer] Frameset file already exists in storage:', framesetFileName);
+          const existingFramesetNode = this.getNodeByPath(framesetUIPath);
+          if (!existingFramesetNode) {
+            // Keep tree/storage in sync when companion already exists but is missing from UI structure.
+            this.addFileToProject({
+              name: framesetFileName,
+              size: 0,
+              lastModified: Date.now(),
+              originalPath: framesetUIPath
+            }, imagePath, true, true);
+            this.renderTree();
+            console.log('[ProjectExplorer] Re-linked existing frameset file into project tree:', framesetUIPath);
+          }
           return;
         }
       } catch (e) {

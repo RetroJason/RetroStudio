@@ -1602,10 +1602,14 @@ class GameEmulator {
           this._gpu.resize(448, 368);
           console.log('[GameEmulator] D2Canvas GPU renderer initialized (448×368)');
 
-          // Load palette map (PMAP) and push first palette to GPU
+          // Load palette map (PMAP), textures, and prepare render extensions.
           const spriteExt = this.extensionLoader?.getExtension('Sprite');
           if (spriteExt) {
             await spriteExt.initGpu(this._gpu);
+          }
+          const imageExt = this.extensionLoader?.getExtension('Image');
+          if (imageExt) {
+            await imageExt.initGpu(this._gpu);
           }
         } else {
           console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
@@ -1678,12 +1682,16 @@ class GameEmulator {
         
         // ── Render pass ──────────────────────────────────────────────
         // Clear the GPU canvas and let each renderable extension draw.
-        // Sprite extension uses D2Canvas.blit() for hardware-accurate rendering.
+        // Sprite/Image extensions use D2Canvas.blit() for hardware-accurate rendering.
         if (this._gpu) {
           this._gpu.clear(0, 0, 0, 1);
           const spriteExt = this.extensionLoader?.getExtension('Sprite');
           if (spriteExt) {
             spriteExt.renderFrame(this._gpu, deltaTime);
+          }
+          const imageExt = this.extensionLoader?.getExtension('Image');
+          if (imageExt) {
+            imageExt.renderFrame(this._gpu, deltaTime);
           }
           this._gpu.present();
         }
