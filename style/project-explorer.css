@@ -312,6 +312,14 @@
   background-color: #37373d;
 }
 
+.context-item-danger {
+  color: #f48771;
+}
+
+.context-item-danger:hover {
+  background-color: #4a2020;
+}
+
 .context-separator {
   height: 1px;
   background-color: #555555;

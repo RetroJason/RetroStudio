@@ -80,9 +80,11 @@ class BuildSystem {
         await window.gameEditor.tabManager.saveAllOpenTabs();
       }
       
-      // Clear the build folder before starting
-      if (window.gameEditor && window.gameEditor.projectExplorer) {
-        await window.gameEditor.projectExplorer.clearBuildFolder();
+      // Clear the build folder before starting.
+      // Prefer service container resolution so this works even when window.gameEditor is not the active host.
+      const projectExplorerForBuild = window.serviceContainer?.get('projectExplorer') || window.gameEditor?.projectExplorer;
+      if (projectExplorerForBuild && typeof projectExplorerForBuild.clearBuildFolder === 'function') {
+        await projectExplorerForBuild.clearBuildFolder();
       }
       
       // Reset the palette registry so texture builds can register palettes

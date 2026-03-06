@@ -37,7 +37,7 @@ class ProjectExplorer {
             children: {
               Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
               SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
-              Images: { type: 'folder', filter: ['.png', '.gif'], children: {} },
+              Images: { type: 'folder', filter: ['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'], children: {} },
               Palettes: { type: 'folder', filter: ['.act', '.pal', '.aco'], children: {} },
               Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
               Sprites: { type: 'folder', filter: ['.sprite'], children: {} },
@@ -633,9 +633,13 @@ class ProjectExplorer {
     if (ok && window.ModalUtils) {
       return window.ModalUtils.showConfirm(title, message, options);
     }
-    // If modal utils cannot be loaded, default to cancelling destructive actions
-    console.warn('[ProjectExplorer] ModalUtils unavailable; cancelling action');
-    return false;
+    // Fall back to native confirm so critical actions still work if modal utils fail to load.
+    console.warn('[ProjectExplorer] ModalUtils unavailable; using native confirm fallback');
+    try {
+      return window.confirm(message);
+    } catch (_) {
+      return false;
+    }
   }
   
 
@@ -648,69 +652,8 @@ class ProjectExplorer {
     const confirmed = await this._confirm('Close Project', `Close project "${projectName}"? Open tabs for its files will be closed.`, { okText: 'Close Project', cancelText: 'Cancel' });
     if (!confirmed) return;
 
-    // Collect all file paths (sources + build) for deletion from storage
-    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-    const toDelete = [];
-    const addPaths = (node, base) => {
-      if (!node) return;
-      if (node.type === 'file') {
-        toDelete.push(base);
-      } else if (node.children) {
-        for (const [name, child] of Object.entries(node.children)) {
-          addPaths(child, base ? `${base}/${name}` : name);
-        }
-      }
-    };
-    addPaths(this.projectData.structure[projectName]?.children?.[sourcesRoot], `${projectName}/${sourcesRoot}`);
-    addPaths(this.projectData.structure[projectName]?.children?.[buildRoot], `${projectName}/${buildRoot}`);
-
-    // Delete from storage via FileManager, normalizing paths
-    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
-    if (fm) {
-      for (const p of toDelete) {
-        const norm = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : p.replace(/^Build\//, 'build/');
-        try { await fm.deleteFile(norm); } catch (_) {}
-      }
-    }
-
-    // Signal deletions to other systems (TabManager will close affected tabs)
-    try {
-      if (window.eventBus && typeof window.eventBus.emit === 'function') {
-        const normalizedDeleted = toDelete.map(p => (window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : p.replace(/^Build\//, 'build/')));
-        await window.eventBus.emit('file.deleted', { path: projectName, isFolder: true, deletedPaths: normalizedDeleted });
-      }
-    } catch (_) { /* ignore */ }
-
-    // Fallback: directly close any open tabs that match deleted files (normalized compare)
-    try {
-      if (window.gameEmulator?.tabManager) {
-        const normalize = (p) => (window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(p) : (typeof p === 'string' ? p.replace(/^Build\//, 'build/') : p));
-        const deletedSet = new Set(toDelete.map(normalize));
-        const tabs = window.gameEmulator.tabManager.getAllTabs();
-        for (const t of tabs) {
-          const tp = t.fullPath;
-          const tpNorm = normalize(tp);
-          if (tpNorm && deletedSet.has(tpNorm)) {
-            if (t.tabId && t.tabId !== 'preview') {
-              window.gameEmulator.tabManager.closeTab(t.tabId);
-            } else if (t.tabId === 'preview') {
-              window.gameEmulator.tabManager._closePreviewTab();
-            }
-          }
-        }
-      }
-    } catch (_) { /* ignore */ }
-
-    // Remove project from structure
-    delete this.projectData.structure[projectName];
-
-    // Focus another project if any
-    const remaining = Object.keys(this.projectData.structure);
-    this.focusedProjectName = remaining[0] || null;
-
-    // Re-render
-    this.renderTree();
+    // Non-destructive close: remove from UI and close tabs, keep stored files intact.
+    await this.removeProjectFromUI(projectName);
   }
   
   handleFileUpload(files) {
@@ -893,7 +836,7 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/SFX` };
     } else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
-    } else if (['.texture'].includes(ext)) {
+    } else if (['.texture', '.frameset', '.d2'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
     } else if (['.sprite'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Sprites` };
@@ -924,7 +867,8 @@ class ProjectExplorer {
     }
     
     // Use an arbitrary target path - the filtering system will auto-redirect
-    const tempPath = `${focusedProject}/Sources`;
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+    const tempPath = `${focusedProject}/${sourcesRoot}`;
     const filtered = this.filterFile(fileObj, tempPath);
     
     if (!filtered.allowed) {
@@ -1130,8 +1074,15 @@ class ProjectExplorer {
     }
     
     try {
-      // Get all build file paths from the current build structure
-      const buildFilePaths = this.getAllBuildFilePaths();
+      // Enumerate directly from storage so orphaned artifacts are cleaned too.
+      const buildPrefix = (window.ProjectPaths && window.ProjectPaths.getBuildStoragePrefix)
+        ? window.ProjectPaths.getBuildStoragePrefix()
+        : 'build/';
+      const buildPrefixNoSlash = buildPrefix.replace(/\/$/, '');
+      const buildRecords = await fm.listFiles(buildPrefixNoSlash);
+      const buildFilePaths = (buildRecords || [])
+        .map(rec => rec?.path || rec)
+        .filter(path => typeof path === 'string' && path.startsWith(buildPrefix));
       
       console.log(`[ProjectExplorer] Found ${buildFilePaths.length} build files to clean up`);
       
@@ -3108,6 +3059,11 @@ class ProjectExplorer {
   // Auto-create texture file for image files
   async createTextureFileForImage(imageUIPath, imagePath, imageFileName) {
     try {
+      const io = window.fileIOService || window.fileManager || window.serviceContainer?.get?.('fileManager');
+      if (!io || typeof io.saveFile !== 'function' || typeof io.loadFile !== 'function') {
+        console.warn('[ProjectExplorer] No file I/O service available for texture companion creation');
+        return;
+      }
       
       // Calculate texture file paths
       const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
@@ -3120,16 +3076,14 @@ class ProjectExplorer {
       const textureUIPath = imagePath + '/' + textureFileName;
       
       // Check if texture file already exists
-      if (window.fileIOService) {
-        try {
-          const existingTexture = await window.fileIOService.loadFile(textureStoragePath);
-          if (existingTexture) {
-            console.log('[ProjectExplorer] Texture file already exists, skipping creation:', textureFileName);
-            return;
-          }
-        } catch (e) {
-          // File doesn't exist, proceed with creation
+      try {
+        const existingTexture = await io.loadFile(textureStoragePath);
+        if (existingTexture) {
+          console.log('[ProjectExplorer] Texture file already exists, skipping creation:', textureFileName);
+          return;
         }
+      } catch (e) {
+        // File doesn't exist, proceed with creation
       }
       
       // Load the image to get its actual dimensions
@@ -3138,7 +3092,7 @@ class ProjectExplorer {
       
       try {
         console.log('[ProjectExplorer] Loading image to get dimensions:', imageStoragePath);
-        const imageFile = await window.fileIOService.loadFile(imageStoragePath);
+        const imageFile = await io.loadFile(imageStoragePath);
         if (imageFile && imageFile.fileContent) {
           // Create an image element to get dimensions
           const img = new Image();
@@ -3196,24 +3150,22 @@ class ProjectExplorer {
       const textureContent = JSON.stringify(defaultTextureData, null, 2);
       
       // Save texture file to storage
-      if (window.fileIOService) {
-        await window.fileIOService.saveFile(textureStoragePath, textureContent);
-        console.log('[ProjectExplorer] Auto-created texture file:', textureStoragePath);
-        
-        // Add texture file to project structure
-        this.addFileToProject({ 
-          name: textureFileName, 
-          size: textureContent.length,
-          lastModified: Date.now(),
-          originalPath: textureUIPath  // Preserve the actual file path for operations
-        }, imagePath, true, true); // Skip auto-open and skip render to avoid duplicate refreshes
-        
-        console.log('[ProjectExplorer] Added texture file to project structure:', textureUIPath);
-        
-        // Manually refresh the UI to show the new texture file
-        this.renderTree();
-        console.log('[ProjectExplorer] Refreshed UI after texture file creation');
-      }
+      await io.saveFile(textureStoragePath, textureContent);
+      console.log('[ProjectExplorer] Auto-created texture file:', textureStoragePath);
+      
+      // Add texture file to project structure
+      this.addFileToProject({ 
+        name: textureFileName, 
+        size: textureContent.length,
+        lastModified: Date.now(),
+        originalPath: textureUIPath  // Preserve the actual file path for operations
+      }, imagePath, true, true); // Skip auto-open and skip render to avoid duplicate refreshes
+      
+      console.log('[ProjectExplorer] Added texture file to project structure:', textureUIPath);
+      
+      // Manually refresh the UI to show the new texture file
+      this.renderTree();
+      console.log('[ProjectExplorer] Refreshed UI after texture file creation');
       
     } catch (error) {
       console.error('[ProjectExplorer] Failed to auto-create texture file:', error);
@@ -3223,6 +3175,12 @@ class ProjectExplorer {
   // Auto-create frameset file for image files
   async createFramesetFileForImage(imageUIPath, imagePath, imageFileName) {
     try {
+      const io = window.fileIOService || window.fileManager || window.serviceContainer?.get?.('fileManager');
+      if (!io || typeof io.saveFile !== 'function' || typeof io.loadFile !== 'function') {
+        console.warn('[ProjectExplorer] No file I/O service available for frameset companion creation');
+        return;
+      }
+
       const baseName = imageFileName.substring(0, imageFileName.lastIndexOf('.'));
       const framesetFileName = baseName + '.frameset';
 
@@ -3233,23 +3191,21 @@ class ProjectExplorer {
       const framesetUIPath = imagePath + '/' + framesetFileName;
 
       // Check if frameset file already exists
-      if (window.fileIOService) {
-        try {
-          const existing = await window.fileIOService.loadFile(framesetStoragePath);
-          if (existing) {
-            console.log('[ProjectExplorer] Frameset file already exists, skipping:', framesetFileName);
-            return;
-          }
-        } catch (e) {
-          // File doesn't exist, proceed
+      try {
+        const existing = await io.loadFile(framesetStoragePath);
+        if (existing) {
+          console.log('[ProjectExplorer] Frameset file already exists, skipping:', framesetFileName);
+          return;
         }
+      } catch (e) {
+        // File doesn't exist, proceed
       }
 
       // Load image to get dimensions
       let imageWidth = 32;
       let imageHeight = 32;
       try {
-        const imageFile = await window.fileIOService.loadFile(imageStoragePath);
+        const imageFile = await io.loadFile(imageStoragePath);
         if (imageFile && imageFile.fileContent) {
           const img = new Image();
           const dims = await new Promise((resolve) => {
@@ -3283,20 +3239,18 @@ class ProjectExplorer {
 
       const framesetContent = JSON.stringify(framesetData, null, 2);
 
-      if (window.fileIOService) {
-        await window.fileIOService.saveFile(framesetStoragePath, framesetContent);
-        console.log('[ProjectExplorer] Auto-created frameset file:', framesetStoragePath);
+      await io.saveFile(framesetStoragePath, framesetContent);
+      console.log('[ProjectExplorer] Auto-created frameset file:', framesetStoragePath);
 
-        this.addFileToProject({
-          name: framesetFileName,
-          size: framesetContent.length,
-          lastModified: Date.now(),
-          originalPath: framesetUIPath
-        }, imagePath, true, true);
+      this.addFileToProject({
+        name: framesetFileName,
+        size: framesetContent.length,
+        lastModified: Date.now(),
+        originalPath: framesetUIPath
+      }, imagePath, true, true);
 
-        this.renderTree();
-        console.log('[ProjectExplorer] Frameset file created and tree refreshed');
-      }
+      this.renderTree();
+      console.log('[ProjectExplorer] Frameset file created and tree refreshed');
     } catch (error) {
       console.error('[ProjectExplorer] Failed to auto-create frameset file:', error);
     }
@@ -3323,7 +3277,7 @@ class ProjectExplorer {
     const ext = nodeName.split('.').pop().toLowerCase();
     const isFile = nodeData.type === 'file';
 
-    // "Make Sprite" — shown for raw image files (not .texture)
+    // "Make Sprite" / "Make Frameset" — shown for raw image files
     if (isFile && ['png', 'gif', 'jpg', 'jpeg', 'bmp'].includes(ext)) {
       const makeFrameset = document.createElement('div');
       makeFrameset.className = 'context-item';
@@ -3342,6 +3296,68 @@ class ProjectExplorer {
         this._makeSprite(nodePath);
       });
       menu.appendChild(makeSprite);
+    }
+
+    // Don't allow delete/rename on top-level root nodes (e.g. "Sources", "Build")
+    const depth = nodePath.split('/').length;
+    const isRootSection = depth <= 1;
+    const isTopLevelProject = (
+      nodeData.type === 'folder' &&
+      depth === 1 &&
+      !!this.projectData?.structure?.[nodePath]
+    );
+
+    if (isTopLevelProject) {
+      const isActive = this.getFocusedProjectName() === nodePath;
+
+      if (!isActive) {
+        const setActiveItem = document.createElement('div');
+        setActiveItem.className = 'context-item';
+        setActiveItem.innerHTML = '<span>📌</span><span>Set Active Project</span>';
+        setActiveItem.addEventListener('click', () => {
+          this._hideContextMenu();
+          this.setFocusedProjectName(nodePath);
+        });
+        menu.appendChild(setActiveItem);
+      }
+
+      const closeProjectItem = document.createElement('div');
+      closeProjectItem.className = 'context-item context-item-danger';
+      closeProjectItem.innerHTML = '<span>🔻</span><span>Close Project</span>';
+      closeProjectItem.addEventListener('click', async () => {
+        this._hideContextMenu();
+        await this.closeProject(nodePath);
+      });
+      menu.appendChild(closeProjectItem);
+    }
+
+    if (!isRootSection) {
+      // Separator if there are already items above
+      if (menu.children.length > 0) {
+        const sep = document.createElement('div');
+        sep.className = 'context-separator';
+        menu.appendChild(sep);
+      }
+
+      // Rename
+      const renameItem = document.createElement('div');
+      renameItem.className = 'context-item';
+      renameItem.innerHTML = '<span>✏️</span><span>Rename</span>';
+      renameItem.addEventListener('click', () => {
+        this._hideContextMenu();
+        this.renameNode(nodePath, nodeData.type);
+      });
+      menu.appendChild(renameItem);
+
+      // Delete
+      const deleteItem = document.createElement('div');
+      deleteItem.className = 'context-item context-item-danger';
+      deleteItem.innerHTML = '<span>🗑️</span><span>Delete</span>';
+      deleteItem.addEventListener('click', () => {
+        this._hideContextMenu();
+        this.deleteNode(nodePath);
+      });
+      menu.appendChild(deleteItem);
     }
 
     // Only show the menu if it has items
@@ -3394,7 +3410,12 @@ class ProjectExplorer {
       const focusedProject = this.getFocusedProjectName();
       const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
         ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-      const storagePath = `${sourcesRoot}/Sprites/${spriteName}`;
+      const spriteUIPath = focusedProject
+        ? `${focusedProject}/${sourcesRoot}/Sprites/${spriteName}`
+        : `${sourcesRoot}/Sprites/${spriteName}`;
+      const storagePath = window.ProjectPaths?.normalizeStoragePath
+        ? window.ProjectPaths.normalizeStoragePath(spriteUIPath)
+        : spriteUIPath;
 
       if (fm) {
         await fm.saveFile(storagePath, spriteJSON);
@@ -3402,20 +3423,21 @@ class ProjectExplorer {
         await window.fileIOService.saveFile(storagePath, spriteJSON);
       }
 
-      // Add to the project tree
-      this.addFileToProjectByName(spriteName, true /* skipAutoOpen */, false);
+      // Add to the project tree at the explicit sprite folder path
+      const spriteFolderPath = spriteUIPath.split('/').slice(0, -1).join('/');
+      this.addFileToProject({ name: spriteName, path: spriteUIPath, isNewFile: true }, spriteFolderPath, true, true);
       this.renderTree();
 
       // Open in editor
       if (window.tabManager) {
-        const fullPath = storagePath;
+        const fullPath = spriteUIPath;
         const componentInfo = this._getComponentForFile(fullPath, true);
         if (componentInfo) {
           window.tabManager.openInTab(fullPath, componentInfo, { isReadOnly: false });
         }
       }
 
-      console.log('[ProjectExplorer] Sprite created:', storagePath);
+      console.log('[ProjectExplorer] Sprite created:', spriteUIPath, '->', storagePath);
     } catch (error) {
       console.error('[ProjectExplorer] Failed to create sprite:', error);
       alert('Failed to create sprite: ' + error.message);
@@ -3438,9 +3460,11 @@ class ProjectExplorer {
         : JSON.stringify({ name: baseName, imagePath }, null, 2);
 
       const fm = window.fileManager || window.serviceContainer?.get('fileManager');
-      const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
-        ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-      const storagePath = `${sourcesRoot}/Sprites/${framesetName}`;
+      // Framesets should live alongside their source image so image-local workflows work.
+      const framesetUIPath = imagePath.replace(/\.[^/.]+$/i, '.frameset');
+      const storagePath = window.ProjectPaths?.normalizeStoragePath
+        ? window.ProjectPaths.normalizeStoragePath(framesetUIPath)
+        : framesetUIPath;
 
       if (fm) {
         await fm.saveFile(storagePath, framesetJSON);
@@ -3448,17 +3472,18 @@ class ProjectExplorer {
         await window.fileIOService.saveFile(storagePath, framesetJSON);
       }
 
-      this.addFileToProjectByName(framesetName, true, false);
+      const folderPath = framesetUIPath.split('/').slice(0, -1).join('/');
+      this.addFileToProject({ name: framesetName, path: framesetUIPath, isNewFile: true }, folderPath, true, true);
       this.renderTree();
 
       if (window.tabManager) {
-        const componentInfo = this._getComponentForFile(storagePath, true);
+        const componentInfo = this._getComponentForFile(framesetUIPath, true);
         if (componentInfo) {
-          window.tabManager.openInTab(storagePath, componentInfo, { isReadOnly: false });
+          window.tabManager.openInTab(framesetUIPath, componentInfo, { isReadOnly: false });
         }
       }
 
-      console.log('[ProjectExplorer] Frameset created:', storagePath);
+      console.log('[ProjectExplorer] Frameset created:', framesetUIPath, '->', storagePath);
     } catch (error) {
       console.error('[ProjectExplorer] Failed to create frameset:', error);
       alert('Failed to create frameset: ' + error.message);

@@ -1477,30 +1477,6 @@ class TabManager {
           console.error('[TabManager] Error in editor close:', error);
           return; // Default to cancel on error
         }
-      } else if (tabInfo.viewer && typeof tabInfo.viewer.canClose === 'function') {
-        // Fallback to legacy canClose method
-        try {
-          console.log(`[TabManager] Using legacy canClose() for ${tabId}`);
-          const res = tabInfo.viewer.canClose();
-          if (res && typeof res.then === 'function') {
-            try {
-              const canClose = await res;
-              if (!canClose) {
-                console.log(`[TabManager] Legacy canClose cancelled for ${tabId}`);
-                return; // User cancelled
-              }
-            } catch (error) {
-              console.error('[TabManager] Error in canClose promise:', error);
-              return; // Default to cancel on error
-            }
-          } else if (!res) {
-            console.log(`[TabManager] Legacy canClose returned false for ${tabId}`);
-            return; // User cancelled
-          }
-        } catch (error) {
-          console.error('[TabManager] Error in canClose:', error);
-          return; // Default to cancel on error
-        }
       }
 
       this._performTabClose(tabId, tabInfo);
@@ -1700,50 +1676,6 @@ class TabManager {
           console.error(`[TabManager] Error in event listener for ${event}:`, error);
         }
       });
-    }
-  }
-  
-  // LEGACY COMPATIBILITY (to be removed)
-  
-  // Legacy methods for compatibility
-  async openFile(file, path, options = {}) {
-    if (options.preferPreview) {
-      return this.openInPreview(path, file, options);
-    } else {
-      return this.openInTab(path, file, options);
-    }
-  }
-  
-  previewResource(file, path) {
-    return this.openInPreview(path, file);
-  }
-  
-  showInPreview(file, path, isReadOnly = false) {
-    return this.openInPreview(path, file, { isReadOnly });
-  }
-  
-  openInNewTab(file, path, isReadOnly = false) {
-    return this.openInTab(path, file, { isReadOnly });
-  }
-  
-  // Update tab file reference after saving (legacy compatibility - mainly for file content updates)
-  updateTabFile(viewer, newFile) {
-    console.log(`[TabManager] updateTabFile called - updating file content only`);
-    
-    // Find tab by viewer
-    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-      if (tabInfo.viewer === viewer) {
-        tabInfo.file = newFile;
-        console.log(`[TabManager] Updated file reference for tab ${tabId}: ${newFile.name}`);
-        return;
-      }
-    }
-    
-    // Check preview tab
-    if (this.previewViewer === viewer) {
-      // For storage-first approach, we don't store File objects
-      // The filename will be updated when the tab is refreshed from storage
-      console.log(`[TabManager] Preview viewer updated, file changes will be reflected from storage`);
     }
   }
   
@@ -2154,38 +2086,6 @@ class TabManager {
     
     // Use the new centralized refresh mechanism
     this.refreshBuildArtifactTabs();
-  }
-
-  // Legacy property accessors
-  get tabs() {
-    // Convert to legacy format for compatibility
-    const legacyTabs = new Map();
-    
-    // Add preview tab if active
-    if (this.previewPath) {
-      const previewTabData = {
-        viewer: this.previewViewer,
-        fileName: this.previewFileName,
-        filePath: this.previewPath,
-        filename: this.previewFileName,
-        isReadOnly: this.previewReadOnly
-      };
-      legacyTabs.set('preview', previewTabData);
-    }
-    
-    // Add dedicated tabs
-    for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
-      const legacyTabData = {
-        viewer: tabInfo.viewer,
-        fileName: tabInfo.fileName,
-        filePath: tabInfo.fullPath,
-        filename: tabInfo.fileName,
-        isReadOnly: tabInfo.isReadOnly
-      };
-      legacyTabs.set(tabId, legacyTabData);
-    }
-    
-    return legacyTabs;
   }
 
   // Helper method to determine if file content is default/new

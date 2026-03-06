@@ -47,52 +47,8 @@ class TabManagerAdapter {
   }
 
   setupIntegration() {
-    // Override openFile to use component registry, preserving original signature (file, path, options)
-    const originalOpenFile = this.tabManager.openFile.bind(this.tabManager);
-    this.tabManager.openFile = (file, path, options = {}) => {
-      // Prefer explicit path; if missing and file is a string, treat it as path
-      const filePath = typeof path === 'string' && path ? path : (typeof file === 'string' ? file : null);
-      if (filePath) {
-        return this.openFileWithComponents(filePath, null, (fp) => originalOpenFile(file, path, options));
-      }
-      return originalOpenFile(file, path, options);
-    };
-
     // Connect events
     this.setupEventConnections();
-  }
-
-  async openFileWithComponents(filePath, content, fallback) {
-    const extension = this.getFileExtension(filePath);
-    
-    // Try to find appropriate component
-    const editor = this.componentRegistry.getEditorForFile(filePath);
-    const viewer = this.componentRegistry.getViewerForFile(filePath);
-
-    if (editor) {
-      this.events.emit('file.opening', { path: filePath, type: 'editor' });
-  return this.openWithEditor(filePath, content, editor);
-    } else if (viewer) {
-      this.events.emit('file.opening', { path: filePath, type: 'viewer' });
-  return this.openWithViewer(filePath, content, viewer);
-    }
-
-    // Fallback to original implementation
-    return fallback(filePath, content);
-  }
-
-  async openWithEditor(filePath, content, editorInfo) {
-    // Use TabManager's public API; it will load from storage and pick the right editor via registry
-    const tabId = await this.tabManager.openInTab(filePath, null, { isReadOnly: false });
-    this.events.emit('file.opened', { path: filePath, type: 'editor', tabId, preferred: editorInfo?.name });
-    return tabId;
-  }
-
-  async openWithViewer(filePath, content, viewerInfo) {
-    // Use preview for viewers by default
-    const tabId = await this.tabManager.openInPreview(filePath, null, { isReadOnly: true });
-    this.events.emit('file.opened', { path: filePath, type: 'viewer', tabId, preferred: viewerInfo?.name });
-    return tabId;
   }
 
   setupEventConnections() {
@@ -117,13 +73,6 @@ class TabManagerAdapter {
     });
   }
 
-  getFileExtension(filePath) {
-    return filePath.substring(filePath.lastIndexOf('.'));
-  }
-
-  getFileName(filePath) {
-    return filePath.substring(filePath.lastIndexOf('/') + 1);
-  }
 }
 
 class BuildSystemAdapter {

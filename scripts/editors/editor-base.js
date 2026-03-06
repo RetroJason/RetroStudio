@@ -161,7 +161,7 @@ class EditorBase extends ViewerBase {
     // Check if this editor is currently active
     if (!window.tabManager) return false;
     
-    const activeTabData = window.tabManager.tabs.get(window.tabManager.activeTabId);
+    const activeTabData = window.tabManager.getActiveTab?.();
     return activeTabData && activeTabData.viewer === this;
   }
   
@@ -228,9 +228,7 @@ class EditorBase extends ViewerBase {
   }
   
   updateTabTitle() {
-    // TabManager now handles tab title updates automatically
-    // This method is kept for compatibility but does nothing
-    // The dirty state is communicated via notifyContentChanged/notifyContentSaved
+    // TabManager handles title updates from dirty/clean notifications.
   }
   
   // Get the current content (override in subclasses)
@@ -349,6 +347,8 @@ class EditorBase extends ViewerBase {
         targetPath = `${sourcesRoot}/SFX`;
       } else if (['.pal', '.act', '.aco'].includes(extension)) {
         targetPath = `${sourcesRoot}/Palettes`;
+      } else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(extension)) {
+        targetPath = `${sourcesRoot}/Images`;
       } else if (extension === '.sprite') {
         targetPath = `${sourcesRoot}/Sprites`;
       }
@@ -535,6 +535,8 @@ class EditorBase extends ViewerBase {
       targetPath = `${sourcesRoot}/SFX`;
     } else if (['.pal', '.act', '.aco'].includes(extension)) {
       targetPath = `${sourcesRoot}/Palettes`;
+    } else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(extension)) {
+      targetPath = `${sourcesRoot}/Images`;
     } else if (extension === '.sprite') {
       targetPath = `${sourcesRoot}/Sprites`;
     }
@@ -786,12 +788,6 @@ class EditorBase extends ViewerBase {
     if (this.cleanup && typeof this.cleanup === 'function') {
       this.cleanup();
     }
-  }
-  
-  // Legacy method for backwards compatibility - now just calls close()
-  canClose() {
-    console.warn('[EditorBase] canClose() is deprecated, use close() instead');
-    return this.close();
   }
   
   // Lifecycle methods
