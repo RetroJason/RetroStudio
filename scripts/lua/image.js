@@ -63,22 +63,28 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   _getImageByHandleArg(argIndex = 2) {
     const handle = this._getHandleArg(argIndex);
-    if (handle === null) return null;
-    return this.images.get(handle) || null;
+    if (handle === null) {
+      throw new Error(`Image: bad argument #${argIndex - 1} (valid image handle expected)`);
+    }
+
+    const image = this.images.get(handle) || null;
+    if (!image) {
+      throw new Error(`Image: bad argument #${argIndex - 1} (unknown image handle ${handle})`);
+    }
+
+    return image;
   }
 
   Create() {
     const L = this.luaState;
     const name = L.raw_tostring(2);
     if (!name) {
-      console.error('[LuaImage] Image.Create: missing name argument');
-      return undefined;
+      throw new Error('Image.Create: bad argument #1 (string expected)');
     }
 
     const asset = this.imageAssets.get(name);
     if (!asset) {
-      console.error(`[LuaImage] Image.Create: no image asset found for "${name}"`);
-      return undefined;
+      throw new Error(`Image.Create: asset not found: ${name}`);
     }
 
     const state = {
@@ -143,17 +149,12 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   Destroy() {
-    const handle = this._getHandleArg(2);
-    if (handle === null) return;
-    this.images.delete(handle);
+    const s = this._getImageByHandleArg(2);
+    this.images.delete(s._handle);
   }
 
   Clone() {
     const src = this._getImageByHandleArg(2);
-    if (!src) {
-      console.error('[LuaImage] Image.Clone: source handle not found');
-      return undefined;
-    }
 
     const clone = { ...src };
     const handle = this._nextHandle++;
@@ -165,20 +166,18 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetPosition() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    if (!s) return;
     s._posX = parseFloat(L.raw_tostring(3)) || 0;
     s._posY = parseFloat(L.raw_tostring(4)) || 0;
   }
 
   GetPosition() {
     const s = this._getImageByHandleArg(2);
-    if (!s) return [0, 0];
     return [s._posX || 0, s._posY || 0];
   }
 
   SetPositionX() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPositionX() {
@@ -188,7 +187,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetPositionY() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPositionY() {
@@ -199,11 +198,9 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetCenter() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    if (s) {
-      s._centerX = parseFloat(L.raw_tostring(3)) || 0;
-      s._centerY = parseFloat(L.raw_tostring(4)) || 0;
-      s._hasCustomCenter = true;
-    }
+    s._centerX = parseFloat(L.raw_tostring(3)) || 0;
+    s._centerY = parseFloat(L.raw_tostring(4)) || 0;
+    s._hasCustomCenter = true;
   }
 
   GetCenter() {
@@ -214,10 +211,8 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetSize() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    if (s) {
-      s._width = parseFloat(L.raw_tostring(3)) || 0;
-      s._height = parseFloat(L.raw_tostring(4)) || 0;
-    }
+    s._width = parseFloat(L.raw_tostring(3)) || 0;
+    s._height = parseFloat(L.raw_tostring(4)) || 0;
   }
 
   GetSize() {
@@ -227,7 +222,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetRotation() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetRotation() {
@@ -238,10 +233,8 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetScale() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    if (s) {
-      s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
-      s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
-    }
+    s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
+    s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
   }
 
   GetScale() {
@@ -251,7 +244,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetColor() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+    s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
   }
 
   GetColor() {
@@ -261,7 +254,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetPaletteSlot() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
+    s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPaletteSlot() {
@@ -271,10 +264,8 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetVisible() {
     const s = this._getImageByHandleArg(2);
-    if (s) {
-      const v = this.luaState.raw_tostring(3);
-      s._visible = v === 'true' || v === '1';
-    }
+    const v = this.luaState.raw_tostring(3);
+    s._visible = v === 'true' || v === '1';
   }
 
   GetVisible() {
@@ -284,7 +275,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetAttributes() {
     const s = this._getImageByHandleArg(2);
-    if (s) s._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+    s._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetAttributes() {
@@ -295,13 +286,16 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetFrame() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    if (!s) return;
 
     const asset = this.imageAssets.get(s._assetName);
-    if (!asset || asset.frames.length === 0) return;
+    if (!asset || asset.frames.length === 0) {
+      throw new Error(`Image.SetFrame: no frames for asset ${s._assetName}`);
+    }
 
     const index = parseInt(L.raw_tostring(3), 10);
-    if (!Number.isFinite(index)) return;
+    if (!Number.isFinite(index)) {
+      throw new Error('Image.SetFrame: bad argument #2 (number expected)');
+    }
 
     const clamped = Math.max(0, Math.min(asset.frames.length - 1, index));
     s._frameIndex = clamped;
@@ -314,9 +308,11 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   GetFrameCount() {
     const s = this._getImageByHandleArg(2);
-    if (!s) return 0;
     const asset = this.imageAssets.get(s._assetName);
-    return asset ? asset.frames.length : 0;
+    if (!asset) {
+      throw new Error(`Image.GetFrameCount: asset not found for handle ${s._handle}`);
+    }
+    return asset.frames.length;
   }
 
   async initGpu(gpu) {

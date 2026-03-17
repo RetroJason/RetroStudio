@@ -132,7 +132,13 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * See: https://en.cppreference.com/w/c/chrono/strftime
    */
   ToString() {
-    const format = arguments[0] || '%Y-%m-%d %H:%M:%S';
+    const rawFormat = arguments[0] ?? this.luaState?.raw_tostring?.(2);
+    if (rawFormat !== undefined && rawFormat !== null && typeof rawFormat !== 'string') {
+      throw new Error(`[Time] ToString invalid format argument: ${rawFormat}`);
+    }
+    const format = (rawFormat === undefined || rawFormat === null || rawFormat === '')
+      ? '%Y-%m-%d %H:%M:%S'
+      : rawFormat;
     const now = new Date();
     
     // Simple implementation of common format specifiers

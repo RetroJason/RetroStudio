@@ -94,8 +94,16 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Resolve sprite state from a handle argument. */
   _getSpriteByHandleArg(argIndex = 2) {
     const handle = this._getHandleArg(argIndex);
-    if (handle === null) return null;
-    return this.sprites.get(handle) || null;
+    if (handle === null) {
+      throw new Error(`Sprite: bad argument #${argIndex - 1} (valid sprite handle expected)`);
+    }
+
+    const sprite = this.sprites.get(handle) || null;
+    if (!sprite) {
+      throw new Error(`Sprite: bad argument #${argIndex - 1} (unknown sprite handle ${handle})`);
+    }
+
+    return sprite;
   }
 
   /**
@@ -107,15 +115,13 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     const L = this.luaState;
     const name = L.raw_tostring(2);
     if (!name) {
-      console.error('[LuaSprite] Sprite.Create: missing name argument');
-      return undefined;
+      throw new Error('Sprite.Create: bad argument #1 (string expected)');
     }
 
     // Find the pre-loaded asset
     const asset = this.spriteAssets.get(name);
     if (!asset) {
-      console.error(`[LuaSprite] Sprite.Create: no sprite asset found for "${name}"`);
-      return undefined;
+      throw new Error(`Sprite.Create: asset not found: ${name}`);
     }
 
     // Create runtime state
@@ -189,10 +195,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Remove the sprite from the scene.
    */
   Destroy() {
-    const handle = this._getHandleArg(2);
-    if (handle === null) return;
-    this.sprites.delete(handle);
-    this.animating.delete(handle);
+    const s = this._getSpriteByHandleArg(2);
+    this.sprites.delete(s._handle);
+    this.animating.delete(s._handle);
   }
 
   /**
@@ -201,10 +206,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    */
   Clone() {
     const src = this._getSpriteByHandleArg(2);
-    if (!src) {
-      console.error('[LuaSprite] Sprite.Clone: source handle not found');
-      return undefined;
-    }
 
     // Shallow-clone state (d2s/d2f are shared read-only data)
     const clone = { ...src };
@@ -228,7 +229,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   SetPosition() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
-    if (!s) return;
     s._posX = parseFloat(L.raw_tostring(3)) || 0;
     s._posY = parseFloat(L.raw_tostring(4)) || 0;
   }
@@ -238,7 +238,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    */
   GetPosition() {
     const s = this._getSpriteByHandleArg(2);
-    if (!s) return [0, 0];
     return [s._posX || 0, s._posY || 0];
   }
 
@@ -247,7 +246,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    */
   SetPositionX() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   /** int = Sprite.GetPositionX(handle) */
@@ -259,7 +258,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetPositionY(handle, y) */
   SetPositionY() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   /** int = Sprite.GetPositionY(handle) */
@@ -272,10 +271,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   SetCenter() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
-    if (s) {
-      s._centerX = parseFloat(L.raw_tostring(3)) || 0;
-      s._centerY = parseFloat(L.raw_tostring(4)) || 0;
-    }
+    s._centerX = parseFloat(L.raw_tostring(3)) || 0;
+    s._centerY = parseFloat(L.raw_tostring(4)) || 0;
   }
 
   /** cx, cy = Sprite.GetCenter(handle) */
@@ -288,10 +285,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   SetSize() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
-    if (s) {
-      s._width = parseFloat(L.raw_tostring(3)) || 0;
-      s._height = parseFloat(L.raw_tostring(4)) || 0;
-    }
+    s._width = parseFloat(L.raw_tostring(3)) || 0;
+    s._height = parseFloat(L.raw_tostring(4)) || 0;
   }
 
   /** w, h = Sprite.GetSize(handle) */
@@ -303,7 +298,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetRotation(handle, angle) — degrees */
   SetRotation() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   /** int = Sprite.GetRotation(handle) */
@@ -316,10 +311,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   SetScale() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
-    if (s) {
-      s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
-      s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
-    }
+    s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
+    s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
   }
 
   /** sx, sy = Sprite.GetScale(handle) */
@@ -331,7 +324,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetColor(handle, 0x00FFFFFF) */
   SetColor() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+    s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
   }
 
   /** int = Sprite.GetColor(handle) */
@@ -343,7 +336,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetPaletteSlot(handle, 2) */
   SetPaletteSlot() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
+    s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   /** int = Sprite.GetPaletteSlot(handle) */
@@ -355,7 +348,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetVisible(handle, true) */
   SetVisible() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) { const v = this.luaState.raw_tostring(3); s._visible = v === 'true' || v === '1'; }
+    const v = this.luaState.raw_tostring(3);
+    s._visible = v === 'true' || v === '1';
   }
 
   /** bool = Sprite.GetVisible(handle) */
@@ -367,7 +361,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetAttributes(handle, flags) */
   SetAttributes() {
     const s = this._getSpriteByHandleArg(2);
-    if (s) s._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+    s._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   /** int = Sprite.GetAttributes(handle) */
@@ -388,7 +382,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
     const animName = L.raw_tostring(3);
-    if (!s) return;
     D2Sprite.setAnimation(s, animName);
   }
 
@@ -399,15 +392,12 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    */
   Play() {
     const L = this.luaState;
-    const handle = this._getHandleArg(2);
+    const s = this._getSpriteByHandleArg(2);
     const animName = L.raw_tostring(3);
-    if (handle === null) return;
-    const s = this.sprites.get(handle);
-    if (!s) return;
     if (animName) {
       D2Sprite.setAnimation(s, animName);
     }
-    this.animating.add(handle);
+    this.animating.add(s._handle);
   }
 
   /**
@@ -415,8 +405,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Stop native animation (freeze on current frame).
    */
   Stop() {
-    const handle = this._getHandleArg(2);
-    if (handle !== null) this.animating.delete(handle);
+    const s = this._getSpriteByHandleArg(2);
+    this.animating.delete(s._handle);
   }
 
   /**
@@ -428,7 +418,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
     const dt = parseFloat(L.raw_tostring(3)) || 0;
-    if (!s) return;
     D2Sprite.updateAnimation(s, dt * 1000); // Lua passes seconds, D2Sprite expects ms
   }
 

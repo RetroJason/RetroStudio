@@ -49,7 +49,7 @@ class RwpService {
   }
 
   // Build a ZIP (.rwp) using JSZip with DEFLATE compression for all files
-  async exportProject(projectName) {
+  async exportProject(projectName, options = {}) {
     if (!projectName) throw new Error('No project selected');
     this.ensureDeps();
     if (!this.fileManager) throw new Error('FileManager unavailable');
@@ -101,6 +101,15 @@ class RwpService {
       }
     }
 
+    // Also bundle the deployable runtime package (.rwa/.rwg) into the .rwp.
+    const rwaService = window.serviceContainer?.get?.('rwaService') || window.rwaService;
+    if (!rwaService || typeof rwaService.buildRuntimePackage !== 'function') {
+      throw new Error('Runtime package service unavailable');
+    }
+    const runtimePkg = await rwaService.buildRuntimePackage(projectName, { buildBeforeExport: true });
+    const runtimeBytes = new Uint8Array(await runtimePkg.blob.arrayBuffer());
+    zip.file(`runtime/${runtimePkg.filename}`, runtimeBytes, { binary: true });
+
     // Build manifest and append to ZIP as rwp.json
     const manifest = {
       format: 'retro-watch-project',
@@ -108,15 +117,25 @@ class RwpService {
       projectName,
       sourcesRoot: this.getSourcesRootUi(),
       createdAt: new Date().toISOString(),
-      files: manifestFiles
+      files: manifestFiles,
+      runtimePackage: {
+        path: `runtime/${runtimePkg.filename}`,
+        kind: runtimePkg.packageKind
+      }
     };
     const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 0));
     zip.file('rwp.json', manifestBytes, { binary: true });
 
     // Generate ZIP with DEFLATE compression for all files
     const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-    const fileName = `${projectName}.rwp`;
-    this.downloadBlob(zipBlob, fileName);
+    const fileName = options.fileName || `${projectName}.rwp`;
+    if (!options.skipDownload) {
+      this.downloadBlob(zipBlob, fileName);
+    }
+    if (options.returnBlob) {
+      return { blob: zipBlob, fileName };
+    }
+    return { fileName };
   }
 
   // Import from ZIP (.rwp). Requires manifest rwp.json
@@ -195,10 +214,29 @@ class RwpService {
 
     // Render the tree first with all files loaded
     explorer.renderTree?.();
+
+    // Ensure project defaults are applied even for template imports.
+    // This is intentionally called here as a backstop in case addProject-time
+    // setup was skipped or delayed.
+    if (typeof explorer.applyTemplateDefaults === 'function') {
+      try {
+        await explorer.applyTemplateDefaults(projectName);
+      } catch (e) {
+        console.warn('[RwpService] Failed to apply project defaults after import:', e);
+      }
+    } else if (typeof explorer.ensurePackageScaffold === 'function') {
+      // Backward compatibility fallback
+      try { await explorer.ensurePackageScaffold(projectName); } catch (_) {}
+    }
     
     // Then initialize project configuration
     if (explorer.initializeProjectConfig) {
       await explorer.initializeProjectConfig();
+    }
+
+    // Open package settings once import/defaults are fully applied.
+    if (typeof explorer.openPackageSettingsForProject === 'function') {
+      await explorer.openPackageSettingsForProject(projectName, true);
     }
   }
 

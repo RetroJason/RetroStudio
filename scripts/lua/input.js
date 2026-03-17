@@ -9,6 +9,33 @@ class LuaInputExtensions extends BaseLuaExtension {
     this.inputManager = null;
   }
 
+  _refreshInputManager() {
+    if (this.gameEmulator && this.gameEmulator.inputManager) {
+      this.inputManager = this.gameEmulator.inputManager;
+    }
+  }
+
+  _requireInputManager(methodName) {
+    this._refreshInputManager();
+    if (!this.inputManager) {
+      throw new Error(`[Input] ${methodName} requires an available input manager`);
+    }
+    return this.inputManager;
+  }
+
+  _requireIntegerArg(args, index, methodName, argName) {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    if (raw === undefined || raw === null || raw === '') {
+      throw new Error(`[Input] ${methodName} missing required argument: ${argName}`);
+    }
+
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isFinite(value)) {
+      throw new Error(`[Input] ${methodName} invalid integer argument ${argName}: ${raw}`);
+    }
+    return value;
+  }
+
   /**
    * Initialize the Input extension
    * @param {Object} luaState - The Lua execution state
@@ -57,15 +84,7 @@ class LuaInputExtensions extends BaseLuaExtension {
    * Lua usage: Input.GetKeysHeld()
    */
   GetKeysHeld() {
-    // Dynamically check for input manager (it might not be available during initialization)
-    if (!this.inputManager && this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.getKeysHeld();
-    }
-    return 0;
+    return this._requireInputManager('GetKeysHeld').getKeysHeld();
   }
 
   /**
@@ -73,15 +92,7 @@ class LuaInputExtensions extends BaseLuaExtension {
    * Lua usage: Input.GetKeysPressed()
    */
   GetKeysPressed() {
-    // Always get fresh reference to input manager (handles reloads)
-    if (this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.getKeysPressed();
-    }
-    return 0;
+    return this._requireInputManager('GetKeysPressed').getKeysPressed();
   }
 
   /**
@@ -89,72 +100,34 @@ class LuaInputExtensions extends BaseLuaExtension {
    * Lua usage: Input.GetKeysReleased()
    */
   GetKeysReleased() {
-    // Always get fresh reference to input manager (handles reloads)
-    if (this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.getKeysReleased();
-    }
-    return 0;
+    return this._requireInputManager('GetKeysReleased').getKeysReleased();
   }
 
   /**
    * Check if a specific key is held
    * Lua usage: Input.IsKeyHeld(Input.Buttons.A)
    */
-  IsKeyHeld() {
-    // Get the key mask from the first Lua argument
-    const keyMask = parseInt(this.luaState.raw_tostring(2) || 0);
-    
-    // Always get fresh reference to input manager (handles reloads)
-    if (this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.isKeyHeld(keyMask);
-    }
-    return false;
+  IsKeyHeld(...args) {
+    const keyMask = this._requireIntegerArg(args, 0, 'IsKeyHeld', 'keyMask');
+    return this._requireInputManager('IsKeyHeld').isKeyHeld(keyMask);
   }
 
   /**
    * Check if a specific key was pressed this frame
    * Lua usage: Input.IsKeyPressed(Input.Buttons.A)
    */
-  IsKeyPressed() {
-    // Get the key mask from the first Lua argument
-    const keyMask = parseInt(this.luaState.raw_tostring(2) || 0);
-    
-    // Always get fresh reference to input manager (handles reloads)
-    if (this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.isKeyPressed(keyMask);
-    }
-    return false;
+  IsKeyPressed(...args) {
+    const keyMask = this._requireIntegerArg(args, 0, 'IsKeyPressed', 'keyMask');
+    return this._requireInputManager('IsKeyPressed').isKeyPressed(keyMask);
   }
 
   /**
    * Check if a specific key was released this frame
    * Lua usage: Input.IsKeyReleased(Input.Buttons.A)
    */
-  IsKeyReleased() {
-    // Get the key mask from the first Lua argument
-    const keyMask = parseInt(this.luaState.raw_tostring(2) || 0);
-    
-    // Always get fresh reference to input manager (handles reloads)
-    if (this.gameEmulator && this.gameEmulator.inputManager) {
-      this.inputManager = this.gameEmulator.inputManager;
-    }
-    
-    if (this.inputManager) {
-      return this.inputManager.isKeyReleased(keyMask);
-    }
-    return false;
+  IsKeyReleased(...args) {
+    const keyMask = this._requireIntegerArg(args, 0, 'IsKeyReleased', 'keyMask');
+    return this._requireInputManager('IsKeyReleased').isKeyReleased(keyMask);
   }
 }
 

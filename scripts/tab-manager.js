@@ -1126,6 +1126,13 @@ class TabManager {
           return null;
         }
 
+        // Some storage backends return raw records without path/name fields.
+        // Editors like PackageSettingsEditor rely on a stable file path.
+        if (typeof fileObj === 'object') {
+          if (!fileObj.path) fileObj.path = fullPath;
+          if (!fileObj.name) fileObj.name = fileName;
+        }
+
         console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
 
         // Create editor instance
@@ -1161,6 +1168,11 @@ class TabManager {
         if (!fileObj) {
           console.error(`[TabManager] File not found: ${fullPath}`);
           return null;
+        }
+
+        if (typeof fileObj === 'object') {
+          if (!fileObj.path) fileObj.path = fullPath;
+          if (!fileObj.name) fileObj.name = fileName;
         }
 
         console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);

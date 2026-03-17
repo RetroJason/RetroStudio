@@ -4232,11 +4232,8 @@ class TextureEditor extends EditorBase {
         await this.matchImageToPalette();
       }
 
-      // Auto-save the palette only when user explicitly clicks Apply,
-      // not during auto-generation when the editor first loads.
-      if (userInitiated) {
-        await this.autoSavePaletteOnApply();
-      }
+      // Do not auto-create palette files on Apply/Best Fit.
+      // Shared palettes should stay shared unless user explicitly saves a new one.
       
       console.log('[TextureEditor] Palette application completed');
       

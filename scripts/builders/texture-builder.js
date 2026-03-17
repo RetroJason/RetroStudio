@@ -261,27 +261,27 @@ class TextureBuilder extends BaseBuilder {
    */
   formatToEnum(format) {
     const map = {
-      'd2_mode_i1': 0x01,
-      'd2_mode_i2': 0x02,
-      'd2_mode_i4': 0x04,
-      'd2_mode_i8': 0x08,
-      'd2_mode_ai44': 0x09,
-      'd2_mode_rgb565': 0x10,
-      'd2_mode_argb1555': 0x11,
-      'd2_mode_rgba5551': 0x12,
-      'd2_mode_rgb555': 0x13,
-      'd2_mode_argb4444': 0x14,
-      'd2_mode_rgba4444': 0x15,
-      'd2_mode_rgb444': 0x16,
-      'd2_mode_rgb888': 0x20,
-      'd2_mode_rgba8888': 0x21,
-      'd2_mode_argb8888': 0x22,
-      'd2_mode_alpha1': 0x30,
-      'd2_mode_alpha2': 0x31,
-      'd2_mode_alpha4': 0x32,
-      'd2_mode_alpha8': 0x33,
+      'd2_mode_alpha8':   0x00,
+      'd2_mode_rgb565':   0x01,
+      'd2_mode_argb8888': 0x02,
+      'd2_mode_argb4444': 0x03,
+      'd2_mode_argb1555': 0x04,
+      'd2_mode_ai44':     0x05,
+      'd2_mode_rgba8888': 0x06,
+      'd2_mode_rgba4444': 0x07,
+      'd2_mode_rgba5551': 0x08,
+      'd2_mode_i8':       0x09,
+      'd2_mode_i4':       0x0A,
+      'd2_mode_i2':       0x0B,
+      'd2_mode_i1':       0x0C,
+      'd2_mode_alpha4':   0x0D,
+      'd2_mode_alpha2':   0x0E,
+      'd2_mode_alpha1':   0x0F,
+      'd2_mode_rgb888':   0x40,
+      'd2_mode_rgb444':   0x41,
+      'd2_mode_rgb555':   0x42,
     };
-    return map[format] || 0x08; // default to i8
+    return map[format] || 0x09; // default to i8
   }
 
   getBaseName(path) {

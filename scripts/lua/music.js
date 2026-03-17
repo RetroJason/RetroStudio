@@ -10,6 +10,68 @@ class LuaMusicExtensions extends BaseLuaExtension {
     this.resourceManager = null;
   }
 
+  _requireStringArg(args, index, methodName, argName) {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      throw new Error(`[Music] ${methodName} missing required string argument: ${argName}`);
+    }
+    return raw;
+  }
+
+  _optionalNumberArg(args, index, defaultValue, methodName, argName) {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    if (raw === undefined || raw === null || raw === '') {
+      return defaultValue;
+    }
+    const value = Number.parseFloat(raw);
+    if (!Number.isFinite(value)) {
+      throw new Error(`[Music] ${methodName} invalid numeric argument ${argName}: ${raw}`);
+    }
+    return value;
+  }
+
+  _optionalBooleanArg(args, index, defaultValue) {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    if (raw === undefined || raw === null || raw === '') {
+      return defaultValue;
+    }
+    if (typeof raw === 'boolean') {
+      return raw;
+    }
+    if (typeof raw === 'string') {
+      const normalized = raw.toLowerCase();
+      if (normalized === 'true' || normalized === '1') {
+        return true;
+      }
+      if (normalized === 'false' || normalized === '0') {
+        return false;
+      }
+    }
+    throw new Error(`[Music] invalid boolean argument: ${raw}`);
+  }
+
+  _requireAudioEngine(methodName) {
+    this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine || this.audioEngine;
+    if (!this.audioEngine) {
+      throw new Error(`[Music] ${methodName} requires an available audio engine`);
+    }
+    return this.audioEngine;
+  }
+
+  _requireResource(resourceId, methodName) {
+    if (!this.gameEmulator || typeof this.gameEmulator.GetResource !== 'function') {
+      throw new Error(`[Music] ${methodName} requires an available game emulator resource API`);
+    }
+    const resource = this.gameEmulator.GetResource(resourceId);
+    if (!resource) {
+      throw new Error(`Music resource not found: ${resourceId}`);
+    }
+    if (!resource.isPreloaded || !resource.audioResource) {
+      throw new Error(`Music resource not preloaded: ${resourceId}`);
+    }
+    return resource;
+  }
+
   /**
    * Initialize the Music extension using centralized resource system
    * @param {Object} luaState - The Lua execution state
@@ -32,73 +94,24 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Play background music using preloaded resources from centralized system
    * Lua usage: Music.Play(resourceId, volume, loop)
    */
-  Play() {
-    // Get parameters from Lua stack
-    const resourceId = this.luaState.raw_tostring(2) || '';
-    const volume = parseFloat(this.luaState.raw_tostring(3) || 1.0);
-    const loop = this.luaState.raw_tostring(4) === 'true' || this.luaState.raw_tostring(4) === '' || true; // Default to true if not specified
-    
-    if (!resourceId) {
-      console.warn('[Music] Play called with empty resource ID');
-      return false;
-    }
-
-    const resource = this.gameEmulator.GetResource(resourceId);
-    if (!resource) {
-      console.error(`[Music] Resource not found: ${resourceId}`);
-      throw new Error(`Music resource not found: ${resourceId}`);
-    }
-    
-    // Check if resource is preloaded
-    if (!resource.isPreloaded) {
-      console.warn(`[LuaMusicExtensions] Music resource not preloaded: ${resourceId}`);
-      // Music files should be preloaded, but we could add fallback loading here if needed
-      const errorMsg = `Music resource not preloaded: ${resourceId}`;
-      console.error(`[LuaMusicExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-    
-    // Use preloaded resource - start music with the preloaded resource ID
-    if (this.audioEngine && resource.audioResource) {
-      // Note: startSong expects (resourceId, volume, loop)
-      this.audioEngine.startSong(resource.audioResource, volume, loop);
-      return true;
-    } else {
-      const errorMsg = `Audio system not available or resource not properly preloaded - cannot play Music: ${resourceId}`;
-      console.warn(`[LuaMusicExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
+  Play(...args) {
+    const resourceId = this._requireStringArg(args, 0, 'Play', 'resourceId');
+    const volume = this._optionalNumberArg(args, 1, 1.0, 'Play', 'volume');
+    const loop = this._optionalBooleanArg(args, 2, true);
+    const resource = this._requireResource(resourceId, 'Play');
+    this._requireAudioEngine('Play').startSong(resource.audioResource, volume, loop);
+    return true;
   }
 
   /**
    * Stop playing background music using centralized resource system
    * Lua usage: Music.Stop(resourceId)
    */
-  Stop() {
-    const resourceId = this.luaState.raw_tostring(2) || '';
-    
-    if (!resourceId) {
-      console.warn('[Music] Stop called with empty resource ID');
-      return false;
-    }
-    
-    // Get resource from centralized system
-    const resource = this.gameEmulator.GetResource(resourceId);
-    if (!resource) {
-      const errorMsg = `Music resource not found: ${resourceId}`;
-      console.error(`[LuaMusicExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
-    
-    // Use the preloaded resource ID for stopping
-    if (this.audioEngine && resource.audioResource) {
-      this.audioEngine.stopSong(resource.audioResource);
-      return true;
-    } else {
-      const errorMsg = `Audio system not available - cannot stop Music: ${resourceId}`;
-      console.warn(`[LuaMusicExtensions] ${errorMsg}`);
-      throw new Error(errorMsg);
-    }
+  Stop(...args) {
+    const resourceId = this._requireStringArg(args, 0, 'Stop', 'resourceId');
+    const resource = this._requireResource(resourceId, 'Stop');
+    this._requireAudioEngine('Stop').stopSong(resource.audioResource);
+    return true;
   }
 }
 

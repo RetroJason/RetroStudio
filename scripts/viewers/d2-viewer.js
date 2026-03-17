@@ -35,47 +35,47 @@ class D2Viewer extends ViewerBase {
   static HEADER_SIZE = 32;
 
   static FORMAT_NAMES = {
-    0x01: 'd2_mode_i1',
-    0x02: 'd2_mode_i2',
-    0x04: 'd2_mode_i4',
-    0x08: 'd2_mode_i8',
-    0x09: 'd2_mode_ai44',
-    0x10: 'd2_mode_rgb565',
-    0x11: 'd2_mode_argb1555',
-    0x12: 'd2_mode_rgba5551',
-    0x13: 'd2_mode_rgb555',
-    0x14: 'd2_mode_argb4444',
-    0x15: 'd2_mode_rgba4444',
-    0x16: 'd2_mode_rgb444',
-    0x20: 'd2_mode_rgb888',
-    0x21: 'd2_mode_rgba8888',
-    0x22: 'd2_mode_argb8888',
-    0x30: 'd2_mode_alpha1',
-    0x31: 'd2_mode_alpha2',
-    0x32: 'd2_mode_alpha4',
-    0x33: 'd2_mode_alpha8',
+    0x00: 'd2_mode_alpha8',
+    0x01: 'd2_mode_rgb565',
+    0x02: 'd2_mode_argb8888',
+    0x03: 'd2_mode_argb4444',
+    0x04: 'd2_mode_argb1555',
+    0x05: 'd2_mode_ai44',
+    0x06: 'd2_mode_rgba8888',
+    0x07: 'd2_mode_rgba4444',
+    0x08: 'd2_mode_rgba5551',
+    0x09: 'd2_mode_i8',
+    0x0A: 'd2_mode_i4',
+    0x0B: 'd2_mode_i2',
+    0x0C: 'd2_mode_i1',
+    0x0D: 'd2_mode_alpha4',
+    0x0E: 'd2_mode_alpha2',
+    0x0F: 'd2_mode_alpha1',
+    0x40: 'd2_mode_rgb888',
+    0x41: 'd2_mode_rgb444',
+    0x42: 'd2_mode_rgb555',
   };
 
   static BITS_PER_PIXEL = {
-    0x01: 1,   // i1
-    0x02: 2,   // i2
-    0x04: 4,   // i4
-    0x08: 8,   // i8
-    0x09: 8,   // ai44
-    0x10: 16,  // rgb565
-    0x11: 16,  // argb1555
-    0x12: 16,  // rgba5551
-    0x13: 16,  // rgb555
-    0x14: 16,  // argb4444
-    0x15: 16,  // rgba4444
-    0x16: 16,  // rgb444
-    0x20: 24,  // rgb888
-    0x21: 32,  // rgba8888
-    0x22: 32,  // argb8888
-    0x30: 1,   // alpha1
-    0x31: 2,   // alpha2
-    0x32: 4,   // alpha4
-    0x33: 8,   // alpha8
+    0x00: 8,   // alpha8
+    0x01: 16,  // rgb565
+    0x02: 32,  // argb8888
+    0x03: 16,  // argb4444
+    0x04: 16,  // argb1555
+    0x05: 8,   // ai44
+    0x06: 32,  // rgba8888
+    0x07: 16,  // rgba4444
+    0x08: 16,  // rgba5551
+    0x09: 8,   // i8
+    0x0A: 4,   // i4
+    0x0B: 2,   // i2
+    0x0C: 1,   // i1
+    0x0D: 4,   // alpha4
+    0x0E: 2,   // alpha2
+    0x0F: 1,   // alpha1
+    0x40: 24,  // rgb888
+    0x41: 16,  // rgb444
+    0x42: 16,  // rgb555
   };
 
   // ── UI ────────────────────────────────────────────────────────────
@@ -248,6 +248,8 @@ class D2Viewer extends ViewerBase {
       paletteIndex: view.getUint16(10, true),
       paletteOffset: view.getUint8(12),
       flags: view.getUint8(13),
+      colorKeyRgb565: view.getUint16(14, true),
+      colorKeyEnabled: (view.getUint8(13) & 0x04) !== 0,
     };
   }
 
@@ -325,6 +327,7 @@ class D2Viewer extends ViewerBase {
           `<b>Palette index:</b> ${h.paletteIndex}`,
           `<b>Palette colors:</b> ${paletteColorCount}`,
           `<b>Palette offset:</b> ${h.paletteOffset}`,
+          `<b>Color key:</b> ${h.colorKeyEnabled ? `on (0x${h.colorKeyRgb565.toString(16).padStart(4, '0')})` : 'off'}`,
           `<b>Pixel data:</b> ${pixelBytes} bytes`,
           `<b>Flags:</b> 0x${h.flags.toString(16).padStart(2, '0')} ${flagStr}`,
           `<b>File size:</b> ${this.formatSize(this.fileData.length)}`,
@@ -392,24 +395,33 @@ class D2Viewer extends ViewerBase {
   }
 
   /**
-   * Toggle color key transparency: set alpha=0 on palette index 0 (and the
-   * first index of each sub-palette chunk for sub-8-bit formats), then re-blit.
+   * Show-color-key visualization: when enabled, render key-colored palette
+   * entries as opaque magenta so keyed pixels are obvious in the preview.
+   * No fallback behavior is applied.
    */
   _applyColorKeyToPalette() {
     if (!this._gpu || !this._rawPalette || !this._currentHeader) return;
 
     const pal = new Uint8Array(this._rawPalette); // copy
     if (this._showColorKey) {
-      // Determine chunk size from format
-      const fmt = this._currentHeader.formatEnum;
-      let chunkSize = 256; // I8 — one chunk
-      if (fmt === D2_FORMAT.I4)  chunkSize = 16;
-      else if (fmt === D2_FORMAT.I2)  chunkSize = 4;
-      else if (fmt === D2_FORMAT.I1)  chunkSize = 2;
-
-      // Set alpha=0 on index 0 of every chunk
-      for (let base = 0; base < 256; base += chunkSize) {
-        pal[base * 4 + 3] = 0; // alpha byte of this chunk's index 0
+      if (this._currentHeader.colorKeyEnabled) {
+        const key565 = this._currentHeader.colorKeyRgb565 & 0xFFFF;
+        for (let i = 0; i < 256; i++) {
+          const off = i * 4;
+          const r = pal[off];
+          const g = pal[off + 1];
+          const b = pal[off + 2];
+          const rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+          if (rgb565 === key565) {
+            // Visualize key pixels explicitly.
+            pal[off] = 255;
+            pal[off + 1] = 0;
+            pal[off + 2] = 255;
+            pal[off + 3] = 255;
+          }
+        }
+      } else {
+        console.warn('[D2Viewer] Show Color Key requested but D2TX key flag is not set');
       }
     }
     this._gpu.setPalette(pal);
@@ -750,7 +762,8 @@ class D2Viewer extends ViewerBase {
   }
 
   isIndexedFormat(fmt) {
-    return fmt >= 0x01 && fmt <= 0x09;
+    // Indexed formats in Dave2D: ai44, i8, i4, i2, i1
+    return fmt === 0x05 || (fmt >= 0x09 && fmt <= 0x0C);
   }
 
   // ── Utility ───────────────────────────────────────────────────────

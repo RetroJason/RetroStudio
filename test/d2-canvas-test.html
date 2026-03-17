@@ -569,25 +569,25 @@ function generateAlpha8(w, h) {
 
 // ── Format test definitions ──────────────────────────────────────
 const FORMAT_TESTS = [
-  { name: 'I1 (1-bit indexed)',    format: 0x01, indexed: true,  gen: generateI1 },
-  { name: 'I2 (2-bit indexed)',    format: 0x02, indexed: true,  gen: generateI2 },
-  { name: 'I4 (4-bit indexed)',    format: 0x04, indexed: true,  gen: generateI4 },
-  { name: 'I8 (8-bit indexed)',    format: 0x08, indexed: true,  gen: generateI8 },
-  { name: 'AI44 (alpha+index)',    format: 0x09, indexed: true,  gen: generateAI44 },
-  { name: 'RGB565',                format: 0x10, indexed: false, gen: generateRGB565 },
-  { name: 'ARGB1555',              format: 0x11, indexed: false, gen: generateARGB1555 },
-  { name: 'RGBA5551',              format: 0x12, indexed: false, gen: generateRGBA5551 },
-  { name: 'RGB555',                format: 0x13, indexed: false, gen: generateRGB555 },
-  { name: 'ARGB4444',              format: 0x14, indexed: false, gen: generateARGB4444 },
-  { name: 'RGBA4444',              format: 0x15, indexed: false, gen: generateRGBA4444 },
-  { name: 'RGB444',                format: 0x16, indexed: false, gen: generateRGB444 },
-  { name: 'RGB888',                format: 0x20, indexed: false, gen: generateRGB888 },
-  { name: 'RGBA8888',              format: 0x21, indexed: false, gen: generateRGBA8888 },
-  { name: 'ARGB8888',              format: 0x22, indexed: false, gen: generateARGB8888 },
-  { name: 'Alpha1',                format: 0x30, indexed: false, gen: generateAlpha1 },
-  { name: 'Alpha2',                format: 0x31, indexed: false, gen: generateAlpha2 },
-  { name: 'Alpha4',                format: 0x32, indexed: false, gen: generateAlpha4 },
-  { name: 'Alpha8',                format: 0x33, indexed: false, gen: generateAlpha8 },
+  { name: 'I1 (1-bit indexed)',    format: 0x0C, indexed: true,  gen: generateI1 },
+  { name: 'I2 (2-bit indexed)',    format: 0x0B, indexed: true,  gen: generateI2 },
+  { name: 'I4 (4-bit indexed)',    format: 0x0A, indexed: true,  gen: generateI4 },
+  { name: 'I8 (8-bit indexed)',    format: 0x09, indexed: true,  gen: generateI8 },
+  { name: 'AI44 (alpha+index)',    format: 0x05, indexed: true,  gen: generateAI44 },
+  { name: 'RGB565',                format: 0x01, indexed: false, gen: generateRGB565 },
+  { name: 'ARGB1555',              format: 0x04, indexed: false, gen: generateARGB1555 },
+  { name: 'RGBA5551',              format: 0x08, indexed: false, gen: generateRGBA5551 },
+  { name: 'RGB555',                format: 0x42, indexed: false, gen: generateRGB555 },
+  { name: 'ARGB4444',              format: 0x03, indexed: false, gen: generateARGB4444 },
+  { name: 'RGBA4444',              format: 0x07, indexed: false, gen: generateRGBA4444 },
+  { name: 'RGB444',                format: 0x41, indexed: false, gen: generateRGB444 },
+  { name: 'RGB888',                format: 0x40, indexed: false, gen: generateRGB888 },
+  { name: 'RGBA8888',              format: 0x06, indexed: false, gen: generateRGBA8888 },
+  { name: 'ARGB8888',              format: 0x02, indexed: false, gen: generateARGB8888 },
+  { name: 'Alpha1',                format: 0x0F, indexed: false, gen: generateAlpha1 },
+  { name: 'Alpha2',                format: 0x0E, indexed: false, gen: generateAlpha2 },
+  { name: 'Alpha4',                format: 0x0D, indexed: false, gen: generateAlpha4 },
+  { name: 'Alpha8',                format: 0x00, indexed: false, gen: generateAlpha8 },
 ];
 
 
@@ -798,7 +798,7 @@ function runBlitTests() {
 
   // Generate an i8 test texture
   const { pixelData: i8Pixels } = generateI8(size, size, pal);
-  const i8D2 = buildD2TX(0x08, size, size, i8Pixels);
+  const i8D2 = buildD2TX(0x09, size, size, i8Pixels);
 
   // Generate a special RGB565 texture for color key test:
   // Checkerboard of magenta (0xF81F) and cyan (0x07FF) — key = magenta → punches holes
@@ -828,7 +828,7 @@ function runBlitTests() {
       ckRefAfterKey[i * 4 + 2] = b8; ckRefAfterKey[i * 4 + 3] = 255;
     }
   }
-  const ckD2 = buildD2TX(0x10, size, size, ckPixels);
+  const ckD2 = buildD2TX(0x01, size, size, ckPixels);
 
   const blitTests = [
     {
