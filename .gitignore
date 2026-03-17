@@ -37,6 +37,9 @@ pids
 tmp/
 temp/
 
+# Published firmware (local per-machine)
+test/firmware/
+
 # Environment variables
 .env
 .env.local
