@@ -322,6 +322,42 @@
   .ok { color: #75d47e; }
   .err { color: #ff7b7b; }
   .muted { color: #9eb2c7; }
+  .warn { color: #f0c060; }
+  .publishForm { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+  .publishForm label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9eb6ce; }
+  .publishForm input, .publishForm textarea {
+    background: #0d131c; border: 1px solid #2d3f54; color: #e7eef7;
+    border-radius: 4px; padding: 6px; font-size: 12px;
+  }
+  .publishForm textarea { min-height: 80px; resize: vertical; font-family: inherit; }
+  .publishActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .publishInfo { font-size: 11px; color: #9eb6ce; margin-top: 4px; }
+  .otaCard { max-width: 480px; }
+  .otaChangeset {
+    margin: 10px 0; padding: 8px; border-radius: 6px;
+    background: #101722; border: 1px solid #2a3646;
+    font-size: 12px; white-space: pre-wrap; max-height: 200px; overflow: auto;
+    color: #d6e6f5;
+  }
+  .otaVersionRow {
+    display: flex; gap: 16px; font-size: 12px; margin: 8px 0;
+  }
+  .otaVersionRow span { color: #9eb6ce; }
+  .otaVersionRow strong { color: #e7eef7; }
+  button.danger { background: #b03a3a; }
+  button.danger:hover { background: #cc4e4e; }
+  #fwBanner {
+    display: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    background: #1a2a1e;
+    border: 1px solid #2f6a3a;
+    color: #a8d8b0;
+    margin-bottom: 8px;
+  }
+  #fwBanner .fwBannerVer { color: #7ee88c; font-weight: bold; }
+  #fwBanner .fwBannerNote { color: #9eb6ce; margin-left: 8px; }
   @media (max-width: 960px) {
     .layout {
       grid-template-columns: 1fr;
@@ -331,6 +367,7 @@
 </head>
 <body>
 <h1>RetroWatch BLE Explorer</h1>
+<div id="fwBanner"></div>
 
 <div class="toolbar">
   <button id="connectBtn">Connect RetroWatch</button>
@@ -340,6 +377,7 @@
   <input id="launchInput" type="file" accept=".rwb,.rwa,.rwf,.mod,.xm,.d2" style="display:none" />
   <button id="pingBtn" class="secondary">Ping</button>
   <button id="setTimeBtn" class="secondary">Set Time (Local Now)</button>
+  <button id="publishBtn" class="secondary">Publish Firmware</button>
   <span class="muted">Launch supports: .rwb .rwa .rwf .mod .xm .d2 (max 4MB)</span>
 </div>
 <div id="status">Disconnected</div>
@@ -372,6 +410,50 @@
 </div>
 
 <input id="uploadInput" type="file" multiple style="display:none" />
+<input id="fwFileInput" type="file" style="display:none" />
+
+<div id="publishModal" class="modalOverlay">
+  <div class="modalCard">
+    <div class="modalTitle">Publish Firmware</div>
+    <div class="publishForm">
+      <label>
+        <span>Firmware File</span>
+        <button id="fwPickBtn" class="secondary" style="align-self:flex-start">Choose File...</button>
+        <div id="fwFileName" class="publishInfo">No file selected</div>
+      </label>
+      <label>
+        <span>Version</span>
+        <input id="fwVersion" type="text" placeholder="e.g. 1.2.0" />
+      </label>
+      <label>
+        <span>Changeset / Release Notes</span>
+        <textarea id="fwChangeset" placeholder="Describe what changed in this version..."></textarea>
+      </label>
+      <div id="publishedInfo" class="publishInfo"></div>
+      <div class="publishActions">
+        <button id="publishClearBtn" class="danger">Clear Published</button>
+        <button id="publishConfirmBtn">Publish</button>
+        <button id="publishCancelBtn" class="secondary">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="otaUpdateModal" class="modalOverlay">
+  <div class="modalCard otaCard">
+    <div class="modalTitle">Firmware Update Available</div>
+    <div class="otaVersionRow">
+      <div><span>Watch:</span> <strong id="otaWatchVer">—</strong></div>
+      <div><span>Latest:</span> <strong id="otaLatestVer">—</strong></div>
+    </div>
+    <div class="otaChangeset" id="otaChangeset"></div>
+    <div id="otaSize" class="publishInfo"></div>
+    <div class="publishActions">
+      <button id="otaConfirmBtn">Update Now</button>
+      <button id="otaDismissBtn" class="secondary">Dismiss</button>
+    </div>
+  </div>
+</div>
 
 <div id="transferModal" class="modalOverlay">
   <div class="modalCard">
@@ -467,6 +549,7 @@ async function updateConnectedStatusWithVersion(name, sourceLabel) {
   const version = await client.ping("version-probe");
   setStatus(`Connected: ${name} | fw ${version}`, true);
   log(`PING ok (${sourceLabel}): ${version}`, "ok");
+  await checkForFirmwareUpdate(version);
 }
 
 function stopReconnectLoop() {
@@ -1597,6 +1680,7 @@ document.getElementById("pingBtn").addEventListener("click", async () => {
     await ensureConnected("PING");
     const echoed = await client.ping("tree-view-ping");
     log(`PING ok: ${echoed}`, "ok");
+    await checkForFirmwareUpdate(echoed);
   } catch (err) {
     log(`PING failed: ${err.message}`, "err");
   }
@@ -1727,6 +1811,265 @@ client.onDisconnect(() => {
 
 setStatus("Disconnected", false);
 log("Ready. Connect to build recursive tree view.", "muted");
+
+/* ─── Firmware Banner ────────────────────────────────────────────── */
+
+const fwBanner = document.getElementById("fwBanner");
+
+async function refreshFwBanner() {
+  try {
+    const res = await fetch("firmware/meta.json");
+    if (!res.ok) {
+      fwBanner.style.display = "none";
+      return;
+    }
+    const meta = await res.json();
+    const firstLine = (meta.changeset || "").split(/\r?\n/)[0];
+    fwBanner.innerHTML =
+      `Latest firmware: <span class="fwBannerVer">${escapeHtml(meta.version)}</span>` +
+      `<span class="fwBannerNote">— ${escapeHtml(firstLine)}</span>`;
+    fwBanner.style.display = "block";
+  } catch {
+    fwBanner.style.display = "none";
+  }
+}
+
+refreshFwBanner();
+
+/* ─── Firmware Publish & OTA Update ──────────────────────────────── */
+
+const FW_META_URL = "firmware/meta.json";
+const FW_API = "firmware-api.php";
+
+async function loadPublishedFirmware() {
+  const res = await fetch(FW_META_URL);
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+async function downloadPublishedBinary() {
+  const meta = await loadPublishedFirmware();
+  if (!meta) throw new Error("No firmware published");
+  const res = await fetch(`firmware/${meta.fileName}`);
+  if (!res.ok) throw new Error(`GET binary failed: ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function savePublishedFirmware(file, version, changeset) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("version", version);
+  form.append("changeset", changeset);
+  const res = await fetch(FW_API, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `POST failed: ${res.status}`);
+  }
+  return await res.json();
+}
+
+async function clearPublishedFirmware() {
+  const res = await fetch(FW_API, { method: "DELETE" });
+  if (!res.ok) throw new Error(`DELETE failed: ${res.status}`);
+}
+
+/* ─── Publish Modal ──────────────────────────────────────────────── */
+
+const publishModal = document.getElementById("publishModal");
+const fwFileInput = document.getElementById("fwFileInput");
+const fwPickBtn = document.getElementById("fwPickBtn");
+const fwFileName = document.getElementById("fwFileName");
+const fwVersionInput = document.getElementById("fwVersion");
+const fwChangesetInput = document.getElementById("fwChangeset");
+const publishedInfo = document.getElementById("publishedInfo");
+const publishConfirmBtn = document.getElementById("publishConfirmBtn");
+const publishCancelBtn = document.getElementById("publishCancelBtn");
+const publishClearBtn = document.getElementById("publishClearBtn");
+
+let pendingFwFile = null;
+
+async function refreshPublishedInfo() {
+  try {
+    const entry = await loadPublishedFirmware();
+    if (entry) {
+      const date = new Date(entry.publishedAt).toLocaleString();
+      publishedInfo.innerHTML =
+        `Currently published: <strong>${escapeHtml(entry.version)}</strong> ` +
+        `(${(entry.size / 1024).toFixed(1)} KB, ${escapeHtml(date)})`;
+      publishClearBtn.style.display = "";
+    } else {
+      publishedInfo.textContent = "No firmware published yet.";
+      publishClearBtn.style.display = "none";
+    }
+  } catch (err) {
+    publishedInfo.textContent = `Error loading info: ${err.message}`;
+    publishClearBtn.style.display = "none";
+  }
+}
+
+document.getElementById("publishBtn").addEventListener("click", async () => {
+  pendingFwFile = null;
+  fwFileName.textContent = "No file selected";
+  fwVersionInput.value = "";
+  fwChangesetInput.value = "";
+  fwFileInput.value = "";
+  await refreshPublishedInfo();
+  publishModal.style.display = "flex";
+});
+
+fwPickBtn.addEventListener("click", () => {
+  fwFileInput.value = "";
+  fwFileInput.click();
+});
+
+fwFileInput.addEventListener("change", (e) => {
+  const file = (e.target.files || [])[0];
+  if (!file) return;
+  pendingFwFile = file;
+  fwFileName.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+});
+
+publishConfirmBtn.addEventListener("click", async () => {
+  if (!pendingFwFile) {
+    log("Publish: no firmware file selected", "err");
+    return;
+  }
+  const version = fwVersionInput.value.trim();
+  if (!version) {
+    log("Publish: version is required", "err");
+    return;
+  }
+  const changeset = fwChangesetInput.value.trim();
+  if (!changeset) {
+    log("Publish: changeset description is required", "err");
+    return;
+  }
+
+  try {
+    const meta = await savePublishedFirmware(pendingFwFile, version, changeset);
+    log(`Published firmware v${meta.version} (${(meta.size / 1024).toFixed(1)} KB)`, "ok");
+    publishModal.style.display = "none";
+    pendingFwFile = null;
+    refreshFwBanner();
+  } catch (err) {
+    log(`Publish failed: ${err.message}`, "err");
+  }
+});
+
+publishCancelBtn.addEventListener("click", () => {
+  publishModal.style.display = "none";
+  pendingFwFile = null;
+});
+
+publishModal.addEventListener("click", (e) => {
+  if (e.target === publishModal) {
+    publishModal.style.display = "none";
+    pendingFwFile = null;
+  }
+});
+
+publishClearBtn.addEventListener("click", async () => {
+  if (!confirm("Clear published firmware? This removes the stored image.")) return;
+  await clearPublishedFirmware();
+  log("Cleared published firmware", "muted");
+  await refreshPublishedInfo();
+  refreshFwBanner();
+});
+
+/* ─── OTA Update Modal ───────────────────────────────────────────── */
+
+const otaUpdateModal = document.getElementById("otaUpdateModal");
+const otaWatchVer = document.getElementById("otaWatchVer");
+const otaLatestVer = document.getElementById("otaLatestVer");
+const otaChangesetEl = document.getElementById("otaChangeset");
+const otaSizeEl = document.getElementById("otaSize");
+const otaConfirmBtn = document.getElementById("otaConfirmBtn");
+const otaDismissBtn = document.getElementById("otaDismissBtn");
+
+let pendingOtaEntry = null;
+let lastWatchVersion = null;
+
+function showOtaPrompt(watchVersion, entry) {
+  otaWatchVer.textContent = watchVersion;
+  otaLatestVer.textContent = entry.version;
+  otaChangesetEl.textContent = entry.changeset;
+  const date = new Date(entry.publishedAt).toLocaleString();
+  otaSizeEl.textContent = `${entry.fileName} · ${(entry.size / 1024).toFixed(1)} KB · published ${date}`;
+  pendingOtaEntry = entry;
+  otaUpdateModal.style.display = "flex";
+}
+
+otaDismissBtn.addEventListener("click", () => {
+  otaUpdateModal.style.display = "none";
+  pendingOtaEntry = null;
+});
+
+otaUpdateModal.addEventListener("click", (e) => {
+  if (e.target === otaUpdateModal) {
+    otaUpdateModal.style.display = "none";
+    pendingOtaEntry = null;
+  }
+});
+
+otaConfirmBtn.addEventListener("click", async () => {
+  if (!pendingOtaEntry) return;
+  const entry = pendingOtaEntry;
+  otaUpdateModal.style.display = "none";
+  pendingOtaEntry = null;
+
+  try {
+    log(`Downloading firmware v${entry.version} from server...`, "muted");
+    const bytes = await downloadPublishedBinary();
+    log(`Downloaded ${(bytes.length / 1024).toFixed(1)} KB`, "ok");
+
+    await ensureConnected("OTA_UPDATE");
+    showTransferProgress(`OTA Update to v${entry.version}`, 0, bytes.length);
+    transferInProgress = true;
+
+    const rsp = await client.otaUploadFirmware(bytes, {
+      launch: true,
+      save: false,
+      path: "",
+      chunksPerAck: 1,
+      allowOutOfOrder: false,
+      onProgress: (sent, total) => {
+        updateTransferProgress(sent, total, "flashing");
+      },
+    });
+
+    transferInProgress = false;
+    hideTransferProgress();
+
+    if (rsp.status !== BleApi.STATUS.OK) {
+      throw new Error(`OTA update failed: ${formatOtaFailure(rsp)}`);
+    }
+
+    log(`OTA update to v${entry.version} complete (${bytes.length} bytes)`, "ok");
+  } catch (err) {
+    transferInProgress = false;
+    hideTransferProgress();
+    log(`OTA update failed: ${err.message}`, "err");
+  }
+});
+
+/* ─── Version Check (called after ping / connect) ────────────────── */
+
+async function checkForFirmwareUpdate(watchVersion) {
+  lastWatchVersion = watchVersion;
+  try {
+    const entry = await loadPublishedFirmware();
+    if (!entry) return;
+
+    if (watchVersion !== entry.version) {
+      log(`Firmware update available: watch=${watchVersion}, published=${entry.version}`, "warn");
+      showOtaPrompt(watchVersion, entry);
+    } else {
+      log(`Firmware is up to date (${watchVersion})`, "ok");
+    }
+  } catch (err) {
+    log(`Version check failed: ${err.message}`, "err");
+  }
+}
 </script>
 </body>
 </html>

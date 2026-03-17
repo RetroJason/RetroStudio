@@ -44,26 +44,26 @@
  *  gpu.present();                          // flush to screen (swaps frame if needed)
  *  gpu.destroy();
  *
- * Format enum → decode strategy (matches D2TX header byte 5):
- *  0x01  i1          1 bpp indexed   → unpack bit, palette lookup
- *  0x02  i2          2 bpp indexed   → unpack 2-bit, palette lookup
- *  0x04  i4          4 bpp indexed   → unpack nibble, palette lookup
- *  0x08  i8          8 bpp indexed   → direct palette lookup
- *  0x09  ai44        4+4 bpp         → lo-nibble palette + hi-nibble alpha
- *  0x10  rgb565      16 bpp          → 5-6-5 unpack
- *  0x11  argb1555    16 bpp          → 1-5-5-5 unpack
- *  0x12  rgba5551    16 bpp          → 5-5-5-1 unpack
- *  0x13  rgb555      16 bpp          → 5-5-5 unpack (A=1)
- *  0x14  argb4444    16 bpp          → 4-4-4-4 unpack
- *  0x15  rgba4444    16 bpp          → 4-4-4-4 unpack
- *  0x16  rgb444      16 bpp          → 4-4-4 unpack (A=1)
- *  0x20  rgb888      24 bpp          → direct
- *  0x21  rgba8888    32 bpp          → direct
- *  0x22  argb8888    32 bpp          → swizzle
- *  0x30  alpha1      1 bpp alpha     → unpack bit, white + alpha
- *  0x31  alpha2      2 bpp alpha     → unpack 2-bit, white + alpha
- *  0x32  alpha4      4 bpp alpha     → unpack nibble, white + alpha
- *  0x33  alpha8      8 bpp alpha     → white + alpha
+ * Format enum → decode strategy (matches Dave2D hardware d2_mode_* defines):
+ *  0x00  alpha8      8 bpp alpha     → white + alpha
+ *  0x01  rgb565      16 bpp          → 5-6-5 unpack
+ *  0x02  argb8888    32 bpp          → swizzle
+ *  0x03  argb4444    16 bpp          → 4-4-4-4 unpack
+ *  0x04  argb1555    16 bpp          → 1-5-5-5 unpack
+ *  0x05  ai44        4+4 bpp         → lo-nibble palette + hi-nibble alpha
+ *  0x06  rgba8888    32 bpp          → direct
+ *  0x07  rgba4444    16 bpp          → 4-4-4-4 unpack
+ *  0x08  rgba5551    16 bpp          → 5-5-5-1 unpack
+ *  0x09  i8          8 bpp indexed   → direct palette lookup
+ *  0x0A  i4          4 bpp indexed   → unpack nibble, palette lookup
+ *  0x0B  i2          2 bpp indexed   → unpack 2-bit, palette lookup
+ *  0x0C  i1          1 bpp indexed   → unpack bit, palette lookup
+ *  0x0D  alpha4      4 bpp alpha     → unpack nibble, white + alpha
+ *  0x0E  alpha2      2 bpp alpha     → unpack 2-bit, white + alpha
+ *  0x0F  alpha1      1 bpp alpha     → unpack bit, white + alpha
+ *  0x40  rgb888      24 bpp          → direct
+ *  0x41  rgb444      16 bpp          → 4-4-4 unpack (A=1)
+ *  0x42  rgb555      16 bpp          → 5-5-5 unpack (A=1)
  */
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -73,47 +73,47 @@ const D2TX_HEADER_SIZE = 32;
 const D2TX_MAGIC       = 0x58543244; // "D2TX" read as LE uint32
 
 const D2_FORMAT = {
-  I1:       0x01,
-  I2:       0x02,
-  I4:       0x04,
-  I8:       0x08,
-  AI44:     0x09,
-  RGB565:   0x10,
-  ARGB1555: 0x11,
-  RGBA5551: 0x12,
-  RGB555:   0x13,
-  ARGB4444: 0x14,
-  RGBA4444: 0x15,
-  RGB444:   0x16,
-  RGB888:   0x20,
-  RGBA8888: 0x21,
-  ARGB8888: 0x22,
-  ALPHA1:   0x30,
-  ALPHA2:   0x31,
-  ALPHA4:   0x32,
-  ALPHA8:   0x33,
+  ALPHA8:   0x00,
+  RGB565:   0x01,
+  ARGB8888: 0x02,
+  ARGB4444: 0x03,
+  ARGB1555: 0x04,
+  AI44:     0x05,
+  RGBA8888: 0x06,
+  RGBA4444: 0x07,
+  RGBA5551: 0x08,
+  I8:       0x09,
+  I4:       0x0A,
+  I2:       0x0B,
+  I1:       0x0C,
+  ALPHA4:   0x0D,
+  ALPHA2:   0x0E,
+  ALPHA1:   0x0F,
+  RGB888:   0x40,
+  RGB444:   0x41,
+  RGB555:   0x42,
 };
 
 const BITS_PER_PIXEL = {
-  [D2_FORMAT.I1]:       1,
-  [D2_FORMAT.I2]:       2,
-  [D2_FORMAT.I4]:       4,
-  [D2_FORMAT.I8]:       8,
-  [D2_FORMAT.AI44]:     8,
-  [D2_FORMAT.RGB565]:   16,
-  [D2_FORMAT.ARGB1555]: 16,
-  [D2_FORMAT.RGBA5551]: 16,
-  [D2_FORMAT.RGB555]:   16,
-  [D2_FORMAT.ARGB4444]: 16,
-  [D2_FORMAT.RGBA4444]: 16,
-  [D2_FORMAT.RGB444]:   16,
-  [D2_FORMAT.RGB888]:   24,
-  [D2_FORMAT.RGBA8888]: 32,
-  [D2_FORMAT.ARGB8888]: 32,
-  [D2_FORMAT.ALPHA1]:   1,
-  [D2_FORMAT.ALPHA2]:   2,
-  [D2_FORMAT.ALPHA4]:   4,
   [D2_FORMAT.ALPHA8]:   8,
+  [D2_FORMAT.RGB565]:   16,
+  [D2_FORMAT.ARGB8888]: 32,
+  [D2_FORMAT.ARGB4444]: 16,
+  [D2_FORMAT.ARGB1555]: 16,
+  [D2_FORMAT.AI44]:     8,
+  [D2_FORMAT.RGBA8888]: 32,
+  [D2_FORMAT.RGBA4444]: 16,
+  [D2_FORMAT.RGBA5551]: 16,
+  [D2_FORMAT.I8]:       8,
+  [D2_FORMAT.I4]:       4,
+  [D2_FORMAT.I2]:       2,
+  [D2_FORMAT.I1]:       1,
+  [D2_FORMAT.ALPHA4]:   4,
+  [D2_FORMAT.ALPHA2]:   2,
+  [D2_FORMAT.ALPHA1]:   1,
+  [D2_FORMAT.RGB888]:   24,
+  [D2_FORMAT.RGB444]:   16,
+  [D2_FORMAT.RGB555]:   16,
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -206,7 +206,7 @@ vec4 decodePixel(int px, int py) {
   int pixelIndex = py * u_texWidth + px;
 
   // ── Indexed 1-bit ──
-  if (u_format == 0x01) {
+  if (u_format == 0x0C) {
     int byteOff = pixelIndex / 8;
     int bitIdx  = 7 - (pixelIndex & 7);
     uint b = fetchByte(byteOff);
@@ -214,7 +214,7 @@ vec4 decodePixel(int px, int py) {
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── Indexed 2-bit ──
-  if (u_format == 0x02) {
+  if (u_format == 0x0B) {
     int byteOff = pixelIndex / 4;
     int shift   = 6 - (pixelIndex & 3) * 2;
     uint b = fetchByte(byteOff);
@@ -222,7 +222,7 @@ vec4 decodePixel(int px, int py) {
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── Indexed 4-bit ──
-  if (u_format == 0x04) {
+  if (u_format == 0x0A) {
     int byteOff = pixelIndex / 2;
     uint b = fetchByte(byteOff);
     int idx;
@@ -235,14 +235,14 @@ vec4 decodePixel(int px, int py) {
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── Indexed 8-bit ──
-  if (u_format == 0x08) {
+  if (u_format == 0x09) {
     int byteOff = pixelIndex;
     uint b = fetchByte(byteOff);
     int idx = int(b);  // i8 uses full palette, no offset
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── AI44 (alpha + index 4+4) ──
-  if (u_format == 0x09) {
+  if (u_format == 0x05) {
     int byteOff = pixelIndex;
     uint b = fetchByte(byteOff);
     float alpha = float((b >> 4u) & 0xFu) / 15.0;
@@ -252,7 +252,7 @@ vec4 decodePixel(int px, int py) {
   }
 
   // ── RGB565 ──
-  if (u_format == 0x10) {
+  if (u_format == 0x01) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -263,7 +263,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, 1.0);
   }
   // ── ARGB1555 ──
-  if (u_format == 0x11) {
+  if (u_format == 0x04) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -275,7 +275,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, a);
   }
   // ── RGBA5551 ──
-  if (u_format == 0x12) {
+  if (u_format == 0x08) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -287,7 +287,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, a);
   }
   // ── RGB555 ──
-  if (u_format == 0x13) {
+  if (u_format == 0x42) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -298,7 +298,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, 1.0);
   }
   // ── ARGB4444 ──
-  if (u_format == 0x14) {
+  if (u_format == 0x03) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -310,7 +310,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, a);
   }
   // ── RGBA4444 ──
-  if (u_format == 0x15) {
+  if (u_format == 0x07) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -322,7 +322,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, a);
   }
   // ── RGB444 ──
-  if (u_format == 0x16) {
+  if (u_format == 0x41) {
     int byteOff = pixelIndex * 2;
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
@@ -334,7 +334,7 @@ vec4 decodePixel(int px, int py) {
   }
 
   // ── RGB888 ──
-  if (u_format == 0x20) {
+  if (u_format == 0x40) {
     int byteOff = pixelIndex * 3;
     float r = float(fetchByte(byteOff))     / 255.0;
     float g = float(fetchByte(byteOff + 1)) / 255.0;
@@ -342,7 +342,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, 1.0);
   }
   // ── RGBA8888 ──
-  if (u_format == 0x21) {
+  if (u_format == 0x06) {
     int byteOff = pixelIndex * 4;
     float r = float(fetchByte(byteOff))     / 255.0;
     float g = float(fetchByte(byteOff + 1)) / 255.0;
@@ -351,7 +351,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(r, g, b, a);
   }
   // ── ARGB8888 ──
-  if (u_format == 0x22) {
+  if (u_format == 0x02) {
     int byteOff = pixelIndex * 4;
     float a = float(fetchByte(byteOff))     / 255.0;
     float r = float(fetchByte(byteOff + 1)) / 255.0;
@@ -361,7 +361,7 @@ vec4 decodePixel(int px, int py) {
   }
 
   // ── Alpha 1-bit ──
-  if (u_format == 0x30) {
+  if (u_format == 0x0F) {
     int byteOff = pixelIndex / 8;
     int bitIdx  = 7 - (pixelIndex & 7);
     uint bb = fetchByte(byteOff);
@@ -369,7 +369,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(1.0, 1.0, 1.0, a);
   }
   // ── Alpha 2-bit ──
-  if (u_format == 0x31) {
+  if (u_format == 0x0E) {
     int byteOff = pixelIndex / 4;
     int shift   = 6 - (pixelIndex & 3) * 2;
     uint bb = fetchByte(byteOff);
@@ -377,7 +377,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(1.0, 1.0, 1.0, a);
   }
   // ── Alpha 4-bit ──
-  if (u_format == 0x32) {
+  if (u_format == 0x0D) {
     int byteOff = pixelIndex / 2;
     uint bb = fetchByte(byteOff);
     float a;
@@ -389,7 +389,7 @@ vec4 decodePixel(int px, int py) {
     return vec4(1.0, 1.0, 1.0, a);
   }
   // ── Alpha 8-bit ──
-  if (u_format == 0x33) {
+  if (u_format == 0x00) {
     int byteOff = pixelIndex;
     float a = float(fetchByte(byteOff)) / 255.0;
     return vec4(1.0, 1.0, 1.0, a);
@@ -1013,35 +1013,35 @@ function packIndexedPixels(indexedData, formatEnum) {
 }
 
 /**
- * Map format string (e.g. "d2_mode_i8") → numeric enum (0x08).
+ * Map format string (e.g. "d2_mode_i8") → numeric enum (0x09).
  */
 const FORMAT_STRING_TO_ENUM = {
-  'd2_mode_i1':       D2_FORMAT.I1,
-  'd2_mode_i2':       D2_FORMAT.I2,
-  'd2_mode_i4':       D2_FORMAT.I4,
-  'd2_mode_i8':       D2_FORMAT.I8,
-  'd2_mode_ai44':     D2_FORMAT.AI44,
-  'd2_mode_rgb565':   D2_FORMAT.RGB565,
-  'd2_mode_argb1555': D2_FORMAT.ARGB1555,
-  'd2_mode_rgba5551': D2_FORMAT.RGBA5551,
-  'd2_mode_rgb555':   D2_FORMAT.RGB555,
-  'd2_mode_argb4444': D2_FORMAT.ARGB4444,
-  'd2_mode_rgba4444': D2_FORMAT.RGBA4444,
-  'd2_mode_rgb444':   D2_FORMAT.RGB444,
-  'd2_mode_rgb888':   D2_FORMAT.RGB888,
-  'd2_mode_rgba8888': D2_FORMAT.RGBA8888,
-  'd2_mode_argb8888': D2_FORMAT.ARGB8888,
-  'd2_mode_alpha1':   D2_FORMAT.ALPHA1,
-  'd2_mode_alpha2':   D2_FORMAT.ALPHA2,
-  'd2_mode_alpha4':   D2_FORMAT.ALPHA4,
   'd2_mode_alpha8':   D2_FORMAT.ALPHA8,
+  'd2_mode_rgb565':   D2_FORMAT.RGB565,
+  'd2_mode_argb8888': D2_FORMAT.ARGB8888,
+  'd2_mode_argb4444': D2_FORMAT.ARGB4444,
+  'd2_mode_argb1555': D2_FORMAT.ARGB1555,
+  'd2_mode_ai44':     D2_FORMAT.AI44,
+  'd2_mode_rgba8888': D2_FORMAT.RGBA8888,
+  'd2_mode_rgba4444': D2_FORMAT.RGBA4444,
+  'd2_mode_rgba5551': D2_FORMAT.RGBA5551,
+  'd2_mode_i8':       D2_FORMAT.I8,
+  'd2_mode_i4':       D2_FORMAT.I4,
+  'd2_mode_i2':       D2_FORMAT.I2,
+  'd2_mode_i1':       D2_FORMAT.I1,
+  'd2_mode_alpha4':   D2_FORMAT.ALPHA4,
+  'd2_mode_alpha2':   D2_FORMAT.ALPHA2,
+  'd2_mode_alpha1':   D2_FORMAT.ALPHA1,
+  'd2_mode_rgb888':   D2_FORMAT.RGB888,
+  'd2_mode_rgb444':   D2_FORMAT.RGB444,
+  'd2_mode_rgb555':   D2_FORMAT.RGB555,
 };
 
 /**
  * Build a complete D2TX file from raw pixel data.
  * @param {number} width
  * @param {number} height
- * @param {number|string} format  Enum (0x08) or string ('d2_mode_i8').
+ * @param {number|string} format  Enum (0x09) or string ('d2_mode_i8').
  * @param {Uint8Array} pixelData  Raw format-encoded pixel bytes.
  * @param {object} [opts]
  * @param {number} [opts.paletteIndex=0]  1-based PMAP palette index.

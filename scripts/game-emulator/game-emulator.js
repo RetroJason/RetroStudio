@@ -363,15 +363,27 @@ class GameEmulator {
   async playProject() {
     console.log('[GameEmulator] Play project');
     this.updateStatus('Preparing to run project...', 'info');
+
+    const playStart = performance.now();
+    let phaseStart = playStart;
+    const logPhase = (label) => {
+      const now = performance.now();
+      const phaseMs = now - phaseStart;
+      const totalMs = now - playStart;
+      console.log(`[Timing][Play] ${label}: ${phaseMs.toFixed(1)}ms (total ${totalMs.toFixed(1)}ms)`);
+      phaseStart = now;
+    };
     
     try {
       // First, build the project to get all scripts
       console.log('[GameEmulator] Building project...');
       await this.buildProject();
+      logPhase('buildProject');
       
       // Concatenate and load the scripts
       console.log('[GameEmulator] Concatenating Lua scripts...');
       const concatenatedScript = await this.concatenateLuaScripts();
+      logPhase('concatenateLuaScripts');
       
       if (!concatenatedScript) {
         this.updateStatus('No Lua scripts found in project', 'warning');
@@ -387,6 +399,9 @@ class GameEmulator {
       
       // Load and execute the concatenated script
       await this.loadAndExecuteScript(concatenatedScript);
+      logPhase('loadAndExecuteScript');
+
+      console.log(`[Timing][Play] COMPLETE: ${(performance.now() - playStart).toFixed(1)}ms`);
       
     } catch (error) {
       console.error('[GameEmulator] Error running project:', error);
@@ -410,7 +425,7 @@ class GameEmulator {
       if (!this.buildSystem) {
         if (!this.initializeBuildSystemIfNeeded()) {
           this.updateStatus('Build system not available', 'error');
-          return;
+          return { success: false, error: 'Build system not available' };
         }
       }
       
@@ -431,7 +446,7 @@ class GameEmulator {
       // Get project files from the ProjectExplorer
       if (!this.projectExplorer) {
         this.updateStatus('No project explorer available', 'warning');
-        return;
+        return { success: false, error: 'No project explorer available' };
       }
       
       // Build the project using the build system (it will read from projectExplorer directly)
@@ -452,9 +467,11 @@ class GameEmulator {
       }
       
       this.updateStatus('Project built successfully!', 'success');
+      return buildResult;
     } catch (error) {
       console.error('[GameEditor] Build failed:', error);
       this.updateStatus(`Build failed: ${error.message}`, 'error');
+      return { success: false, error: error.message };
     }
   }
   
@@ -1430,16 +1447,30 @@ class GameEmulator {
   async loadAndExecuteScript(scriptData) {
     console.log('[GameEmulator] Loading and executing Lua script...');
     this.updateStatus('Loading Lua script...', 'info');
+
+    const runStart = performance.now();
+    let runPhaseStart = runStart;
+    const logRunPhase = (label) => {
+      const now = performance.now();
+      const phaseMs = now - runPhaseStart;
+      const totalMs = now - runStart;
+      console.log(`[Timing][Run] ${label}: ${phaseMs.toFixed(1)}ms (total ${totalMs.toFixed(1)}ms)`);
+      runPhaseStart = now;
+    };
     
     try {
       // Load Lua engine if not already loaded
       if (!window.Lua) {
         await this.loadLuaEngine();
+        logRunPhase('loadLuaEngine (cold)');
+      } else {
+        logRunPhase('loadLuaEngine (warm)');
       }
       
       // Create a new Lua state
       const L = new window.Lua.State();
       this.luaState = L;
+      logRunPhase('createLuaState');
       
       // Initialize print output capture
       // GameConsole will handle all output display
@@ -1471,12 +1502,14 @@ class GameEmulator {
       
       // Initialize centralized resource mappings
       await this.initializeResourceMappings();
+      logRunPhase('initializeResourceMappings');
       
       // Load and initialize Lua extensions
       console.log('[GameEmulator] Loading Lua extensions...');
       try {
         await this.loadLuaExtensions(L);
         console.log('[GameEmulator] Lua extensions loaded successfully');
+        logRunPhase('loadLuaExtensions');
         
         // Test Input API availability
         try {
@@ -1494,6 +1527,7 @@ class GameEmulator {
       } catch (error) {
         console.warn('[GameEmulator] Failed to load Lua extensions:', error);
         // Continue anyway - extensions are optional
+        logRunPhase('loadLuaExtensions (failed)');
       }
       
       console.log('[GameEmulator] Concatenated Lua script:');
@@ -1504,6 +1538,7 @@ class GameEmulator {
       try {
         L.execute(scriptData.content);
         console.log('[GameEmulator] Script loaded successfully');
+        logRunPhase('luaLoadScript');
         
         // Check what functions are defined in the global scope
         try {
@@ -1542,6 +1577,7 @@ class GameEmulator {
         console.log('[GameEmulator] Setup() function executed successfully');
         // Capture any print output from Setup()
         this.captureLuaPrintOutput();
+        logRunPhase('luaSetup');
       } catch (error) {
         console.log('[GameEmulator] Setup() function issue:', error.message);
         if (error.message.includes('Setup function is not defined')) {
@@ -1550,6 +1586,7 @@ class GameEmulator {
           console.error('[GameEmulator] Setup() function failed during execution:', error);
           this.updateStatus(`Setup() error: ${error.message}`, 'warning');
         }
+        logRunPhase('luaSetup (optional/missing/error)');
       }
       
       // Test Update() function (required) - check if it exists first
@@ -1575,6 +1612,7 @@ class GameEmulator {
         console.log('[GameEmulator] Update() function test successful');
         // Capture any print output from test Update()
         this.captureLuaPrintOutput();
+        logRunPhase('luaUpdateSmokeTest');
       } catch (error) {
         console.error('[GameEmulator] Update() function runtime error:', error);
         this.updateStatus(`Update() runtime error: ${error.message}`, 'error');
@@ -1611,9 +1649,11 @@ class GameEmulator {
           if (imageExt) {
             await imageExt.initGpu(this._gpu);
           }
+          logRunPhase('gpuInit');
         } else {
           console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
           this._gpu = null;
+          logRunPhase('gpuInit (skipped)');
         }
       } catch (gpuError) {
         console.error('[GameEmulator] GPU init failed:', gpuError);
@@ -1625,15 +1665,20 @@ class GameEmulator {
           const loseCtx = gameCanvas?.getContext('webgl2')?.getExtension('WEBGL_lose_context');
           if (loseCtx) loseCtx.loseContext();
         } catch (_) { /* best effort */ }
+        logRunPhase('gpuInit (failed)');
       }
       
       // Start the game loop
       console.log('[GameEmulator] About to start game loop...');
       this.startGameLoop();
       console.log('[GameEmulator] Game loop start command issued');
+      logRunPhase('startGameLoop');
       
       // Show game engine
       this.showGameEngine(scriptData);
+      logRunPhase('showGameEngine');
+
+      console.log(`[Timing][Run] COMPLETE: ${(performance.now() - runStart).toFixed(1)}ms`);
       
     } catch (error) {
       console.error('[GameEmulator] Script execution error:', error);

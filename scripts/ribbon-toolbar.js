@@ -285,15 +285,21 @@ class RibbonToolbar {
     this.setupButton('exportRwpBtn', async () => {
       await this.exportProjectRwp();
     });
+    this.setupButton('saveTemplateBtn', async () => {
+      await this.saveProjectAsTemplate();
+    });
+    this.setupButton('exportRwaBtn', async () => {
+      await this.exportProjectRwa();
+    });
     this.setupButton('importRwpBtn', async () => {
       await this.importProjectRwp();
     });
     
     // Project operations
-    this.setupButton('buildBtn', () => {
-      if (window.gameEmulator) {
-        window.gameEmulator.buildProject();
-      }
+    this.setupButton('buildBtn', async () => {
+      if (!window.gameEmulator) return;
+      const result = await window.gameEmulator.buildProject();
+      this.showBuildSummaryPopup(result);
     });
     
     // Note: Create buttons are now handled dynamically
@@ -311,6 +317,152 @@ class RibbonToolbar {
       console.error('[RibbonToolbar] Export failed:', e);
       alert('Export failed: ' + (e?.message || e));
     }
+  }
+
+  async saveProjectAsTemplate() {
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+      const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+      if (!svc) return alert('Project export service unavailable');
+
+      const suggested = `${project.replace(/\s+/g, '')}Template.rwp`;
+      const form = await (window.ModalUtils?.showForm?.('Save As Template', [
+        { name: 'fileName', type: 'text', label: 'Template File Name', required: true, placeholder: suggested }
+      ], { okText: 'Save Template' }) ?? Promise.resolve(null));
+      if (!form) return;
+
+      let fileName = (form.fileName || '').trim() || suggested;
+      fileName = fileName.replace(/[\\/:*?"<>|]/g, '_');
+      if (!fileName.toLowerCase().endsWith('.rwp')) fileName += '.rwp';
+
+      const result = await svc.exportProject(project, { fileName, skipDownload: true, returnBlob: true });
+      if (!result?.blob) throw new Error('Template export did not produce an archive');
+
+      // Browser sandbox cannot write directly into repository folders.
+      // We download the archive so it can be moved into RetroStudio/templates.
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      window.gameEmulator?.updateStatus?.(`Template downloaded: ${fileName}`, 'success');
+    } catch (e) {
+      console.error('[RibbonToolbar] Save template failed:', e);
+      alert('Save template failed: ' + (e?.message || e));
+    }
+  }
+
+  // Build and export current focused project as .rwa runtime package
+  async exportProjectRwa() {
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+      const svc = window.serviceContainer?.get?.('rwaService') || window.rwaService;
+      if (!svc) return alert('Runtime export service unavailable');
+
+      window.gameEmulator?.updateStatus?.('Building and exporting runtime package...', 'info');
+      const pkg = await svc.exportProject(project, { buildBeforeExport: true });
+      window.gameEmulator?.updateStatus?.(`Exported ${pkg?.filename || 'runtime package'} successfully`, 'success');
+    } catch (e) {
+      console.error('[RibbonToolbar] RWA export failed:', e);
+      window.gameEmulator?.updateStatus?.(`RWA export failed: ${e?.message || e}`, 'error');
+      alert('RWA export failed: ' + (e?.message || e));
+    }
+  }
+
+  showBuildSummaryPopup(result) {
+    const summary = result?.summary || {};
+    const ok = result && result.success !== false;
+    const title = ok ? 'Build Summary' : 'Build Failed';
+    const lines = [
+      `${title}`,
+      '',
+      `Success: ${ok ? 'yes' : 'no'}`,
+      `Total files: ${summary.total ?? 0}`,
+      `Built: ${summary.success ?? 0}`,
+      `Errors: ${summary.errors ?? 0}`,
+      `Time: ${summary.time != null ? summary.time + ' ms' : 'n/a'}`
+    ];
+
+    if (!ok && result?.error) {
+      lines.push('', `Error: ${result.error}`);
+    }
+
+    // Intentional popup only for the explicit Build button flow.
+    alert(lines.join('\n'));
+  }
+
+  getPackageAssetFolder(projectName) {
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return `${projectName}/${sourcesRoot}/Package`;
+  }
+
+  async saveAssetToProject(file, projectName, subFolder, filename) {
+    const explorer = window.gameEmulator?.projectExplorer;
+    if (!explorer) throw new Error('ProjectExplorer unavailable');
+
+    const folderPath = `${this.getPackageAssetFolder(projectName)}/${subFolder}`;
+    const targetName = filename || file.name;
+    const outFile = (file.name === targetName) ? file : new File([await file.arrayBuffer()], targetName, { type: file.type || 'application/octet-stream' });
+    await explorer.addFileToProject(outFile, folderPath, true, true);
+
+    // Return relative path used by package settings.
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return `${sourcesRoot}/Package/${subFolder}/${targetName}`;
+  }
+
+  async captureSimulatorPng(defaultName = 'capture.png') {
+    const canvas = document.querySelector('#game-canvas');
+    if (!canvas) throw new Error('Simulator canvas not found. Run the simulator first.');
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Failed to capture simulator frame');
+    return new File([blob], defaultName, { type: 'image/png' });
+  }
+
+  async chooseFile(accept) {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = accept;
+      input.onchange = () => resolve(input.files && input.files[0] ? input.files[0] : null);
+      input.click();
+    });
+  }
+
+  async createDefaultIcon32File() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Unable to create icon canvas');
+
+    // Small readable launcher icon with high contrast.
+    ctx.fillStyle = '#0b132b';
+    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillStyle = '#1c2541';
+    ctx.fillRect(2, 2, 28, 28);
+    ctx.strokeStyle = '#5bc0be';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(3, 3, 26, 26);
+    ctx.fillStyle = '#e0fbfc';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RW', 16, 17);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Failed to encode default icon32');
+    return new File([blob], 'icon32.png', { type: 'image/png' });
   }
 
   // Import a .rwp file and create a project
@@ -346,14 +498,47 @@ class RibbonToolbar {
       // Fetch templates (stubbed service)
       const catalog = window.serviceContainer?.get?.('templateCatalog') || window.templateCatalog;
       const templates = (await (catalog?.fetchProjectTemplates?.() ?? [])) || [];
-      if (!templates.length) return alert('No templates available');
 
-      // Build options for selection
-      const options = templates.map(t => ({ value: t.id, text: `${t.icon || ''} ${t.name} — ${t.description}`.trim() }));
+      // Build options for selection. Always include an explicit empty project mode
+      // so users can create brand-new template seeds.
+      const options = [
+        { value: '__empty__', text: 'Blank Project - No template files' },
+        ...templates.map(t => ({ value: t.id, text: `${t.icon || ''} ${t.name} — ${t.description}`.trim() }))
+      ];
       const pick = await (window.ModalUtils?.showForm?.('Choose Template', [
         { name: 'templateId', type: 'select', label: 'Template', options, required: true }
       ], { okText: 'Create Project' }) ?? Promise.resolve(null));
       if (!pick) return;
+
+      if (pick.templateId === '__empty__') {
+        const explorer = window.gameEmulator?.projectExplorer;
+        if (!explorer) throw new Error('ProjectExplorer unavailable');
+        if (explorer.projectData?.structure?.[projectName]) {
+          alert('A project with that name is already open');
+          return;
+        }
+
+        explorer.addProject(projectName);
+        explorer.setFocusedProjectName(projectName);
+
+        // Explicit backstop to guarantee package scaffold/default assets for blank projects.
+        if (typeof explorer.applyTemplateDefaults === 'function') {
+          await explorer.applyTemplateDefaults(projectName);
+        } else if (typeof explorer.ensurePackageScaffold === 'function') {
+          await explorer.ensurePackageScaffold(projectName);
+        }
+
+        if (typeof explorer.initializeProjectConfig === 'function') {
+          await explorer.initializeProjectConfig();
+        }
+
+        if (typeof explorer.openPackageSettingsForProject === 'function') {
+          await explorer.openPackageSettingsForProject(projectName, true);
+        }
+
+        window.gameEmulator?.updateStatus?.(`Created blank project: ${projectName}`, 'success');
+        return;
+      }
 
       const chosen = templates.find(t => t.id === pick.templateId);
       if (!chosen) return;

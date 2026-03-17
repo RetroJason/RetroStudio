@@ -41,6 +41,7 @@ class ProjectExplorer {
               Palettes: { type: 'folder', filter: ['.act', '.pal', '.aco'], children: {} },
               Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
               Sprites: { type: 'folder', filter: ['.sprite'], children: {} },
+              Package: { type: 'folder', filter: ['.package', '.png', '.webm', '.mp4'], children: {} },
               Binary: { type: 'folder', filter: ['*'], children: {} }
             }
           },
@@ -48,8 +49,264 @@ class ProjectExplorer {
         }
       };
     }
+    // Always apply project defaults for newly created/opened projects.
+    this.applyTemplateDefaults(projectName).catch((e) => {
+      console.warn('[ProjectExplorer] Project defaults setup failed:', e);
+    });
     // Re-render if initialized
     if (this.treeContainer) this.renderTree();
+  }
+
+  async createDefaultPackageIcon32File() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Unable to create package icon canvas');
+
+    ctx.fillStyle = '#0b132b';
+    ctx.fillRect(0, 0, 32, 32);
+    ctx.fillStyle = '#1c2541';
+    ctx.fillRect(2, 2, 28, 28);
+    ctx.strokeStyle = '#5bc0be';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(3, 3, 26, 26);
+    ctx.fillStyle = '#e0fbfc';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('RW', 16, 17);
+
+    let blob = null;
+    if (typeof canvas.toBlob === 'function') {
+      blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    }
+    if (!blob && typeof canvas.toDataURL === 'function') {
+      const dataUrl = canvas.toDataURL('image/png');
+      const commaIndex = dataUrl.indexOf(',');
+      if (commaIndex > 0) {
+        const mimeMatch = dataUrl.substring(0, commaIndex).match(/data:([^;]+);base64/);
+        const mime = (mimeMatch && mimeMatch[1]) ? mimeMatch[1] : 'image/png';
+        const base64 = dataUrl.substring(commaIndex + 1);
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        blob = new Blob([bytes], { type: mime });
+      }
+    }
+    if (!blob) throw new Error('Failed to encode default package icon32');
+    return this.createFileLike([blob], 'icon32.png', 'image/png');
+  }
+
+  createFileLike(parts, name, type = 'application/octet-stream') {
+    if (typeof File === 'function') {
+      return new File(parts, name, { type });
+    }
+    const blob = new Blob(parts, { type });
+    blob.name = name;
+    blob.lastModified = Date.now();
+    return blob;
+  }
+
+  async ensurePackageScaffold(projectName) {
+    if (!projectName) return;
+    const sourcesRoot = this.getPreferredSourcesRootForProject(projectName);
+    await this.ensurePackageScaffoldForRoot(projectName, sourcesRoot);
+  }
+
+  getPreferredSourcesRootForProject(projectName) {
+    if (!projectName) {
+      return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+        ? window.ProjectPaths.getSourcesRootUi()
+        : 'Resources';
+    }
+
+    const projectNode = this.projectData?.structure?.[projectName];
+    const configuredRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Resources';
+
+    // Prefer whatever root currently exists and has content.
+    const hasConfigured = !!projectNode?.children?.[configuredRoot];
+    const hasLegacyResources = !!projectNode?.children?.Resources;
+    if (hasConfigured) return configuredRoot;
+    if (hasLegacyResources) return 'Resources';
+    return configuredRoot;
+  }
+
+  isManagedPackagePath(path) {
+    if (!path || typeof path !== 'string') return false;
+    const pp = window.ProjectPaths?.parseProjectPath
+      ? window.ProjectPaths.parseProjectPath(path)
+      : { rest: path };
+    const rest = String(pp.rest || path).replace(/\\/g, '/');
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
+  }
+
+  async ensurePackageScaffoldForRoot(projectName, sourcesRoot) {
+    if (!projectName || !sourcesRoot) return;
+    const projectNode = this.projectData?.structure?.[projectName];
+    if (!projectNode) return;
+
+    if (!projectNode.children[sourcesRoot]) {
+      projectNode.children[sourcesRoot] = { type: 'folder', children: {} };
+    }
+    const srcChildren = projectNode.children[sourcesRoot].children || (projectNode.children[sourcesRoot].children = {});
+    if (!srcChildren.Package) {
+      srcChildren.Package = { type: 'folder', filter: ['.package', '.png', '.webm', '.mp4'], children: {} };
+    }
+
+    const packageFolder = `${projectName}/${sourcesRoot}/Package`;
+    const appSettingsPath = `${packageFolder}/app.package`;
+    const iconPath = `${packageFolder}/icons/icon32.png`;
+
+    let changed = false;
+
+    if (!this.getNodeByPath(appSettingsPath)) {
+      const defaultSettings = {
+        formatVersion: 1,
+        projectName,
+        packageKind: 'rwa',
+        title: projectName,
+        author: '',
+        version: '0.0.1',
+        description: '',
+        icons: {
+          icon32: `${sourcesRoot}/Package/icons/icon32.png`,
+          icon128: ''
+        },
+        screenshots: [],
+        videos: []
+      };
+      const settingsFile = this.createFileLike([
+        JSON.stringify(defaultSettings, null, 2)
+      ], 'app.package', 'application/json');
+      await this.addFileToProject(settingsFile, packageFolder, true, true);
+      changed = true;
+    }
+
+    if (!this.getNodeByPath(iconPath)) {
+      try {
+        const icon = await this.createDefaultPackageIcon32File();
+        await this.addFileToProject(icon, `${packageFolder}/icons`, true, true);
+        changed = true;
+      } catch (e) {
+        console.warn('[ProjectExplorer] Failed to scaffold default icon32:', e);
+      }
+    }
+
+    if (changed) {
+      this.renderTree();
+    }
+  }
+
+  async fetchDefaultAssetAsFile(candidates, outName) {
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        if (!blob || blob.size <= 0) continue;
+        return this.createFileLike([blob], outName, blob.type || 'application/octet-stream');
+      } catch (_) {
+        // Try next candidate path.
+      }
+    }
+    return null;
+  }
+
+  async applyTemplateDefaults(projectName) {
+    if (!projectName) return;
+
+    const sourcesRoot = this.getPreferredSourcesRootForProject(projectName);
+    await this.ensurePackageScaffoldForRoot(projectName, sourcesRoot);
+
+    const defaults = [
+      {
+        targetPath: `${projectName}/${sourcesRoot}/Palettes`,
+        fileName: 'retrowatch_256.act',
+        candidates: [
+          'templates/defaults/retrowatch_256.act'
+        ]
+      },
+      {
+        targetPath: `${projectName}/${sourcesRoot}/Package/icons`,
+        fileName: 'icon32.png',
+        candidates: [
+          'templates/defaults/icon32.png',
+          'templates/defaults/package/icon32.png'
+        ]
+      },
+      {
+        targetPath: `${projectName}/${sourcesRoot}/Package/screenshots`,
+        fileName: 'default.png',
+        candidates: [
+          'templates/defaults/screenshot.png',
+          'templates/defaults/package/screenshot.png'
+        ]
+      }
+    ];
+
+    let changed = false;
+    for (const item of defaults) {
+      const fullPath = `${item.targetPath}/${item.fileName}`;
+      if (this.getNodeByPath(fullPath)) continue;
+
+      const file = await this.fetchDefaultAssetAsFile(item.candidates, item.fileName);
+      if (!file) continue;
+      await this.addFileToProject(file, item.targetPath, true, true);
+      changed = true;
+    }
+
+    if (changed) {
+      this.renderTree();
+    }
+  }
+
+  ensurePackageScaffoldForAllProjects() {
+    const projectNames = Object.keys(this.projectData?.structure || {});
+    for (const projectName of projectNames) {
+      this.applyTemplateDefaults(projectName).catch((e) => {
+        console.warn(`[ProjectExplorer] Package scaffold backfill failed for ${projectName}:`, e);
+      });
+    }
+  }
+
+  async openPackageSettingsForProject(projectName, preferDedicatedTab = true) {
+    if (!projectName) return;
+
+    const sourcesRoot = this.getPreferredSourcesRootForProject(projectName);
+    const packagePath = `${projectName}/${sourcesRoot}/Package/app.package`;
+
+    const openNow = async () => {
+      const tabManager = window.tabManager || window.gameEmulator?.tabManager;
+      if (!tabManager) return false;
+
+      const componentInfo = this._getComponentForFile(packagePath, true);
+      if (preferDedicatedTab) {
+        await tabManager.openInTab(packagePath, componentInfo || null);
+      } else {
+        await tabManager.openInPreview(packagePath, componentInfo || null);
+      }
+      return true;
+    };
+
+    // TabManager may not be ready immediately after startup/import wiring.
+    try {
+      const opened = await openNow();
+      if (opened) return;
+    } catch (_) {
+      // Retry on the next tick.
+    }
+
+    setTimeout(() => {
+      openNow().catch((e) => {
+        console.warn('[ProjectExplorer] Failed to auto-open package settings:', e);
+      });
+    }, 100);
   }
 
   setFocusedProjectName(name) {
@@ -89,6 +346,7 @@ class ProjectExplorer {
     
     this.setupEventListeners();
     this.renderTree();
+    this.ensurePackageScaffoldForAllProjects();
     
     console.log('[ProjectExplorer] Initialized');
   }
@@ -438,7 +696,9 @@ class ProjectExplorer {
       item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this._showContextMenu(e, data, currentPath, name);
+        const menuPath = data.originalPath || currentPath;
+        const menuName = (menuPath && menuPath.includes('/')) ? menuPath.split('/').pop() : name;
+        this._showContextMenu(e, data, menuPath, menuName);
       });
 
       // Drag and drop for folders
@@ -509,6 +769,7 @@ class ProjectExplorer {
         if (name === 'SFX') return '🔊';
         if (name === 'Sprites') return '🎞️';
         if (name === 'Lua') return '📜';
+        if (name === 'Package') return '📦';
         if (name === 'Binary') return '🗃️';
         return '📂'; // Open folder for resource subfolders
       }
@@ -658,12 +919,25 @@ class ProjectExplorer {
   
   handleFileUpload(files) {
     const targetPath = this.currentUploadPath || this.getDefaultPath();
+    if (this.isManagedPackagePath(targetPath)) {
+      try {
+        window.gameEmulator?.updateStatus?.('Package folder is managed by Package Settings editor', 'warning');
+      } catch (_) {}
+      return;
+    }
     this.addFiles(files, targetPath);
   }
   
   async handleFileDrop(event, targetPath = null) {
     const files = event.dataTransfer.files;
     const path = targetPath || this.getDropTargetPath(event.target);
+
+    if (this.isManagedPackagePath(path)) {
+      try {
+        window.gameEmulator?.updateStatus?.('Drop blocked: Package folder is managed by Package Settings editor', 'warning');
+      } catch (_) {}
+      return;
+    }
 
     if (!files || files.length === 0) return;
 
@@ -964,7 +1238,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite'];
+        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package'];
         const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
@@ -2214,6 +2488,18 @@ class ProjectExplorer {
 
   // Helper method to get appropriate component for a file
   _getComponentForFile(filePath, preferEditor = false) {
+    const fileName = (filePath || '').split('/').pop() || (filePath || '').split('\\').pop() || '';
+    if (fileName.toLowerCase() === 'app.package' && window.PackageSettingsEditor) {
+      return {
+        type: 'editor',
+        name: 'package-settings-editor',
+        displayName: 'Package Settings',
+        class: window.PackageSettingsEditor,
+        icon: '⚙️',
+        priority: 0
+      };
+    }
+
     const componentRegistry = window.serviceContainer?.get('componentRegistry');
     if (!componentRegistry) {
       console.warn('[ProjectExplorer] ComponentRegistry not available');
@@ -2221,7 +2507,6 @@ class ProjectExplorer {
     }
 
     // Get file extension
-    const fileName = filePath.split('/').pop() || filePath.split('\\').pop();
     const extension = fileName.includes('.') ? '.' + fileName.split('.').pop().toLowerCase() : '';
     
     console.log(`[ProjectExplorer] Getting component for file: ${fileName}, extension: ${extension}, preferEditor: ${preferEditor}`);
@@ -2284,7 +2569,7 @@ class ProjectExplorer {
       const fullPath = path.endsWith(file.name) ? path : `${path}/${file.name}`;
       
       // Get the appropriate component for this file type
-      const componentInfo = this._getComponentForFile(file.name, false); // preferEditor = false for auto-open
+      const componentInfo = this._getComponentForFile(fullPath, false); // preferEditor = false for auto-open
       console.log('[ProjectExplorer] Using component for auto-open:', componentInfo?.name);
       
       await tabManager.openInTab(fullPath, componentInfo);
@@ -2727,27 +3012,6 @@ class ProjectExplorer {
     return `${focusedProject}/${defaultPalette}`;
   }
 
-  // Initialize project configuration when project is loaded/created
-  async initializeProjectConfig() {
-    console.log('[ProjectExplorer] Initializing project configuration');
-    
-    if (!window.ProjectConfigManager) {
-      console.error('[ProjectExplorer] ProjectConfigManager not available');
-      return;
-    }
-    
-    try {
-      // Initialize config with write-through behavior (auto-creates if needed)
-      await window.ProjectConfigManager.initializeForProject();
-      console.log('[ProjectExplorer] Project configuration initialized');
-      
-      // Update UI to show config changes
-      this.updatePaletteFileVisuals();
-    } catch (error) {
-      console.error('[ProjectExplorer] Failed to initialize project config:', error);
-    }
-  }
-
   // Clear the default palette
   async clearDefaultPalette() {
     if (!window.ProjectConfigManager) {
@@ -2775,13 +3039,28 @@ class ProjectExplorer {
     }
 
     const projectName = this.focusedProjectName;
+    const sourcesRoot = this.getPreferredSourcesRootForProject(projectName);
     console.log('[ProjectExplorer] Initializing config for project:', projectName);
+
+    // Backstop: ensure package scaffold exists even if earlier async setup was skipped.
+    try {
+      await this.ensurePackageScaffoldForRoot(projectName, sourcesRoot);
+    } catch (e) {
+      console.warn('[ProjectExplorer] Package scaffold backstop failed during config init:', e);
+    }
+
+    // Backstop: ensure template defaults are applied before selecting a default palette.
+    try {
+      await this.applyTemplateDefaults(projectName);
+    } catch (e) {
+      console.warn('[ProjectExplorer] Template defaults backstop failed during config init:', e);
+    }
 
     // Step 1: Initialize the config manager for this project (will create config if doesn't exist)
     await window.ProjectConfigManager.initializeForProject(projectName);
 
     // Add config file to project structure if it doesn't exist there
-    const configPath = 'Sources/config.json';
+    const configPath = `${sourcesRoot}/config.json`;
     if (!this.doesFileExist(`${projectName}/${configPath}`)) {
       this.addFileToProjectStructure(projectName, configPath, { type: 'file' });
       console.log('[ProjectExplorer] Added config file to project structure:', configPath);
@@ -2795,7 +3074,7 @@ class ProjectExplorer {
     const paletteFileObjects = this.GetSourceFiles('Palettes');
     const paletteFiles = paletteFileObjects
       .filter(file => this.isPaletteFileByName(file.name))
-      .map(file => `Sources/Palettes/${file.name}`);
+      .map(file => `${sourcesRoot}/Palettes/${file.name}`);
     console.log('[ProjectExplorer] Found palette files:', paletteFiles);
 
     // Step 4: Validate and set default palette
@@ -2811,14 +3090,15 @@ class ProjectExplorer {
 
     if (needsNewDefault) {
       if (paletteFiles.length > 0) {
-        // Set first available palette as default
-        const newDefault = paletteFiles[0];
+        // Prefer the shared template default palette if present.
+        const preferred = `${sourcesRoot}/Palettes/retrowatch_256.act`;
+        const newDefault = paletteFiles.includes(preferred) ? preferred : paletteFiles[0];
         console.log('[ProjectExplorer] Setting first palette as default:', newDefault);
         await window.ProjectConfigManager.setDefaultPalette(newDefault);
       } else {
         // Create a default palette file
         console.log('[ProjectExplorer] No palettes found, creating default palette');
-        await this.createDefaultPalette();
+        await this.createDefaultPalette(sourcesRoot);
       }
     }
 
@@ -2830,25 +3110,34 @@ class ProjectExplorer {
   }
 
   // Create a default palette file when none exists
-  async createDefaultPalette() {
+  async createDefaultPalette(sourcesRoot = 'Sources') {
     try {
-      // Create a basic default palette (16 colors, Pico-8 style)
+      // First choice: shared template default palette asset.
+      const templatePalette = await this.fetchDefaultAssetAsFile(
+        ['templates/defaults/retrowatch_256.act'],
+        'retrowatch_256.act'
+      );
+
+      if (templatePalette) {
+        const targetFolder = `${this.focusedProjectName}/${sourcesRoot}/Palettes`;
+        await this.addFileToProject(templatePalette, targetFolder, true, true);
+        const defaultPath = `${sourcesRoot}/Palettes/retrowatch_256.act`;
+        await window.ProjectConfigManager.setDefaultPalette(defaultPath);
+        this.renderTree();
+        console.log('[ProjectExplorer] Created default palette from template defaults:', defaultPath);
+        return;
+      }
+
+      // Fallback: generate basic built-in palette.
       const defaultPaletteData = this.generateDefaultPaletteData();
-      const defaultPath = 'Sources/Palettes/default.act';
-      
-      // Save the palette file
+      const defaultPath = `${sourcesRoot}/Palettes/default.act`;
+
       await window.fileIOService.saveFile(defaultPath, defaultPaletteData, { binaryData: true, builderId: 'pal' });
-      
-      // Add to project structure
       this.addFileToProjectStructure(this.focusedProjectName, defaultPath, { type: 'file' });
-      
-      // Set as default in config
       await window.ProjectConfigManager.setDefaultPalette(defaultPath);
-      
-      // Refresh the UI
       this.renderTree();
-      
-      console.log('[ProjectExplorer] Created default palette:', defaultPath);
+
+      console.log('[ProjectExplorer] Created fallback default palette:', defaultPath);
     } catch (error) {
       console.error('[ProjectExplorer] Error creating default palette:', error);
     }
@@ -2958,7 +3247,7 @@ class ProjectExplorer {
     
     try {
       // Check if we already have a default palette
-      const currentDefault = window.ProjectConfigManager.getDefaultPalette();
+      const currentDefault = await window.ProjectConfigManager.getDefaultPalette();
       console.log('[ProjectExplorer] Current default palette for auto-promotion check:', currentDefault);
       
       if (currentDefault) {
@@ -3268,26 +3557,30 @@ class ProjectExplorer {
         console.warn('[ProjectExplorer] Could not load image for dimensions, using defaults:', error);
       }
       
-      // Create texture data with actual image dimensions.
-      // Use a neutral default — the texture editor's updateColorDepthIndicator()
-      // will auto-detect the best format once the image pixels are analysed.
+      const importDefaults = await this.getTextureImportDefaults(imageStoragePath, imageFileName, io);
+
+      // Create texture data with actual image dimensions and import-time defaults
+      // so Image.Create() works immediately after dropping an image.
       const defaultTextureData = {
         width: imageWidth,
         height: imageHeight,
-        colorDepth: 32,
+        colorDepth: importDefaults.colorDepth,
         palette: null,
-        transparentColor: '#FF00FF',
+        transparentColor: importDefaults.transparentColor,
+        useColorKey: importDefaults.useColorKey,
         compression: 'none',
         rotation: 0,
         scale: 1,
         paletteSize: 256,
-        paletteOffset: 0,
+        paletteOffset: importDefaults.paletteOffset,
         sourceImagePath: imageFileName,
-        palettePath: '',
+        palettePath: importDefaults.palettePath,
         metadata: {
           created: new Date().toISOString(),
           autoGenerated: true,
-          outputPixelFormat: 'd2_mode_rgba8888'
+          outputPixelFormat: importDefaults.outputPixelFormat,
+          palettePath: importDefaults.palettePath,
+          paletteOffset: importDefaults.paletteOffset
         }
       };
       
@@ -3315,6 +3608,205 @@ class ProjectExplorer {
     } catch (error) {
       console.error('[ProjectExplorer] Failed to auto-create texture file:', error);
     }
+  }
+
+  // Determine import-time defaults for a dropped image so first-run behavior is usable.
+  async getTextureImportDefaults(imageStoragePath, imageFileName, io = null) {
+    const defaults = {
+      outputPixelFormat: 'd2_mode_rgba8888',
+      colorDepth: 32,
+      palettePath: '',
+      paletteOffset: 0,
+      useColorKey: false,
+      transparentColor: '#FF00FF'
+    };
+
+    const ioService = io || window.fileIOService || window.fileManager || window.serviceContainer?.get?.('fileManager');
+    if (!ioService || typeof ioService.loadFile !== 'function' || !window.ImageData) {
+      return defaults;
+    }
+
+    let frame = null;
+    try {
+      const imageFile = await ioService.loadFile(imageStoragePath);
+      if (!imageFile || !imageFile.fileContent) {
+        return defaults;
+      }
+
+      const imageData = await window.ImageData.fromFile(imageFile.fileContent, imageFileName);
+      frame = imageData?.getCurrentFrame ? imageData.getCurrentFrame() : null;
+      if (!frame || !Array.isArray(frame.colors)) {
+        return defaults;
+      }
+    } catch (error) {
+      console.warn('[ProjectExplorer] Could not analyze image for import defaults:', error);
+      return defaults;
+    }
+
+    let hasAlpha = false;
+    const uniqueOpaque = new Set();
+    for (const px of frame.colors) {
+      const a = typeof px.a === 'number' ? px.a : Math.round((px.alpha || 0) * 255);
+      if (a < 255) {
+        hasAlpha = true;
+      }
+      if (a >= 128) {
+        uniqueOpaque.add(((px.r & 0xFF) << 16) | ((px.g & 0xFF) << 8) | (px.b & 0xFF));
+      }
+    }
+
+    const neededColors = Math.max(1, uniqueOpaque.size + (hasAlpha ? 1 : 0));
+
+    let defaultPalettePath = '';
+    let paletteColors = [];
+    try {
+      defaultPalettePath = await this.getDefaultPalettePath();
+      if (defaultPalettePath && window.Palette) {
+        const paletteStoragePath = window.ProjectPaths?.normalizeStoragePath
+          ? window.ProjectPaths.normalizeStoragePath(defaultPalettePath)
+          : defaultPalettePath;
+        const paletteFile = await ioService.loadFile(paletteStoragePath);
+        if (paletteFile && paletteFile.fileContent) {
+          const paletteObj = await window.Palette.fromFile(paletteFile.fileContent, defaultPalettePath);
+          paletteColors = paletteObj?.getColors ? paletteObj.getColors() : (paletteObj?.colors || []);
+          defaults.palettePath = defaultPalettePath;
+        }
+      }
+    } catch (error) {
+      console.warn('[ProjectExplorer] Could not load default palette for import defaults:', error);
+    }
+
+    defaults.useColorKey = hasAlpha;
+
+    // Need at least one drawable palette entry, plus one reserved color-key slot for alpha imports.
+    const minPaletteEntries = hasAlpha ? 2 : 1;
+    if (paletteColors.length < minPaletteEntries) {
+      if (hasAlpha) {
+        defaults.outputPixelFormat = 'd2_mode_rgba8888';
+        defaults.colorDepth = 32;
+      } else {
+        defaults.outputPixelFormat = 'd2_mode_rgb565';
+        defaults.colorDepth = 16;
+      }
+      defaults.palettePath = '';
+      defaults.paletteOffset = 0;
+      return defaults;
+    }
+
+    if (!Array.isArray(paletteColors) || paletteColors.length === 0) {
+      // No palette available: pick a sensible true-color default.
+      if (hasAlpha) {
+        defaults.outputPixelFormat = 'd2_mode_rgba8888';
+        defaults.colorDepth = 32;
+      } else {
+        defaults.outputPixelFormat = 'd2_mode_rgb565';
+        defaults.colorDepth = 16;
+      }
+      return defaults;
+    }
+
+    const candidates = [
+      { format: 'd2_mode_i1', capacity: 2, bits: 1 },
+      { format: 'd2_mode_i2', capacity: 4, bits: 2 },
+      { format: 'd2_mode_i4', capacity: 16, bits: 4 },
+      { format: 'd2_mode_i8', capacity: 256, bits: 8 }
+    ].filter(c => c.capacity >= neededColors && paletteColors.length >= c.capacity);
+
+    const usableCandidates = candidates.length > 0 ? candidates : [
+      { format: 'd2_mode_i8', capacity: Math.min(256, paletteColors.length), bits: 8 }
+    ];
+
+    const samplePixels = [];
+    const maxSamples = 1024;
+    const step = Math.max(1, Math.floor(frame.colors.length / maxSamples));
+    for (let i = 0; i < frame.colors.length; i += step) {
+      const px = frame.colors[i];
+      const a = typeof px.a === 'number' ? px.a : Math.round((px.alpha || 0) * 255);
+      if (a >= 128) {
+        samplePixels.push({ r: px.r, g: px.g, b: px.b });
+      }
+    }
+
+    const parseHex = (hex) => {
+      if (!hex || typeof hex !== 'string' || hex.length !== 7 || hex[0] !== '#') return null;
+      return {
+        r: parseInt(hex.slice(1, 3), 16),
+        g: parseInt(hex.slice(3, 5), 16),
+        b: parseInt(hex.slice(5, 7), 16)
+      };
+    };
+
+    const colorDistance = (a, b) => {
+      const dr = a.r - b.r;
+      const dg = a.g - b.g;
+      const db = a.b - b.b;
+      return (dr * dr) + (dg * dg) + (db * db);
+    };
+
+    let best = null;
+    for (const candidate of usableCandidates) {
+      if (candidate.capacity <= 0) continue;
+
+      const offsetLimit = Math.max(0, paletteColors.length - candidate.capacity);
+      for (let offset = 0; offset <= offsetLimit; offset++) {
+        const startIdx = hasAlpha ? 1 : 0;
+        const endIdx = candidate.capacity;
+        if (startIdx >= endIdx) continue;
+
+        const working = [];
+        for (let i = startIdx; i < endIdx; i++) {
+          const rgb = parseHex(paletteColors[offset + i]);
+          if (rgb) working.push(rgb);
+        }
+        if (working.length === 0) continue;
+
+        let total = 0;
+        for (const px of samplePixels) {
+          let localBest = Number.POSITIVE_INFINITY;
+          for (const pal of working) {
+            const dist = colorDistance(px, pal);
+            if (dist < localBest) localBest = dist;
+          }
+          total += localBest;
+        }
+
+        const avgError = samplePixels.length > 0 ? (total / samplePixels.length) : 0;
+        if (!best || avgError < best.avgError || (avgError === best.avgError && candidate.bits < best.bits)) {
+          best = {
+            format: candidate.format,
+            bits: candidate.bits,
+            offset,
+            avgError
+          };
+        }
+      }
+    }
+
+    if (best) {
+      defaults.outputPixelFormat = best.format;
+      defaults.colorDepth = best.bits;
+      defaults.paletteOffset = best.offset;
+    } else {
+      // If no valid indexed fit was found, fall back to true-color so import remains usable.
+      if (hasAlpha) {
+        defaults.outputPixelFormat = 'd2_mode_rgba8888';
+        defaults.colorDepth = 32;
+      } else {
+        defaults.outputPixelFormat = 'd2_mode_rgb565';
+        defaults.colorDepth = 16;
+      }
+      defaults.palettePath = '';
+      defaults.paletteOffset = 0;
+    }
+
+    if (hasAlpha) {
+      const keyColor = paletteColors[defaults.paletteOffset];
+      if (typeof keyColor === 'string' && keyColor.startsWith('#')) {
+        defaults.transparentColor = keyColor;
+      }
+    }
+
+    return defaults;
   }
 
   // Auto-create frameset file for image files
@@ -3433,6 +3925,8 @@ class ProjectExplorer {
 
     const ext = nodeName.split('.').pop().toLowerCase();
     const isFile = nodeData.type === 'file';
+    const isPalette = isFile && this.isPaletteFile(nodePath);
+    const isManagedPackage = this.isManagedPackagePath(nodePath);
 
     // "Make Sprite" / "Make Frameset" — shown for raw image files
     if (isFile && ['png', 'gif', 'jpg', 'jpeg', 'bmp'].includes(ext)) {
@@ -3453,6 +3947,18 @@ class ProjectExplorer {
         this._makeSprite(nodePath);
       });
       menu.appendChild(makeSprite);
+    }
+
+    // Palette action: allow setting project default palette from explorer menu path.
+    if (isPalette) {
+      const setDefaultPaletteItem = document.createElement('div');
+      setDefaultPaletteItem.className = 'context-item';
+      setDefaultPaletteItem.innerHTML = '<span>🎨</span><span>Set as Default Palette</span>';
+      setDefaultPaletteItem.addEventListener('click', async () => {
+        this._hideContextMenu();
+        await this.setDefaultPalette(nodePath);
+      });
+      menu.appendChild(setDefaultPaletteItem);
     }
 
     // Don't allow delete/rename on top-level root nodes (e.g. "Sources", "Build")
@@ -3488,7 +3994,7 @@ class ProjectExplorer {
       menu.appendChild(closeProjectItem);
     }
 
-    if (!isRootSection) {
+    if (!isRootSection && !isManagedPackage) {
       // Separator if there are already items above
       if (menu.children.length > 0) {
         const sep = document.createElement('div');

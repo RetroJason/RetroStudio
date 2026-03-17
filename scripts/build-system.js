@@ -348,8 +348,26 @@ class BuildSystem {
       console.error('[BuildSystem] Available services:', Object.keys(window.serviceContainer?.services || {}));
     }
     
-    console.log(`[BuildSystem] Extracted ${filePaths.length} file paths:`, filePaths);
-    return filePaths;
+    const filteredFilePaths = filePaths.filter((p) => !this.isPackageManagedResourcePath(p));
+    const skipped = filePaths.length - filteredFilePaths.length;
+    if (skipped > 0) {
+      console.log(`[BuildSystem] Skipping ${skipped} package-managed file(s) from build`);
+    }
+
+    console.log(`[BuildSystem] Extracted ${filteredFilePaths.length} file paths:`, filteredFilePaths);
+    return filteredFilePaths;
+  }
+
+  isPackageManagedResourcePath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const pp = (window.ProjectPaths && typeof window.ProjectPaths.parseProjectPath === 'function')
+      ? window.ProjectPaths.parseProjectPath(filePath)
+      : { rest: filePath };
+    const rest = String(pp.rest || filePath).replace(/\\/g, '/');
+    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
   }
 
   extractFilePathsFromNode(node, basePath = '') {

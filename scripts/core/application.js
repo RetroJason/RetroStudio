@@ -145,6 +145,16 @@ class RetroStudioApplication {
       console.warn('[Application] Unable to register rwpService:', e?.message || e);
     }
 
+    // Register RWA export service as a singleton if script loaded
+    try {
+      if (window.RwaService && !this.services.has('rwaService')) {
+        const rwa = new window.RwaService(this.services);
+        this.services.registerSingleton('rwaService', rwa);
+      }
+    } catch (e) {
+      console.warn('[Application] Unable to register rwaService:', e?.message || e);
+    }
+
     // Create service instances
     const audioEngine = this.services.get('audioEngine');
     await audioEngine.initialize();
@@ -173,6 +183,7 @@ class RetroStudioApplication {
       'scripts/editors/texture-editor.js',
       'scripts/editors/sprite-editor.js',
       'scripts/editors/frameset-editor.js',
+      'scripts/editors/package-settings-editor.js',
       'scripts/editors/editor-registry.js',
       
       // Viewers

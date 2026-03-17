@@ -12,7 +12,10 @@ class LuaSystemExtensions extends BaseLuaExtension {
    * Lua usage: System.LogLua("Hello World")
    */
   LogLua() {
-    const message = this.luaState.raw_tostring(2);
+    const message = arguments[0] ?? this.luaState?.raw_tostring?.(2);
+    if (message === undefined || message === null || message === '') {
+      throw new Error('[System] LogLua missing required argument: message');
+    }
     console.log('[Lua System]', message);
   }
 }
