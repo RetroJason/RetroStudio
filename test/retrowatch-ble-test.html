@@ -358,6 +358,13 @@
   }
   #fwBanner .fwBannerVer { color: #7ee88c; font-weight: bold; }
   #fwBanner .fwBannerNote { color: #9eb6ce; margin-left: 8px; }
+  .setupCard { max-width: 480px; }
+  .setupList {
+    margin: 10px 0; padding: 0; list-style: none;
+    font-size: 12px; color: #d6e6f5;
+  }
+  .setupList li { padding: 4px 0; }
+  .setupList li::before { content: "→ "; color: #7cc6ff; }
   @media (max-width: 960px) {
     .layout {
       grid-template-columns: 1fr;
@@ -452,6 +459,22 @@
     <div class="publishActions">
       <button id="otaConfirmBtn">Update Now</button>
       <button id="otaDismissBtn" class="secondary">Dismiss</button>
+    </div>
+  </div>
+</div>
+
+<div id="setupModal" class="modalOverlay">
+  <div class="modalCard setupCard">
+    <div class="modalTitle">Initial Watch Setup</div>
+    <div style="font-size:12px;color:#9eb6ce;margin:8px 0;">Your watch face directory is empty. Set up the default apps and watch face?</div>
+    <ul class="setupList">
+      <li>Analog.rwa → /watches/</li>
+      <li>PlutoBoy.rwb → /apps/</li>
+      <li>Zelda Link's Awakening → /roms/gb/</li>
+    </ul>
+    <div class="publishActions">
+      <button id="setupConfirmBtn">Set Up Now</button>
+      <button id="setupDismissBtn" class="secondary">Skip</button>
     </div>
   </div>
 </div>
@@ -2068,22 +2091,152 @@ document.getElementById("otaBtn").addEventListener("click", async () => {
   }
 });
 
+function compareVersions(a, b) {
+  const pa = String(a || "").split(".").map(Number);
+  const pb = String(b || "").split(".").map(Number);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const va = pa[i] || 0;
+    const vb = pb[i] || 0;
+    if (va !== vb) return va - vb;
+  }
+  return 0;
+}
+
 async function checkForFirmwareUpdate(watchVersion) {
   lastWatchVersion = watchVersion;
   try {
     const entry = await loadPublishedFirmware();
-    if (!entry) return;
+    if (!entry) {
+      await checkInitialSetup();
+      return;
+    }
 
-    if (watchVersion !== entry.version) {
+    if (compareVersions(entry.version, watchVersion) > 0) {
       log(`Firmware update available: watch=${watchVersion}, published=${entry.version}`, "warn");
       showOtaPrompt(watchVersion, entry);
     } else {
       log(`Firmware is up to date (${watchVersion})`, "ok");
+      await checkInitialSetup();
     }
   } catch (err) {
     log(`Version check failed: ${err.message}`, "err");
   }
 }
+
+/* ─── Initial Watch Setup ────────────────────────────────────────── */
+
+const setupModal = document.getElementById("setupModal");
+const setupConfirmBtn = document.getElementById("setupConfirmBtn");
+const setupDismissBtn = document.getElementById("setupDismissBtn");
+
+const SETUP_FILES = [
+  { url: "newsetup/Analog.rwa",                                              dest: "/watches/Analog.rwa" },
+  { url: "newsetup/PlutoBoy.rwb",                                            dest: "/apps/PlutoBoy.rwb" },
+  { url: "newsetup/Legend of Zelda, The - Link's Awakening (USA, Europe).gb", dest: "/roms/gb/Legend of Zelda, The - Link's Awakening (USA, Europe).gb" },
+];
+
+async function checkInitialSetup() {
+  try {
+    await ensureConnected("SETUP_CHECK");
+    let hasFiles = false;
+    try {
+      const watchItems = await listDir("/watches");
+      hasFiles = watchItems.some(item => !item.isDir);
+    } catch {
+      // /watches doesn't exist — treat as empty
+    }
+    if (hasFiles) return;
+    log("Watch face directory is empty or missing — prompting initial setup", "muted");
+    setupModal.style.display = "flex";
+  } catch (err) {
+    log(`Setup check failed: ${err.message}`, "err");
+  }
+}
+
+async function ensureDirExists(path) {
+  try {
+    await listDir(path);
+  } catch {
+    // Walk the path and create each level if needed
+    const parts = path.split("/").filter(Boolean);
+    let cur = "";
+    for (const part of parts) {
+      cur += "/" + part;
+      try {
+        await listDir(cur);
+      } catch {
+        const rsp = await client.mkdir(cur);
+        if (rsp.status !== BleApi.STATUS.OK) {
+          throw new Error(`MKDIR ${cur} failed: ${statusText(rsp.status)}`);
+        }
+        log(`Created directory ${cur}`, "ok");
+      }
+    }
+  }
+}
+
+async function uploadBytesViaOta(bytes, remotePath, label) {
+  showTransferProgress(`Uploading ${label}`, 0, bytes.length);
+  transferInProgress = true;
+
+  const rsp = await client.otaUploadFirmware(bytes, {
+    launch: false,
+    save: true,
+    path: remotePath,
+    chunksPerAck: 1,
+    allowOutOfOrder: false,
+    onProgress: (sent, total) => {
+      updateTransferProgress(sent, total, "saving");
+    },
+  });
+
+  transferInProgress = false;
+  hideTransferProgress();
+
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`Upload ${label} failed: ${formatOtaFailure(rsp)}`);
+  }
+}
+
+setupConfirmBtn.addEventListener("click", async () => {
+  setupModal.style.display = "none";
+
+  try {
+    await ensureConnected("SETUP");
+
+    for (const item of SETUP_FILES) {
+      log(`Downloading ${item.url}...`, "muted");
+      const res = await fetch(item.url);
+      if (!res.ok) throw new Error(`Failed to fetch ${item.url}: ${res.status}`);
+      const bytes = new Uint8Array(await res.arrayBuffer());
+
+      const dir = item.dest.slice(0, item.dest.lastIndexOf("/"));
+      await ensureDirExists(dir);
+
+      log(`Uploading to ${item.dest} (${(bytes.length / 1024).toFixed(1)} KB)...`, "muted");
+      await uploadBytesViaOta(bytes, item.dest, item.dest.split("/").pop());
+      log(`Saved ${item.dest}`, "ok");
+    }
+
+    log("Initial setup complete!", "ok");
+    await rebuildTree();
+  } catch (err) {
+    transferInProgress = false;
+    hideTransferProgress();
+    log(`Setup failed: ${err.message}`, "err");
+  }
+});
+
+setupDismissBtn.addEventListener("click", () => {
+  setupModal.style.display = "none";
+});
+
+setupModal.addEventListener("click", (e) => {
+  if (e.target === setupModal) {
+    setupModal.style.display = "none";
+  }
+});
 </script>
 </body>
 </html>

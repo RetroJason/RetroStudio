@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "projectName": "AnalogWatch",
+  "packageKind": "rwa",
+  "title": "AnalogWatch",
+  "author": "",
+  "version": "0.0.1",
+  "description": "",
+  "icons": {
+    "icon32": "Sources/Package/icons/icon32.png",
+    "icon128": ""
+  },
+  "screenshots": [],
+  "videos": []
+}
