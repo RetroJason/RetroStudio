@@ -378,6 +378,7 @@
   <button id="pingBtn" class="secondary">Ping</button>
   <button id="setTimeBtn" class="secondary">Set Time (Local Now)</button>
   <button id="publishBtn" class="secondary">Publish Firmware</button>
+  <button id="otaBtn" class="secondary">OTA Update</button>
   <span class="muted">Launch supports: .rwb .rwa .rwf .mod .xm .d2 (max 4MB)</span>
 </div>
 <div id="status">Disconnected</div>
@@ -2053,6 +2054,19 @@ otaConfirmBtn.addEventListener("click", async () => {
 });
 
 /* ─── Version Check (called after ping / connect) ────────────────── */
+
+document.getElementById("otaBtn").addEventListener("click", async () => {
+  try {
+    const entry = await loadPublishedFirmware();
+    if (!entry) {
+      log("No firmware published to OTA", "err");
+      return;
+    }
+    showOtaPrompt(lastWatchVersion || "unknown", entry);
+  } catch (err) {
+    log(`OTA check failed: ${err.message}`, "err");
+  }
+});
 
 async function checkForFirmwareUpdate(watchVersion) {
   lastWatchVersion = watchVersion;
