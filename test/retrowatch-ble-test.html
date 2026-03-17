@@ -1,0 +1,1732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RetroWatch BLE Explorer</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 14px;
+    background: #13161b;
+    color: #e7eef7;
+    font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+  }
+  h1 {
+    margin: 0 0 10px;
+    font-size: 20px;
+    color: #7cc6ff;
+  }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  button {
+    background: #2c7ec2;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 7px 10px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { background: #3894de; }
+  button.secondary { background: #43556b; }
+  button.secondary:hover { background: #516783; }
+  #status {
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    background: #222b36;
+    border: 1px solid #314153;
+    margin-bottom: 10px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 42%) minmax(360px, 58%);
+    gap: 10px;
+    min-height: 420px;
+  }
+  .panel {
+    background: #1c222b;
+    border: 1px solid #2e3a49;
+    border-radius: 8px;
+    padding: 10px;
+    min-height: 0;
+  }
+  .panelTitle {
+    margin: 0 0 8px;
+    color: #99d3ff;
+    font-size: 13px;
+  }
+  #treeHost {
+    overflow: auto;
+    max-height: 500px;
+    border: 1px solid #2f3d4d;
+    border-radius: 6px;
+    background: #141a22;
+    padding: 6px;
+  }
+  .tree ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 16px;
+  }
+  .treeItem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+  }
+  .treeItem:hover { background: #233143; }
+  .treeItem.selected { background: #2a4865; }
+  .treeItem.dropTarget { background: #21543e; }
+  .twisty {
+    width: 12px;
+    text-align: center;
+    color: #9db8d3;
+    font-size: 11px;
+  }
+  .treeName.dir { color: #9fd1ff; }
+  .treeName.file { color: #dbe8f6; }
+  #viewerHost {
+    height: 500px;
+    overflow: auto;
+    white-space: pre-wrap;
+    border: 1px solid #2a3646;
+    border-radius: 6px;
+    background: #0f141c;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .viewerPath {
+    margin-bottom: 8px;
+    color: #94b1cd;
+  }
+  .viewerHint {
+    color: #9bb5ce;
+  }
+  .hexBlock {
+    font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+    white-space: pre;
+    color: #d6e6f5;
+  }
+  .logPanel {
+    margin-top: 10px;
+  }
+  #log {
+    width: 100%;
+    height: 220px;
+    overflow: auto;
+    white-space: pre-wrap;
+    background: #0e1217;
+    border: 1px solid #2a3646;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .menu {
+    position: fixed;
+    min-width: 140px;
+    background: #19212b;
+    border: 1px solid #2f4155;
+    border-radius: 6px;
+    padding: 4px;
+    display: none;
+    z-index: 1000;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+  }
+  .menu button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 4px;
+    padding: 7px 8px;
+    font-size: 12px;
+    color: #dbe8f6;
+  }
+  .menu button:hover { background: #2a3c50; }
+  .menu button[disabled] {
+    color: #6d8196;
+    cursor: default;
+  }
+  .menu button[disabled]:hover { background: transparent; }
+  .modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 12, 16, 0.65);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+  }
+  .modalCard {
+    width: min(520px, calc(100vw - 28px));
+    background: #1b2430;
+    border: 1px solid #2f4155;
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .editorCard {
+    width: min(980px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    display: flex;
+    flex-direction: column;
+  }
+  .editorBody {
+    margin-top: 10px;
+    flex: 1;
+    overflow: auto;
+    border: 1px solid #2f4155;
+    border-radius: 8px;
+    background: #101722;
+    padding: 10px;
+  }
+  .editorActions {
+    margin-top: 10px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .settingsRows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .settingsInlineToolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .settingsInlineActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settingsInlineRow {
+    border: 1px solid #2f4155;
+    border-radius: 6px;
+    padding: 8px;
+    background: #151d28;
+    display: grid;
+    grid-template-columns: 24px minmax(140px, 1fr) minmax(220px, 2fr) auto auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .settingsInlineRow.dragging {
+    opacity: 0.55;
+    border-color: #5da7e2;
+  }
+  .settingsInlineRow.dropBefore {
+    box-shadow: inset 0 2px 0 #6cc2ff;
+  }
+  .settingsInlineRow.dropAfter {
+    box-shadow: inset 0 -2px 0 #6cc2ff;
+  }
+  .dragHandle {
+    cursor: grab;
+    text-align: center;
+    color: #9eb6ce;
+    user-select: none;
+    font-size: 14px;
+  }
+  .dragHandle:active {
+    cursor: grabbing;
+  }
+  .settingsInlineRow label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11px;
+    color: #9eb6ce;
+  }
+  .settingsInlineRow input,
+  .settingsInlineRow select,
+  .settingsInlineRow textarea,
+  .settingsMetaPanel input,
+  .settingsMetaPanel select,
+  .settingsMetaPanel textarea {
+    width: 100%;
+    background: #0d131c;
+    border: 1px solid #2d3f54;
+    color: #e7eef7;
+    border-radius: 4px;
+    padding: 6px;
+    font-size: 12px;
+  }
+  .settingsInlineRow textarea,
+  .settingsMetaPanel textarea {
+    min-height: 56px;
+    resize: vertical;
+  }
+  .settingsMetaPanel {
+    grid-column: 2 / span 4;
+    border: 1px solid #30485f;
+    border-radius: 6px;
+    background: #111a25;
+    padding: 8px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .miniBtn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .iconBtn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    font-size: 14px;
+  }
+  .modalTitle {
+    color: #dbe8f6;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  .progressTrack {
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid #2f4155;
+    background: #101722;
+  }
+  .progressFill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #2dbb71 0%, #56d69a 100%);
+    transition: width 100ms linear;
+  }
+  .progressLabel {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #a8bfd6;
+  }
+  .ok { color: #75d47e; }
+  .err { color: #ff7b7b; }
+  .muted { color: #9eb2c7; }
+  @media (max-width: 960px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+</head>
+<body>
+<h1>RetroWatch BLE Explorer</h1>
+
+<div class="toolbar">
+  <button id="connectBtn">Connect RetroWatch</button>
+  <button id="disconnectBtn" class="secondary">Disconnect</button>
+  <button id="rebuildBtn">Rebuild Tree</button>
+  <button id="pickLaunchBtn">Launch File...</button>
+  <input id="launchInput" type="file" accept=".rwb,.rwa,.rwf,.mod,.xm,.d2" style="display:none" />
+  <button id="pingBtn" class="secondary">Ping</button>
+  <button id="setTimeBtn" class="secondary">Set Time (Local Now)</button>
+  <span class="muted">Launch supports: .rwb .rwa .rwf .mod .xm .d2 (max 4MB)</span>
+</div>
+<div id="status">Disconnected</div>
+
+<div class="layout">
+  <div class="panel">
+    <h2 class="panelTitle">Tree</h2>
+    <div id="treeHost" class="tree"></div>
+  </div>
+
+  <div class="panel">
+    <h2 class="panelTitle">File Viewer / Editor</h2>
+    <div id="viewerHost">
+      <div class="viewerHint">Select or double-click a file from the tree to view/edit.</div>
+    </div>
+  </div>
+</div>
+
+<div class="panel logPanel">
+  <h2 class="panelTitle">Log</h2>
+  <div id="log"></div>
+</div>
+
+<div id="ctxMenu" class="menu">
+  <button data-action="upload">Upload Here</button>
+  <button data-action="download">Download</button>
+  <button data-action="rename">Rename</button>
+  <button data-action="mkdir">New Folder</button>
+  <button data-action="delete">Delete</button>
+</div>
+
+<input id="uploadInput" type="file" multiple style="display:none" />
+
+<div id="transferModal" class="modalOverlay">
+  <div class="modalCard">
+    <div id="transferTitle" class="modalTitle">Uploading...</div>
+    <div class="progressTrack"><div id="transferFill" class="progressFill"></div></div>
+    <div id="transferLabel" class="progressLabel">0 / 0 bytes</div>
+  </div>
+</div>
+
+<div id="fileEditorModal" class="modalOverlay">
+  <div class="modalCard editorCard">
+    <div id="fileEditorTitle" class="modalTitle">File Editor</div>
+    <div id="fileEditorBody" class="editorBody"></div>
+    <div class="editorActions">
+      <button id="fileEditorSaveBtn">Save</button>
+      <button id="fileEditorCloseBtn" class="secondary">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="./retrowatch-ble-client.js"></script>
+<script>
+const BleApi = window.RetroWatchBle;
+const client = new BleApi.RetroWatchBleClient();
+
+const statusEl = document.getElementById("status");
+const treeHost = document.getElementById("treeHost");
+const launchInput = document.getElementById("launchInput");
+const uploadInput = document.getElementById("uploadInput");
+const viewerHost = document.getElementById("viewerHost");
+const logEl = document.getElementById("log");
+const ctxMenu = document.getElementById("ctxMenu");
+const transferModal = document.getElementById("transferModal");
+const transferTitle = document.getElementById("transferTitle");
+const transferFill = document.getElementById("transferFill");
+const transferLabel = document.getElementById("transferLabel");
+const fileEditorModal = document.getElementById("fileEditorModal");
+const fileEditorTitle = document.getElementById("fileEditorTitle");
+const fileEditorBody = document.getElementById("fileEditorBody");
+const fileEditorSaveBtn = document.getElementById("fileEditorSaveBtn");
+const fileEditorCloseBtn = document.getElementById("fileEditorCloseBtn");
+
+let rootNode = null;
+let selectedNode = null;
+let contextNode = null;
+let reconnectTimer = null;
+let reconnectInFlight = false;
+let manualDisconnectRequested = false;
+let transferInProgress = false;
+let pendingUploadNode = null;
+let viewerRequestToken = 0;
+let activeEditorState = null;
+
+const SETTINGS_HEADER = ["name", "type", "value", "[min]", "[max]", "[choices]", "[ui element]"];
+const SETTINGS_TYPES = ["int", "uint", "string", "float", "bool"];
+const SETTINGS_UI_ELEMENTS = ["check box", "slider", "numeric entry", "date time", "text", "list picker"];
+
+function showTransferProgress(title, sent = 0, total = 0) {
+  transferTitle.textContent = title;
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.floor((sent * 100) / total))) : 0;
+  transferFill.style.width = `${pct}%`;
+  transferLabel.textContent = `${sent} / ${total} bytes (${pct}%)`;
+  transferModal.style.display = "flex";
+}
+
+function updateTransferProgress(sent, total, stage = "") {
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.floor((sent * 100) / total))) : 0;
+  transferFill.style.width = `${pct}%`;
+  transferLabel.textContent = `${sent} / ${total} bytes (${pct}%)${stage ? ` • ${stage}` : ""}`;
+}
+
+function hideTransferProgress() {
+  transferModal.style.display = "none";
+  transferFill.style.width = "0%";
+  transferLabel.textContent = "0 / 0 bytes";
+}
+
+function log(line, cls = "") {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.textContent = line;
+  logEl.appendChild(el);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text, isOk) {
+  statusEl.textContent = text;
+  statusEl.style.borderColor = isOk ? "#2f7c3a" : "#7a3340";
+  statusEl.style.background = isOk ? "#1d3323" : "#331f24";
+}
+
+async function updateConnectedStatusWithVersion(name, sourceLabel) {
+  const version = await client.ping("version-probe");
+  setStatus(`Connected: ${name} | fw ${version}`, true);
+  log(`PING ok (${sourceLabel}): ${version}`, "ok");
+}
+
+function stopReconnectLoop() {
+  if (reconnectTimer) {
+    clearInterval(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function startReconnectLoop() {
+  if (reconnectTimer) {
+    return;
+  }
+
+  log("Auto-reconnect enabled (5s interval)", "muted");
+  reconnectTimer = setInterval(async () => {
+    if (reconnectInFlight || client.isConnected() || !client.canReconnect()) {
+      return;
+    }
+
+    reconnectInFlight = true;
+    try {
+      setStatus("Reconnecting...", false);
+      const name = await client.reconnect();
+      await updateConnectedStatusWithVersion(name, "auto-reconnect");
+      log(`Auto-reconnected to ${name}`, "ok");
+      stopReconnectLoop();
+
+      try {
+        await rebuildTree();
+      } catch (err) {
+        log(`Tree refresh after reconnect failed: ${err.message}`, "err");
+      }
+    } catch (err) {
+      log(`Auto-reconnect failed: ${err.message}`, "muted");
+
+      if ((err.message || "").includes("Primary service")) {
+        stopReconnectLoop();
+        client.clearKnownDevice();
+        setStatus("Disconnected (service unavailable). Click Connect to re-select device.", false);
+      }
+    } finally {
+      reconnectInFlight = false;
+    }
+  }, 5000);
+}
+
+function statusText(code) {
+  const entry = Object.entries(BleApi.STATUS).find(([, v]) => v === code);
+  return entry ? entry[0] : `UNKNOWN(${code})`;
+}
+
+function msgTypeText(type) {
+  return BleApi.msgTypeName ? BleApi.msgTypeName(type) : `0x${(type & 0xff).toString(16).padStart(2, "0")}`;
+}
+
+function otaReasonText(code) {
+  if (BleApi.OTA_ERROR_REASON && BleApi.OTA_ERROR_REASON[code] != null) {
+    return BleApi.OTA_ERROR_REASON[code];
+  }
+  return `UNKNOWN_REASON(${code})`;
+}
+
+function fmtHex32(v) {
+  return `0x${(v >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function formatOtaFailure(rsp) {
+  if (!rsp || !rsp.error) {
+    return "(no OTA error metadata returned)";
+  }
+  const reasonPart = rsp.error.reason == null
+    ? ""
+    : ` reason=${rsp.error.reason}/${otaReasonText(rsp.error.reason)}`;
+  const bodyPart = rsp.error.bodyHex ? ` body=[${rsp.error.bodyHex}]` : "";
+  return `phase=${rsp.phase || "unknown"} status=${rsp.error.code}/${rsp.error.name || statusText(rsp.error.code)}${reasonPart}${bodyPart}`;
+}
+
+function normalizePath(path) {
+  let out = (path || "/").trim();
+  if (!out.startsWith("/")) {
+    out = `/${out}`;
+  }
+  out = out.replace(/\/+/g, "/");
+  if (out.length > 1 && out.endsWith("/")) {
+    out = out.slice(0, -1);
+  }
+  return out || "/";
+}
+
+function parentPath(path) {
+  const p = normalizePath(path);
+  if (p === "/") return "/";
+  const idx = p.lastIndexOf("/");
+  return idx <= 0 ? "/" : p.slice(0, idx);
+}
+
+function joinPath(base, name) {
+  const b = normalizePath(base);
+  if (b === "/") return `/${name}`;
+  return `${b}/${name}`;
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function bytesToHexDump(bytes, maxBytes = 4096) {
+  const shown = bytes.slice(0, Math.min(bytes.length, maxBytes));
+  const lines = [];
+
+  for (let i = 0; i < shown.length; i += 16) {
+    const chunk = shown.slice(i, i + 16);
+    const hex = Array.from(chunk).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const ascii = Array.from(chunk).map((b) => {
+      if (b >= 32 && b <= 126) {
+        return String.fromCharCode(b);
+      }
+      return ".";
+    }).join("");
+    lines.push(`${i.toString(16).padStart(8, "0")}  ${hex.padEnd(47, " ")}  ${ascii}`);
+  }
+
+  if (bytes.length > maxBytes) {
+    lines.push(`... truncated, showing ${maxBytes} of ${bytes.length} bytes`);
+  }
+
+  return lines.join("\n");
+}
+
+function isSettingsPath(path) {
+  return normalizePath(path).toLowerCase().endsWith(".settings");
+}
+
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else {
+        quoted = !quoted;
+      }
+      continue;
+    }
+    if (ch === "," && !quoted) {
+      out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+
+  out.push(cur.trim());
+  return out;
+}
+
+function csvQuote(value) {
+  const s = String(value == null ? "" : value);
+  if (!s.includes(",") && !s.includes('"') && !s.includes("\n") && !s.includes("\r")) {
+    return s;
+  }
+  return `"${s.replaceAll('"', '""')}"`;
+}
+
+function parseSettingsText(text) {
+  const lines = (text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) {
+    return [];
+  }
+
+  const rows = [];
+  for (let i = 1; i < lines.length; i += 1) {
+    const cols = parseCsvLine(lines[i]);
+    rows.push({
+      name: cols[0] || "",
+      type: (cols[1] || "string").toLowerCase(),
+      value: cols[2] || "",
+      min: cols[3] || "",
+      max: cols[4] || "",
+      choices: cols[5] || "",
+      uiElement: cols[6] || "text",
+    });
+  }
+
+  return rows;
+}
+
+function serializeSettingsRows(rows) {
+  const out = [SETTINGS_HEADER.join(",")];
+  for (const row of rows) {
+    out.push([
+      csvQuote(row.name),
+      csvQuote((row.type || "string").toLowerCase()),
+      csvQuote(row.value),
+      csvQuote(row.min),
+      csvQuote(row.max),
+      csvQuote(row.choices),
+      csvQuote(row.uiElement || "text"),
+    ].join(","));
+  }
+  return `${out.join("\n")}\n`;
+}
+
+function parseChoicePairs(choicesText) {
+  const src = String(choicesText || "").trim();
+  if (!src) {
+    return [];
+  }
+
+  const body = src.startsWith("{") && src.endsWith("}") ? src.slice(1, -1) : src;
+  return body
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const idx = part.indexOf(":");
+      if (idx < 1) {
+        return null;
+      }
+      return {
+        label: part.slice(0, idx).trim(),
+        value: part.slice(idx + 1).trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+function closeFileEditor() {
+  fileEditorModal.style.display = "none";
+  fileEditorBody.innerHTML = "";
+  activeEditorState = null;
+}
+
+function openEditorModal(title) {
+  fileEditorTitle.textContent = title;
+  fileEditorModal.style.display = "flex";
+}
+
+function renderViewerHtml(html) {
+  viewerHost.innerHTML = html;
+}
+
+async function showFileHexViewer(path, bytes, titlePrefix = "Hex Viewer") {
+  const hex = bytesToHexDump(bytes);
+  openEditorModal(`${titlePrefix}: ${path}`);
+  fileEditorBody.innerHTML = `<pre class="hexBlock">${escapeHtml(hex)}</pre>`;
+  fileEditorSaveBtn.disabled = true;
+  activeEditorState = null;
+}
+
+function makeField(labelText, inputEl) {
+  const label = document.createElement("label");
+  const title = document.createElement("span");
+  title.textContent = labelText;
+  label.appendChild(title);
+  label.appendChild(inputEl);
+  return label;
+}
+
+function createSettingValueControl(row, onChange) {
+  const type = (row.type || "string").toLowerCase();
+  const uiElement = (row.uiElement || "text").toLowerCase();
+  const min = row.min === "" ? null : Number(row.min);
+  const max = row.max === "" ? null : Number(row.max);
+
+  if (uiElement === "check box" || type === "bool") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = String(row.value).toLowerCase() === "true";
+    input.addEventListener("change", () => {
+      row.value = input.checked ? "true" : "false";
+      onChange();
+    });
+    return input;
+  }
+
+  if (uiElement === "list picker") {
+    const pairs = parseChoicePairs(row.choices);
+    if (pairs.length) {
+      const select = document.createElement("select");
+      for (const pair of pairs) {
+        const opt = document.createElement("option");
+        opt.value = pair.value;
+        opt.textContent = `${pair.label} (${pair.value})`;
+        if (String(row.value) === pair.value) {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      }
+      select.addEventListener("change", () => {
+        row.value = select.value;
+        onChange();
+      });
+      return select;
+    }
+  }
+
+  if (uiElement === "date time") {
+    const input = document.createElement("input");
+    input.type = "datetime-local";
+    input.value = row.value || "";
+    input.addEventListener("change", () => {
+      row.value = input.value;
+      onChange();
+    });
+    return input;
+  }
+
+  if (uiElement === "slider") {
+    const wrap = document.createElement("div");
+    wrap.style.display = "flex";
+    wrap.style.gap = "6px";
+    const range = document.createElement("input");
+    range.type = "range";
+    range.min = Number.isFinite(min) ? String(min) : "0";
+    range.max = Number.isFinite(max) ? String(max) : "100";
+    range.value = row.value || range.min;
+
+    const num = document.createElement("input");
+    num.type = "number";
+    num.value = row.value || range.min;
+    if (Number.isFinite(min)) num.min = String(min);
+    if (Number.isFinite(max)) num.max = String(max);
+
+    const syncValue = (next) => {
+      row.value = String(next);
+      range.value = String(next);
+      num.value = String(next);
+      onChange();
+    };
+
+    range.addEventListener("input", () => syncValue(range.value));
+    num.addEventListener("input", () => syncValue(num.value));
+    wrap.appendChild(range);
+    wrap.appendChild(num);
+    return wrap;
+  }
+
+  if (uiElement === "numeric entry" || type === "int" || type === "uint" || type === "float") {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = row.value || "";
+    if (type === "uint") input.min = Number.isFinite(min) ? String(min) : "0";
+    if (Number.isFinite(min)) input.min = String(min);
+    if (Number.isFinite(max)) input.max = String(max);
+    if (type === "int" || type === "uint") input.step = "1";
+    if (type === "float") input.step = "any";
+    input.addEventListener("input", () => {
+      row.value = input.value;
+      onChange();
+    });
+    return input;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = row.value || "";
+  input.addEventListener("input", () => {
+    row.value = input.value;
+    onChange();
+  });
+  return input;
+}
+
+function renderSettingsInlineView(path, rows) {
+  viewerHost.innerHTML = "";
+
+  const header = document.createElement("div");
+  header.className = "settingsInlineToolbar";
+
+  const summary = document.createElement("div");
+  summary.className = "viewerPath";
+  summary.textContent = path;
+
+  const actions = document.createElement("div");
+  actions.className = "settingsInlineActions";
+
+  const countEl = document.createElement("div");
+  countEl.className = "muted";
+
+  const addBtn = document.createElement("button");
+  addBtn.className = "miniBtn";
+  addBtn.textContent = "Add";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "miniBtn";
+  saveBtn.textContent = "Save";
+
+  actions.appendChild(countEl);
+  actions.appendChild(addBtn);
+  actions.appendChild(saveBtn);
+  header.appendChild(summary);
+  header.appendChild(actions);
+
+  const hint = document.createElement("div");
+  hint.className = "viewerHint";
+  hint.textContent = "Drag rows to reorder. Default view shows Name and active UI control.";
+
+  const list = document.createElement("div");
+  list.className = "settingsRows";
+
+  viewerHost.appendChild(header);
+  viewerHost.appendChild(hint);
+  viewerHost.appendChild(list);
+
+  const state = {
+    path,
+    kind: "settings-inline",
+    rows,
+    expanded: new Set(),
+    dragIndex: null,
+  };
+  activeEditorState = state;
+
+  const updateCount = () => {
+    countEl.textContent = `${state.rows.length} setting(s)`;
+  };
+
+  const clearDropClasses = () => {
+    list.querySelectorAll(".settingsInlineRow").forEach((rowEl) => {
+      rowEl.classList.remove("dropBefore");
+      rowEl.classList.remove("dropAfter");
+    });
+  };
+
+  const renderRows = () => {
+    list.innerHTML = "";
+    updateCount();
+
+    state.rows.forEach((row, idx) => {
+      const card = document.createElement("div");
+      card.className = "settingsInlineRow";
+      card.draggable = true;
+      card.dataset.index = String(idx);
+
+      const dragHandle = document.createElement("span");
+      dragHandle.className = "dragHandle";
+      dragHandle.textContent = "::";
+
+      const nameInput = document.createElement("input");
+      nameInput.value = row.name;
+      nameInput.placeholder = "setting name";
+      nameInput.addEventListener("input", () => {
+        row.name = nameInput.value;
+      });
+
+      const valueHost = document.createElement("div");
+      const valueControl = createSettingValueControl(row, () => {});
+      valueHost.appendChild(valueControl);
+
+      const metaBtn = document.createElement("button");
+      metaBtn.className = "secondary iconBtn";
+      metaBtn.title = "Edit metadata";
+      metaBtn.textContent = "⚙";
+      metaBtn.addEventListener("click", () => {
+        if (state.expanded.has(idx)) {
+          state.expanded.delete(idx);
+        } else {
+          state.expanded.add(idx);
+        }
+        renderRows();
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "secondary miniBtn";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => {
+        state.rows.splice(idx, 1);
+        const remapped = new Set();
+        state.expanded.forEach((v) => {
+          if (v < idx) remapped.add(v);
+          if (v > idx) remapped.add(v - 1);
+        });
+        state.expanded = remapped;
+        renderRows();
+      });
+
+      card.appendChild(dragHandle);
+      card.appendChild(nameInput);
+      card.appendChild(valueHost);
+      card.appendChild(metaBtn);
+      card.appendChild(deleteBtn);
+
+      card.addEventListener("dragstart", (e) => {
+        state.dragIndex = idx;
+        card.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+      });
+
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        clearDropClasses();
+      });
+
+      card.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        if (state.dragIndex == null || state.dragIndex === idx) {
+          return;
+        }
+        clearDropClasses();
+        const rect = card.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        card.classList.add(before ? "dropBefore" : "dropAfter");
+      });
+
+      card.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (state.dragIndex == null || state.dragIndex === idx) {
+          clearDropClasses();
+          return;
+        }
+
+        const from = state.dragIndex;
+        let to = idx;
+        const rect = card.getBoundingClientRect();
+        const before = (e.clientY - rect.top) < rect.height / 2;
+        if (!before) {
+          to += 1;
+        }
+
+        const moved = state.rows.splice(from, 1)[0];
+        if (from < to) {
+          to -= 1;
+        }
+        state.rows.splice(Math.max(0, Math.min(state.rows.length, to)), 0, moved);
+        state.dragIndex = null;
+        clearDropClasses();
+        state.expanded.clear();
+        renderRows();
+      });
+
+      list.appendChild(card);
+
+      if (state.expanded.has(idx)) {
+        const meta = document.createElement("div");
+        meta.className = "settingsMetaPanel";
+
+        const typeSel = document.createElement("select");
+        SETTINGS_TYPES.forEach((type) => {
+          const opt = document.createElement("option");
+          opt.value = type;
+          opt.textContent = type;
+          if ((row.type || "string") === type) opt.selected = true;
+          typeSel.appendChild(opt);
+        });
+        typeSel.addEventListener("change", () => {
+          row.type = typeSel.value;
+          renderRows();
+        });
+
+        const minInput = document.createElement("input");
+        minInput.value = row.min || "";
+        minInput.addEventListener("input", () => { row.min = minInput.value; });
+
+        const maxInput = document.createElement("input");
+        maxInput.value = row.max || "";
+        maxInput.addEventListener("input", () => { row.max = maxInput.value; });
+
+        const choicesInput = document.createElement("textarea");
+        choicesInput.value = row.choices || "";
+        choicesInput.addEventListener("input", () => { row.choices = choicesInput.value; });
+
+        const uiSel = document.createElement("select");
+        SETTINGS_UI_ELEMENTS.forEach((uiType) => {
+          const opt = document.createElement("option");
+          opt.value = uiType;
+          opt.textContent = uiType;
+          if ((row.uiElement || "").toLowerCase() === uiType) opt.selected = true;
+          uiSel.appendChild(opt);
+        });
+        uiSel.addEventListener("change", () => {
+          row.uiElement = uiSel.value;
+          renderRows();
+        });
+
+        meta.appendChild(makeField("Type", typeSel));
+        meta.appendChild(makeField("Min", minInput));
+        meta.appendChild(makeField("Max", maxInput));
+        meta.appendChild(makeField("Choices", choicesInput));
+        meta.appendChild(makeField("UI Element", uiSel));
+        list.appendChild(meta);
+      }
+    });
+  };
+
+  addBtn.addEventListener("click", () => {
+    state.rows.push({
+      name: "new_setting",
+      type: "string",
+      value: "",
+      min: "",
+      max: "",
+      choices: "",
+      uiElement: "text",
+    });
+    renderRows();
+  });
+
+  saveBtn.addEventListener("click", async () => {
+    try {
+      const serialized = serializeSettingsRows(state.rows);
+      await ensureConnected(`WRITE ${state.path}`);
+      const rsp = await client.writeFileAll(state.path, new TextEncoder().encode(serialized));
+      if (rsp.status !== BleApi.STATUS.OK) {
+        throw new Error(`WRITE failed: ${statusText(rsp.status)}`);
+      }
+      log(`Saved ${state.path} (${rsp.written} bytes)`, "ok");
+    } catch (err) {
+      log(`Save failed: ${err.message}`, "err");
+    }
+  });
+
+  renderRows();
+}
+
+async function openFileInEditor(node) {
+  if (!node || node.isDir) {
+    return;
+  }
+
+  await ensureConnected(`READ ${node.path}`);
+  const rsp = await client.readFileAll(node.path);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`READ failed: ${statusText(rsp.status)}`);
+  }
+
+  if (isSettingsPath(node.path)) {
+    renderSettingsInlineView(node.path, parseSettingsText(rsp.text));
+    return;
+  }
+
+  await showFileHexViewer(node.path, rsp.data);
+}
+
+async function updateViewer(node) {
+  const token = ++viewerRequestToken;
+  if (!node) {
+    renderViewerHtml('<div class="viewerHint">Select a file to preview. Double-click to open editor.</div>');
+    return;
+  }
+
+  if (node.isDir) {
+    renderViewerHtml(
+      `<div class="viewerPath">${escapeHtml(node.path)}</div><div class="viewerHint">Directory selected. Use context menu for file operations.</div>`
+    );
+    return;
+  }
+
+  renderViewerHtml(
+    `<div class="viewerPath">${escapeHtml(node.path)}</div><div class="viewerHint">Loading preview...</div>`
+  );
+
+  try {
+    await ensureConnected(`PREVIEW ${node.path}`);
+    const rsp = await client.read(node.path, 0, 1024);
+    if (token !== viewerRequestToken) {
+      return;
+    }
+    if (rsp.status !== BleApi.STATUS.OK) {
+      renderViewerHtml(`<div class="viewerPath">${escapeHtml(node.path)}</div><div class="err">Preview failed: ${escapeHtml(statusText(rsp.status))}</div>`);
+      return;
+    }
+
+    const head = rsp.data || new Uint8Array(0);
+    if (isSettingsPath(node.path)) {
+      const fullRsp = await client.readFileAll(node.path);
+      if (token !== viewerRequestToken) {
+        return;
+      }
+      if (fullRsp.status !== BleApi.STATUS.OK) {
+        renderViewerHtml(`<div class="viewerPath">${escapeHtml(node.path)}</div><div class="err">Load failed: ${escapeHtml(statusText(fullRsp.status))}</div>`);
+        return;
+      }
+      renderSettingsInlineView(node.path, parseSettingsText(fullRsp.text));
+      return;
+    }
+
+    const preview = bytesToHexDump(head, 1024);
+    renderViewerHtml(
+      `<div class="viewerPath">${escapeHtml(node.path)}</div><pre class="hexBlock">${escapeHtml(preview)}</pre>`
+    );
+  } catch (err) {
+    if (token !== viewerRequestToken) {
+      return;
+    }
+    renderViewerHtml(`<div class="viewerPath">${escapeHtml(node.path)}</div><div class="err">Preview failed: ${escapeHtml(err.message)}</div>`);
+  }
+}
+
+function parseListText(text) {
+  const lines = (text || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return lines
+    .map((line) => {
+      const idx = line.indexOf(":");
+      if (idx < 1) return null;
+      const kind = line.slice(0, idx);
+      const name = line.slice(idx + 1);
+      if (!name || name === "." || name === "..") return null;
+      return { name, isDir: kind === "D" };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+async function ensureConnected(actionLabel) {
+  if (client.isConnected()) return;
+
+  if (!client.canReconnect()) {
+    throw new Error(`Not connected for ${actionLabel}. Click Connect first.`);
+  }
+
+  setStatus("Reconnecting...", false);
+  log(`BLE disconnected before ${actionLabel}, reconnecting...`, "muted");
+  const name = await client.reconnect();
+  await updateConnectedStatusWithVersion(name, `reconnect for ${actionLabel}`);
+  log(`Reconnected to ${name}`, "ok");
+}
+
+async function listDir(path) {
+  const rsp = await client.listAll(path);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`LIST ${path} failed: ${statusText(rsp.status)}`);
+  }
+  return parseListText(rsp.text);
+}
+
+async function buildTreeRecursive(path, name, depth = 0) {
+  if (depth > 32) {
+    return { name, path, isDir: true, children: [] };
+  }
+
+  const node = { name, path, isDir: true, children: [] };
+  const items = await listDir(path);
+
+  for (const item of items) {
+    const childPath = joinPath(path, item.name);
+    if (item.isDir) {
+      node.children.push(await buildTreeRecursive(childPath, item.name, depth + 1));
+    } else {
+      node.children.push({ name: item.name, path: childPath, isDir: false, children: [] });
+    }
+  }
+
+  return node;
+}
+
+function renderTree() {
+  treeHost.innerHTML = "";
+  if (!rootNode) {
+    treeHost.textContent = "(empty)";
+    return;
+  }
+
+  const rootUl = document.createElement("ul");
+  rootUl.appendChild(renderTreeNode(rootNode));
+  treeHost.appendChild(rootUl);
+}
+
+function renderTreeNode(node) {
+  const li = document.createElement("li");
+  const row = document.createElement("div");
+  row.className = "treeItem";
+  row.dataset.path = node.path;
+
+  if (selectedNode && selectedNode.path === node.path) {
+    row.classList.add("selected");
+  }
+
+  const twisty = document.createElement("span");
+  twisty.className = "twisty";
+  if (node.isDir) {
+    node.collapsed = !!node.collapsed;
+  }
+  twisty.textContent = node.isDir ? (node.collapsed ? "▸" : "▾") : "";
+
+  const name = document.createElement("span");
+  name.className = `treeName ${node.isDir ? "dir" : "file"}`;
+  name.textContent = node.path === "/" ? "/" : node.name;
+
+  row.appendChild(twisty);
+  row.appendChild(name);
+
+  if (node.isDir) {
+    twisty.addEventListener("click", (e) => {
+      e.stopPropagation();
+      node.collapsed = !node.collapsed;
+      renderTree();
+      if (selectedNode) {
+        const restored = findNodeByPath(rootNode, selectedNode.path);
+        if (restored) {
+          selectedNode = restored;
+          selectNode(restored);
+        }
+      }
+    });
+  }
+
+  row.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    selectNode(node);
+  });
+
+  row.addEventListener("dblclick", async (e) => {
+    e.stopPropagation();
+    if (node.isDir) {
+      return;
+    }
+    try {
+      await openFileInEditor(node);
+    } catch (err) {
+      log(`Open editor failed: ${err.message}`, "err");
+    }
+  });
+
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    contextNode = node;
+    showContextMenu(e.clientX, e.clientY, node);
+  });
+
+  row.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    row.classList.add("dropTarget");
+  });
+
+  row.addEventListener("dragleave", () => {
+    row.classList.remove("dropTarget");
+  });
+
+  row.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    row.classList.remove("dropTarget");
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    try {
+      await uploadFilesToNode(files, node);
+    } catch (err) {
+      log(`Upload failed: ${err.message}`, "err");
+    }
+  });
+
+  li.appendChild(row);
+
+  if (node.isDir && node.children.length && !node.collapsed) {
+    const ul = document.createElement("ul");
+    for (const child of node.children) {
+      ul.appendChild(renderTreeNode(child));
+    }
+    li.appendChild(ul);
+  }
+
+  return li;
+}
+
+function showContextMenu(x, y, node) {
+  const isRoot = node.path === "/";
+  const isFile = !node.isDir;
+
+  for (const btn of ctxMenu.querySelectorAll("button")) {
+    const action = btn.dataset.action;
+    let disabled = false;
+    if (action === "upload" && !node.isDir && node.path !== "/") disabled = false;
+    if (action === "download" && !isFile) disabled = true;
+    if ((action === "delete" || action === "rename") && isRoot) disabled = true;
+    btn.disabled = disabled;
+  }
+
+  ctxMenu.style.left = `${x}px`;
+  ctxMenu.style.top = `${y}px`;
+  ctxMenu.style.display = "block";
+}
+
+function hideContextMenu() {
+  ctxMenu.style.display = "none";
+}
+
+function selectNode(node) {
+  selectedNode = node;
+  for (const row of treeHost.querySelectorAll(".treeItem")) {
+    row.classList.toggle("selected", row.dataset.path === node.path);
+  }
+  updateViewer(node);
+}
+
+function resolveUploadPathForNode(node, fileName) {
+  const targetNode = node || selectedNode;
+  if (!targetNode) {
+    return joinPath("/", fileName);
+  }
+  if (targetNode.isDir) {
+    return joinPath(targetNode.path, fileName);
+  }
+  return joinPath(parentPath(targetNode.path), fileName);
+}
+
+async function uploadFileViaTransport(file, options) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const remotePath = options.path;
+  showTransferProgress(options.title, 0, bytes.length);
+  transferInProgress = true;
+
+  const rsp = await client.otaUploadFirmware(bytes, {
+    launch: !!options.launch,
+    save: !!options.save,
+    path: remotePath,
+    chunksPerAck: 1,
+    allowOutOfOrder: false,
+    onProgress: (sent, total) => {
+      updateTransferProgress(sent, total, options.stage || "transferring");
+    },
+  });
+
+  transferInProgress = false;
+  hideTransferProgress();
+
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`${options.failPrefix}: ${formatOtaFailure(rsp)}`);
+  }
+
+  return { rsp, bytes };
+}
+
+async function uploadFilesToNode(files, node) {
+  if (!files.length) return;
+  await ensureConnected("UPLOAD");
+
+  for (const file of files) {
+    const remotePath = resolveUploadPathForNode(node, file.name);
+    await uploadFileViaTransport(file, {
+      title: `Uploading ${file.name}`,
+      stage: "saving",
+      launch: false,
+      save: true,
+      path: remotePath,
+      failPrefix: `Upload failed for ${file.name}`,
+    });
+    log(`Saved ${remotePath}`, "ok");
+  }
+
+  await rebuildTree();
+}
+
+async function uploadFiles(files) {
+  if (!files.length) return;
+  await uploadFilesToNode(files, selectedNode);
+}
+
+const ALLOWED_LAUNCH_EXTENSIONS = [".rwb", ".rwa", ".rwf", ".mod", ".xm", ".d2"];
+const MAX_LAUNCH_BYTES = 4 * 1024 * 1024;
+
+function validateLaunchFile(file) {
+  const lower = file.name.toLowerCase();
+  const okExt = ALLOWED_LAUNCH_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  if (!okExt) {
+    return `Launch file type not supported: ${file.name}`;
+  }
+  if (file.size > MAX_LAUNCH_BYTES) {
+    return `Launch file too large (${file.size} bytes). Max is ${MAX_LAUNCH_BYTES} bytes.`;
+  }
+  return null;
+}
+
+async function launchFile(file) {
+  const validationError = validateLaunchFile(file);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  await ensureConnected("LAUNCH");
+  const remotePath = `/${file.name}`;
+  await uploadFileViaTransport(file, {
+    title: `Launching ${file.name}`,
+    stage: "launching",
+    launch: true,
+    save: false,
+    path: remotePath,
+    failPrefix: "Launch failed",
+  });
+}
+
+async function saveActiveEditor() {
+  if (!activeEditorState) {
+    return;
+  }
+  throw new Error(`Save is not available for this editor: ${activeEditorState.kind}`);
+}
+
+async function actionDelete(node) {
+  if (!node || node.path === "/") return;
+  if (!confirm(`Delete ${node.path}?`)) return;
+
+  await ensureConnected(`DELETE ${node.path}`);
+  const rsp = await client.remove(node.path);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`DELETE failed: ${statusText(rsp.status)}`);
+  }
+  log(`Deleted ${node.path}`, "ok");
+  await rebuildTree();
+}
+
+async function actionRename(node) {
+  if (!node || node.path === "/") return;
+  const newName = prompt("Rename to:", node.name);
+  if (!newName) return;
+
+  const dstPath = joinPath(parentPath(node.path), newName.trim());
+  await ensureConnected(`RENAME ${node.path}`);
+  const rsp = await client.rename(node.path, dstPath);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`RENAME failed: ${statusText(rsp.status)}`);
+  }
+  log(`Renamed ${node.path} -> ${dstPath}`, "ok");
+  await rebuildTree();
+}
+
+async function actionMkdir(node) {
+  const base = node ? (node.isDir ? node.path : parentPath(node.path)) : "/";
+  const folderName = prompt("New folder name:");
+  if (!folderName) return;
+
+  const target = joinPath(base, folderName.trim());
+  await ensureConnected(`MKDIR ${target}`);
+  const rsp = await client.mkdir(target);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`MKDIR failed: ${statusText(rsp.status)}`);
+  }
+  log(`Created folder ${target}`, "ok");
+  await rebuildTree();
+}
+
+async function actionDownload(node) {
+  if (!node || node.isDir) return;
+
+  await ensureConnected(`READ ${node.path}`);
+  const rsp = await client.readFileAll(node.path);
+  if (rsp.status !== BleApi.STATUS.OK) {
+    throw new Error(`READ failed: ${statusText(rsp.status)}`);
+  }
+
+  const blob = new Blob([rsp.data]);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = node.name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  log(`Downloaded ${node.path} (${rsp.data.length} bytes)`, "ok");
+}
+
+async function rebuildTree() {
+  await ensureConnected("TREE");
+  log("Building recursive directory tree...", "muted");
+  rootNode = await buildTreeRecursive("/", "/");
+  renderTree();
+  if (selectedNode) {
+    const next = findNodeByPath(rootNode, selectedNode.path);
+    if (next) {
+      selectNode(next);
+    } else {
+      selectedNode = null;
+      updateViewer(null);
+    }
+  } else {
+    updateViewer(null);
+  }
+  log("Tree ready", "ok");
+}
+
+function findNodeByPath(node, path) {
+  if (!node) return null;
+  if (node.path === path) return node;
+  if (!node.children) return null;
+  for (const child of node.children) {
+    const hit = findNodeByPath(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+document.getElementById("connectBtn").addEventListener("click", async () => {
+  try {
+    stopReconnectLoop();
+    manualDisconnectRequested = false;
+    client.clearKnownDevice();
+    const name = await client.connect();
+    await updateConnectedStatusWithVersion(name, "connect");
+    log(`Connected to ${name}`, "ok");
+    await rebuildTree();
+  } catch (err) {
+    setStatus("Connect failed", false);
+    log(`Connect failed: ${err.message}`, "err");
+  }
+});
+
+document.getElementById("disconnectBtn").addEventListener("click", async () => {
+  manualDisconnectRequested = true;
+  stopReconnectLoop();
+  await client.disconnect();
+  setStatus("Disconnected", false);
+  log("Disconnected", "muted");
+});
+
+document.getElementById("rebuildBtn").addEventListener("click", async () => {
+  try {
+    await rebuildTree();
+  } catch (err) {
+    log(`Tree build failed: ${err.message}`, "err");
+  }
+});
+
+document.getElementById("pingBtn").addEventListener("click", async () => {
+  try {
+    await ensureConnected("PING");
+    const echoed = await client.ping("tree-view-ping");
+    log(`PING ok: ${echoed}`, "ok");
+  } catch (err) {
+    log(`PING failed: ${err.message}`, "err");
+  }
+});
+
+document.getElementById("setTimeBtn").addEventListener("click", async () => {
+  try {
+    await ensureConnected("SET_TIME");
+    const unixSeconds = Math.floor(Date.now() / 1000);
+    const tzOffsetMinutesEast = -new Date().getTimezoneOffset();
+    const rsp = await client.setTimeUnix(unixSeconds, tzOffsetMinutesEast);
+    if (rsp.status !== BleApi.STATUS.OK) {
+      throw new Error(`SET_TIME failed: ${statusText(rsp.status)}`);
+    }
+
+    const local = new Date(unixSeconds * 1000);
+    log(`SET_TIME ok: utc=${unixSeconds} tzEastMin=${tzOffsetMinutesEast} local=${local.toString()}`, "ok");
+  } catch (err) {
+    log(`SET_TIME failed: ${err.message}`, "err");
+  }
+});
+
+document.getElementById("pickLaunchBtn").addEventListener("click", () => {
+  launchInput.value = "";
+  launchInput.click();
+});
+
+launchInput.addEventListener("change", async (e) => {
+  const file = (e.target.files || [])[0];
+  if (!file) return;
+
+  try {
+    await launchFile(file);
+    log(`Launch uploaded successfully: ${file.name} (${file.size} bytes)`, "ok");
+  } catch (err) {
+    log(`Launch failed: ${err.message}`, "err");
+  }
+});
+
+fileEditorSaveBtn.addEventListener("click", async () => {
+  try {
+    await saveActiveEditor();
+  } catch (err) {
+    log(`Save failed: ${err.message}`, "err");
+  }
+});
+
+fileEditorCloseBtn.addEventListener("click", () => {
+  closeFileEditor();
+});
+
+fileEditorModal.addEventListener("click", (e) => {
+  if (e.target === fileEditorModal) {
+    closeFileEditor();
+  }
+});
+uploadInput.addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  try {
+    await uploadFilesToNode(files, pendingUploadNode || selectedNode || rootNode);
+  } catch (err) {
+    log(`Upload failed: ${err.message}`, "err");
+  } finally {
+    pendingUploadNode = null;
+  }
+});
+
+treeHost.addEventListener("dragover", (e) => {
+  e.preventDefault();
+});
+
+treeHost.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const files = Array.from(e.dataTransfer?.files || []);
+  if (!files.length) return;
+  try {
+    await uploadFilesToNode(files, selectedNode || rootNode);
+  } catch (err) {
+    log(`Upload failed: ${err.message}`, "err");
+  }
+});
+
+treeHost.addEventListener("contextmenu", (e) => {
+  if (e.target.closest(".treeItem")) {
+    return;
+  }
+  e.preventDefault();
+  contextNode = rootNode || { path: "/", isDir: true, name: "/", children: [] };
+  showContextMenu(e.clientX, e.clientY, contextNode);
+});
+
+ctxMenu.addEventListener("click", async (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn || btn.disabled) return;
+
+  const action = btn.dataset.action;
+  const node = contextNode;
+  hideContextMenu();
+
+  try {
+    if (action === "upload") {
+      pendingUploadNode = node || rootNode;
+      uploadInput.value = "";
+      uploadInput.click();
+      return;
+    }
+    if (action === "download") await actionDownload(node);
+    if (action === "rename") await actionRename(node);
+    if (action === "mkdir") await actionMkdir(node || rootNode);
+    if (action === "delete") await actionDelete(node);
+  } catch (err) {
+    log(err.message, "err");
+  }
+});
+
+document.addEventListener("click", () => hideContextMenu());
+window.addEventListener("resize", () => hideContextMenu());
+client.onDisconnect(() => {
+  if (manualDisconnectRequested) {
+    manualDisconnectRequested = false;
+    return;
+  }
+
+  setStatus("Disconnected (link dropped). Auto-reconnect in 5s...", false);
+  log("BLE disconnected unexpectedly", "err");
+  startReconnectLoop();
+});
+
+setStatus("Disconnected", false);
+log("Ready. Connect to build recursive tree view.", "muted");
+</script>
+</body>
+</html>
