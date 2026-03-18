@@ -365,6 +365,49 @@
   }
   .setupList li { padding: 4px 0; }
   .setupList li::before { content: "→ "; color: #7cc6ff; }
+  #welcomeOverlay {
+    position: fixed; inset: 0;
+    background: #13161b;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 3000;
+    flex-direction: column; gap: 20px;
+  }
+  #welcomeOverlay.hidden { display: none; }
+  .welcomeCard {
+    text-align: center; padding: 40px;
+    background: #1c222b; border: 1px solid #2e3a49;
+    border-radius: 12px; max-width: 420px; width: 90%;
+  }
+  .welcomeCard h2 {
+    color: #7cc6ff; font-size: 22px; margin: 0 0 8px;
+  }
+  .welcomeCard p {
+    color: #9eb6ce; font-size: 13px; margin: 0 0 24px;
+  }
+  .welcomeCard button {
+    font-size: 16px; padding: 12px 32px; border-radius: 8px;
+  }
+  .welcomeStatus {
+    color: #9eb6ce; font-size: 12px; margin-top: 12px; min-height: 18px;
+  }
+  .welcomeProgress {
+    display: none; width: 100%; margin-top: 16px;
+  }
+  .welcomeProgress .progressTrack {
+    width: 100%; height: 6px; background: #2e3a49; border-radius: 3px; overflow: hidden;
+  }
+  .welcomeProgress .progressBar {
+    height: 100%; width: 30%; background: #7cc6ff; border-radius: 3px;
+    animation: progressPulse 1.5s ease-in-out infinite;
+  }
+  @keyframes progressPulse {
+    0%   { width: 10%; margin-left: 0; }
+    50%  { width: 40%; margin-left: 30%; }
+    100% { width: 10%; margin-left: 90%; }
+  }
+  .welcomeProgress.active { display: block; }
+  #mainUI { display: none; }
+  #mainUI.visible { display: block; }
   @media (max-width: 960px) {
     .layout {
       grid-template-columns: 1fr;
@@ -373,6 +416,18 @@
 </style>
 </head>
 <body>
+
+<div id="welcomeOverlay">
+  <div class="welcomeCard">
+    <h2>RetroWatch</h2>
+    <p>Connect your watch to get started.</p>
+    <button id="welcomeConnectBtn">Connect</button>
+    <div id="welcomeProgress" class="welcomeProgress"><div class="progressTrack"><div class="progressBar"></div></div></div>
+    <div id="welcomeStatus" class="welcomeStatus"></div>
+  </div>
+</div>
+
+<div id="mainUI">
 <h1>RetroWatch BLE Explorer</h1>
 <div id="fwBanner"></div>
 
@@ -408,6 +463,8 @@
   <h2 class="panelTitle">Log</h2>
   <div id="log"></div>
 </div>
+
+</div><!-- end #mainUI -->
 
 <div id="ctxMenu" class="menu">
   <button data-action="upload">Upload Here</button>
@@ -1683,6 +1740,93 @@ document.getElementById("connectBtn").addEventListener("click", async () => {
   }
 });
 
+/* ─── Welcome Overlay Connect Flow ──────────────────────────────── */
+
+const welcomeOverlay = document.getElementById("welcomeOverlay");
+const welcomeStatusEl = document.getElementById("welcomeStatus");
+const mainUI = document.getElementById("mainUI");
+
+function showMainUI() {
+  welcomeOverlay.style.display = "none";
+  mainUI.style.display = "block";
+}
+
+const welcomeProgressEl = document.getElementById("welcomeProgress");
+const welcomeConnectBtn = document.getElementById("welcomeConnectBtn");
+
+welcomeConnectBtn.addEventListener("click", async () => {
+  try {
+    welcomeConnectBtn.disabled = true;
+    welcomeStatusEl.textContent = "";
+    stopReconnectLoop();
+    manualDisconnectRequested = false;
+    client.clearKnownDevice();
+    const name = await client.connect();
+
+    welcomeProgressEl.classList.add("active");
+    welcomeStatusEl.textContent = `Connecting to ${name}...`;
+    const version = await client.ping("version-probe");
+
+    welcomeStatusEl.textContent = `Connected to ${name}. Checking firmware...`;
+    setStatus(`Connected: ${name} | fw ${version}`, true);
+    log(`Connected to ${name}, fw ${version}`, "ok");
+    lastWatchVersion = version;
+
+    // Check for firmware update
+    const entry = await loadPublishedFirmware();
+    if (entry && compareVersions(entry.version, version) > 0) {
+      welcomeStatusEl.textContent = "Firmware update available...";
+      log(`Firmware update available: watch=${version}, published=${entry.version}`, "warn");
+      welcomeOverlay.style.display = "none";
+      const didUpdate = await showOtaPromptAsync(version, entry);
+      welcomeOverlay.style.display = "flex";
+      if (didUpdate) {
+        welcomeStatusEl.textContent = "Update complete. Reconnecting...";
+        // Wait for watch to reboot, then reconnect
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const rName = await client.reconnect();
+          const rVer = await client.ping("post-ota-probe");
+          setStatus(`Connected: ${rName} | fw ${rVer}`, true);
+          log(`Reconnected after OTA: ${rName}, fw ${rVer}`, "ok");
+          lastWatchVersion = rVer;
+        } catch (reconnErr) {
+          log(`Post-OTA reconnect failed: ${reconnErr.message}`, "err");
+        }
+      }
+    } else {
+      log(`Firmware is up to date (${version})`, "ok");
+    }
+
+    // Check initial setup
+    welcomeStatusEl.textContent = "Checking watch setup...";
+    let needsSetup = false;
+    try {
+      const watchItems = await listDir("/watches");
+      needsSetup = !watchItems.some(item => !item.isDir);
+    } catch {
+      needsSetup = true;
+    }
+
+    if (needsSetup) {
+      welcomeStatusEl.textContent = "Watch needs initial setup...";
+      log("Watch face directory is empty or missing — prompting initial setup", "muted");
+      welcomeOverlay.style.display = "none";
+      await showSetupPromptAsync();
+    }
+
+    // All done — show main UI
+    welcomeStatusEl.textContent = "Loading...";
+    await rebuildTree();
+    showMainUI();
+  } catch (err) {
+    welcomeConnectBtn.disabled = false;
+    welcomeProgressEl.classList.remove("active");
+    welcomeStatusEl.textContent = `Failed: ${err.message}`;
+    log(`Welcome connect failed: ${err.message}`, "err");
+  }
+});
+
 document.getElementById("disconnectBtn").addEventListener("click", async () => {
   manualDisconnectRequested = true;
   stopReconnectLoop();
@@ -2012,6 +2156,7 @@ const otaDismissBtn = document.getElementById("otaDismissBtn");
 
 let pendingOtaEntry = null;
 let lastWatchVersion = null;
+let otaResolve = null;
 
 function showOtaPrompt(watchVersion, entry) {
   otaWatchVer.textContent = watchVersion;
@@ -2023,16 +2168,25 @@ function showOtaPrompt(watchVersion, entry) {
   otaUpdateModal.style.display = "flex";
 }
 
-otaDismissBtn.addEventListener("click", () => {
+function showOtaPromptAsync(watchVersion, entry) {
+  return new Promise((resolve) => {
+    otaResolve = resolve;
+    showOtaPrompt(watchVersion, entry);
+  });
+}
+
+function resolveOta(didUpdate) {
   otaUpdateModal.style.display = "none";
   pendingOtaEntry = null;
+  if (otaResolve) { const r = otaResolve; otaResolve = null; r(didUpdate); }
+}
+
+otaDismissBtn.addEventListener("click", () => {
+  resolveOta(false);
 });
 
 otaUpdateModal.addEventListener("click", (e) => {
-  if (e.target === otaUpdateModal) {
-    otaUpdateModal.style.display = "none";
-    pendingOtaEntry = null;
-  }
+  if (e.target === otaUpdateModal) resolveOta(false);
 });
 
 otaConfirmBtn.addEventListener("click", async () => {
@@ -2041,6 +2195,7 @@ otaConfirmBtn.addEventListener("click", async () => {
   otaUpdateModal.style.display = "none";
   pendingOtaEntry = null;
 
+  let didUpdate = false;
   try {
     log(`Downloading firmware v${entry.version} from server...`, "muted");
     const bytes = await downloadPublishedBinary();
@@ -2069,11 +2224,14 @@ otaConfirmBtn.addEventListener("click", async () => {
     }
 
     log(`OTA update to v${entry.version} complete (${bytes.length} bytes)`, "ok");
+    didUpdate = true;
   } catch (err) {
     transferInProgress = false;
     hideTransferProgress();
     log(`OTA update failed: ${err.message}`, "err");
   }
+
+  if (otaResolve) { const r = otaResolve; otaResolve = null; r(didUpdate); }
 });
 
 /* ─── Version Check (called after ping / connect) ────────────────── */
@@ -2199,6 +2357,20 @@ async function uploadBytesViaOta(bytes, remotePath, label) {
   }
 }
 
+let setupResolve = null;
+
+function showSetupPromptAsync() {
+  return new Promise((resolve) => {
+    setupResolve = resolve;
+    setupModal.style.display = "flex";
+  });
+}
+
+function resolveSetup() {
+  setupModal.style.display = "none";
+  if (setupResolve) { const r = setupResolve; setupResolve = null; r(); }
+}
+
 setupConfirmBtn.addEventListener("click", async () => {
   setupModal.style.display = "none";
 
@@ -2226,16 +2398,16 @@ setupConfirmBtn.addEventListener("click", async () => {
     hideTransferProgress();
     log(`Setup failed: ${err.message}`, "err");
   }
+
+  resolveSetup();
 });
 
 setupDismissBtn.addEventListener("click", () => {
-  setupModal.style.display = "none";
+  resolveSetup();
 });
 
 setupModal.addEventListener("click", (e) => {
-  if (e.target === setupModal) {
-    setupModal.style.display = "none";
-  }
+  if (e.target === setupModal) resolveSetup();
 });
 </script>
 </body>
