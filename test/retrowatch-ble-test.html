@@ -1986,7 +1986,7 @@ const fwBanner = document.getElementById("fwBanner");
 
 async function refreshFwBanner() {
   try {
-    const res = await fetch("firmware/meta.json");
+    const res = await fetch("firmware/meta.json?t=" + Date.now(), { cache: "no-store" });
     if (!res.ok) {
       fwBanner.style.display = "none";
       return;
@@ -2010,7 +2010,7 @@ const FW_META_URL = "firmware/meta.json";
 const FW_API = "firmware-api.php";
 
 async function loadPublishedFirmware() {
-  const res = await fetch(FW_META_URL);
+  const res = await fetch(FW_META_URL + "?t=" + Date.now(), { cache: "no-store" });
   if (!res.ok) return null;
   return await res.json();
 }
