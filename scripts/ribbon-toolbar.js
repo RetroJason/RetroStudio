@@ -285,12 +285,6 @@ class RibbonToolbar {
     this.setupButton('exportRwpBtn', async () => {
       await this.exportProjectRwp();
     });
-    this.setupButton('saveTemplateBtn', async () => {
-      await this.saveProjectAsTemplate();
-    });
-    this.setupButton('exportRwaBtn', async () => {
-      await this.exportProjectRwa();
-    });
     this.setupButton('importRwpBtn', async () => {
       await this.importProjectRwp();
     });
@@ -300,6 +294,14 @@ class RibbonToolbar {
       if (!window.gameEmulator) return;
       const result = await window.gameEmulator.buildProject();
       this.showBuildSummaryPopup(result);
+    });
+
+    // Watch operations
+    this.watchClient = null;
+    this.watchLaunchBtn = document.getElementById('watchLaunchBtn');
+
+    this.setupButton('watchLaunchBtn', async () => {
+      await this.watchLaunch();
     });
     
     // Note: Create buttons are now handled dynamically
@@ -316,62 +318,6 @@ class RibbonToolbar {
     } catch (e) {
       console.error('[RibbonToolbar] Export failed:', e);
       alert('Export failed: ' + (e?.message || e));
-    }
-  }
-
-  async saveProjectAsTemplate() {
-    try {
-      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
-      if (!project) return alert('No active project');
-      const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
-      if (!svc) return alert('Project export service unavailable');
-
-      const suggested = `${project.replace(/\s+/g, '')}Template.rwp`;
-      const form = await (window.ModalUtils?.showForm?.('Save As Template', [
-        { name: 'fileName', type: 'text', label: 'Template File Name', required: true, placeholder: suggested }
-      ], { okText: 'Save Template' }) ?? Promise.resolve(null));
-      if (!form) return;
-
-      let fileName = (form.fileName || '').trim() || suggested;
-      fileName = fileName.replace(/[\\/:*?"<>|]/g, '_');
-      if (!fileName.toLowerCase().endsWith('.rwp')) fileName += '.rwp';
-
-      const result = await svc.exportProject(project, { fileName, skipDownload: true, returnBlob: true });
-      if (!result?.blob) throw new Error('Template export did not produce an archive');
-
-      // Browser sandbox cannot write directly into repository folders.
-      // We download the archive so it can be moved into RetroStudio/templates.
-      const url = URL.createObjectURL(result.blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      window.gameEmulator?.updateStatus?.(`Template downloaded: ${fileName}`, 'success');
-    } catch (e) {
-      console.error('[RibbonToolbar] Save template failed:', e);
-      alert('Save template failed: ' + (e?.message || e));
-    }
-  }
-
-  // Build and export current focused project as .rwa runtime package
-  async exportProjectRwa() {
-    try {
-      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
-      if (!project) return alert('No active project');
-      const svc = window.serviceContainer?.get?.('rwaService') || window.rwaService;
-      if (!svc) return alert('Runtime export service unavailable');
-
-      window.gameEmulator?.updateStatus?.('Building and exporting runtime package...', 'info');
-      const pkg = await svc.exportProject(project, { buildBeforeExport: true });
-      window.gameEmulator?.updateStatus?.(`Exported ${pkg?.filename || 'runtime package'} successfully`, 'success');
-    } catch (e) {
-      console.error('[RibbonToolbar] RWA export failed:', e);
-      window.gameEmulator?.updateStatus?.(`RWA export failed: ${e?.message || e}`, 'error');
-      alert('RWA export failed: ' + (e?.message || e));
     }
   }
 
@@ -528,6 +474,14 @@ class RibbonToolbar {
           await explorer.ensurePackageScaffold(projectName);
         }
 
+        // Create default main.lua with setup/update stubs
+        const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+          ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
+        const luaFolder = `${projectName}/${sourcesRoot}/Lua`;
+        const luaContent = `function setup()\n\nend\n\nfunction update(dt)\n\nend\n`;
+        const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
+        await explorer.addFileToProject(luaFile, luaFolder, true, true);
+
         if (typeof explorer.initializeProjectConfig === 'function') {
           await explorer.initializeProjectConfig();
         }
@@ -557,7 +511,124 @@ class RibbonToolbar {
       alert('Failed to create project: ' + (err?.message || String(err)));
     }
   }
-  
+
+  // ─── Watch BLE ─────────────────────────────────────────────────
+
+  updateWatchButtonState() {
+    const connected = this.watchClient && this.watchClient.isConnected();
+    const btn = this.watchLaunchBtn;
+    if (btn) {
+      btn.title = connected ? 'Build and launch on watch' : 'Connect and launch on watch';
+    }
+  }
+
+  async ensureWatchConnected() {
+    const BLE = window.RetroWatchBle;
+    if (!BLE) throw new Error('BLE client not loaded');
+
+    if (this.watchClient && this.watchClient.isConnected()) return;
+
+    if (!this.watchClient) {
+      this.watchClient = new BLE.RetroWatchBleClient();
+      this.watchClient.onDisconnect(() => {
+        this.updateWatchButtonState();
+        window.gameEmulator?.updateStatus?.('Watch disconnected', 'info');
+      });
+    }
+
+    window.gameEmulator?.updateStatus?.('Connecting to watch...', 'info');
+    const name = await this.watchClient.connect();
+    const fwVersion = await this.watchClient.ping('version-probe');
+    this.updateWatchButtonState();
+    window.gameEmulator?.updateStatus?.(`Connected to ${name} — fw ${fwVersion}`, 'success');
+  }
+
+  async watchConnect() {
+    try {
+      await this.ensureWatchConnected();
+    } catch (err) {
+      this.updateWatchButtonState();
+      window.gameEmulator?.updateStatus?.(`Watch connect failed: ${err.message}`, 'error');
+    }
+  }
+
+  async watchLaunch() {
+    try {
+      await this.ensureWatchConnected();
+    } catch (err) {
+      this.updateWatchButtonState();
+      window.gameEmulator?.updateStatus?.(`Watch connect failed: ${err.message}`, 'error');
+      return;
+    }
+
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) {
+        alert('No active project');
+        return;
+      }
+      const svc = window.serviceContainer?.get?.('rwaService') || window.rwaService;
+      if (!svc) {
+        alert('Runtime export service unavailable');
+        return;
+      }
+
+      // Build the RWA (same as Export Runtime but skip download)
+      window.gameEmulator?.updateStatus?.('Building runtime package...', 'info');
+      console.log('[RibbonToolbar] watchLaunch: building RWA for project:', project);
+      const pkg = await svc.buildRuntimePackage(project, { buildBeforeExport: true });
+      console.log('[RibbonToolbar] watchLaunch: built', pkg.filename, 'blob size:', pkg.blob.size, 'files:', pkg.fileCount);
+
+      if (!pkg.blob || pkg.blob.size === 0) {
+        throw new Error('Build produced an empty package');
+      }
+
+      // Convert blob to bytes
+      const arrayBuf = await pkg.blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      console.log('[RibbonToolbar] watchLaunch: sending', bytes.length, 'bytes to watch');
+
+      // Show progress bar
+      const progressEl = document.getElementById('watchProgress');
+      const fillEl = document.getElementById('watchProgressFill');
+      const textEl = document.getElementById('watchProgressText');
+      if (progressEl) progressEl.style.display = '';
+      if (fillEl) fillEl.style.width = '0%';
+      if (textEl) textEl.textContent = `Uploading ${pkg.filename}...`;
+
+      // Path must include filename so firmware knows the file type
+      const rsp = await this.watchClient.otaUploadFirmware(bytes, {
+        launch: true,
+        save: false,
+        path: '/' + pkg.filename,
+        chunksPerAck: 1,
+        allowOutOfOrder: false,
+        onProgress: (sent, total) => {
+          const pct = Math.round((sent / total) * 100);
+          if (fillEl) fillEl.style.width = pct + '%';
+          if (textEl) textEl.textContent = `${pct}%  (${(sent / 1024).toFixed(1)} / ${(total / 1024).toFixed(1)} KB)`;
+        },
+      });
+
+      console.log('[RibbonToolbar] watchLaunch: response status:', rsp.status);
+      const BLE = window.RetroWatchBle;
+      if (rsp.status !== BLE.STATUS.OK) {
+        const errDetail = rsp.error ? `${rsp.error.name}: ${rsp.error.reasonName}` : `status ${rsp.status}`;
+        throw new Error(`Launch failed: ${errDetail}`);
+      }
+
+      if (fillEl) fillEl.style.width = '100%';
+      if (textEl) textEl.textContent = 'Launched!';
+      setTimeout(() => { if (progressEl) progressEl.style.display = 'none'; }, 2000);
+    } catch (err) {
+      console.error('[RibbonToolbar] Watch launch failed:', err);
+      const progressEl = document.getElementById('watchProgress');
+      const textEl = document.getElementById('watchProgressText');
+      if (textEl) textEl.textContent = 'Failed';
+      setTimeout(() => { if (progressEl) progressEl.style.display = 'none'; }, 3000);
+      alert('Launch failed: ' + err.message);
+    }
+  }
   
   setupButton(id, handler) {
     const button = document.getElementById(id);

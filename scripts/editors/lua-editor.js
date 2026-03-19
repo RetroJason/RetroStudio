@@ -83,7 +83,11 @@ class LuaEditor extends EditorBase {
         bracketMatching: 'always', // Restored bracket matching
         formatOnPaste: true, // Restored formatting
         formatOnType: true,
-        readOnly: this.readOnly
+        readOnly: this.readOnly,
+        suggestOnTriggerCharacters: false,
+        acceptSuggestionOnCommitCharacter: false,
+        acceptSuggestionOnEnter: 'off',
+        quickSuggestions: { other: true, comments: false, strings: false }
       });
 
       console.log(`[LuaEditor] Monaco editor created - instance: ${!!this.monacoEditor}, model: ${!!this.monacoEditor.getModel()}`);
@@ -634,9 +638,10 @@ class LuaEditor extends EditorBase {
 
   async setupIntelliSense() {
     try {
-      // Prevent multiple registrations
-      if (this.intelliSenseSetup) {
-        console.log('[LuaEditor] IntelliSense already setup, skipping...');
+      // Prevent multiple registrations — providers are global per language,
+      // so use a static (class-level) guard instead of an instance guard.
+      if (LuaEditor._intelliSenseRegistered) {
+        console.log('[LuaEditor] IntelliSense already registered globally, skipping...');
         return;
       }
       
@@ -755,7 +760,7 @@ class LuaEditor extends EditorBase {
       });
       */
 
-      this.intelliSenseSetup = true;
+      LuaEditor._intelliSenseRegistered = true;
       console.log('[LuaEditor] IntelliSense providers registered successfully');
       
     } catch (error) {
