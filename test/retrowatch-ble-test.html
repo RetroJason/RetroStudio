@@ -658,6 +658,7 @@ function startReconnectLoop() {
       await updateConnectedStatusWithVersion(name, "auto-reconnect");
       log(`Auto-reconnected to ${name}`, "ok");
       stopReconnectLoop();
+      showMainUI();
 
       try {
         await rebuildTree();
@@ -1751,20 +1752,40 @@ function showMainUI() {
   mainUI.style.display = "block";
 }
 
+function hideMainUI() {
+  mainUI.style.display = "none";
+  welcomeOverlay.style.display = "flex";
+  welcomeProgressEl.classList.remove("active");
+  welcomeStatusEl.textContent = "";
+  welcomeConnectBtn.disabled = false;
+}
+
 const welcomeProgressEl = document.getElementById("welcomeProgress");
 const welcomeConnectBtn = document.getElementById("welcomeConnectBtn");
 
 welcomeConnectBtn.addEventListener("click", async () => {
   try {
     welcomeConnectBtn.disabled = true;
-    welcomeStatusEl.textContent = "";
+    welcomeProgressEl.classList.add("active");
+    welcomeStatusEl.textContent = "Scanning for watch...";
     stopReconnectLoop();
     manualDisconnectRequested = false;
     client.clearKnownDevice();
-    const name = await client.connect();
 
-    welcomeProgressEl.classList.add("active");
+    // Step 1: browser picker (requestDevice)
+    if (!navigator.bluetooth) throw new Error("Web Bluetooth not available");
+    client.device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: "RetroWatch" }],
+      optionalServices: [client.serviceUuid],
+    });
+    client.knownDevice = client.device;
+    const name = client.device.name || "RetroWatch";
+
+    // Step 2: GATT connect + service discovery
     welcomeStatusEl.textContent = `Connecting to ${name}...`;
+    await client.reconnect();
+
+    welcomeStatusEl.textContent = `Checking firmware...`;
     const version = await client.ping("version-probe");
 
     welcomeStatusEl.textContent = `Connected to ${name}. Checking firmware...`;
@@ -1833,6 +1854,7 @@ document.getElementById("disconnectBtn").addEventListener("click", async () => {
   await client.disconnect();
   setStatus("Disconnected", false);
   log("Disconnected", "muted");
+  hideMainUI();
 });
 
 document.getElementById("rebuildBtn").addEventListener("click", async () => {
@@ -1974,6 +1996,9 @@ client.onDisconnect(() => {
 
   setStatus("Disconnected (link dropped). Auto-reconnect in 5s...", false);
   log("BLE disconnected unexpectedly", "err");
+  hideMainUI();
+  welcomeStatusEl.textContent = "Connection lost. Reconnecting...";
+  welcomeProgressEl.classList.add("active");
   startReconnectLoop();
 });
 
@@ -1983,10 +2008,14 @@ log("Ready. Connect to build recursive tree view.", "muted");
 /* ─── Firmware Banner ────────────────────────────────────────────── */
 
 const fwBanner = document.getElementById("fwBanner");
+const _isHttp = location.protocol.startsWith("http");
+function _noCacheUrl(url) { return _isHttp ? url + "?t=" + Date.now() : url; }
+function _noCacheOpts() { return _isHttp ? { cache: "no-store" } : {}; }
 
 async function refreshFwBanner() {
+  if (!_isHttp) { fwBanner.style.display = "none"; return; }
   try {
-    const res = await fetch("firmware/meta.json?t=" + Date.now(), { cache: "no-store" });
+    const res = await fetch(_noCacheUrl("firmware/meta.json"), _noCacheOpts());
     if (!res.ok) {
       fwBanner.style.display = "none";
       return;
@@ -2010,7 +2039,8 @@ const FW_META_URL = "firmware/meta.json";
 const FW_API = "firmware-api.php";
 
 async function loadPublishedFirmware() {
-  const res = await fetch(FW_META_URL + "?t=" + Date.now(), { cache: "no-store" });
+  if (!_isHttp) return null;
+  const res = await fetch(_noCacheUrl(FW_META_URL), _noCacheOpts());
   if (!res.ok) return null;
   return await res.json();
 }
