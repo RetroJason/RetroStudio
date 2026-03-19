@@ -357,6 +357,37 @@ body.no-select {
   box-shadow: 0 1px 3px rgba(0,0,0,0.3);
 }
 
+.ribbon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Watch upload progress */
+.watch-progress {
+  width: 100%;
+  margin-top: 4px;
+}
+.watch-progress-bar {
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.watch-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #4caf50;
+  border-radius: 2px;
+  transition: width 0.15s ease;
+}
+.watch-progress-text {
+  font-size: 9px;
+  color: #aaa;
+  text-align: center;
+  margin-top: 2px;
+}
+
 .ribbon-icon {
   font-size: 20px;
   margin-bottom: 4px;

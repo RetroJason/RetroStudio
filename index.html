@@ -33,14 +33,6 @@
             <div class="ribbon-icon">📦</div>
             <div class="ribbon-text">Export RWP</div>
           </button>
-          <button id="saveTemplateBtn" class="ribbon-btn" title="Save Project As Template (.rwp)">
-            <div class="ribbon-icon">🧱</div>
-            <div class="ribbon-text">Save Template</div>
-          </button>
-          <button id="exportRwaBtn" class="ribbon-btn" title="Export Runtime App (.rwa/.rwg)">
-            <div class="ribbon-icon">🚀</div>
-            <div class="ribbon-text">Export Runtime</div>
-          </button>
           <button id="importRwpBtn" class="ribbon-btn" title="Import Project (.rwp)">
             <div class="ribbon-icon">📥</div>
             <div class="ribbon-text">Import</div>
@@ -64,6 +56,21 @@
             <div class="ribbon-icon">🔨</div>
             <div class="ribbon-text">Build</div>
           </button>
+        </div>
+      </div>
+
+      <!-- Watch Section -->
+      <div class="ribbon-section">
+        <div class="ribbon-label">Watch</div>
+        <div class="ribbon-buttons">
+          <button id="watchLaunchBtn" class="ribbon-btn" title="Build and launch on watch">
+            <div class="ribbon-icon">&#x1F680;</div>
+            <div class="ribbon-text">Launch</div>
+          </button>
+        </div>
+        <div id="watchProgress" class="watch-progress" style="display:none">
+          <div class="watch-progress-bar"><div class="watch-progress-fill" id="watchProgressFill"></div></div>
+          <div class="watch-progress-text" id="watchProgressText"></div>
         </div>
       </div>
     </div>
@@ -197,6 +204,9 @@
   <script src="scripts/tab-manager.js"></script>
   <script src="scripts/project-explorer.js"></script>
   <script src="scripts/game-emulator/game-emulator.js"></script>
+
+  <!-- BLE Watch Client -->
+  <script src="test/retrowatch-ble-client.js"></script>
   
   <!-- Application Bootstrap (components will be loaded dynamically after init) -->
   <script src="scripts/core/application.js"></script>
