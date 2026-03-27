@@ -1037,7 +1037,10 @@ class ProjectExplorer {
       }
 
       // During multi-drop, skip auto-open and skip per-file re-render to avoid thrash
-      const skipAutoOpen = multiDrop;
+      // For font source files, always skip auto-open — FontEditor intercept handles them below
+      const ext = this.getFileExtension(file.name).toLowerCase();
+      const isFontSource = ['.ttf', '.otf', '.woff', '.woff2'].includes(ext);
+      const skipAutoOpen = multiDrop || isFontSource;
       const skipRender = true;
       persistPromises.push(this.addFileToProject(file, destPath, skipAutoOpen, skipRender));
       lastAddedFile = file;
@@ -1053,6 +1056,62 @@ class ProjectExplorer {
 
     // Render once after batch
     this.renderTree();
+
+    // Font source files (.ttf/.otf/.woff) — open a new FontEditor with the TTF pre-loaded
+    const fontSourceExts = ['.ttf', '.otf', '.woff', '.woff2'];
+    const fontSourceFiles = fileList.filter(f => {
+      const ext = this.getFileExtension(f.name).toLowerCase();
+      return fontSourceExts.includes(ext);
+    });
+    if (fontSourceFiles.length > 0 && typeof FontEditor !== 'undefined') {
+      const tabManager = window.serviceContainer?.get?.('tabManager') || window.gameEmulator?.tabManager;
+      const componentRegistry = window.serviceContainer?.get?.('componentRegistry');
+      if (tabManager && componentRegistry) {
+        for (const ttfFile of fontSourceFiles) {
+          try {
+            const editorInfo = componentRegistry.editors.get('font-editor');
+            if (editorInfo) {
+              // Create font editor and pre-load the TTF
+              const editor = new FontEditor();
+              await editor.loadTtfFile(ttfFile);
+
+              const tabId = `new-font-${Date.now()}`;
+              const tabElement = document.createElement('div');
+              tabElement.className = 'tab';
+              tabElement.dataset.tabId = tabId;
+              const displayName = ttfFile.name.replace(/\.[^.]+$/, '');
+              tabElement.innerHTML = `
+                <span class="tab-title">${displayName}.font</span>
+                <span class="tab-close" data-action="close">×</span>
+              `;
+              const tabPane = document.createElement('div');
+              tabPane.className = 'tab-pane';
+              tabPane.dataset.tabId = tabId;
+              tabPane.appendChild(editor.getElement());
+
+              tabManager.tabBar.appendChild(tabElement);
+              tabManager.tabContentArea.appendChild(tabPane);
+              tabManager.dedicatedTabs.set(tabId, {
+                viewer: editor,
+                fileName: `${displayName}.font`,
+                fullPath: null,
+                isReadOnly: false,
+                componentInfo: editorInfo,
+                element: tabElement,
+                pane: tabPane
+              });
+              tabManager.markTabDirty(tabId);
+              tabManager.switchToTab(tabId);
+              console.log(`[ProjectExplorer] Opened FontEditor for dropped TTF: ${ttfFile.name}`);
+            }
+          } catch (e) {
+            console.warn(`[ProjectExplorer] Failed to open FontEditor for ${ttfFile.name}:`, e);
+          }
+        }
+        // Skip default tab opening only if all files were font sources
+        if (fontSourceFiles.length === fileList.length) return;
+      }
+    }
 
     // For multi-drop, open all files in tabs after persistence is complete
     if (multiDrop && persistPromises.length > 0) {
@@ -1118,6 +1177,8 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/Lua` };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Palettes` };
+    } else if (['.fnt', '.font', '.ttf', '.otf', '.woff', '.woff2'].includes(ext)) {
+      return { allowed: true, path: `${project}/${sourcesRoot}/Fonts` };
     }
     // Default unrecognized files to Binary folder
     return { allowed: true, path: `${project}/${sourcesRoot}/Binary` };

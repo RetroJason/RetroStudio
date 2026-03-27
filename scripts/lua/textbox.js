@@ -1,0 +1,648 @@
+// textbox.js - TextBox Lua Extensions for RetroStudio Emulator
+// Provides firmware-parity TextBox API for rendering text using BMFont assets.
+// TextBox instances are identified by string name (matching firmware RWA pattern).
+// Font assets are loaded from build output (.fnt BMFont binary + .d2 texture atlas).
+
+class LuaTextBoxExtensions extends BaseLuaExtension {
+  constructor(gameEmulator) {
+    super();
+    this.gameEmulator = gameEmulator;
+
+    /** @type {Map<string, object>} name -> textbox runtime state */
+    this.textboxes = new Map();
+
+    /** @type {Map<string, object>} font name -> parsed BMFont data + d2Path */
+    this.fontAssets = new Map();
+
+    /** @type {Map<string, object>} font name -> GPU texture handle */
+    this.gpuTextures = new Map();
+
+    /** @type {Uint8Array|null} Concatenated PMAP RGBA data */
+    this.pmapData = null;
+
+    /** @type {Array<{offset:number, count:number}>} PMAP entries */
+    this.pmapEntries = [];
+
+    /** @type {Uint8Array} Active GPU palette buffer (256 RGBA entries) */
+    this.currentPalette = new Uint8Array(1024);
+
+    /** @type {number} Active PMAP index on GPU (-1 = none) */
+    this._activePaletteIndex = -1;
+
+    /** @type {number} Active PMAP offset on GPU */
+    this._activePaletteOffset = -1;
+
+    /** @type {D2Canvas|null} GPU renderer */
+    this.gpu = null;
+  }
+
+  async initialize(luaState) {
+    console.log('[LuaTextBox] Initializing textbox system');
+    this.luaState = luaState;
+    await this._preloadFontAssets();
+  }
+
+  reset() {
+    this.textboxes.clear();
+    this.gpuTextures.clear();
+    this._activePaletteIndex = -1;
+    this._activePaletteOffset = -1;
+    this.gpu = null;
+    console.log('[LuaTextBox] TextBox system reset');
+  }
+
+  // ── Helper: get textbox by name from Lua stack ───────────────────
+
+  _getTextBoxByNameArg(argIndex = 2) {
+    const name = this.luaState.raw_tostring(argIndex);
+    if (!name) {
+      throw new Error(`TextBox: bad argument #${argIndex - 1} (string name expected)`);
+    }
+    const tb = this.textboxes.get(name);
+    if (!tb) {
+      throw new Error(`TextBox: unknown textbox "${name}"`);
+    }
+    return tb;
+  }
+
+  // ── BMFont Binary Parser ─────────────────────────────────────────
+
+  _parseBMFont(bytes) {
+    if (bytes.length < 4 ||
+        bytes[0] !== 0x42 || bytes[1] !== 0x4D ||
+        bytes[2] !== 0x46 || bytes[3] !== 3) {
+      throw new Error('Invalid BMFont binary (expected BMF\\x03 header)');
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    let offset = 4;
+
+    const font = {
+      info: null,
+      common: null,
+      characters: new Map(),
+      kerning: new Map(),
+    };
+
+    while (offset + 5 <= bytes.length) {
+      const blockType = bytes[offset];
+      const blockSize = view.getUint32(offset + 1, true);
+      offset += 5;
+
+      if (offset + blockSize > bytes.length) break;
+
+      const blockView = new DataView(bytes.buffer, bytes.byteOffset + offset, blockSize);
+
+      switch (blockType) {
+        case 1: // Info
+          font.info = {
+            size: blockView.getInt16(0, true),
+          };
+          break;
+
+        case 2: // Common
+          font.common = {
+            lineHeight: blockView.getUint16(0, true),
+            base: blockView.getUint16(2, true),
+            scaleW: blockView.getUint16(4, true),
+            scaleH: blockView.getUint16(6, true),
+          };
+          break;
+
+        case 3: // Pages — not needed
+          break;
+
+        case 4: { // Chars (20 bytes each)
+          const numChars = Math.floor(blockSize / 20);
+          for (let i = 0; i < numChars; i++) {
+            const off = i * 20;
+            const charInfo = {
+              id:       blockView.getUint32(off, true),
+              x:        blockView.getUint16(off + 4, true),
+              y:        blockView.getUint16(off + 6, true),
+              width:    blockView.getUint16(off + 8, true),
+              height:   blockView.getUint16(off + 10, true),
+              xoffset:  blockView.getInt16(off + 12, true),
+              yoffset:  blockView.getInt16(off + 14, true),
+              xadvance: blockView.getInt16(off + 16, true),
+              page:     bytes[offset + off + 18],
+              chnl:     bytes[offset + off + 19],
+            };
+            font.characters.set(charInfo.id, charInfo);
+          }
+          break;
+        }
+
+        case 5: { // Kerning (10 bytes each)
+          const numKernings = Math.floor(blockSize / 10);
+          for (let i = 0; i < numKernings; i++) {
+            const off = i * 10;
+            const first  = blockView.getUint32(off, true);
+            const second = blockView.getUint32(off + 4, true);
+            const amount = blockView.getInt16(off + 8, true);
+            font.kerning.set(`${first},${second}`, amount);
+          }
+          break;
+        }
+
+        // case 6: embedded texture — handled separately via .d2 file
+      }
+
+      offset += blockSize;
+    }
+
+    return font;
+  }
+
+  // ── Lua API: TextBox.Create(name, fontName, x, y, z, color, text) ──
+
+  Create() {
+    const L = this.luaState;
+    const name     = L.raw_tostring(2);
+    const fontName = L.raw_tostring(3);
+    const x        = parseFloat(L.raw_tostring(4)) || 0;
+    const y        = parseFloat(L.raw_tostring(5)) || 0;
+    const z        = parseFloat(L.raw_tostring(6)) || 0;
+    const color    = parseInt(L.raw_tostring(7)) || 0x00FFFFFF;
+    const text     = L.raw_tostring(8) || '';
+
+    if (!name)     throw new Error('TextBox.Create: bad argument #1 (string name expected)');
+    if (!fontName) throw new Error('TextBox.Create: bad argument #2 (string font name expected)');
+
+    const fontAsset = this.fontAssets.get(fontName);
+    if (!fontAsset) throw new Error(`TextBox.Create: font asset not found: "${fontName}"`);
+
+    const state = {
+      _name: name,
+      _fontName: fontName,
+      _text: text,
+      _posX: x,
+      _posY: y,
+      _layer: z,
+      _centerX: 0,
+      _centerY: 0,
+      _rotation: 0,
+      _scaleX: 1,
+      _scaleY: 1,
+      _color: color,
+      _paletteSlot: null,
+      _visible: true,
+      _attributes: 0,
+      _width: 448,
+      _height: 368,
+    };
+
+    this.textboxes.set(name, state);
+    console.log(`[LuaTextBox] Created textbox "${name}" with font "${fontName}": "${text}"`);
+  }
+
+  Destroy() {
+    const name = this.luaState.raw_tostring(2);
+    if (!name) throw new Error('TextBox.Destroy: bad argument #1 (string name expected)');
+    this.textboxes.delete(name);
+  }
+
+  // ── TextBox-specific: SetText / GetText ──────────────────────────
+
+  SetText() {
+    const tb  = this._getTextBoxByNameArg(2);
+    const txt = this.luaState.raw_tostring(3);
+    if (txt === undefined || txt === null) {
+      throw new Error('TextBox.SetText: bad argument #2 (string expected)');
+    }
+    tb._text = txt;
+  }
+
+  GetText() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._text || '';
+  }
+
+  // ── Renderable API (firmware parity, string name as first arg) ──
+
+  SetPosition() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    tb._posY = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  }
+
+  GetPosition() {
+    const tb = this._getTextBoxByNameArg(2);
+    return [tb._posX || 0, tb._posY || 0];
+  }
+
+  SetPositionX() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetPositionX() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._posX || 0;
+  }
+
+  SetPositionY() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetPositionY() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._posY || 0;
+  }
+
+  SetCenter() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._centerX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    tb._centerY = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  }
+
+  GetCenter() {
+    const tb = this._getTextBoxByNameArg(2);
+    return [tb._centerX || 0, tb._centerY || 0];
+  }
+
+  SetSize() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._width = parseFloat(this.luaState.raw_tostring(3)) || 0;
+    tb._height = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  }
+
+  GetSize() {
+    const tb = this._getTextBoxByNameArg(2);
+    return [tb._width || 0, tb._height || 0];
+  }
+
+  SetRotation() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetRotation() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._rotation || 0;
+  }
+
+  SetScale() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._scaleX = parseFloat(this.luaState.raw_tostring(3)) || 1;
+    tb._scaleY = parseFloat(this.luaState.raw_tostring(4)) || 1;
+  }
+
+  GetScale() {
+    const tb = this._getTextBoxByNameArg(2);
+    return [tb._scaleX ?? 1, tb._scaleY ?? 1];
+  }
+
+  SetColor() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+  }
+
+  GetColor() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._color ?? 0x00FFFFFF;
+  }
+
+  SetPaletteSlot() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetPaletteSlot() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._paletteSlot || 0;
+  }
+
+  SetVisible() {
+    const tb = this._getTextBoxByNameArg(2);
+    const v = this.luaState.raw_tostring(3);
+    tb._visible = v === 'true' || v === '1';
+  }
+
+  GetVisible() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._visible !== false;
+  }
+
+  SetAttributes() {
+    const tb = this._getTextBoxByNameArg(2);
+    tb._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetAttributes() {
+    const tb = this._getTextBoxByNameArg(2);
+    return tb._attributes || 0;
+  }
+
+  // ── GPU Initialization ───────────────────────────────────────────
+
+  async initGpu(gpu) {
+    this.gpu = gpu;
+    console.log('[LuaTextBox] GPU init — loading palette map + font textures');
+
+    await this._loadPaletteMap();
+    await this._uploadFontTextures();
+
+    if (this.pmapEntries.length > 0) {
+      this._activatePalette(1, 0);
+    }
+  }
+
+  // ── Per-Frame Rendering ──────────────────────────────────────────
+
+  renderFrame(gpu, deltaMs) {
+    for (const [, tb] of this.textboxes) {
+      if (tb._visible === false) continue;
+
+      const fontAsset = this.fontAssets.get(tb._fontName);
+      if (!fontAsset) continue;
+
+      const texHandle = this.gpuTextures.get(tb._fontName);
+      if (!texHandle) continue;
+
+      const font = fontAsset.font;
+      if (!font || !font.characters) continue;
+
+      // Activate palette for this font texture
+      const paletteIndex = (tb._paletteSlot != null && tb._paletteSlot > 0)
+        ? tb._paletteSlot
+        : (fontAsset.paletteSlot || 1);
+      const paletteOffset = fontAsset.paletteOffset || 0;
+
+      if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
+        this._activatePalette(paletteIndex, paletteOffset);
+      }
+
+      const scaleX = tb._scaleX ?? 1;
+      const scaleY = tb._scaleY ?? 1;
+
+      let xCursor = tb._posX || 0;
+      const yBase = tb._posY || 0;
+      const text = tb._text || '';
+
+      for (let i = 0; i < text.length; i++) {
+        const charCode = text.charCodeAt(i);
+        const chInfo = font.characters.get(charCode);
+        if (!chInfo) continue;
+
+        const glyphX = xCursor + chInfo.xoffset * scaleX;
+        const glyphY = yBase + chInfo.yoffset * scaleY;
+
+        if (chInfo.width > 0 && chInfo.height > 0) {
+          gpu.blit(texHandle, {
+            x: glyphX,
+            y: glyphY,
+            srcX: chInfo.x,
+            srcY: chInfo.y,
+            srcW: chInfo.width,
+            srcH: chInfo.height,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            rotation: tb._rotation || 0,
+            pivotX: 0,
+            pivotY: 0,
+            filter: 'nearest',
+          });
+        }
+
+        // Advance cursor
+        xCursor += chInfo.xadvance * scaleX;
+
+        // Apply kerning for next character
+        if (i + 1 < text.length) {
+          const nextChar = text.charCodeAt(i + 1);
+          const kerning = font.kerning.get(`${charCode},${nextChar}`) || 0;
+          xCursor += kerning * scaleX;
+        }
+      }
+    }
+  }
+
+  // ── Palette Management ───────────────────────────────────────────
+
+  _activatePalette(index, offset) {
+    if (!this.gpu) return;
+    if (index >= 1 && index <= this.pmapEntries.length) {
+      const entry = this.pmapEntries[index - 1];
+      this.currentPalette.fill(0);
+      const src = this.pmapData.subarray(entry.offset, entry.offset + entry.count * 4);
+      this.currentPalette.set(src.subarray(0, Math.min(src.length, 1024)));
+      this.gpu.setPalette(this.currentPalette);
+    }
+    this.gpu.setPaletteOffset(offset);
+    this._activePaletteIndex = index;
+    this._activePaletteOffset = offset;
+  }
+
+  async _loadPaletteMap() {
+    try {
+      const pmapPath = this._buildPrefix() + 'palette_map.pmap';
+      const raw = await this._loadBinary(pmapPath);
+      if (!raw) {
+        console.warn('[LuaTextBox] No PMAP found — palette rendering may fail');
+        return;
+      }
+
+      const bytes = new Uint8Array(raw);
+      if (bytes.length < 8) return;
+      if (bytes[0] !== 0x50 || bytes[1] !== 0x4D ||
+          bytes[2] !== 0x41 || bytes[3] !== 0x50) {
+        console.warn('[LuaTextBox] Invalid PMAP magic');
+        return;
+      }
+
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const count = view.getUint16(6, true);
+      this.pmapEntries = [];
+      let off = 8;
+      const allPalData = [];
+      let accumOffset = 0;
+
+      for (let i = 0; i < count; i++) {
+        if (off + 2 > bytes.length) break;
+        const colorCount = view.getUint16(off, true);
+        off += 2;
+        const dataLen = colorCount * 4;
+        this.pmapEntries.push({ offset: accumOffset, count: colorCount });
+        allPalData.push(bytes.slice(off, off + dataLen));
+        accumOffset += dataLen;
+        off += dataLen;
+      }
+
+      this.pmapData = new Uint8Array(accumOffset);
+      let writeOff = 0;
+      for (const chunk of allPalData) {
+        this.pmapData.set(chunk, writeOff);
+        writeOff += chunk.length;
+      }
+
+      console.log(`[LuaTextBox] Loaded PMAP: ${count} palettes`);
+    } catch (e) {
+      console.error('[LuaTextBox] PMAP load error:', e);
+    }
+  }
+
+  // ── Font Asset Loading ───────────────────────────────────────────
+
+  async _preloadFontAssets() {
+    try {
+      const allFiles = await this._listBuildFiles(this._buildPrefix());
+      const fntFiles = allFiles.filter(p => p.toLowerCase().endsWith('.fnt'));
+
+      for (const fntPath of fntFiles) {
+        try {
+          const raw = await this._loadBinary(fntPath);
+          if (!raw) continue;
+
+          const fntBytes = new Uint8Array(raw);
+          if (fntBytes.length < 4 ||
+              fntBytes[0] !== 0x42 || fntBytes[1] !== 0x4D ||
+              fntBytes[2] !== 0x46 || fntBytes[3] !== 3) {
+            continue; // Not a valid BMFont binary
+          }
+
+          const font = this._parseBMFont(fntBytes);
+          const fontName = fntPath.split('/').pop().replace(/\.fnt$/i, '');
+
+          // The companion .d2 texture atlas has the same base name
+          const d2Path = fntPath.replace(/\.fnt$/i, '.d2');
+
+          // Read D2TX header for palette info
+          let paletteSlot = 1;
+          let paletteOffset = 0;
+          const d2Raw = await this._loadBinary(d2Path);
+          if (d2Raw) {
+            const d2Bytes = new Uint8Array(d2Raw);
+            if (d2Bytes.length >= 32 &&
+                d2Bytes[0] === 0x44 && d2Bytes[1] === 0x32 &&
+                d2Bytes[2] === 0x54 && d2Bytes[3] === 0x58) {
+              const d2View = new DataView(d2Bytes.buffer, d2Bytes.byteOffset, d2Bytes.byteLength);
+              paletteSlot = d2View.getUint16(10, true) || 1;
+              paletteOffset = d2Bytes[12] || 0;
+            }
+          }
+
+          this.fontAssets.set(fontName, {
+            name: fontName,
+            fntPath,
+            d2Path,
+            font,
+            paletteSlot,
+            paletteOffset,
+          });
+
+          console.log(`[LuaTextBox] Loaded font asset: "${fontName}" (${font.characters.size} chars, ${font.kerning.size} kerning pairs)`);
+        } catch (e) {
+          console.error(`[LuaTextBox] Failed to preload font asset ${fntPath}:`, e);
+        }
+      }
+
+      console.log(`[LuaTextBox] Pre-loaded ${this.fontAssets.size} font assets`);
+    } catch (e) {
+      console.error('[LuaTextBox] Failed to preload font assets:', e);
+    }
+  }
+
+  async _uploadFontTextures() {
+    if (!this.gpu) return;
+
+    for (const [fontName, asset] of this.fontAssets.entries()) {
+      try {
+        const raw = await this._loadBinary(asset.d2Path);
+        if (!raw) continue;
+
+        const d2Bytes = new Uint8Array(raw);
+        if (d2Bytes.length < 32 ||
+            d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
+            d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
+          continue;
+        }
+
+        const texHandle = this.gpu.createTexture(d2Bytes);
+        this.gpuTextures.set(fontName, texHandle);
+        console.log(`[LuaTextBox] Uploaded font GPU texture "${fontName}": ${texHandle.width}x${texHandle.height}`);
+      } catch (e) {
+        console.error(`[LuaTextBox] Failed to upload font texture ${asset.d2Path}:`, e);
+      }
+    }
+
+    console.log(`[LuaTextBox] ${this.gpuTextures.size} font GPU textures ready`);
+  }
+
+  // ── File I/O Helpers (same pattern as Image) ─────────────────────
+
+  _buildPrefix() {
+    return (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
+      ? window.ProjectPaths.getBuildStoragePrefix()
+      : 'build/';
+  }
+
+  async _listBuildFiles(prefix) {
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager) return [];
+
+    if (typeof fileManager.listFiles === 'function') {
+      const results = await fileManager.listFiles(prefix);
+      return results.map(r => (typeof r === 'string') ? r : (r.path || r.name || ''));
+    }
+
+    const projectExplorer = window.serviceContainer?.get('projectExplorer');
+    if (!projectExplorer) return [];
+
+    const paths = [];
+    const buildRoot = (window.ProjectPaths && typeof window.ProjectPaths.getBuildRootUi === 'function')
+      ? window.ProjectPaths.getBuildRootUi()
+      : 'Game Objects';
+
+    this._collectPaths(projectExplorer.projectData?.structure, '', buildRoot, prefix, paths);
+    return paths;
+  }
+
+  _collectPaths(node, currentPath, buildRoot, prefix, out) {
+    if (!node) return;
+    for (const [name, child] of Object.entries(node)) {
+      const path = currentPath ? `${currentPath}/${name}` : name;
+      if (child && child.type === 'folder' && child.children) {
+        this._collectPaths(child.children, path, buildRoot, prefix, out);
+      } else if (child && child.type === 'file') {
+        const storagePath = prefix + path.replace(new RegExp(`^${buildRoot}/`), '');
+        out.push(storagePath);
+      }
+    }
+  }
+
+  async _loadBinary(path) {
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager) return null;
+
+    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
+      ? window.ProjectPaths.normalizeStoragePath(path)
+      : path;
+
+    const obj = await fileManager.loadFile(normPath);
+    if (!obj) return null;
+
+    const content = obj.content ?? obj.fileContent ?? obj.data;
+    if (content instanceof ArrayBuffer) return content;
+    if (ArrayBuffer.isView(content)) return content.buffer;
+    if (typeof content === 'string') {
+      try {
+        const bin = atob(content);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr.buffer;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return null;
+  }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = LuaTextBoxExtensions;
+} else {
+  window.LuaTextBoxExtensions = LuaTextBoxExtensions;
+}

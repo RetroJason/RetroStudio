@@ -115,6 +115,42 @@
   .viewerHint {
     color: #9bb5ce;
   }
+  .starterDownloads {
+    margin-bottom: 10px;
+    border: 1px solid #2a3646;
+    border-radius: 6px;
+    background: #121a24;
+    padding: 8px;
+    font-size: 12px;
+  }
+  .starterDownloadsTitle {
+    color: #9fd1ff;
+    font-size: 12px;
+    margin: 0 0 6px;
+  }
+  .starterDownloadsNote {
+    margin: 0 0 8px;
+    color: #9bb5ce;
+    font-size: 11px;
+  }
+  .starterDownloads ul {
+    margin: 0;
+    padding-left: 18px;
+  }
+  .starterDownloads li {
+    margin: 4px 0;
+  }
+  .starterDownloads a {
+    color: #7cc6ff;
+    text-decoration: none;
+  }
+  .starterDownloads a:hover {
+    text-decoration: underline;
+  }
+  .starterDest {
+    color: #8ea9c4;
+    font-size: 11px;
+  }
   .hexBlock {
     font-family: Consolas, "SFMono-Regular", Menlo, monospace;
     white-space: pre;
@@ -453,6 +489,24 @@
 
   <div class="panel">
     <h2 class="panelTitle">File Viewer / Editor</h2>
+    <div class="starterDownloads">
+      <h3 class="starterDownloadsTitle">Starter Downloads (Manual MSD Install)</h3>
+      <p class="starterDownloadsNote">Auto setup is temporarily disabled. Download these files and copy them to your watch over USB MSD.</p>
+      <ul>
+        <li>
+          <a href="NewSetup/Analog.rwa" download>Analog.rwa</a>
+          <div class="starterDest">Copy to: /watches/</div>
+        </li>
+        <li>
+          <a href="NewSetup/PlutoBoy.rwb" download>PlutoBoy.rwb</a>
+          <div class="starterDest">Copy to: /apps/</div>
+        </li>
+        <li>
+          <a href="NewSetup/Legend%20of%20Zelda,%20The%20-%20Link%27s%20Awakening%20(USA,%20Europe).gb" download>Legend of Zelda, The - Link's Awakening (USA, Europe).gb</a>
+          <div class="starterDest">Copy to: /roms/gb/</div>
+        </li>
+      </ul>
+    </div>
     <div id="viewerHost">
       <div class="viewerHint">Select or double-click a file from the tree to view/edit.</div>
     </div>
@@ -1762,6 +1816,7 @@ function hideMainUI() {
 
 const welcomeProgressEl = document.getElementById("welcomeProgress");
 const welcomeConnectBtn = document.getElementById("welcomeConnectBtn");
+const ENABLE_INITIAL_SETUP_WIZARD = false;
 
 welcomeConnectBtn.addEventListener("click", async () => {
   try {
@@ -1819,21 +1874,10 @@ welcomeConnectBtn.addEventListener("click", async () => {
       log(`Firmware is up to date (${version})`, "ok");
     }
 
-    // Check initial setup
-    welcomeStatusEl.textContent = "Checking watch setup...";
-    let needsSetup = false;
-    try {
-      const watchItems = await listDir("/watches");
-      needsSetup = !watchItems.some(item => !item.isDir);
-    } catch {
-      needsSetup = true;
-    }
-
-    if (needsSetup) {
-      welcomeStatusEl.textContent = "Watch needs initial setup...";
-      log("Watch face directory is empty or missing — prompting initial setup", "muted");
-      welcomeOverlay.style.display = "none";
-      await showSetupPromptAsync();
+    // Initial setup wizard is temporarily disabled until file-write paths are finalized.
+    welcomeStatusEl.textContent = "Skipping initial setup (temporarily disabled)...";
+    if (!ENABLE_INITIAL_SETUP_WIZARD) {
+      log("Initial setup prompt skipped (temporary: BLE file-write path migration in progress)", "muted");
     }
 
     // All done — show main UI
@@ -2325,6 +2369,11 @@ const SETUP_FILES = [
 ];
 
 async function checkInitialSetup() {
+  if (!ENABLE_INITIAL_SETUP_WIZARD) {
+    setupModal.style.display = "none";
+    return;
+  }
+
   try {
     await ensureConnected("SETUP_CHECK");
     let hasFiles = false;

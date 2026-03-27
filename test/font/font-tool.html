@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Font Atlas Tool — RetroStudio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #1e1e1e; color: #ccc;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header { background: #2d2d2d; padding: 10px 16px; border-bottom: 1px solid #444; }
+  header h1 { font-size: 16px; color: #eee; }
+
+  /* ── controls panel ─────────────────────────────── */
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 12px; padding: 12px 16px;
+    background: #252525; border-bottom: 1px solid #333;
+    align-items: flex-end;
+  }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .5px; }
+  .field input[type=text],
+  .field input[type=number],
+  .field select { background: #333; border: 1px solid #555; color: #eee;
+    padding: 5px 8px; border-radius: 3px; font-size: 13px; }
+  .field input[type=number] { width: 70px; }
+  .field input[type=file] { font-size: 12px; color: #aaa; }
+  .field textarea { background: #333; border: 1px solid #555; color: #eee;
+    padding: 5px 8px; border-radius: 3px; font-size: 12px; resize: vertical;
+    font-family: 'Consolas', monospace; min-height: 28px; width: 320px; }
+  .cb-row { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+  .cb-row input { accent-color: #4caf50; }
+
+  button.action {
+    background: #4a7c2e; color: #fff; border: none; border-radius: 4px;
+    padding: 7px 16px; font-size: 13px; cursor: pointer; font-weight: 600;
+    margin-top: auto;
+  }
+  button.action:hover { background: #5a9c3a; }
+  button.action:disabled { opacity: .4; cursor: not-allowed; }
+  button.export-btn {
+    background: #3a6090; color: #fff; border: none; border-radius: 4px;
+    padding: 5px 12px; font-size: 12px; cursor: pointer;
+  }
+  button.export-btn:hover { background: #4a80b0; }
+  button.export-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── layout ─────────────────────────────────────── */
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .preview-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .info-panel {
+    width: 280px; min-width: 220px;
+    background: #252525; border-left: 1px solid #333;
+    overflow-y: auto; padding: 12px;
+  }
+
+  /* ── atlas preview ──────────────────────────────── */
+  .preview-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 16px; background: #2a2a2a; border-bottom: 1px solid #333;
+  }
+  .preview-header span { font-size: 12px; color: #888; }
+  .zoom-controls { display: flex; gap: 4px; align-items: center; }
+  .zoom-controls button { background: #444; color: #ccc; border: 1px solid #555;
+    border-radius: 3px; width: 26px; height: 26px; cursor: pointer; font-size: 14px; }
+  .zoom-controls button:hover { background: #555; }
+  .zoom-controls span { font-size: 12px; color: #aaa; min-width: 40px; text-align: center; }
+
+  .canvas-wrap {
+    flex: 1; overflow: auto; position: relative;
+    background: repeating-conic-gradient(#2a2a2a 0% 25%, #222 0% 50%) 0 0 / 16px 16px;
+  }
+  .canvas-wrap canvas {
+    image-rendering: pixelated;
+    display: block;
+    transform-origin: 0 0;
+  }
+
+  /* ── info panel ─────────────────────────────────── */
+  .info-panel h3 { font-size: 13px; color: #aaa; margin-bottom: 8px;
+    text-transform: uppercase; letter-spacing: .5px; }
+  .stats { font-size: 12px; line-height: 1.8; }
+  .stats .val { color: #eee; }
+
+  .glyph-detail { margin-top: 16px; }
+  .glyph-detail .glyph-char { font-size: 48px; text-align: center;
+    background: #333; border-radius: 4px; padding: 8px; margin-bottom: 8px; }
+  .glyph-detail table { width: 100%; font-size: 12px; }
+  .glyph-detail td { padding: 2px 4px; }
+  .glyph-detail td:first-child { color: #888; }
+  .glyph-detail td:last-child { color: #eee; text-align: right; }
+
+  .export-section { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
+
+  /* ── text preview ───────────────────────────────── */
+  .text-preview-section { padding: 8px 16px; background: #2a2a2a; border-top: 1px solid #333; }
+  .text-preview-section label { font-size: 11px; color: #888; text-transform: uppercase; }
+  .text-preview-section input { background: #333; border: 1px solid #555; color: #eee;
+    padding: 4px 8px; border-radius: 3px; font-size: 13px; width: 100%; margin-top: 4px; }
+  .text-preview-canvas { margin-top: 6px; background: #000; border-radius: 4px;
+    width: 448px; height: 368px; overflow: hidden; position: relative;
+    border: 2px solid #444; }
+  .text-preview-canvas canvas { image-rendering: pixelated; position: absolute; top: 0; left: 0; }
+  .watch-label { position: absolute; bottom: 4px; right: 6px; font-size: 9px; color: #444;
+    pointer-events: none; }
+</style>
+</head>
+<body>
+<header><h1>&#x1F520; Font Atlas Tool</h1></header>
+
+<!-- ── Controls ──────────────────────────────────────── -->
+<div class="controls">
+  <div class="field">
+    <label>Font File</label>
+    <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2,.fnt,.png" multiple>
+  </div>
+  <div class="field">
+    <label>Font Name</label>
+    <input type="text" id="fontName" value="" placeholder="auto-detected">
+  </div>
+  <div class="field">
+    <label>Size (px)</label>
+    <input type="number" id="fontSize" value="32" min="6" max="256">
+  </div>
+  <div class="field">
+    <label>Padding</label>
+    <input type="number" id="padding" value="1" min="0" max="8">
+  </div>
+  <div class="field">
+    <label>Spacing</label>
+    <input type="number" id="spacing" value="1" min="0" max="8">
+  </div>
+  <div class="field">
+    <label>Characters</label>
+    <textarea id="chars" rows="1">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,;:!?'"()-+*/=@#$%&amp;_[]{}|&lt;&gt;~`^\/</textarea>
+  </div>
+  <div class="cb-row">
+    <input type="checkbox" id="antialias"><label for="antialias">Anti-alias</label>
+  </div>
+  <button class="action" id="generateBtn" disabled>Generate Atlas</button>
+</div>
+
+<!-- ── Main area ─────────────────────────────────────── -->
+<div class="main">
+  <div class="preview-panel">
+    <div class="preview-header">
+      <span id="atlasInfo">No atlas generated</span>
+      <div class="zoom-controls">
+        <button id="zoomOut">−</button>
+        <span id="zoomLevel">1×</span>
+        <button id="zoomIn">+</button>
+        <button id="zoomFit" title="Fit">⊞</button>
+      </div>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="atlasCanvas" width="1" height="1"></canvas>
+    </div>
+    <!-- text rendering preview -->
+    <div class="text-preview-section">
+      <label>Text Preview</label>
+      <input type="text" id="previewText" value="Hello, World! 123" placeholder="Type to preview...">
+      <div class="text-preview-canvas"><canvas id="previewCanvas" width="448" height="368"></canvas><span class="watch-label">448 × 368</span></div>
+    </div>
+  </div>
+
+  <!-- ── Info / Export panel ─────────────────────────── -->
+  <div class="info-panel">
+    <h3>Atlas Info</h3>
+    <div class="stats" id="statsBlock">
+      <div>Glyphs: <span class="val" id="statGlyphs">—</span></div>
+      <div>Atlas: <span class="val" id="statSize">—</span></div>
+      <div>Line Height: <span class="val" id="statLineH">—</span></div>
+      <div>Baseline: <span class="val" id="statBase">—</span></div>
+    </div>
+
+    <div class="glyph-detail" id="glyphDetail" style="display:none">
+      <h3>Selected Glyph</h3>
+      <div class="glyph-char" id="glyphChar"></div>
+      <table>
+        <tr><td>Code</td><td id="gdCode"></td></tr>
+        <tr><td>Atlas X, Y</td><td id="gdXY"></td></tr>
+        <tr><td>Size</td><td id="gdSize"></td></tr>
+        <tr><td>X Offset</td><td id="gdXOff"></td></tr>
+        <tr><td>Y Offset</td><td id="gdYOff"></td></tr>
+        <tr><td>X Advance</td><td id="gdXAdv"></td></tr>
+      </table>
+    </div>
+
+    <div class="export-section">
+      <h3>Export</h3>
+      <button class="export-btn" id="dlPNG" disabled>Download PNG</button>
+      <button class="export-btn" id="dlFNT" disabled>Download .fnt (BMFont)</button>
+      <button class="export-btn" id="dlJSON" disabled>Download Frameset JSON</button>
+    </div>
+  </div>
+</div>
+
+<script src="../../scripts/font/font-atlas-generator.js"></script>
+<script>
+(function() {
+  const gen      = new FontAtlasGenerator();
+  let result     = null;   // last generate() result
+  let zoom       = 1;
+  let loadedName = '';
+
+  // ── DOM refs ──────────────────────────────────────
+  const fontFileEl  = document.getElementById('fontFile');
+  const fontNameEl  = document.getElementById('fontName');
+  const fontSizeEl  = document.getElementById('fontSize');
+  const paddingEl   = document.getElementById('padding');
+  const spacingEl   = document.getElementById('spacing');
+  const charsEl     = document.getElementById('chars');
+  const aaEl        = document.getElementById('antialias');
+  const genBtn      = document.getElementById('generateBtn');
+
+  const atlasCanvas = document.getElementById('atlasCanvas');
+  const canvasWrap  = document.getElementById('canvasWrap');
+  const atlasInfo   = document.getElementById('atlasInfo');
+  const zoomLevelEl = document.getElementById('zoomLevel');
+
+  const previewText   = document.getElementById('previewText');
+  const previewCanvas = document.getElementById('previewCanvas');
+
+  // stats
+  const statGlyphs = document.getElementById('statGlyphs');
+  const statSize   = document.getElementById('statSize');
+  const statLineH  = document.getElementById('statLineH');
+  const statBase   = document.getElementById('statBase');
+
+  // glyph detail
+  const glyphDetail = document.getElementById('glyphDetail');
+  const glyphChar   = document.getElementById('glyphChar');
+  const gd = { code: document.getElementById('gdCode'),
+               xy:   document.getElementById('gdXY'),
+               size: document.getElementById('gdSize'),
+               xoff: document.getElementById('gdXOff'),
+               yoff: document.getElementById('gdYOff'),
+               xadv: document.getElementById('gdXAdv') };
+
+  // export
+  const dlPNG  = document.getElementById('dlPNG');
+  const dlFNT  = document.getElementById('dlFNT');
+  const dlJSON = document.getElementById('dlJSON');
+
+  // ── font loading / .fnt import ────────────────────
+  fontFileEl.addEventListener('change', async () => {
+    const files = Array.from(fontFileEl.files);
+    if (!files.length) return;
+
+    const fntFile = files.find(f => f.name.toLowerCase().endsWith('.fnt'));
+
+    if (fntFile) {
+      // ── .fnt import path ──
+      const imgFiles = files.filter(f => /\.(png|bmp|tga|jpg|jpeg|gif)$/i.test(f.name));
+      try {
+        const fntBuf = await fntFile.arrayBuffer();
+        const parsed = FontAtlasGenerator.parseBMFont(fntBuf);
+        console.log('[FontTool] Parsed .fnt:', parsed.info?.fontName,
+          parsed.glyphs.length, 'glyphs,', parsed.pages.length, 'page(s)',
+          parsed.d2Block ? '+ D2 block (' + parsed.d2Block.length + ' bytes)' : '');
+
+        let atlasImage = null;
+        const pageName = parsed.pages[0] || '';
+
+        let imgFile = imgFiles.find(f => f.name === pageName)
+                   || imgFiles.find(f => /\.png$/i.test(f.name))
+                   || imgFiles[0];
+
+        if (!imgFile && pageName) {
+          atlasImage = await new Promise((resolve) => {
+            const msg = `The .fnt references "${pageName}". Select the atlas image, or Cancel to view metrics only.`;
+            const inp = document.createElement('input');
+            inp.type = 'file';
+            inp.accept = '.png,.bmp,.jpg,.jpeg,.gif';
+            inp.onchange = async () => {
+              if (inp.files[0]) {
+                resolve(await loadImageFile(inp.files[0]));
+              } else {
+                resolve(null);
+              }
+            };
+            if (!confirm(msg + '\n\nClick OK to select the image, Cancel to skip.')) {
+              resolve(null);
+            } else {
+              inp.click();
+            }
+          });
+        } else if (imgFile) {
+          atlasImage = await loadImageFile(imgFile);
+        }
+
+        result = FontAtlasGenerator.bmfontToResult(parsed, atlasImage);
+
+        fontNameEl.value = parsed.info?.fontName || fntFile.name.replace(/\.fnt$/i, '');
+        fontSizeEl.value = parsed.info?.fontSize || '';
+        paddingEl.value  = parsed.info?.padding?.[0] ?? 0;
+        spacingEl.value  = parsed.info?.spacing?.[0] ?? 0;
+        charsEl.value    = result.glyphs.map(g => g.char).join('');
+
+        showResult();
+      } catch (err) {
+        console.error('[FontTool] .fnt import failed:', err);
+        alert('Failed to import .fnt: ' + err.message);
+      }
+    } else {
+      // ── TTF/OTF/WOFF load path ──
+      const file = files[0];
+      const raw = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      loadedName = raw;
+      fontNameEl.value = raw;
+      try {
+        await gen.loadFont(file, raw);
+        genBtn.disabled = false;
+      } catch (e) {
+        alert('Failed to load font: ' + e.message);
+      }
+    }
+  });
+
+  function loadImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')); };
+      img.src = url;
+    });
+  }
+
+  // ── generate ──────────────────────────────────────
+  genBtn.addEventListener('click', () => {
+    const family = fontNameEl.value.trim() || loadedName;
+    if (!family) return alert('Load a font first');
+
+    result = gen.generate({
+      fontFamily:   family,
+      fontSize:     parseInt(fontSizeEl.value) || 32,
+      chars:        charsEl.value,
+      padding:      parseInt(paddingEl.value) || 0,
+      spacing:      parseInt(spacingEl.value) || 0,
+      antialiasing: aaEl.checked,
+    });
+
+    showResult();
+  });
+
+  function showResult() {
+    if (!result) return;
+
+    // show atlas
+    atlasCanvas.width  = result.width;
+    atlasCanvas.height = result.height;
+    const ctx = atlasCanvas.getContext('2d');
+    if (result.canvas) ctx.drawImage(result.canvas, 0, 0);
+    setZoom(1);
+
+    // stats
+    statGlyphs.textContent = result.glyphs.length;
+    statSize.textContent    = result.width + ' × ' + result.height;
+    statLineH.textContent   = result.lineHeight + ' px';
+    statBase.textContent    = result.base + ' px';
+    atlasInfo.textContent   = `${result.width}×${result.height}  •  ${result.glyphs.length} glyphs`;
+
+    // enable exports
+    dlPNG.disabled  = !result.canvas;
+    dlFNT.disabled  = false;
+    dlJSON.disabled = false;
+
+    glyphDetail.style.display = 'none';
+    renderTextPreview();
+  }
+
+  // ── zoom ──────────────────────────────────────────
+  function setZoom(z) {
+    zoom = Math.max(0.25, Math.min(16, z));
+    atlasCanvas.style.transform = `scale(${zoom})`;
+    zoomLevelEl.textContent = zoom + '×';
+  }
+  document.getElementById('zoomIn').addEventListener('click',  () => setZoom(zoom * 2));
+  document.getElementById('zoomOut').addEventListener('click', () => setZoom(zoom / 2));
+  document.getElementById('zoomFit').addEventListener('click', () => {
+    if (!result) return;
+    const wrapW = canvasWrap.clientWidth - 20;
+    const wrapH = canvasWrap.clientHeight - 20;
+    setZoom(Math.min(wrapW / result.width, wrapH / result.height, 8));
+  });
+
+  // ── atlas click → glyph detail ────────────────────
+  atlasCanvas.addEventListener('click', (e) => {
+    if (!result) return;
+    const rect = atlasCanvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / zoom;
+    const y = (e.clientY - rect.top) / zoom;
+
+    const hit = result.glyphs.find(g =>
+      g.width > 0 && x >= g.x && x < g.x + g.width && y >= g.y && y < g.y + g.height);
+    if (!hit) { glyphDetail.style.display = 'none'; return; }
+
+    glyphDetail.style.display = '';
+    glyphChar.textContent = hit.char;
+    gd.code.textContent = 'U+' + hit.id.toString(16).toUpperCase().padStart(4, '0') + ' (' + hit.id + ')';
+    gd.xy.textContent   = hit.x + ', ' + hit.y;
+    gd.size.textContent = hit.width + ' × ' + hit.height;
+    gd.xoff.textContent = hit.xoffset;
+    gd.yoff.textContent = hit.yoffset;
+    gd.xadv.textContent = hit.xadvance;
+
+    // highlight glyph on atlas
+    redrawAtlas(hit);
+  });
+
+  function redrawAtlas(highlight) {
+    const ctx = atlasCanvas.getContext('2d');
+    ctx.clearRect(0, 0, atlasCanvas.width, atlasCanvas.height);
+    ctx.drawImage(result.canvas, 0, 0);
+    if (highlight) {
+      ctx.strokeStyle = '#ff0';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(highlight.x + 0.5, highlight.y + 0.5, highlight.width - 1, highlight.height - 1);
+    }
+  }
+
+  // ── text preview using generated atlas data ───────
+  previewText.addEventListener('input', renderTextPreview);
+
+  function renderTextPreview() {
+    if (!result) return;
+    const text = previewText.value;
+    const glyphMap = new Map(result.glyphs.map(g => [g.char, g]));
+
+    const W = 448, H = 368;
+    previewCanvas.width  = W;
+    previewCanvas.height = H;
+    const ctx = previewCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+
+    let cx = 4, cy = 4;
+    for (const ch of text) {
+      const g = glyphMap.get(ch);
+      if (!g) continue;
+      if (g.width === 0) { cx += g.xadvance; continue; }
+      // wrap to next line if overflowing
+      if (cx + g.xoffset + g.width > W - 4) {
+        cx = 4;
+        cy += result.lineHeight;
+        if (cy + result.lineHeight > H) break;
+      }
+      ctx.drawImage(result.canvas,
+        g.x, g.y, g.width, g.height,
+        cx + g.xoffset, cy + g.yoffset, g.width, g.height);
+      cx += g.xadvance;
+    }
+  }
+
+  // ── exports ───────────────────────────────────────
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  dlPNG.addEventListener('click', async () => {
+    if (!result) return;
+    const name = (fontNameEl.value.trim() || 'font') + '_' + fontSizeEl.value;
+    const blob = await gen.toPNG(result.canvas);
+    download(blob, name + '.png');
+  });
+
+  dlFNT.addEventListener('click', () => {
+    if (!result) return;
+    const name = (fontNameEl.value.trim() || 'font') + '_' + fontSizeEl.value;
+    const bin  = gen.toBMFontBinary(result, name + '.png');
+    download(new Blob([bin], { type: 'application/octet-stream' }), name + '.fnt');
+  });
+
+  dlJSON.addEventListener('click', () => {
+    if (!result) return;
+    const name = (fontNameEl.value.trim() || 'font') + '_' + fontSizeEl.value;
+    const fs   = gen.toFrameset(result, name);
+    const json = JSON.stringify(fs, null, 2);
+    download(new Blob([json], { type: 'application/json' }), name + '.frameset');
+  });
+})();
+</script>
+</body>
+</html>

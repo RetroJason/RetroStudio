@@ -16,9 +16,14 @@ class RibbonToolbar {
     // Wait for component registry to be available
     this.waitForComponentRegistry();
 
-    // React to project focus changes
+    // React to project focus changes and component loading
     try {
       window.eventBus?.on?.('project.focus.changed', () => {
+        try {
+          this.setupDynamicCreateButtons();
+        } catch (_) {}
+      });
+      window.eventBus?.on?.('components.loaded', () => {
         try {
           this.setupDynamicCreateButtons();
         } catch (_) {}
@@ -474,11 +479,11 @@ class RibbonToolbar {
           await explorer.ensurePackageScaffold(projectName);
         }
 
-        // Create default main.lua with setup/update stubs
+        // Create default main.lua with Setup/Update stubs
         const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
           ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
         const luaFolder = `${projectName}/${sourcesRoot}/Lua`;
-        const luaContent = `function setup()\n\nend\n\nfunction update(dt)\n\nend\n`;
+        const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
         const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
         await explorer.addFileToProject(luaFile, luaFolder, true, true);
 
