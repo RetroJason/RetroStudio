@@ -540,6 +540,254 @@
       ]
     },
     {
+      "name": "TextBox",
+      "description": "Text rendering using BMFont assets",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a textbox instance bound to a font asset",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Unique textbox name (used to reference it later)"},
+            {"name": "fontName", "type": "string", "description": "Font asset name (matches .fnt filename without extension)"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Layer/depth"},
+            {"name": "color", "type": "int32", "description": "Text color (0x00RRGGBB)"},
+            {"name": "text", "type": "string", "description": "Initial text string"}
+          ],
+          "example": "TextBox.Create(\"title\", \"myfont\", 10, 20, 0, 0x00FFFFFF, \"Hello World\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove a textbox from the scene",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "example": "TextBox.Destroy(\"title\")"
+        },
+        {
+          "name": "SetText",
+          "description": "Set the text content of a textbox",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "text", "type": "string", "description": "New text string"}
+          ],
+          "example": "TextBox.SetText(\"title\", \"New Text\")"
+        },
+        {
+          "name": "GetText",
+          "description": "Get the text content of a textbox",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "string", "description": "Current text string"},
+          "example": "local t = TextBox.GetText(\"title\")"
+        },
+        {
+          "name": "SetPosition",
+          "description": "Set textbox position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "TextBox.SetPosition(\"title\", 100, 200)"
+        },
+        {
+          "name": "GetPosition",
+          "description": "Get textbox position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = TextBox.GetPosition(\"title\")"
+        },
+        {
+          "name": "SetPositionX",
+          "description": "Set textbox X position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "x", "type": "float", "description": "X position"}
+          ],
+          "example": "TextBox.SetPositionX(\"title\", 100)"
+        },
+        {
+          "name": "GetPositionX",
+          "description": "Get textbox X position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = TextBox.GetPositionX(\"title\")"
+        },
+        {
+          "name": "SetPositionY",
+          "description": "Set textbox Y position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "TextBox.SetPositionY(\"title\", 200)"
+        },
+        {
+          "name": "GetPositionY",
+          "description": "Get textbox Y position",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = TextBox.GetPositionY(\"title\")"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set textbox center of rotation",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "centerX", "type": "float", "description": "Center X"},
+            {"name": "centerY", "type": "float", "description": "Center Y"}
+          ],
+          "example": "TextBox.SetCenter(\"title\", 50, 10)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get textbox center of rotation",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float, float", "description": "Center X and Y"},
+          "example": "local cx, cy = TextBox.GetCenter(\"title\")"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set textbox display size",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "width", "type": "float", "description": "Width"},
+            {"name": "height", "type": "float", "description": "Height"}
+          ],
+          "example": "TextBox.SetSize(\"title\", 200, 30)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get textbox display size",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float, float", "description": "Width and height"},
+          "example": "local w, h = TextBox.GetSize(\"title\")"
+        },
+        {
+          "name": "SetRotation",
+          "description": "Set textbox rotation in degrees",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
+          ],
+          "example": "TextBox.SetRotation(\"title\", 45)"
+        },
+        {
+          "name": "GetRotation",
+          "description": "Get textbox rotation in degrees",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = TextBox.GetRotation(\"title\")"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set textbox scale",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "TextBox.SetScale(\"title\", 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get textbox scale",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = TextBox.GetScale(\"title\")"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set textbox text color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "TextBox.SetColor(\"title\", 0x00FF0000)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get textbox text color",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = TextBox.GetColor(\"title\")"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this textbox uses",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "TextBox.SetPaletteSlot(\"title\", 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get textbox palette slot",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = TextBox.GetPaletteSlot(\"title\")"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set textbox visibility",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "TextBox.SetVisible(\"title\", false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get textbox visibility",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = TextBox.GetVisible(\"title\")"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set textbox attribute flags",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "TextBox.SetAttributes(\"title\", 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get textbox attribute flags",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Textbox name"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = TextBox.GetAttributes(\"title\")"
+        }
+      ]
+    },
+    {
       "name": "Music",
       "description": "Background music playback functions", 
       "functions": [

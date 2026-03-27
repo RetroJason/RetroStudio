@@ -170,6 +170,9 @@ class RetroStudioApplication {
     await this.loadComponentScripts();
     
     console.log('[Application] All components loaded and registered');
+
+    // Notify any listeners (e.g. ribbon toolbar) that all components are now registered
+    try { window.eventBus?.emit?.('components.loaded'); } catch (_) {}
   }
 
   // Load component scripts dynamically
@@ -184,6 +187,8 @@ class RetroStudioApplication {
       'scripts/editors/sprite-editor.js',
       'scripts/editors/frameset-editor.js',
       'scripts/editors/package-settings-editor.js',
+      'scripts/font/font-atlas-generator.js',
+      'scripts/editors/font-editor.js',
       'scripts/editors/editor-registry.js',
       
       // Viewers
@@ -206,7 +211,7 @@ class RetroStudioApplication {
   loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = src;
+      script.src = src + (src.includes('?') ? '&' : '?') + 'v=5';
       script.onload = () => {
         console.log(`[Application] Loaded component script: ${src}`);
         resolve();

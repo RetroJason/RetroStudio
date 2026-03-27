@@ -4,6 +4,7 @@
 @import url('texture-editor.css');
 @import url('sprite-editor.css');
 @import url('frameset-editor.css');
+@import url('font-editor.css');
 
 /* Custom Modal Dialog */
 .modal-overlay {

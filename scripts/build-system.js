@@ -57,6 +57,8 @@ class BuildSystem {
         return 'pal';
       case '.texture':
         return 'texture';
+      case '.font':
+        return 'font';
       case '.sprite':
         return 'sprite';
       default: return 'copy';
@@ -100,10 +102,14 @@ class BuildSystem {
       // so we can skip copying the raw source images for those.
       const textureBaseNames = new Set();
       const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp']);
+      // Also collect .font base names so we skip companion .fnt, .d2, .png
+      const fontBaseNames = new Set();
       for (const fp of resourceFilePaths) {
         if (fp.toLowerCase().endsWith('.texture')) {
           // Strip .texture to get the base name (e.g. "proj/Sources/Images/player")
           textureBaseNames.add(fp.substring(0, fp.length - '.texture'.length).toLowerCase());
+        } else if (fp.toLowerCase().endsWith('.font')) {
+          fontBaseNames.add(fp.substring(0, fp.length - '.font'.length).toLowerCase());
         }
       }
       
@@ -117,10 +123,34 @@ class BuildSystem {
           // Skip source images and .d2 files that have a companion .texture file
           // (the TextureBuilder will produce the .d2 output from the .texture file)
           const ext = this.getFileExtension(filePath);
+
+          // Skip raw source font files from Fonts folder (.font is the editable source,
+          // and FontBuilder emits the runtime artifacts: .d2 + .fnt).
+          const sourceFontExts = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+          if (sourceFontExts.has(ext) && this.isSourceFontsFolderPath(filePath)) {
+            console.log(`[BuildSystem] Skipping ${filePath} (source font file in Fonts folder)`);
+            buildResults.push({ success: true, inputPath: filePath, skipped: true });
+            successCount++;
+            continue;
+          }
+
           if (imageExtensions.has(ext) || ext === '.d2') {
             const baseName = filePath.substring(0, filePath.length - ext.length).toLowerCase();
             if (textureBaseNames.has(baseName)) {
               console.log(`[BuildSystem] Skipping ${filePath} (has companion .texture)`);
+              buildResults.push({ success: true, inputPath: filePath, skipped: true });
+              successCount++;
+              continue;
+            }
+          }
+
+          // Skip .fnt, .d2, .png, .ttf companions of .font files
+          // (the FontBuilder produces .d2 + .fnt outputs from the .font file)
+          const fontCompanionExts = new Set(['.fnt', '.d2', '.png', '.ttf', '.otf', '.woff', '.woff2']);
+          if (fontCompanionExts.has(ext)) {
+            const baseName = filePath.substring(0, filePath.length - ext.length).toLowerCase();
+            if (fontBaseNames.has(baseName)) {
+              console.log(`[BuildSystem] Skipping ${filePath} (has companion .font)`);
               buildResults.push({ success: true, inputPath: filePath, skipped: true });
               successCount++;
               continue;
@@ -140,6 +170,13 @@ class BuildSystem {
               await this.addBuiltFileToExplorer(result.outputPath, filePath);
             } else {
               console.log(`[BuildSystem] Skipping addBuiltFileToExplorer - projectExplorer: ${!!projectExplorer}, outputPath: ${!!result.outputPath}`);
+            }
+            // Handle additional output paths (e.g. FontBuilder produces both .d2 and .fnt)
+            if (projectExplorer && result.additionalOutputPaths) {
+              for (const extraPath of result.additionalOutputPaths) {
+                console.log(`[BuildSystem] Adding additional built file to explorer: ${extraPath}`);
+                await this.addBuiltFileToExplorer(extraPath, filePath);
+              }
             }
           } else {
             errorCount++;
@@ -370,6 +407,18 @@ class BuildSystem {
     return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
   }
 
+  isSourceFontsFolderPath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const pp = (window.ProjectPaths && typeof window.ProjectPaths.parseProjectPath === 'function')
+      ? window.ProjectPaths.parseProjectPath(filePath)
+      : { rest: filePath };
+    const rest = String(pp.rest || filePath).replace(/\\/g, '/');
+    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return rest.startsWith(`${sourcesRoot}/Fonts/`);
+  }
+
   extractFilePathsFromNode(node, basePath = '') {
     const filePaths = [];
     
@@ -428,7 +477,23 @@ class BuildSystem {
     const explicitId = fileObj.builderId;
   const ext = this.getFileExtension(filePath);
     const builderId = explicitId || this.getBuilderIdForExtension(ext);
-    const builder = this.builderById.get(builderId) || this.getBuilderForFile(legacyFile.name);
+    let builder = this.builderById.get(builderId) || this.getBuilderForFile(legacyFile.name);
+
+    // .font files must be handled by FontBuilder; do not fall back to CopyBuilder.
+    if (ext === '.font' && (!builder || builder.constructor?.name === 'CopyBuilder')) {
+      if (typeof FontBuilder !== 'undefined') {
+        const fb = new FontBuilder();
+        this.registerBuilder('.font', fb);
+        this.builderById.set('font', fb);
+        builder = fb;
+        console.log('[BuildSystem] Lazily registered FontBuilder during build');
+      }
+    }
+
+    if (ext === '.font' && (!builder || builder.constructor?.name === 'CopyBuilder')) {
+      throw new Error('FontBuilder is not available; refusing to copy .font into build output');
+    }
+
     console.log(`[BuildSystem] Builder resolution: ext=${ext}, builderId=${builderId}, found=${builder?.constructor?.name || 'none'}`);
     if (!builder) {
       throw new Error(`No builder available for ${filePath}`);

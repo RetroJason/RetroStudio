@@ -1649,6 +1649,10 @@ class GameEmulator {
           if (imageExt) {
             await imageExt.initGpu(this._gpu);
           }
+          const textboxExt = this.extensionLoader?.getExtension('TextBox');
+          if (textboxExt) {
+            await textboxExt.initGpu(this._gpu);
+          }
           logRunPhase('gpuInit');
         } else {
           console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
@@ -1737,6 +1741,10 @@ class GameEmulator {
           const imageExt = this.extensionLoader?.getExtension('Image');
           if (imageExt) {
             imageExt.renderFrame(this._gpu, deltaTime);
+          }
+          const textboxExt = this.extensionLoader?.getExtension('TextBox');
+          if (textboxExt) {
+            textboxExt.renderFrame(this._gpu, deltaTime);
           }
           this._gpu.present();
         }
