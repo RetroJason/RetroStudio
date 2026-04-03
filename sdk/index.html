@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RetroWatch SDK</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 60px 20px;
+    }
+    .container {
+      max-width: 640px;
+      width: 100%;
+    }
+    h1 {
+      font-size: 2rem;
+      color: #f5c2e7;
+      margin-bottom: 0.3em;
+    }
+    .subtitle {
+      color: #a6adc8;
+      margin-bottom: 2em;
+    }
+    .card {
+      background: #313244;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      color: #89b4fa;
+      margin-bottom: 8px;
+    }
+    .card p {
+      font-size: 0.9rem;
+      color: #a6adc8;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .btn {
+      display: inline-block;
+      padding: 10px 24px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: background 0.15s;
+    }
+    .btn-primary {
+      background: #89b4fa;
+      color: #1e1e2e;
+    }
+    .btn-primary:hover { background: #74c7ec; }
+    .btn-secondary {
+      background: #45475a;
+      color: #cdd6f4;
+    }
+    .btn-secondary:hover { background: #585b70; }
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding: 0;
+    }
+    .steps li {
+      counter-increment: step;
+      margin-bottom: 12px;
+      padding-left: 32px;
+      position: relative;
+      line-height: 1.5;
+    }
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      width: 22px;
+      height: 22px;
+      background: #45475a;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 22px;
+      font-size: 0.8rem;
+      color: #89b4fa;
+      font-weight: 700;
+    }
+    code {
+      background: #45475a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    .note {
+      font-size: 0.85rem;
+      color: #6c7086;
+      margin-top: 24px;
+    }
+    .changelog {
+      max-height: 300px;
+      overflow-y: auto;
+      padding: 0;
+      margin: 0;
+      list-style: none;
+    }
+    .changelog li {
+      font-size: 0.85rem;
+      color: #bac2de;
+      padding: 6px 0;
+      border-bottom: 1px solid #45475a;
+      line-height: 1.4;
+    }
+    .changelog li:last-child { border-bottom: none; }
+    .changelog .date {
+      color: #6c7086;
+      font-size: 0.8rem;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>RetroWatch SDK</h1>
+    <p class="subtitle">Everything you need to build and upload apps for RetroWatch.</p>
+
+    <div class="card">
+      <h2>VS Code Extension</h2>
+      <p>Install the RetroWatch extension to get build tasks, upload commands, and one-click SDK setup inside VS Code.</p>
+      <a class="btn btn-primary" href="retrowatch-latest.vsix" download>Download Extension (.vsix)</a>
+    </div>
+
+    <div class="card">
+      <h2>SDK Bundle</h2>
+      <p>Self-contained SDK with ARM toolchain, embedded Python, make, libraries, and project templates. ~100 MB.</p>
+      <a class="btn btn-primary" href="https://github.com/RetroJason/RetroStudio/releases/latest/download/RetroWatch-SDK-latest.zip">Download SDK Bundle (.zip)</a>
+    </div>
+
+    <div class="card">
+      <h2>Quick Start</h2>
+      <ol class="steps">
+        <li>Install the <strong>.vsix</strong> in VS Code: <code>Ctrl+Shift+P</code> &rarr; <em>Install from VSIX</em></li>
+        <li>Run <code>Ctrl+Shift+P</code> &rarr; <em>RetroWatch: Setup Environment</em> &mdash; this downloads and installs the SDK automatically.</li>
+        <li>Open a template project and build with <code>Ctrl+Shift+B</code>.</li>
+      </ol>
+      <p style="margin-top:12px">Or use the standalone installer: extract the SDK zip and run <code>setup.bat</code>.</p>
+    </div>
+
+    <div class="card">
+      <h2>Changelog</h2>
+      <ul class="changelog" id="changelog"><li>Loading...</li></ul>
+    </div>
+
+    <p class="note">The extension will be published to the VS Code Marketplace soon. Until then, use the .vsix above.</p>
+  </div>
+  <script>
+    fetch('changelog.md')
+      .then(r => r.ok ? r.text() : Promise.reject())
+      .then(md => {
+        const ul = document.getElementById('changelog');
+        const lines = md.split('\n').filter(l => l.startsWith('- '));
+        if (!lines.length) { ul.innerHTML = '<li>No entries yet.</li>'; return; }
+        ul.innerHTML = lines.map(l => {
+          const m = l.match(/^- (\d{4}-\d{2}-\d{2})\s+(.*)/);
+          if (m) return `<li><span class="date">${m[1]}</span>${m[2]}</li>`;
+          return `<li>${l.slice(2)}</li>`;
+        }).join('');
+      })
+      .catch(() => {
+        document.getElementById('changelog').innerHTML = '<li>No releases yet.</li>';
+      });
+  </script>
+</body>
+</html>

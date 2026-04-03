@@ -171,7 +171,6 @@ class LuaTimeExtensions extends BaseLuaExtension {
     result = result.replace(/%x/g, now.toLocaleDateString());
     result = result.replace(/%X/g, now.toLocaleTimeString());
     
-    console.log(`[Lua Time] ToString("${format}") = "${result}"`);
     return result;
   }
 }

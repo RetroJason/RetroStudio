@@ -1,39 +1,59 @@
+/**
+ * RetroWatch BLE Client v2.0
+ *
+ * Wire format (from messages.json):
+ *   [type:2B LE][size:2B LE][payload:0-240B]
+ *   Header = 4 bytes, max frame = 244 bytes, max payload = 240 bytes
+ *
+ * Changes from v1:
+ *   - Message type is 16-bit LE (was 8-bit)
+ *   - Frame header is 4 bytes (was 3)
+ *   - FS message IDs start at 0x0100 (were 0x10)
+ *   - File transfer IDs start at 0x0200 (were 0x20)
+ *   - LFS_* names replaced with FS_* (VFS handles both FAT and LFS)
+ */
+
 const SERVICE_UUID = "ed5c1400-2ac0-4349-ad36-dfe8831383ee";
 const CHARACTERISTIC_UUID = "ed5c1401-2ac0-4349-ad36-dfe8831383ee";
 const RX_CHARACTERISTIC_UUID = "ed5c1401-2ac0-4349-ad36-dfe8831383ee";
 const TX_CHARACTERISTIC_UUID = "ed5c1402-2ac0-4349-ad36-dfe8831383ee";
 
+const HEADER_SIZE = 4;
+const MAX_PAYLOAD = 240;
+const MAX_FRAME = 244;
+const RSP_HEADER_SIZE = 3;
+
 const MSG = {
-  NONE: 0x00,
-  PING: 0x01,
-  PONG: 0x02,
-  ERROR: 0x03,
-  TRANSPORT_INFO_REQ: 0x04,
-  TRANSPORT_INFO_RSP: 0x05,
-  SET_TIME_REQ: 0x06,
-  SET_TIME_RSP: 0x07,
-  LFS_LIST_REQ: 0x10,
-  LFS_LIST_RSP: 0x11,
-  LFS_READ_REQ: 0x12,
-  LFS_READ_RSP: 0x13,
-  LFS_WRITE_REQ: 0x14,
-  LFS_WRITE_RSP: 0x15,
-  LFS_DELETE_REQ: 0x16,
-  LFS_DELETE_RSP: 0x17,
-  LFS_MKDIR_REQ: 0x18,
-  LFS_MKDIR_RSP: 0x19,
-  LFS_STAT_REQ: 0x1a,
-  LFS_STAT_RSP: 0x1b,
-  LFS_RENAME_REQ: 0x1c,
-  LFS_RENAME_RSP: 0x1d,
-  FILE_BEGIN_REQ: 0x20,
-  FILE_BEGIN_RSP: 0x21,
-  FILE_CHUNK_REQ: 0x22,
-  FILE_CHUNK_RSP: 0x23,
-  FILE_COMMIT_REQ: 0x24,
-  FILE_COMMIT_RSP: 0x25,
-  LAUNCH_APP_REQ: 0x26,
-  LAUNCH_APP_RSP: 0x27,
+  NONE:               0x0000,
+  PING:               0x0001,
+  PONG:               0x0002,
+  ERROR:              0x0003,
+  TRANSPORT_INFO_REQ: 0x0004,
+  TRANSPORT_INFO_RSP: 0x0005,
+  SET_TIME_REQ:       0x0006,
+  SET_TIME_RSP:       0x0007,
+  FS_LIST_REQ:        0x0100,
+  FS_LIST_RSP:        0x0101,
+  FS_READ_REQ:        0x0102,
+  FS_READ_RSP:        0x0103,
+  FS_WRITE_REQ:       0x0104,
+  FS_WRITE_RSP:       0x0105,
+  FS_DELETE_REQ:      0x0106,
+  FS_DELETE_RSP:      0x0107,
+  FS_MKDIR_REQ:       0x0108,
+  FS_MKDIR_RSP:       0x0109,
+  FS_STAT_REQ:        0x010A,
+  FS_STAT_RSP:        0x010B,
+  FS_RENAME_REQ:      0x010C,
+  FS_RENAME_RSP:      0x010D,
+  FILE_BEGIN_REQ:      0x0200,
+  FILE_BEGIN_RSP:      0x0201,
+  FILE_CHUNK_REQ:      0x0202,
+  FILE_CHUNK_RSP:      0x0203,
+  FILE_COMMIT_REQ:     0x0204,
+  FILE_COMMIT_RSP:     0x0205,
+  LAUNCH_APP_REQ:      0x0206,
+  LAUNCH_APP_RSP:      0x0207,
 };
 
 const STATUS = {
@@ -72,26 +92,29 @@ const UPLOAD_FLAG = {
 const MSG_NAME_BY_TYPE = Object.fromEntries(Object.entries(MSG).map(([name, value]) => [value, name]));
 const STATUS_NAME_BY_CODE = Object.fromEntries(Object.entries(STATUS).map(([name, value]) => [value, name]));
 
+/* ---- Wire encoding (v2: 4-byte header, 16-bit type) ---- */
+
 function encodePacket(type, payloadBytes) {
   const payload = payloadBytes || new Uint8Array(0);
-  const totalSize = 3 + payload.length;
+  const totalSize = HEADER_SIZE + payload.length;
   const out = new Uint8Array(totalSize);
   out[0] = type & 0xff;
-  out[1] = totalSize & 0xff;
-  out[2] = (totalSize >> 8) & 0xff;
-  out.set(payload, 3);
+  out[1] = (type >> 8) & 0xff;
+  out[2] = totalSize & 0xff;
+  out[3] = (totalSize >> 8) & 0xff;
+  out.set(payload, HEADER_SIZE);
   return out;
 }
 
 function decodePacket(buffer) {
   const bytes = new Uint8Array(buffer);
-  if (bytes.length < 3) {
+  if (bytes.length < HEADER_SIZE) {
     throw new Error("Packet too short");
   }
 
-  const type = bytes[0];
-  const size = bytes[1] | (bytes[2] << 8);
-  if (size < 3) {
+  const type = bytes[0] | (bytes[1] << 8);
+  const size = bytes[2] | (bytes[3] << 8);
+  if (size < HEADER_SIZE) {
     throw new Error("Packet has invalid total size");
   }
 
@@ -102,9 +125,11 @@ function decodePacket(buffer) {
   return {
     type,
     size,
-    payload: bytes.slice(3, size),
+    payload: bytes.slice(HEADER_SIZE, size),
   };
 }
+
+/* ---- Utilities ---- */
 
 const CRC32_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -175,7 +200,7 @@ function statusName(code) {
 }
 
 function msgTypeName(type) {
-  return MSG_NAME_BY_TYPE[type] || `0x${(type & 0xff).toString(16).padStart(2, "0")}`;
+  return MSG_NAME_BY_TYPE[type] || `0x${(type & 0xffff).toString(16).padStart(4, "0")}`;
 }
 
 function fileReasonName(reasonCode) {
@@ -183,14 +208,16 @@ function fileReasonName(reasonCode) {
 }
 
 function parseRspHeader(payload) {
-  if (payload.length < 3) {
+  if (payload.length < RSP_HEADER_SIZE) {
     throw new Error("Response payload too short");
   }
   const status = payload[0];
   const requestId = payload[1] | (payload[2] << 8);
-  const body = payload.slice(3);
+  const body = payload.slice(RSP_HEADER_SIZE);
   return { status, requestId, body };
 }
+
+/* ---- BLE Client ---- */
 
 class RetroWatchBleClient {
   constructor(opts = {}) {
@@ -214,7 +241,7 @@ class RetroWatchBleClient {
     this.txLock = Promise.resolve();
 
     this.maxNotifyPayloadBytes = 20;
-    this.maxMessagePayloadBytes = 17;
+    this.maxMessagePayloadBytes = 16; /* 20 - 4 byte header */
     this.debugLogger = typeof opts.debugLogger === "function" ? opts.debugLogger : null;
 
     this._onNotification = this._onNotification.bind(this);
@@ -389,7 +416,7 @@ class RetroWatchBleClient {
   _setTransportPayloadLimits(notifyPayloadBytes, messagePayloadBytes = null) {
     const clampedNotify = Math.max(20, Math.min(505, notifyPayloadBytes | 0));
     this.maxNotifyPayloadBytes = clampedNotify;
-    const protocolPayloadCap = Math.max(0, clampedNotify - 3);
+    const protocolPayloadCap = Math.max(0, clampedNotify - HEADER_SIZE);
 
     if (messagePayloadBytes == null) {
       this.maxMessagePayloadBytes = protocolPayloadCap;
@@ -401,7 +428,7 @@ class RetroWatchBleClient {
   }
 
   _maxRspBodyBytes() {
-    return Math.max(0, this.maxMessagePayloadBytes - 3);
+    return Math.max(0, this.maxMessagePayloadBytes - RSP_HEADER_SIZE);
   }
 
   _maxReadChunkForPath(pathLen) {
@@ -417,7 +444,6 @@ class RetroWatchBleClient {
   }
 
   _maxListChunkBytes() {
-    /* listPaged response body: has_more(1) + next_off(2) + chunk_len(2) + chunk */
     return this._maxRspBodyBytes() - 5;
   }
 
@@ -447,7 +473,6 @@ class RetroWatchBleClient {
         });
       }
     } catch (err) {
-      /* Keep conservative defaults when running against older firmware. */
       this._setTransportPayloadLimits(20);
       this._emitDebug({
         phase: "transport_info",
@@ -461,6 +486,8 @@ class RetroWatchBleClient {
       });
     }
   }
+
+  /* ---- Protocol commands ---- */
 
   async getTransportInfo() {
     const reqId = this._nextRequestId();
@@ -526,8 +553,8 @@ class RetroWatchBleClient {
     const pathBytes = textToBytes(path);
     const payload = concatBytes([u16LE(reqId), u16LE(pathBytes.length), pathBytes]);
 
-    const packet = await this.sendRequest(MSG.LFS_LIST_REQ, payload, {
-      expectType: MSG.LFS_LIST_RSP,
+    const packet = await this.sendRequest(MSG.FS_LIST_REQ, payload, {
+      expectType: MSG.FS_LIST_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -558,8 +585,8 @@ class RetroWatchBleClient {
       u16LE(requestChunkBytes & 0xffff),
     ]);
 
-    const packet = await this.sendRequest(MSG.LFS_LIST_REQ, payload, {
-      expectType: MSG.LFS_LIST_RSP,
+    const packet = await this.sendRequest(MSG.FS_LIST_REQ, payload, {
+      expectType: MSG.FS_LIST_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -643,8 +670,8 @@ class RetroWatchBleClient {
       pathBytes,
     ]);
 
-    const packet = await this.sendRequest(MSG.LFS_READ_REQ, payload, {
-      expectType: MSG.LFS_READ_RSP,
+    const packet = await this.sendRequest(MSG.FS_READ_REQ, payload, {
+      expectType: MSG.FS_READ_RSP,
       timeoutMs: 5000,
       requestId: reqId,
     });
@@ -672,8 +699,8 @@ class RetroWatchBleClient {
       dataBytes,
     ]);
 
-    const packet = await this.sendRequest(MSG.LFS_WRITE_REQ, payload, {
-      expectType: MSG.LFS_WRITE_RSP,
+    const packet = await this.sendRequest(MSG.FS_WRITE_REQ, payload, {
+      expectType: MSG.FS_WRITE_RSP,
       timeoutMs: 5000,
       requestId: reqId,
     });
@@ -696,8 +723,8 @@ class RetroWatchBleClient {
     const pathBytes = textToBytes(path);
     const payload = concatBytes([u16LE(reqId), u16LE(pathBytes.length), pathBytes]);
 
-    const packet = await this.sendRequest(MSG.LFS_MKDIR_REQ, payload, {
-      expectType: MSG.LFS_MKDIR_RSP,
+    const packet = await this.sendRequest(MSG.FS_MKDIR_REQ, payload, {
+      expectType: MSG.FS_MKDIR_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -714,8 +741,8 @@ class RetroWatchBleClient {
     const pathBytes = textToBytes(path);
     const payload = concatBytes([u16LE(reqId), u16LE(pathBytes.length), pathBytes]);
 
-    const packet = await this.sendRequest(MSG.LFS_DELETE_REQ, payload, {
-      expectType: MSG.LFS_DELETE_RSP,
+    const packet = await this.sendRequest(MSG.FS_DELETE_REQ, payload, {
+      expectType: MSG.FS_DELETE_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -732,8 +759,8 @@ class RetroWatchBleClient {
     const pathBytes = textToBytes(path);
     const payload = concatBytes([u16LE(reqId), u16LE(pathBytes.length), pathBytes]);
 
-    const packet = await this.sendRequest(MSG.LFS_STAT_REQ, payload, {
-      expectType: MSG.LFS_STAT_RSP,
+    const packet = await this.sendRequest(MSG.FS_STAT_REQ, payload, {
+      expectType: MSG.FS_STAT_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -771,8 +798,8 @@ class RetroWatchBleClient {
       dstBytes,
     ]);
 
-    const packet = await this.sendRequest(MSG.LFS_RENAME_REQ, payload, {
-      expectType: MSG.LFS_RENAME_RSP,
+    const packet = await this.sendRequest(MSG.FS_RENAME_REQ, payload, {
+      expectType: MSG.FS_RENAME_RSP,
       timeoutMs: 4000,
       requestId: reqId,
     });
@@ -950,6 +977,8 @@ class RetroWatchBleClient {
     };
   }
 
+  /* ---- High-level helpers ---- */
+
   async fileTransfer(data, opts = {}) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     const launch = opts.launch !== false;
@@ -961,7 +990,6 @@ class RetroWatchBleClient {
     const chunkSize = Math.max(1, Math.min(requestedChunk, autoChunk, 0xffff));
     const requestedWindow = opts.chunksPerAck == null ? 16 : opts.chunksPerAck;
     const allowOutOfOrder = opts.allowOutOfOrder === true;
-    // Firmware currently validates strict in-order chunk offsets, so default to single in-flight chunk.
     const chunkWindow = allowOutOfOrder ? Math.max(1, Math.min(requestedWindow | 0, 16)) : 1;
     const totalCrc32 = crc32(bytes);
 
@@ -1173,6 +1201,8 @@ class RetroWatchBleClient {
     };
   }
 
+  /* ---- Request/response infrastructure ---- */
+
   async sendRequest(type, payload, opts = {}) {
     this._assertConnected();
 
@@ -1244,7 +1274,7 @@ class RetroWatchBleClient {
       }
 
       if (entry.requestId != null && entry.requestIdInHeader) {
-        if (packet.payload.length < 3) {
+        if (packet.payload.length < RSP_HEADER_SIZE) {
           continue;
         }
         const rspReqId = packet.payload[1] | (packet.payload[2] << 8);
@@ -1303,13 +1333,21 @@ class RetroWatchBleClient {
   }
 }
 
+/* ---- Export ---- */
+
 window.RetroWatchBle = {
   RetroWatchBleClient,
   MSG,
   STATUS,
   FILE_ERROR_REASON,
+  UPLOAD_FLAG,
+  HEADER_SIZE,
+  MAX_PAYLOAD,
+  MAX_FRAME,
+  RSP_HEADER_SIZE,
   msgTypeName,
   statusName,
+  fileReasonName,
   crc32,
   SERVICE_UUID,
   CHARACTERISTIC_UUID,

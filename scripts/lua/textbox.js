@@ -145,7 +145,10 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
           break;
         }
 
-        // case 6: embedded texture — handled separately via .d2 file
+        // case 6: embedded D2 texture data (copy to own buffer)
+        case 6:
+          font.embeddedD2 = new Uint8Array(bytes.slice(offset, offset + blockSize));
+          break;
       }
 
       offset += blockSize;
@@ -403,6 +406,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
             pivotX: 0,
             pivotY: 0,
             filter: 'nearest',
+            color: tb._color ?? 0xFFFFFF,
           });
         }
 
@@ -505,28 +509,34 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
           const font = this._parseBMFont(fntBytes);
           const fontName = fntPath.split('/').pop().replace(/\.fnt$/i, '');
 
-          // The companion .d2 texture atlas has the same base name
-          const d2Path = fntPath.replace(/\.fnt$/i, '.d2');
+          // Use embedded D2 from block 6 if available, otherwise load separate .d2
+          let d2Bytes = font.embeddedD2 || null;
+          let d2Path = null;
+
+          if (!d2Bytes) {
+            d2Path = fntPath.replace(/\.fnt$/i, '.d2');
+            const d2Raw = await this._loadBinary(d2Path);
+            if (d2Raw) {
+              d2Bytes = new Uint8Array(d2Raw);
+            }
+          }
 
           // Read D2TX header for palette info
           let paletteSlot = 1;
           let paletteOffset = 0;
-          const d2Raw = await this._loadBinary(d2Path);
-          if (d2Raw) {
-            const d2Bytes = new Uint8Array(d2Raw);
-            if (d2Bytes.length >= 32 &&
-                d2Bytes[0] === 0x44 && d2Bytes[1] === 0x32 &&
-                d2Bytes[2] === 0x54 && d2Bytes[3] === 0x58) {
-              const d2View = new DataView(d2Bytes.buffer, d2Bytes.byteOffset, d2Bytes.byteLength);
-              paletteSlot = d2View.getUint16(10, true) || 1;
-              paletteOffset = d2Bytes[12] || 0;
-            }
+          if (d2Bytes && d2Bytes.length >= 32 &&
+              d2Bytes[0] === 0x44 && d2Bytes[1] === 0x32 &&
+              d2Bytes[2] === 0x54 && d2Bytes[3] === 0x58) {
+            const d2View = new DataView(d2Bytes.buffer, d2Bytes.byteOffset, d2Bytes.byteLength);
+            paletteSlot = d2View.getUint16(10, true) || 1;
+            paletteOffset = d2Bytes[12] || 0;
           }
 
           this.fontAssets.set(fontName, {
             name: fontName,
             fntPath,
             d2Path,
+            d2Bytes,
             font,
             paletteSlot,
             paletteOffset,
@@ -549,13 +559,17 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
     for (const [fontName, asset] of this.fontAssets.entries()) {
       try {
-        const raw = await this._loadBinary(asset.d2Path);
-        if (!raw) continue;
+        let d2Bytes = asset.d2Bytes;
 
-        const d2Bytes = new Uint8Array(raw);
-        if (d2Bytes.length < 32 ||
+        if (!d2Bytes && asset.d2Path) {
+          const raw = await this._loadBinary(asset.d2Path);
+          if (raw) d2Bytes = new Uint8Array(raw);
+        }
+
+        if (!d2Bytes || d2Bytes.length < 32 ||
             d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
             d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
+          console.warn(`[LuaTextBox] No valid D2TX data for font "${fontName}"`);
           continue;
         }
 

@@ -455,8 +455,8 @@
 
 <div id="welcomeOverlay">
   <div class="welcomeCard">
-    <h2>RetroWatch</h2>
-    <p>Connect your watch to get started.</p>
+    <h2>RetroWatch v2.0</h2>
+    <p>Connect your watch to get started. (16-bit message protocol)</p>
     <button id="welcomeConnectBtn">Connect</button>
     <div id="welcomeProgress" class="welcomeProgress"><div class="progressTrack"><div class="progressBar"></div></div></div>
     <div id="welcomeStatus" class="welcomeStatus"></div>
@@ -464,7 +464,7 @@
 </div>
 
 <div id="mainUI">
-<h1>RetroWatch BLE Explorer</h1>
+<h1>RetroWatch BLE Explorer v2.0</h1>
 <div id="fwBanner"></div>
 
 <div class="toolbar">
@@ -610,7 +610,7 @@
   </div>
 </div>
 
-<script src="./retrowatch-ble-client.js"></script>
+<script src="./retrowatch-ble-client-v2.js"></script>
 <script>
 const BleApi = window.RetroWatchBle;
 const client = new BleApi.RetroWatchBleClient();
@@ -1847,9 +1847,9 @@ welcomeConnectBtn.addEventListener("click", async () => {
       version = await client.ping("version-probe");
     } catch (pingErr) {
       log(`Ping failed (wrong protocol version?): ${pingErr.message}`, "err");
-      welcomeStatusEl.textContent = "Protocol mismatch — switching to v2...";
+      welcomeStatusEl.textContent = "Protocol mismatch — switching to v1...";
       await new Promise(r => setTimeout(r, 800));
-      location.href = "retrowatch-ble-test-v2.html";
+      location.href = "retrowatch-ble-test.html";
       return;
     }
 

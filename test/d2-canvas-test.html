@@ -85,12 +85,15 @@
   <label>Test Size:
     <select id="testSize">
       <option value="8">8×8</option>
-      <option value="16" selected>16×16</option>
+      <option value="16">16×16</option>
       <option value="32">32×32</option>
+      <option value="64">64×64</option>
+      <option value="128" selected>128×128</option>
+      <option value="256">256×256</option>
     </select>
   </label>
   <label>Scale:
-    <input id="scaleFactor" type="number" value="8" min="1" max="32" style="width:50px">
+    <input id="scaleFactor" type="number" value="2" min="1" max="32" style="width:50px">
   </label>
   <label>Filter:
     <select id="filterMode">
@@ -106,6 +109,7 @@
   </label>
   <button id="runBtn">Run All Tests</button>
   <button id="runBlitBtn">Run Blit Tests</button>
+  <button id="bleBtn" class="ble-btn">Connect BLE</button>
 </div>
 
 <div id="summary" style="display:none"></div>
@@ -113,6 +117,7 @@
 <div id="log"></div>
 
 <script src="../scripts/graphics/d2-canvas.js"></script>
+<script src="retrowatch-ble-client-v2.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
    Test Harness  (D2TX_HEADER_SIZE, D2_FORMAT, D2Canvas come from d2-canvas.js)
@@ -721,6 +726,7 @@ function runAllTests() {
       // Build card
       const status = result.pass ? 'pass' : 'fail';
       card.classList.add(status);
+      card.dataset.format = test.format;
       card.innerHTML = `
         <h3>
           <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
@@ -728,7 +734,9 @@ function runAllTests() {
         </h3>
         <div class="canvases"></div>
         <div class="legend">Left: GPU (D2Canvas) &nbsp;|&nbsp; Right: CPU Reference</div>
+        <div class="upload-status">Click to send over BLE</div>
       `;
+      card.addEventListener('click', () => sendD2OverBle(test));
       const canvases = card.querySelector('.canvases');
       canvases.appendChild(gpuDisplayCanvas);
       canvases.appendChild(cpuCanvas);
@@ -748,13 +756,16 @@ function runAllTests() {
     } catch (err) {
       failCount++;
       card.classList.add('fail');
+      card.dataset.format = test.format;
       card.innerHTML = `
         <h3>
           <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
           <span class="status fail">ERROR</span>
         </h3>
         <div style="color:#f44;font-size:11px;word-break:break-all">${err.message}</div>
+        <div class="upload-status">Click to send over BLE</div>
       `;
+      card.addEventListener('click', () => sendD2OverBle(test));
       log(`  ✗ ${test.name}: ${err.message}`, 'err');
     }
 
@@ -988,6 +999,238 @@ function runBlitTests() {
   }
 
   gpu.destroy();
+}
+
+// ── BLE connection ───────────────────────────────────────────────
+let bleClient = null;
+const bleBtn = document.getElementById('bleBtn');
+console.log('[BLE] button:', bleBtn, 'RetroWatchBle:', typeof window.RetroWatchBle, 'bluetooth:', typeof navigator.bluetooth);
+
+bleBtn.addEventListener('click', async () => {
+  console.log('[BLE] click handler fired');
+  if (bleClient && bleClient.isConnected()) {
+    bleClient.disconnect();
+    bleClient = null;
+    bleBtn.textContent = 'Connect BLE';
+    bleBtn.classList.remove('connected');
+    log('[BLE] Disconnected');
+    return;
+  }
+  if (!window.RetroWatchBle) {
+    log('[BLE] retrowatch-ble-client-v2.js not loaded!', 'err');
+    return;
+  }
+  if (!navigator.bluetooth) {
+    log('[BLE] Web Bluetooth not available — use Chrome and serve over localhost or HTTPS', 'err');
+    return;
+  }
+  try {
+    bleBtn.textContent = 'Connecting…';
+    console.log('[BLE] requesting device…');
+    bleClient = new RetroWatchBle.RetroWatchBleClient();
+    bleClient.onDisconnect(() => {
+      bleBtn.textContent = 'Connect BLE';
+      bleBtn.classList.remove('connected');
+      log('[BLE] Disconnected');
+    });
+    await bleClient.connect();
+    const pong = await bleClient.ping('d2test');
+    console.log('[BLE] ping OK, pong:', pong);
+    bleBtn.textContent = 'Disconnect BLE';
+    bleBtn.classList.add('connected');
+    log('[BLE] Connected (MTU payload=' + bleClient.maxMessagePayloadBytes + ', ping OK)');
+  } catch (e) {
+    console.error('[BLE] connect error:', e);
+    bleBtn.textContent = 'Connect BLE';
+    bleBtn.classList.remove('connected');
+    bleClient = null;
+    log('[BLE] ' + e.message, 'err');
+  }
+});
+
+/**
+ * Build a binary PMAP with a single palette entry from an RGBA8 palette.
+ * @param {Uint8Array} pal  1024-byte RGBA palette (256 colors × 4)
+ * @returns {Uint8Array} PMAP binary
+ */
+function buildPMAP(pal) {
+  const colorCount = 256;
+  const dataLen = 8 + 2 + colorCount * 4;
+  const buf = new Uint8Array(dataLen);
+  const view = new DataView(buf.buffer);
+  buf[0] = 0x50; buf[1] = 0x4D; buf[2] = 0x41; buf[3] = 0x50; // "PMAP"
+  buf[4] = 1;    // version
+  view.setUint16(6, 1, true); // 1 palette
+  view.setUint16(8, colorCount, true);
+  buf.set(pal.subarray(0, colorCount * 4), 10);
+  return buf;
+}
+
+/**
+ * Build a minimal STORE-only ZIP (RWA) containing the .d2 as Images/test.d2
+ * and a tiny Lua script that displays it.
+ * @param {Uint8Array} d2Bytes  The complete D2TX file
+ * @param {Uint8Array|null} palette  If non-null, 1024-byte RGBA palette → include PMAP
+ */
+function wrapD2InRwa(d2Bytes, palette) {
+  const lua = new TextEncoder().encode(
+    'function Setup()\n  Image.Create("test")\nend\n\nfunction Update(dt)\nend\n'
+  );
+
+  function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) {
+      crc ^= data[i];
+      for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xEDB88320 & (-(crc & 1)));
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  const files = [
+    { name: 'Images/test.d2', data: d2Bytes },
+    { name: 'Lua/main.lua',   data: lua },
+  ];
+  if (palette) {
+    files.push({ name: 'palette_map.pmap', data: buildPMAP(palette) });
+  }
+
+  // Calculate total size
+  let totalSize = 22; // EOCD
+  for (const f of files) {
+    totalSize += 30 + f.name.length + f.data.length; // local header + data
+    totalSize += 46 + f.name.length;                  // central dir entry
+  }
+
+  const buf = new ArrayBuffer(totalSize);
+  const view = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  let pos = 0;
+
+  const entries = [];
+
+  for (const f of files) {
+    const nameBytes = new TextEncoder().encode(f.name);
+    const crc = crc32(f.data);
+    const localOffset = pos;
+
+    // Local file header
+    view.setUint32(pos, 0x04034b50, true); pos += 4;
+    view.setUint16(pos, 20, true); pos += 2;       // version needed
+    view.setUint16(pos, 0, true); pos += 2;        // flags
+    view.setUint16(pos, 0, true); pos += 2;        // compression: STORE
+    view.setUint16(pos, 0, true); pos += 2;        // mod time
+    view.setUint16(pos, 0, true); pos += 2;        // mod date
+    view.setUint32(pos, crc, true); pos += 4;
+    view.setUint32(pos, f.data.length, true); pos += 4; // compressed
+    view.setUint32(pos, f.data.length, true); pos += 4; // uncompressed
+    view.setUint16(pos, nameBytes.length, true); pos += 2;
+    view.setUint16(pos, 0, true); pos += 2;        // extra length
+    u8.set(nameBytes, pos); pos += nameBytes.length;
+    u8.set(f.data instanceof Uint8Array ? f.data : new Uint8Array(f.data), pos);
+    pos += f.data.length;
+
+    entries.push({ nameBytes, crc, size: f.data.length, localOffset });
+  }
+
+  // Central directory
+  const cdStart = pos;
+  for (const e of entries) {
+    view.setUint32(pos, 0x02014b50, true); pos += 4;
+    view.setUint16(pos, 20, true); pos += 2;       // version made by
+    view.setUint16(pos, 20, true); pos += 2;       // version needed
+    view.setUint16(pos, 0, true); pos += 2;        // flags
+    view.setUint16(pos, 0, true); pos += 2;        // compression
+    view.setUint16(pos, 0, true); pos += 2;        // time
+    view.setUint16(pos, 0, true); pos += 2;        // date
+    view.setUint32(pos, e.crc, true); pos += 4;
+    view.setUint32(pos, e.size, true); pos += 4;
+    view.setUint32(pos, e.size, true); pos += 4;
+    view.setUint16(pos, e.nameBytes.length, true); pos += 2;
+    view.setUint16(pos, 0, true); pos += 2;        // extra
+    view.setUint16(pos, 0, true); pos += 2;        // comment
+    view.setUint16(pos, 0, true); pos += 2;        // disk
+    view.setUint16(pos, 0, true); pos += 2;        // internal attrs
+    view.setUint32(pos, 0, true); pos += 4;        // external attrs
+    view.setUint32(pos, e.localOffset, true); pos += 4;
+    u8.set(e.nameBytes, pos); pos += e.nameBytes.length;
+  }
+  const cdSize = pos - cdStart;
+
+  // EOCD
+  view.setUint32(pos, 0x06054b50, true); pos += 4;
+  view.setUint16(pos, 0, true); pos += 2;
+  view.setUint16(pos, 0, true); pos += 2;
+  view.setUint16(pos, entries.length, true); pos += 2;
+  view.setUint16(pos, entries.length, true); pos += 2;
+  view.setUint32(pos, cdSize, true); pos += 4;
+  view.setUint32(pos, cdStart, true); pos += 4;
+  view.setUint16(pos, 0, true); pos += 2;
+
+  return new Uint8Array(buf);
+}
+
+async function sendD2OverBle(test) {
+  if (!bleClient || !bleClient.isConnected()) {
+    log('[BLE] Not connected — click Connect BLE first', 'err');
+    return;
+  }
+
+  const size = parseInt(document.getElementById('testSize').value);
+  const w = size, h = size;
+  const pal = makeTestPalette();
+
+  const { pixelData } = test.indexed ? test.gen(w, h, pal) : test.gen(w, h);
+  const d2File = buildD2TX(test.format, w, h, pixelData,
+    test.indexed ? { paletteIndex: 1 } : {});
+
+  // Wrap the .d2 in a minimal RWA so firmware renders it via the normal RWA pipeline
+  const rwaFile = wrapD2InRwa(d2File, test.indexed ? pal : null);
+
+  const safeName = test.name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+  const filename = `test_${safeName}.rwa`;
+
+  const statusEl = document.querySelector(`[data-format="${test.format}"] .upload-status`);
+  if (statusEl) {
+    statusEl.textContent = 'Sending ' + rwaFile.length + ' bytes…';
+    statusEl.className = 'upload-status sending';
+  }
+
+  log(`[BLE] Uploading ${filename} (${rwaFile.length} bytes, d2=${d2File.length} bytes, fmt=0x${test.format.toString(16)})…`);
+
+  try {
+    const result = await bleClient.fileTransfer(rwaFile, {
+      launch: true,
+      save: false,
+      path: filename,
+      onProgress: (sent, total) => {
+        if (statusEl) {
+          const pct = Math.round(sent / total * 100);
+          statusEl.textContent = `Sending… ${pct}%`;
+        }
+      },
+    });
+
+    if (result.status === 0) {
+      log(`[BLE] ✓ ${test.name} uploaded OK`, 'ok');
+      if (statusEl) {
+        statusEl.textContent = '✓ Sent OK';
+        statusEl.className = 'upload-status ok';
+      }
+    } else {
+      const err = result.error || {};
+      log(`[BLE] ✗ ${test.name} failed: ${err.name || 'status=' + result.status} (reason: ${err.reasonName || 'unknown'})`, 'err');
+      if (statusEl) {
+        statusEl.textContent = '✗ ' + (err.reasonName || err.name || 'Failed');
+        statusEl.className = 'upload-status err';
+      }
+    }
+  } catch (e) {
+    log(`[BLE] ✗ ${test.name}: ${e.message}`, 'err');
+    if (statusEl) {
+      statusEl.textContent = '✗ ' + e.message;
+      statusEl.className = 'upload-status err';
+    }
+  }
 }
 
 // ── Wire up buttons ──────────────────────────────────────────────

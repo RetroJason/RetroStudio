@@ -1,6 +1,6 @@
 // font-builder.js
-// Build-time font processor: reads .font metadata, copies the pre-built .d2
-// (with header patching) and .fnt BMFont binary to build output.
+// Build-time font processor: reads .font metadata, loads the source TTF,
+// generates the atlas (.d2 + .fnt) if needed, and copies to build output.
 
 console.log('[FontBuilder] Class definition loading');
 
@@ -14,17 +14,14 @@ class FontBuilder extends BaseBuilder {
    *   "sourceFontPath": "...",
    *   "fontFamily": "...",
    *   "fontSize": 32,
+   *   "characters": "...",
    *   "outputPixelFormat": "d2_mode_alpha8",
    *   ...
    * }
    *
-   * The FontEditor already creates companion files alongside the .font:
-   *   name.d2   — D2TX atlas texture
-   *   name.fnt  — BMFont binary glyph data
-   *   name.png  — source atlas image (not needed in build output)
-   *
-   * This builder loads and patches the .d2 header, then copies both .d2 and
-   * .fnt to the build output directory.
+   * The builder first tries to use pre-generated companion files (name.d2,
+   * name.fnt).  If those are missing it falls back to loading the source
+   * TTF and regenerating the atlas via FontAtlasGenerator at build time.
    */
   async build(file) {
     const tag = '[FontBuilder]';
@@ -46,65 +43,86 @@ class FontBuilder extends BaseBuilder {
 
       const basePath = file.path.replace(/\.font$/i, '');
 
-      // ── 2. Load the source .d2 ───────────────────────────────────
+      // ── 2. Try pre-generated .d2 first ───────────────────────────
       const sourceD2Path = basePath + '.d2';
-      const sourceD2Content = await this._loadFileContent(sourceD2Path);
-      if (!sourceD2Content) {
-        throw new Error(`Source .d2 not found: ${sourceD2Path} — open in Font Editor and generate atlas first`);
-      }
+      let sourceD2Content = await this._loadFileContent(sourceD2Path);
 
-      let d2Bytes = this._toUint8Array(sourceD2Content);
-      if (!d2Bytes || d2Bytes.length < 32 ||
-          d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
-          d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
-        throw new Error(`Invalid D2TX magic in source .d2: ${sourceD2Path}`);
-      }
+      let d2Bytes;
+      let fntBytes;
 
-      console.log(`${tag} Loaded source .d2: ${d2Bytes.length} bytes from ${sourceD2Path}`);
+      if (sourceD2Content) {
+        d2Bytes = this._toUint8Array(sourceD2Content);
+        if (!d2Bytes || d2Bytes.length < 32 ||
+            d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
+            d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
+          console.warn(`${tag} Invalid D2TX in ${sourceD2Path}, will regenerate`);
+          d2Bytes = null;
+        } else {
+          console.log(`${tag} Using pre-generated .d2: ${d2Bytes.length} bytes`);
+        }
 
-      // Make a mutable copy for header patching
-      const output = new Uint8Array(d2Bytes.length);
-      output.set(d2Bytes);
-
-      // ── 3. Save .d2 to build output ──────────────────────────────
-      const d2OutputPath = this._toBuildOutputPath(basePath + '.d2');
-      await this._saveFile(d2OutputPath, output);
-      console.log(`${tag} ✓ Saved .d2: ${d2OutputPath} (${output.length} bytes)`);
-
-      // ── 4. Copy .fnt to build output ─────────────────────────────
-      const sourceFntPath = basePath + '.fnt';
-      const fntContent = await this._loadFileContent(sourceFntPath);
-      let fntSaved = false;
-      let fntOutputPath = null;
-      if (fntContent) {
-        const fntBytes = this._toUint8Array(fntContent);
-        if (fntBytes) {
-          fntOutputPath = this._toBuildOutputPath(basePath + '.fnt');
-          await this._saveFile(fntOutputPath, fntBytes);
-          fntSaved = true;
-          console.log(`${tag} ✓ Saved .fnt: ${fntOutputPath} (${fntBytes.length} bytes)`);
+        // Also grab pre-generated .fnt
+        const sourceFntPath = basePath + '.fnt';
+        const fntContent = await this._loadFileContent(sourceFntPath);
+        if (fntContent) {
+          fntBytes = this._toUint8Array(fntContent);
         }
       }
-      if (!fntSaved) {
-        console.warn(`${tag} .fnt not found at ${sourceFntPath} — skipping`);
+
+      // ── 3. If no pre-generated files, generate from source TTF ───
+      if (!d2Bytes) {
+        console.log(`${tag} No pre-generated .d2 found, generating from source TTF...`);
+        const generated = await this._generateFromSource(fontJson, basePath);
+        d2Bytes = generated.d2Bytes;
+        fntBytes = generated.fntBytes;
       }
 
-      const headerView = new DataView(output.buffer, output.byteOffset, output.byteLength);
-      const hWidth = headerView.getUint16(6, true);
-      const hHeight = headerView.getUint16(8, true);
+      // ── 4. Embed .d2 as block type 6 in the .fnt ────────────────
+      // The firmware Font parser reads block 6 as the embedded texture,
+      // so the .d2 is not saved separately to build output.
+      if (fntBytes && d2Bytes) {
+        const block6Header = 5; // 1 byte type + 4 bytes size
+        const combined = new Uint8Array(fntBytes.length + block6Header + d2Bytes.length);
+        combined.set(fntBytes, 0);
+        // Block type 6
+        combined[fntBytes.length] = 6;
+        // Block size (little-endian uint32)
+        const sizeOffset = fntBytes.length + 1;
+        combined[sizeOffset]     =  d2Bytes.length        & 0xFF;
+        combined[sizeOffset + 1] = (d2Bytes.length >> 8)  & 0xFF;
+        combined[sizeOffset + 2] = (d2Bytes.length >> 16) & 0xFF;
+        combined[sizeOffset + 3] = (d2Bytes.length >> 24) & 0xFF;
+        combined.set(d2Bytes, fntBytes.length + block6Header);
+        fntBytes = combined;
+        console.log(`${tag} Embedded .d2 (${d2Bytes.length} bytes) as block 6 in .fnt`);
+      }
+
+      // ── 5. Save .fnt to build output ─────────────────────────────
+      let fntOutputPath = null;
+      if (fntBytes) {
+        fntOutputPath = this._toBuildOutputPath(basePath + '.fnt');
+        await this._saveFile(fntOutputPath, fntBytes);
+        console.log(`${tag} ✓ Saved .fnt: ${fntOutputPath} (${fntBytes.length} bytes)`);
+      } else {
+        console.warn(`${tag} No .fnt data available for ${file.path}`);
+      }
+
+      const d2View = new DataView(d2Bytes.buffer, d2Bytes.byteOffset, d2Bytes.byteLength);
+      const hWidth = d2View.getUint16(6, true);
+      const hHeight = d2View.getUint16(8, true);
 
       return {
         success: true,
         inputPath: file.path,
-        outputPath: d2OutputPath,
-        additionalOutputPaths: fntOutputPath ? [fntOutputPath] : [],
+        outputPath: fntOutputPath,
+        additionalOutputPaths: [],
         builder: 'font',
         meta: {
           width: hWidth,
           height: hHeight,
           format: fontJson.outputPixelFormat || 'd2_mode_alpha8',
-          binarySize: output.length - 32,
-          fntSaved
+          binarySize: d2Bytes.length - 32,
+          fntSaved: !!fntOutputPath
         }
       };
 
@@ -117,6 +135,122 @@ class FontBuilder extends BaseBuilder {
         builder: 'font'
       };
     }
+  }
+
+  // ── Generate .d2 + .fnt from source TTF at build time ───────────
+
+  async _generateFromSource(fontJson, basePath) {
+    const tag = '[FontBuilder]';
+
+    // Load the source TTF
+    const ttfPath = fontJson.sourceFontPath;
+    if (!ttfPath) {
+      throw new Error('No sourceFontPath in .font metadata — open in Font Editor and save first');
+    }
+
+    const ttfContent = await this._loadFileContent(ttfPath);
+    let ttfBuffer;
+    if (!ttfContent) {
+      // Try same folder as the .font file
+      const folder = basePath.substring(0, basePath.lastIndexOf('/'));
+      const ttfName = ttfPath.split('/').pop();
+      const altPath = folder ? `${folder}/${ttfName}` : ttfName;
+      const altContent = await this._loadFileContent(altPath);
+      if (!altContent) {
+        throw new Error(`Source TTF not found: ${ttfPath} (also tried ${altPath})`);
+      }
+      ttfBuffer = this._toArrayBuffer(altContent);
+    } else {
+      ttfBuffer = this._toArrayBuffer(ttfContent);
+    }
+
+    if (!ttfBuffer) {
+      throw new Error(`Failed to convert TTF content to ArrayBuffer`);
+    }
+
+    console.log(`${tag} Loaded source TTF: ${ttfBuffer.byteLength} bytes`);
+
+    // Generate atlas using FontAtlasGenerator
+    if (typeof FontAtlasGenerator === 'undefined') {
+      throw new Error('FontAtlasGenerator not available — cannot generate atlas at build time');
+    }
+
+    const gen = new FontAtlasGenerator();
+    const family = fontJson.fontFamily || 'build_font_' + Date.now();
+    await gen.loadFont(ttfBuffer, family);
+
+    const result = gen.generate({
+      fontFamily:   family,
+      fontSize:     fontJson.fontSize || 32,
+      chars:        fontJson.characters || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,;:!?\'"()-+*/=',
+      padding:      fontJson.padding ?? 1,
+      spacing:      fontJson.spacing ?? 1,
+      antialiasing: !!fontJson.antialias,
+    });
+
+    console.log(`${tag} Generated atlas: ${result.width}×${result.height}, ${result.glyphs.length} glyphs`);
+
+    // Build .fnt binary
+    const base = basePath.split('/').pop();
+    const fntBytes = gen.toBMFontBinary(result, `${base}.png`);
+
+    // Build .d2 binary
+    if (typeof D2File === 'undefined' || typeof FORMAT_STRING_TO_ENUM === 'undefined' || typeof buildD2TX === 'undefined') {
+      throw new Error('D2File/buildD2TX not available — cannot generate .d2 at build time');
+    }
+
+    const format = fontJson.outputPixelFormat || 'd2_mode_alpha8';
+    const ctx = result.canvas.getContext('2d');
+    const origW = result.canvas.width, origH = result.canvas.height;
+    const rgba = ctx.getImageData(0, 0, origW, origH).data;
+
+    // Pre-rotate 90° CW so texture matches Dave2D scan order
+    const rotated = new Uint8Array(origW * origH * 4);
+    for (let y = 0; y < origH; y++)
+      for (let x = 0; x < origW; x++) {
+        const s = (y * origW + x) * 4, d = (x * origH + (origH - 1 - y)) * 4;
+        rotated[d] = rgba[s]; rotated[d+1] = rgba[s+1]; rotated[d+2] = rgba[s+2]; rotated[d+3] = rgba[s+3];
+      }
+
+    const formatBytes = D2File.convertRGBAToFormat(rotated, format);
+    const fmtEnum = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.ALPHA8;
+    const d2Bytes = buildD2TX(origH, origW, fmtEnum, formatBytes, {
+      paletteOffset: 0,
+      preRotated: true
+    });
+
+    console.log(`${tag} Generated .d2: ${d2Bytes.length} bytes, .fnt: ${fntBytes.length} bytes`);
+
+    // Also persist companions back to source folder so they exist for next build
+    const folder = basePath.substring(0, basePath.lastIndexOf('/'));
+    const savePath = (p, data) => {
+      const norm = window.ProjectPaths?.normalizeStoragePath?.(p) || p;
+      return window.fileIOService?.saveFile(norm, data, { binaryData: true });
+    };
+    try {
+      await savePath(basePath + '.d2', d2Bytes);
+      await savePath(basePath + '.fnt', fntBytes);
+      console.log(`${tag} Persisted generated companions to source folder`);
+    } catch (e) {
+      console.warn(`${tag} Could not persist companions: ${e.message}`);
+    }
+
+    return { d2Bytes: new Uint8Array(d2Bytes), fntBytes: new Uint8Array(fntBytes) };
+  }
+
+  _toArrayBuffer(raw) {
+    if (raw instanceof ArrayBuffer) return raw;
+    if (raw instanceof Uint8Array) return raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+    if (ArrayBuffer.isView(raw)) return raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+    if (typeof raw === 'string') {
+      try {
+        const bin = atob(raw);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes.buffer;
+      } catch (_) { /* not base64 */ }
+    }
+    return null;
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────

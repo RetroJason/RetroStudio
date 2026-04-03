@@ -602,7 +602,7 @@ class RibbonToolbar {
       if (textEl) textEl.textContent = `Uploading ${pkg.filename}...`;
 
       // Path must include filename so firmware knows the file type
-      const rsp = await this.watchClient.otaUploadFirmware(bytes, {
+      const rsp = await this.watchClient.fileTransfer(bytes, {
         launch: true,
         save: false,
         path: '/' + pkg.filename,

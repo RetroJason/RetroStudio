@@ -52,3 +52,7 @@ test/firmware/
 
 # External Lua engine
 lua.vm.js/
+
+# SDK release artifacts (hosted separately, not in git)
+sdk/*.zip
+sdk/*.vsix
