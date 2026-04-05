@@ -36,8 +36,8 @@ if (isset($_POST['update']) && isset($_SESSION['admin_logged_in'])) {
     // Change to repository directory
     chdir(REPO_PATH);
     
-    // Simple git pull operation
-    exec('git pull origin ' . GIT_BRANCH . ' 2>&1', $output, $return_code);
+    // Use --ff-only to avoid merge conflicts; fails cleanly if history diverged
+    exec('git pull --ff-only origin ' . GIT_BRANCH . ' 2>&1', $output, $return_code);
 
     // Initialize and update submodules
     if ($return_code === 0) { // Only proceed if the pull was successful
@@ -47,6 +47,29 @@ if (isset($_POST['update']) && isset($_SESSION['admin_logged_in'])) {
     $update_result = [
         'success' => $return_code === 0,
         'output' => implode("\n", array_merge($output, $output_submodules ?? [])),
+        'return_code' => $return_code
+    ];
+}
+
+// Handle force reset request (for after force-pushes / history rewrites)
+if (isset($_POST['force_reset']) && isset($_SESSION['admin_logged_in'])) {
+    $output = [];
+    $return_code = 0;
+    
+    chdir(REPO_PATH);
+    
+    exec('git fetch origin 2>&1', $output, $return_code);
+    if ($return_code === 0) {
+        exec('git reset --hard origin/' . GIT_BRANCH . ' 2>&1', $output, $return_code);
+    }
+    if ($return_code === 0) {
+        exec('git submodule update --init --recursive 2>&1', $output_sub, $return_code_sub);
+        $output = array_merge($output, $output_sub ?? []);
+    }
+    
+    $update_result = [
+        'success' => $return_code === 0,
+        'output' => implode("\n", $output),
         'return_code' => $return_code
     ];
 }
@@ -269,10 +292,16 @@ $is_logged_in = isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_i
             <?php endif; ?>
             
             <!-- Update Form -->
-            <form method="POST" onsubmit="return confirm('Are you sure you want to pull the latest changes from the repository?');">
+            <form method="POST" onsubmit="return confirm('Pull the latest changes?');">
                 <h3>Update Repository</h3>
-                <p>Click the button below to pull the latest changes from the repository:</p>
+                <p>Pull the latest changes (fast-forward only). If this fails after a force-push, use Force Reset below.</p>
                 <button type="submit" name="update" class="btn btn-success">Update Repository</button>
+            </form>
+
+            <!-- Force Reset Form -->
+            <form method="POST" style="margin-top: 15px;" onsubmit="return confirm('This will DISCARD all local changes and reset to match the remote. Continue?');">
+                <p>Force reset to remote (use after force-pushes or history rewrites):</p>
+                <button type="submit" name="force_reset" class="btn btn-danger">Force Reset to Remote</button>
             </form>
             
             <!-- Navigation -->
