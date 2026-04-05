@@ -130,8 +130,17 @@
 
     <div class="card">
       <h2>Prerequisites</h2>
-      <p>You'll need VS Code installed to use the RetroWatch extension and SDK.</p>
-      <a class="btn btn-secondary" href="https://code.visualstudio.com/" target="_blank">Download VS Code</a>
+      <p>Install these before setting up the SDK:</p>
+      <ol class="steps">
+        <li><strong>VS Code</strong> &mdash; required for the extension and build tasks.<br>
+          <a class="btn btn-secondary" style="margin-top:6px" href="https://code.visualstudio.com/" target="_blank">Download VS Code</a></li>
+        <li><strong>Arm GNU Toolchain</strong> &mdash; the ARM cross-compiler (<code>arm-none-eabi-gcc</code>). Install to <code>C:\devkitPro\RetroWatch</code>.<br>
+          <a class="btn btn-secondary" style="margin-top:6px" href="https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads" target="_blank">Download ARM Toolchain</a></li>
+        <li><strong>Python 3</strong> &mdash; needed for flashing and upload tools. Check "Add to PATH" during install.<br>
+          <a class="btn btn-secondary" style="margin-top:6px" href="https://www.python.org/downloads/" target="_blank">Download Python</a></li>
+        <li><strong>SEGGER J-Link</strong> (optional) &mdash; only needed for on-device debugging via SWD.<br>
+          <a class="btn btn-secondary" style="margin-top:6px" href="https://www.segger.com/downloads/jlink/" target="_blank">Download J-Link</a></li>
+      </ol>
     </div>
 
     <div class="card">
