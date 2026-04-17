@@ -555,7 +555,7 @@
             {"name": "color", "type": "int32", "description": "Text color (0x00RRGGBB)"},
             {"name": "text", "type": "string", "description": "Initial text string"}
           ],
-          "example": "TextBox.Create(\"title\", \"myfont\", 10, 20, 0, 0x00FFFFFF, \"Hello World\")"
+          "example": "local title = TextBox.Create(\"myfont\", 10, 20, 0, 0x00FFFFFF, \"Hello World\")"
         },
         {
           "name": "Destroy",
@@ -563,7 +563,7 @@
           "parameters": [
             {"name": "name", "type": "string", "description": "Textbox name"}
           ],
-          "example": "TextBox.Destroy(\"title\")"
+          "example": "TextBox.Destroy(title)"
         },
         {
           "name": "SetText",
@@ -572,7 +572,7 @@
             {"name": "name", "type": "string", "description": "Textbox name"},
             {"name": "text", "type": "string", "description": "New text string"}
           ],
-          "example": "TextBox.SetText(\"title\", \"New Text\")"
+          "example": "TextBox.SetText(title, \"New Text\")"
         },
         {
           "name": "GetText",

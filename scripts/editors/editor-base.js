@@ -258,10 +258,6 @@ class EditorBase extends ViewerBase {
       this.markClean();
       console.log(`[EditorBase] Saved ${this.path}`);
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.log('[EditorBase] Save cancelled by user');
-        return; // Don't alert on user cancel
-      }
       console.error('[EditorBase] Save failed:', error);
       // Keep the tab dirty since save failed
       alert(`Failed to save: ${error.message}`);
@@ -326,7 +322,7 @@ class EditorBase extends ViewerBase {
         
         if (!result || !result.filename) {
           console.log(`[EditorBase] Save cancelled by user`);
-          throw new DOMException('Save cancelled by user', 'AbortError');
+          return;
         }
         
         finalFilename = result.filename + extension;

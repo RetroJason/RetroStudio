@@ -47,11 +47,11 @@
  * Format enum → decode strategy (matches Dave2D hardware d2_mode_* defines):
  *  0x00  alpha8      8 bpp alpha     → white + alpha
  *  0x01  rgb565      16 bpp          → 5-6-5 unpack
- *  0x02  argb8888    32 bpp          → swizzle
+ *  0x02  argb8888    32 bpp          → little-endian 0xAARRGGBB
  *  0x03  argb4444    16 bpp          → 4-4-4-4 unpack
  *  0x04  argb1555    16 bpp          → 1-5-5-5 unpack
  *  0x05  ai44        4+4 bpp         → lo-nibble palette + hi-nibble alpha
- *  0x06  rgba8888    32 bpp          → direct
+ *  0x06  rgba8888    32 bpp          → little-endian 0xRRGGBBAA
  *  0x07  rgba4444    16 bpp          → 4-4-4-4 unpack
  *  0x08  rgba5551    16 bpp          → 5-5-5-1 unpack
  *  0x09  i8          8 bpp indexed   → direct palette lookup
@@ -61,8 +61,8 @@
  *  0x0D  alpha4      4 bpp alpha     → unpack nibble, white + alpha
  *  0x0E  alpha2      2 bpp alpha     → unpack 2-bit, white + alpha
  *  0x0F  alpha1      1 bpp alpha     → unpack bit, white + alpha
- *  0x40  rgb888      24 bpp          → direct
- *  0x41  rgb444      16 bpp          → 4-4-4 unpack (A=1)
+ *  0x40  rgb888      32 bpp          → little-endian 0x00RRGGBB
+ *  0x41  rgb444      16 bpp          → 4-4-4 unpack via RGB565-equivalent expansion (A=1)
  *  0x42  rgb555      16 bpp          → 5-5-5 unpack (A=1)
  */
 
@@ -111,7 +111,7 @@ const BITS_PER_PIXEL = {
   [D2_FORMAT.ALPHA4]:   4,
   [D2_FORMAT.ALPHA2]:   2,
   [D2_FORMAT.ALPHA1]:   1,
-  [D2_FORMAT.RGB888]:   24,
+  [D2_FORMAT.RGB888]:   32,
   [D2_FORMAT.RGB444]:   16,
   [D2_FORMAT.RGB555]:   16,
 };
@@ -187,7 +187,6 @@ uniform int   u_colorKey;       // RGB565 color key (-1 = disabled)
 uniform bool  u_filter;         // true = bilinear, false = nearest
 uniform bool  u_aa;             // true = 4× SSAA
 uniform bool  u_preRotated;     // true = texture stored rotated 90° CW
-uniform vec4  u_colorMult;      // per-blit color multiply (RGBA, default white)
 
 out vec4 fragColor;
 
@@ -209,7 +208,7 @@ vec4 decodePixel(int px, int py) {
   // ── Indexed 1-bit ──
   if (u_format == 0x0C) {
     int byteOff = pixelIndex / 8;
-    int bitIdx  = 7 - (pixelIndex & 7);
+    int bitIdx  = pixelIndex & 7;
     uint b = fetchByte(byteOff);
     int idx = int((b >> uint(bitIdx)) & 1u) + u_palOffset;
     return texelFetch(u_palette, ivec2(idx, 0), 0);
@@ -217,7 +216,7 @@ vec4 decodePixel(int px, int py) {
   // ── Indexed 2-bit ──
   if (u_format == 0x0B) {
     int byteOff = pixelIndex / 4;
-    int shift   = 6 - (pixelIndex & 3) * 2;
+    int shift   = (pixelIndex & 3) * 2;
     uint b = fetchByte(byteOff);
     int idx = int((b >> uint(shift)) & 3u) + u_palOffset;
     return texelFetch(u_palette, ivec2(idx, 0), 0);
@@ -228,9 +227,9 @@ vec4 decodePixel(int px, int py) {
     uint b = fetchByte(byteOff);
     int idx;
     if ((pixelIndex & 1) == 0) {
-      idx = int((b >> 4u) & 0xFu);
-    } else {
       idx = int(b & 0xFu);
+    } else {
+      idx = int((b >> 4u) & 0xFu);
     }
     idx += u_palOffset;
     return texelFetch(u_palette, ivec2(idx, 0), 0);
@@ -328,43 +327,46 @@ vec4 decodePixel(int px, int py) {
     uint lo = fetchByte(byteOff);
     uint hi = fetchByte(byteOff + 1);
     uint v = lo | (hi << 8u);
-    float r = float((v >>  8u) & 0xFu) / 15.0;
-    float g = float((v >>  4u) & 0xFu) / 15.0;
-    float b = float( v         & 0xFu) / 15.0;
+    uint r4 = (v >> 8u) & 0xFu;
+    uint g4 = (v >> 4u) & 0xFu;
+    uint b4 = v & 0xFu;
+    float r = float((r4 << 1u) | (r4 >> 3u)) / 31.0;
+    float g = float((g4 << 2u) | (g4 >> 2u)) / 63.0;
+    float b = float((b4 << 1u) | (b4 >> 3u)) / 31.0;
     return vec4(r, g, b, 1.0);
   }
 
-  // ── RGB888 ──
+  // ── RGB888 (stored as little-endian 0x00RRGGBB) ──
   if (u_format == 0x40) {
-    int byteOff = pixelIndex * 3;
-    float r = float(fetchByte(byteOff))     / 255.0;
+    int byteOff = pixelIndex * 4;
+    float b = float(fetchByte(byteOff))     / 255.0;
     float g = float(fetchByte(byteOff + 1)) / 255.0;
-    float b = float(fetchByte(byteOff + 2)) / 255.0;
+    float r = float(fetchByte(byteOff + 2)) / 255.0;
     return vec4(r, g, b, 1.0);
   }
-  // ── RGBA8888 ──
+  // ── RGBA8888 (stored as little-endian 0xRRGGBBAA) ──
   if (u_format == 0x06) {
     int byteOff = pixelIndex * 4;
-    float r = float(fetchByte(byteOff))     / 255.0;
-    float g = float(fetchByte(byteOff + 1)) / 255.0;
-    float b = float(fetchByte(byteOff + 2)) / 255.0;
-    float a = float(fetchByte(byteOff + 3)) / 255.0;
+    float a = float(fetchByte(byteOff))     / 255.0;
+    float b = float(fetchByte(byteOff + 1)) / 255.0;
+    float g = float(fetchByte(byteOff + 2)) / 255.0;
+    float r = float(fetchByte(byteOff + 3)) / 255.0;
     return vec4(r, g, b, a);
   }
-  // ── ARGB8888 ──
+  // ── ARGB8888 (stored as little-endian 0xAARRGGBB) ──
   if (u_format == 0x02) {
     int byteOff = pixelIndex * 4;
-    float a = float(fetchByte(byteOff))     / 255.0;
-    float r = float(fetchByte(byteOff + 1)) / 255.0;
-    float g = float(fetchByte(byteOff + 2)) / 255.0;
-    float b = float(fetchByte(byteOff + 3)) / 255.0;
+    float b = float(fetchByte(byteOff))     / 255.0;
+    float g = float(fetchByte(byteOff + 1)) / 255.0;
+    float r = float(fetchByte(byteOff + 2)) / 255.0;
+    float a = float(fetchByte(byteOff + 3)) / 255.0;
     return vec4(r, g, b, a);
   }
 
   // ── Alpha 1-bit ──
   if (u_format == 0x0F) {
     int byteOff = pixelIndex / 8;
-    int bitIdx  = 7 - (pixelIndex & 7);
+    int bitIdx  = pixelIndex & 7;
     uint bb = fetchByte(byteOff);
     float a = float((bb >> uint(bitIdx)) & 1u);
     return vec4(1.0, 1.0, 1.0, a);
@@ -372,7 +374,7 @@ vec4 decodePixel(int px, int py) {
   // ── Alpha 2-bit ──
   if (u_format == 0x0E) {
     int byteOff = pixelIndex / 4;
-    int shift   = 6 - (pixelIndex & 3) * 2;
+    int shift   = (pixelIndex & 3) * 2;
     uint bb = fetchByte(byteOff);
     float a = float((bb >> uint(shift)) & 3u) / 3.0;
     return vec4(1.0, 1.0, 1.0, a);
@@ -383,9 +385,9 @@ vec4 decodePixel(int px, int py) {
     uint bb = fetchByte(byteOff);
     float a;
     if ((pixelIndex & 1) == 0) {
-      a = float((bb >> 4u) & 0xFu) / 15.0;
-    } else {
       a = float(bb & 0xFu) / 15.0;
+    } else {
+      a = float((bb >> 4u) & 0xFu) / 15.0;
     }
     return vec4(1.0, 1.0, 1.0, a);
   }
@@ -493,9 +495,6 @@ void main() {
     fragColor = sampleTexture(uv);
   }
 
-  // Color multiply — matches dav2d d2_settextureoperation(d2_to_multiply)
-  fragColor.rgb *= u_colorMult.rgb;
-
   // Color key check — done once in main() to avoid per-sample overhead
   if (u_colorKey >= 0) {
     if (toRGB565(fragColor) == u_colorKey) fragColor.a = 0.0;
@@ -559,7 +558,7 @@ class D2Canvas {
       'u_rotation', 'u_pivot',
       'u_texData', 'u_palette', 'u_format', 'u_texWidth', 'u_texHeight',
       'u_texStride', 'u_palOffset', 'u_colorKey', 'u_filter', 'u_aa',
-      'u_preRotated', 'u_colorMult',
+      'u_preRotated',
     ];
     for (const n of names) this._uloc[n] = gl.getUniformLocation(this._program, n);
 
@@ -874,13 +873,6 @@ class D2Canvas {
     gl.uniform1i(u.u_aa, aa ? 1 : 0);
     gl.uniform1i(u.u_preRotated, tex.preRotated ? 1 : 0);
 
-    // Color multiply: 0x00RRGGBB integer → vec4(r, g, b, 1.0)
-    const colorInt = opts.color ?? 0xFFFFFF;
-    const cr = ((colorInt >> 16) & 0xFF) / 255;
-    const cg = ((colorInt >>  8) & 0xFF) / 255;
-    const cb = ( colorInt        & 0xFF) / 255;
-    gl.uniform4f(u.u_colorMult, cr, cg, cb, 1.0);
-
     // Draw fullscreen quad (4 vertices, triangle strip)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -987,9 +979,9 @@ function packIndexedPixels(indexedData, formatEnum) {
       for (let i = 0; i < count; i++) {
         const byteIdx = i >> 1;
         if ((i & 1) === 0) {
-          out[byteIdx] = (indexedData[i] & 0xF) << 4;
+          out[byteIdx] = indexedData[i] & 0xF;
         } else {
-          out[byteIdx] |= indexedData[i] & 0xF;
+          out[byteIdx] |= (indexedData[i] & 0xF) << 4;
         }
       }
       return out;
@@ -999,7 +991,7 @@ function packIndexedPixels(indexedData, formatEnum) {
       const out = new Uint8Array(Math.ceil(count / 4));
       for (let i = 0; i < count; i++) {
         const byteIdx = i >> 2;
-        const shift = 6 - ((i & 3) * 2);
+        const shift = (i & 3) * 2;
         out[byteIdx] |= (indexedData[i] & 3) << shift;
       }
       return out;
@@ -1009,7 +1001,7 @@ function packIndexedPixels(indexedData, formatEnum) {
       const out = new Uint8Array(Math.ceil(count / 8));
       for (let i = 0; i < count; i++) {
         const byteIdx = i >> 3;
-        const bitIdx = 7 - (i & 7);
+        const bitIdx = i & 7;
         if (indexedData[i] & 1) {
           out[byteIdx] |= 1 << bitIdx;
         }
@@ -1063,7 +1055,7 @@ const FORMAT_STRING_TO_ENUM = {
  * @returns {Uint8Array} Complete .d2 file bytes.
  */
 function buildD2TX(width, height, format, pixelData, opts = {}) {
-  const fmt = typeof format === 'string' ? (FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.I8) : format;
+  const fmt = typeof format === 'string' ? (FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.I8) : format;
   const colorKey = opts.colorKey ?? -1;
   const flags = (opts.rle ? 0x01 : 0) | (opts.preRotated ? 0x02 : 0) | (colorKey >= 0 ? 0x04 : 0);
   const paletteIndex = opts.paletteIndex || 0;

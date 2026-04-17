@@ -4106,9 +4106,8 @@ class TextureEditor extends EditorBase {
       const height = srcData.height;
 
       console.log(`[TextureEditor] Generating direct-colour output: ${format} ${width}×${height}`);
-
-      // Convert RGBA pixels to target format bytes
-      const formatBytes = D2File.convertRGBAToFormat(srcData.data, format);
+      const textureCfg = this.textureData.toJSON();
+      const d2Bytes = D2File.buildFromRGBA(textureCfg, srcData.data, width, height);
 
       // Initialise GPU renderer
       this._initGpu();
@@ -4123,10 +4122,10 @@ class TextureEditor extends EditorBase {
       ctx.putImageData(nativeImgData, 0, 0);
       this.updateCanvasFromImage(canvas);
 
-      // Build the D2 preview using the format-converted bytes
-      this._buildD2PreviewDirect(formatBytes, width, height);
+      // Upload the shared D2 build for preview/persistence.
+      this._buildD2PreviewDirect(d2Bytes, format);
 
-      console.log(`[TextureEditor] Direct-colour output complete (${formatBytes.length} bytes)`);
+      console.log(`[TextureEditor] Direct-colour output complete (${d2Bytes.length} bytes)`);
     } catch (error) {
       console.error('[TextureEditor] generateDirectColorOutput failed:', error);
     }
@@ -4137,57 +4136,9 @@ class TextureEditor extends EditorBase {
    * Used for direct-colour formats where the pixel data is already in the
    * target format (RGB565, RGBA8888, etc.) and does NOT need packIndexedPixels.
    */
-  _buildD2PreviewDirect(formatBytes, width, height) {
+  _buildD2PreviewDirect(d2, format) {
     this._initGpu();
     if (!this._gpu) return;
-
-    const textureCfg = this.textureData.toJSON();
-    const meta       = textureCfg.metadata || {};
-    const format     = meta.outputPixelFormat || textureCfg.outputPixelFormat || 'd2_mode_rgba8888';
-    const fmtEnum    = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.RGBA8888;
-    const compress   = textureCfg.compressionType || meta.compressionType || 'none';
-    const rotation   = textureCfg.rotation ?? 0;
-
-    let buildW = width;
-    let buildH = height;
-    let data   = formatBytes;
-
-    // Pre-rotate if needed (for direct-colour we must rotate the raw bytes)
-    if (rotation === 90) {
-      const bpp = BITS_PER_PIXEL[fmtEnum] || 32;
-      data = D2File._rotateDirectBytes90CW(data, width, height, bpp);
-      buildW = height;
-      buildH = width;
-    }
-
-    // RLE compress if requested
-    let isRLE = false;
-    if (compress === 'rle') {
-      const RWImageData = window.ImageData;
-      if (RWImageData && typeof RWImageData.rleEncode === 'function') {
-        data = new Uint8Array(RWImageData.rleEncode(data));
-        isRLE = true;
-      }
-    }
-
-    // Resolve color key → RGB565
-    let colorKey = -1;
-    if (textureCfg.useColorKey) {
-      const hex = textureCfg.transparentColor || '#FF00FF';
-      const r = parseInt(hex.substring(1, 3), 16) || 0;
-      const g = parseInt(hex.substring(3, 5), 16) || 0;
-      const b = parseInt(hex.substring(5, 7), 16) || 0;
-      colorKey = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
-    }
-
-    // Build the D2TX binary
-    const palOff = meta.paletteOffset ?? textureCfg.paletteOffset ?? 0;
-    const d2 = buildD2TX(buildW, buildH, fmtEnum, data, {
-      paletteOffset: palOff,
-      rle: isRLE,
-      preRotated: rotation === 90,
-      colorKey,
-    });
 
     // Upload to GPU
     if (this._gpuTex) {
@@ -4208,7 +4159,7 @@ class TextureEditor extends EditorBase {
     // Persist .d2
     this._saveD2File(d2);
 
-    console.log(`[TextureEditor] D2 direct preview: ${buildW}×${buildH} ${format} (${d2.length} bytes)`);
+    console.log(`[TextureEditor] D2 direct preview: ${format} (${d2.length} bytes)`);
   }
 
   async applyPaletteToImage(userInitiated = false) {

@@ -94,14 +94,8 @@ class FontEditor extends EditorBase {
     }
 
     // Try JSON parse first (new metadata format)
-    // Content may be a string, ArrayBuffer, or Uint8Array — decode to text first
     try {
-      let text = null;
-      if (typeof content === 'string') {
-        text = content;
-      } else if (content instanceof ArrayBuffer || content instanceof Uint8Array) {
-        text = new TextDecoder().decode(content);
-      }
+      const text = typeof content === 'string' ? content : null;
       if (text) {
         const data = JSON.parse(text);
         if (data && data.type === 'retrowatch-font') {
@@ -165,28 +159,30 @@ class FontEditor extends EditorBase {
     if (this.sourceFontPath) {
       const loaded = await this._loadSourceFontFromStorage(this.sourceFontPath);
       if (loaded) {
-        // Generate without marking dirty — this is a load, not a user edit
-        const family = this.ui.fontName.value.trim() || this.loadedFontFamily;
-        if (family) {
-          this.result = this.gen.generate({
-            fontFamily:   family,
-            fontSize:     parseInt(this.ui.fontSize.value) || 32,
-            chars:        this.ui.chars.value,
-            padding:      parseInt(this.ui.padding.value) || 0,
-            spacing:      parseInt(this.ui.spacing.value) || 0,
-            antialiasing: this.ui.antialias.checked,
-          });
-          this._showResult();
-        }
+        this._generate();
         return;
       }
-      console.warn('[FontEditor] Source font not found in storage:', this.sourceFontPath);
     }
 
-    // Source font unavailable — error, do not fall back
-    const fontDesc = this.sourceFontPath ? this.sourceFontPath.split('/').pop() : '(none)';
-    this.ui.atlasInfo.textContent = `⚠ Source font "${fontDesc}" not found — re-import the TTF to regenerate`;
-    console.error('[FontEditor] Source font missing for:', this.path, '— expected:', this.sourceFontPath);
+    // If source font not available, try to load companion atlas for display only
+    if (data.atlasPage && this.path) {
+      const atlasImage = await this._loadProjectImage(data.atlasPage);
+      if (atlasImage) {
+        const canvas = document.createElement('canvas');
+        canvas.width = atlasImage.width;
+        canvas.height = atlasImage.height;
+        canvas.getContext('2d').drawImage(atlasImage, 0, 0);
+        this.result = {
+          canvas,
+          width: atlasImage.width,
+          height: atlasImage.height,
+          glyphs: [],
+          lineHeight: data.fontSize || 32,
+          base: data.fontSize || 32
+        };
+        this._showResult();
+      }
+    }
   }
 
   async _loadSourceFontFromStorage(fontPath) {
@@ -296,44 +292,6 @@ class FontEditor extends EditorBase {
     }, null, 2);
   }
 
-  async createNewFont() {
-    try {
-      // Save a placeholder .font first to establish this.path
-      const content = this.getContent();
-      await this.saveNewResource(content);
-
-      // Save companion files (this updates sourceFontPath)
-      if (this.path) {
-        const folder = this._fontFolder();
-        const base = this._baseName();
-
-        if (this._sourceFontBlob) {
-          await this._saveSourceFont(folder);
-        }
-        if (this.result) {
-          await this._saveCompanionAtlas(folder, base);
-          await this._saveCompanionFnt(folder, base);
-          await this._saveCompanionD2(folder, base);
-        }
-
-        // Re-save .font metadata now that sourceFontPath is set correctly
-        await this._resaveMetadata();
-
-        const pe = window.serviceContainer?.get('projectExplorer')
-                || window.gameEmulator?.projectExplorer;
-        if (pe && typeof pe.renderTree === 'function') pe.renderTree();
-      }
-
-      // Reset to new-resource state so the next save prompts for a new filename
-      this.isNewResource = true;
-      console.log('[FontEditor] Created new font, ready for next save');
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      console.error('[FontEditor] Failed to create new font:', error);
-      alert('Failed to create font: ' + error.message);
-    }
-  }
-
   async save() {
     try {
       // Save the .font JSON metadata via base class (this sets this.path for new files)
@@ -360,9 +318,6 @@ class FontEditor extends EditorBase {
           await this._saveCompanionD2(folder, base);
         }
 
-        // Re-save .font metadata now that sourceFontPath is set correctly
-        await this._resaveMetadata();
-
         // Refresh project tree to show any newly added companions
         const pe = window.serviceContainer?.get('projectExplorer')
                 || window.gameEmulator?.projectExplorer;
@@ -371,7 +326,6 @@ class FontEditor extends EditorBase {
 
       console.log(`[FontEditor] Save complete: ${this.path}`);
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
       console.error('[FontEditor] Save failed:', error);
       alert('Failed to save font: ' + error.message);
     }
@@ -396,14 +350,6 @@ class FontEditor extends EditorBase {
       // Add TTF to project tree so it's visible in the explorer
       this._addCompanionToProjectTree(filename, fontPath);
     }
-  }
-
-  /** Re-save the .font JSON metadata to storage after companions have updated paths */
-  async _resaveMetadata() {
-    if (!this.path || !window.fileIOService) return;
-    const storagePath = window.ProjectPaths?.normalizeStoragePath?.(this.path) || this.path;
-    await window.fileIOService.saveFile(storagePath, this.getContent(), { type: '.font' });
-    console.log(`[FontEditor] Re-saved metadata with sourceFontPath: ${this.sourceFontPath}`);
   }
 
   async _saveCompanionAtlas(folder, base) {
@@ -449,25 +395,17 @@ class FontEditor extends EditorBase {
     const format = this.outputPixelFormat || 'd2_mode_alpha8';
     const { canvas } = this.result;
     const ctx = canvas.getContext('2d');
-    const origW = canvas.width, origH = canvas.height;
-    const rgba = ctx.getImageData(0, 0, origW, origH).data;
+    const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-    // Pre-rotate 90° CW so texture matches Dave2D scan order
-    const rotated = new Uint8Array(origW * origH * 4);
-    for (let y = 0; y < origH; y++)
-      for (let x = 0; x < origW; x++) {
-        const s = (y * origW + x) * 4, d = (x * origH + (origH - 1 - y)) * 4;
-        rotated[d] = rgba[s]; rotated[d+1] = rgba[s+1]; rotated[d+2] = rgba[s+2]; rotated[d+3] = rgba[s+3];
-      }
-
-    const formatBytes = D2File.convertRGBAToFormat(rotated, format);
-    const fmtEnum = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.ALPHA8;
-
-    // Build D2TX binary with rotated dimensions
-    const d2Bytes = buildD2TX(origH, origW, fmtEnum, formatBytes, {
-      paletteOffset: 0,
-      preRotated: true
-    });
+    const d2Bytes = D2File.buildFromRGBA({
+      outputPixelFormat: format,
+      metadata: {
+        outputPixelFormat: format,
+        paletteOffset: 0,
+      },
+      rotation: 0,
+      compressionType: 'none',
+    }, rgba, canvas.width, canvas.height);
 
     const d2Path = folder ? `${folder}/${base}.d2` : `${base}.d2`;
     const d2Storage = window.ProjectPaths?.normalizeStoragePath?.(d2Path) || d2Path;
@@ -531,7 +469,6 @@ class FontEditor extends EditorBase {
         </div>
         <div class="fe-cb-row">
           <input type="checkbox" class="fe-antialias"><label>Anti-alias</label>
-          <button class="fe-saveNewFont control-btn">💾 Save Font</button>
         </div>
       </div>
 
@@ -631,7 +568,6 @@ class FontEditor extends EditorBase {
       gdXAdv:       q('.fe-gdXAdv'),
       formatValue:  q('.fe-formatValue'),
       formatBtn:    q('.fe-formatBtn'),
-      saveNewFont:  q('.fe-saveNewFont'),
     };
   }
 
@@ -682,11 +618,6 @@ class FontEditor extends EditorBase {
 
     // Format selection
     ui.formatBtn.addEventListener('click', () => this._showFormatSelectionModal());
-
-    // Save New Font button
-    if (ui.saveNewFont) {
-      ui.saveNewFont.addEventListener('click', () => this.createNewFont());
-    }
 
     this._syncSizeInputs('slider');
   }

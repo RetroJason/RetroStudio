@@ -517,7 +517,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         pivotX: centerX / (frame.w || 1),
         pivotY: centerY / (frame.h || 1),
         filter: 'nearest',
-        color: s._color ?? 0xFFFFFF,
       });
     }
   }

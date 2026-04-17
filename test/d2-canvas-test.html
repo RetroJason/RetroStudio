@@ -85,15 +85,12 @@
   <label>Test Size:
     <select id="testSize">
       <option value="8">8×8</option>
-      <option value="16">16×16</option>
+      <option value="16" selected>16×16</option>
       <option value="32">32×32</option>
-      <option value="64">64×64</option>
-      <option value="128" selected>128×128</option>
-      <option value="256">256×256</option>
     </select>
   </label>
   <label>Scale:
-    <input id="scaleFactor" type="number" value="2" min="1" max="32" style="width:50px">
+    <input id="scaleFactor" type="number" value="8" min="1" max="32" style="width:50px">
   </label>
   <label>Filter:
     <select id="filterMode">
@@ -109,7 +106,7 @@
   </label>
   <button id="runBtn">Run All Tests</button>
   <button id="runBlitBtn">Run Blit Tests</button>
-  <button id="bleBtn" class="ble-btn">Connect BLE</button>
+  <button id="exportBundleBtn">Export Test Bundle</button>
 </div>
 
 <div id="summary" style="display:none"></div>
@@ -117,7 +114,8 @@
 <div id="log"></div>
 
 <script src="../scripts/graphics/d2-canvas.js"></script>
-<script src="retrowatch-ble-client-v2.js"></script>
+<script src="../scripts/graphics/d2-file.js"></script>
+<script src="../scripts/vendor/jszip.min.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════
    Test Harness  (D2TX_HEADER_SIZE, D2_FORMAT, D2Canvas come from d2-canvas.js)
@@ -134,27 +132,123 @@ function log(msg, cls) {
 }
 
 // ── D2TX builder ─────────────────────────────────────────────────
-function buildD2TX(format, width, height, pixelData, opts = {}) {
-  const flags = (opts.rle ? 0x01 : 0) | (opts.preRotated ? 0x02 : 0);
-  const paletteIndex = opts.paletteIndex || 0;
-  const paletteOffset = opts.paletteOffset || 0;
+// Reuse the shared implementation exported by scripts/graphics/d2-canvas.js
 
-  const header = new Uint8Array(D2TX_HEADER_SIZE);
-  const view = new DataView(header.buffer);
-  // Magic "D2TX"
-  header[0] = 0x44; header[1] = 0x32; header[2] = 0x54; header[3] = 0x58;
-  view.setUint8(4, 2);               // version
-  view.setUint8(5, format);          // format enum
-  view.setUint16(6, width, true);    // width
-  view.setUint16(8, height, true);   // height
-  view.setUint16(10, paletteIndex, true);
-  view.setUint8(12, paletteOffset);
-  view.setUint8(13, flags);
+function rotatePixels90CW(pixels, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      out[x * h + (h - 1 - y)] = pixels[y * w + x];
+    }
+  }
+  return out;
+}
 
-  const result = new Uint8Array(D2TX_HEADER_SIZE + pixelData.length);
-  result.set(header);
-  result.set(pixelData, D2TX_HEADER_SIZE);
-  return result;
+function subByteShift(format, pixelIndex, bitsPerPixel) {
+  if (format === D2_FORMAT.I4 || format === D2_FORMAT.ALPHA4) {
+    return (pixelIndex & 1) === 0 ? 0 : 4;
+  }
+  if (format === D2_FORMAT.I2 || format === D2_FORMAT.ALPHA2) {
+    return (pixelIndex & 3) * 2;
+  }
+  if (format === D2_FORMAT.I1 || format === D2_FORMAT.ALPHA1) {
+    return pixelIndex & 7;
+  }
+  return 8 - bitsPerPixel - ((pixelIndex % (8 / bitsPerPixel)) * bitsPerPixel);
+}
+
+function unpackSubBytePixels(data, format, bitsPerPixel, pixelCount) {
+  const out = new Uint8Array(pixelCount);
+  const mask = (1 << bitsPerPixel) - 1;
+  const pixelsPerByte = 8 / bitsPerPixel;
+  for (let i = 0; i < pixelCount; i++) {
+    const byteIdx = Math.floor(i / pixelsPerByte);
+    const shift = subByteShift(format, i, bitsPerPixel);
+    out[i] = (data[byteIdx] >> shift) & mask;
+  }
+  return out;
+}
+
+function packSubBytePixels(pixels, format, bitsPerPixel) {
+  const out = new Uint8Array(Math.ceil((pixels.length * bitsPerPixel) / 8));
+  const mask = (1 << bitsPerPixel) - 1;
+  const pixelsPerByte = 8 / bitsPerPixel;
+  for (let i = 0; i < pixels.length; i++) {
+    const byteIdx = Math.floor(i / pixelsPerByte);
+    const shift = subByteShift(format, i, bitsPerPixel);
+    out[byteIdx] |= (pixels[i] & mask) << shift;
+  }
+  return out;
+}
+
+function rotateEncodedPixelData90CW(format, width, height, pixelData) {
+  const bitsPerPixel = BITS_PER_PIXEL[format];
+  if (!bitsPerPixel) {
+    throw new Error(`Unsupported D2 format for rotation: 0x${format.toString(16)}`);
+  }
+
+  if ((bitsPerPixel % 8) === 0) {
+    const bytesPerPixel = bitsPerPixel / 8;
+    const out = new Uint8Array(width * height * bytesPerPixel);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const srcOff = (y * width + x) * bytesPerPixel;
+        const dstOff = (x * height + (height - 1 - y)) * bytesPerPixel;
+        for (let b = 0; b < bytesPerPixel; b++) {
+          out[dstOff + b] = pixelData[srcOff + b];
+        }
+      }
+    }
+    return { pixelData: out, width: height, height: width };
+  }
+
+  const unpacked = unpackSubBytePixels(pixelData, format, bitsPerPixel, width * height);
+  const rotated = rotatePixels90CW(unpacked, width, height);
+  return {
+    pixelData: packSubBytePixels(rotated, format, bitsPerPixel),
+    width: height,
+    height: width,
+  };
+}
+
+function formatEnumToString(formatEnum) {
+  for (const [formatStr, enumValue] of Object.entries(FORMAT_STRING_TO_ENUM)) {
+    if (enumValue === formatEnum) {
+      return formatStr;
+    }
+  }
+  throw new Error(`Unknown D2 format enum: 0x${formatEnum.toString(16)}`);
+}
+
+function makeStudioTextureConfig(formatEnum) {
+  const formatStr = formatEnumToString(formatEnum);
+  return {
+    outputPixelFormat: formatStr,
+    metadata: {
+      outputPixelFormat: formatStr,
+      paletteOffset: 0,
+      compressionType: 'none',
+    },
+    rotation: 90,
+    compressionType: 'none',
+    useColorKey: false,
+  };
+}
+
+function buildStudioTestD2(test, width, height, generated) {
+  const textureCfg = makeStudioTextureConfig(test.format);
+  if (test.indexed) {
+    return D2File.build(textureCfg, generated.pixelData, width, height);
+  }
+  return D2File.buildFromRGBA(textureCfg, generated.referenceRGBA, width, height);
+}
+
+function buildHardwareD2TX(format, width, height, pixelData, opts = {}) {
+  const rotated = rotateEncodedPixelData90CW(format, width, height, pixelData);
+  return buildD2TX(rotated.width, rotated.height, format, rotated.pixelData, {
+    ...opts,
+    preRotated: true,
+  });
 }
 
 // ── Test palette: 256 entries with distinguishable colours ────────
@@ -190,34 +284,48 @@ function hslToRgb(h, s, l) {
 
 function generateI1(w, h, pal) {
   const totalPixels = w * h;
-  const byteLen = Math.ceil(totalPixels / 8);
-  const pixels = new Uint8Array(byteLen);
+  const pixels = new Uint8Array(totalPixels);
   const ref = new Uint8Array(totalPixels * 4);
-  for (let i = 0; i < totalPixels; i++) {
-    const idx = (i + (Math.floor(i / w))) & 1; // checkerboard
-    const byteIdx = i >> 3;
-    const bitIdx = 7 - (i & 7);
-    pixels[byteIdx] |= (idx << bitIdx);
-    const po = idx * 4;
-    ref[i * 4]     = pal[po];
-    ref[i * 4 + 1] = pal[po + 1];
-    ref[i * 4 + 2] = pal[po + 2];
-    ref[i * 4 + 3] = pal[po + 3];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let idx = 0;
+
+      if (y === 0 || x === 0) {
+        idx = 1;
+      }
+      if (x >= 10 && y >= 2 && y <= 4) {
+        idx = 1;
+      }
+      if (x >= 2 && x <= 4 && y >= 10) {
+        idx = 1;
+      }
+      if (x === y && x >= 5 && x <= 11) {
+        idx = 1;
+      }
+      if ((x === 12 && y === 9) || (x === 9 && y === 12) || (x === 6 && y === 3)) {
+        idx = 1;
+      }
+
+      const i = y * w + x;
+      pixels[i] = idx;
+      const po = idx * 4;
+      ref[i * 4]     = pal[po];
+      ref[i * 4 + 1] = pal[po + 1];
+      ref[i * 4 + 2] = pal[po + 2];
+      ref[i * 4 + 3] = pal[po + 3];
+    }
   }
   return { pixelData: pixels, referenceRGBA: ref };
 }
 
 function generateI2(w, h, pal) {
   const totalPixels = w * h;
-  const byteLen = Math.ceil(totalPixels / 4);
-  const pixels = new Uint8Array(byteLen);
+  const pixels = new Uint8Array(totalPixels);
   const ref = new Uint8Array(totalPixels * 4);
   for (let i = 0; i < totalPixels; i++) {
     const px = i % w, py = Math.floor(i / w);
     const idx = ((px >> 1) + (py >> 1)) & 3; // 2×2 block pattern
-    const byteIdx = i >> 2;
-    const shift = 6 - (i & 3) * 2;
-    pixels[byteIdx] |= (idx << shift);
+    pixels[i] = idx;
     const po = idx * 4;
     ref[i * 4]     = pal[po];
     ref[i * 4 + 1] = pal[po + 1];
@@ -229,18 +337,12 @@ function generateI2(w, h, pal) {
 
 function generateI4(w, h, pal) {
   const totalPixels = w * h;
-  const byteLen = Math.ceil(totalPixels / 2);
-  const pixels = new Uint8Array(byteLen);
+  const pixels = new Uint8Array(totalPixels);
   const ref = new Uint8Array(totalPixels * 4);
   for (let i = 0; i < totalPixels; i++) {
     const px = i % w, py = Math.floor(i / w);
     const idx = (px + py) & 0xF; // diagonal ramp
-    const byteIdx = i >> 1;
-    if ((i & 1) === 0) {
-      pixels[byteIdx] |= (idx << 4);
-    } else {
-      pixels[byteIdx] |= idx;
-    }
+    pixels[i] = idx;
     const po = idx * 4;
     ref[i * 4]     = pal[po];
     ref[i * 4 + 1] = pal[po + 1];
@@ -410,6 +512,10 @@ function generateRGBA4444(w, h) {
   return { pixelData: pixels, referenceRGBA: ref };
 }
 
+function rgb565LevelToRgb888(level, maxLevel) {
+  return Math.floor((level * 255 + Math.floor(maxLevel / 2)) / maxLevel);
+}
+
 function generateRGB444(w, h) {
   const totalPixels = w * h;
   const pixels = new Uint8Array(totalPixels * 2);
@@ -420,11 +526,14 @@ function generateRGB444(w, h) {
     const g4 = Math.floor(py / h * 15);
     const b4 = 7;
     const v = (r4 << 8) | (g4 << 4) | b4;
+    const r5 = (r4 << 1) | (r4 >> 3);
+    const g6 = (g4 << 2) | (g4 >> 2);
+    const b5 = (b4 << 1) | (b4 >> 3);
     pixels[i * 2]     = v & 0xFF;
     pixels[i * 2 + 1] = (v >> 8) & 0xFF;
-    ref[i * 4]     = r4 * 17;
-    ref[i * 4 + 1] = g4 * 17;
-    ref[i * 4 + 2] = b4 * 17;
+    ref[i * 4]     = rgb565LevelToRgb888(r5, 31);
+    ref[i * 4 + 1] = rgb565LevelToRgb888(g6, 63);
+    ref[i * 4 + 2] = rgb565LevelToRgb888(b5, 31);
     ref[i * 4 + 3] = 255;
   }
   return { pixelData: pixels, referenceRGBA: ref };
@@ -432,16 +541,17 @@ function generateRGB444(w, h) {
 
 function generateRGB888(w, h) {
   const totalPixels = w * h;
-  const pixels = new Uint8Array(totalPixels * 3);
+  const pixels = new Uint8Array(totalPixels * 4);
   const ref = new Uint8Array(totalPixels * 4);
   for (let i = 0; i < totalPixels; i++) {
     const px = i % w, py = Math.floor(i / w);
     const r = Math.floor(px / w * 255);
     const g = Math.floor(py / h * 255);
     const b = 128;
-    pixels[i * 3]     = r;
-    pixels[i * 3 + 1] = g;
-    pixels[i * 3 + 2] = b;
+    pixels[i * 4]     = b;
+    pixels[i * 4 + 1] = g;
+    pixels[i * 4 + 2] = r;
+    pixels[i * 4 + 3] = 0;
     ref[i * 4]     = r;
     ref[i * 4 + 1] = g;
     ref[i * 4 + 2] = b;
@@ -460,10 +570,10 @@ function generateRGBA8888(w, h) {
     const g = Math.floor(py / h * 255);
     const b = 100;
     const a = Math.floor(((px + py) / (w + h)) * 255);
-    pixels[i * 4]     = r;
-    pixels[i * 4 + 1] = g;
-    pixels[i * 4 + 2] = b;
-    pixels[i * 4 + 3] = a;
+    pixels[i * 4]     = a;
+    pixels[i * 4 + 1] = b;
+    pixels[i * 4 + 2] = g;
+    pixels[i * 4 + 3] = r;
     ref[i * 4]     = r;
     ref[i * 4 + 1] = g;
     ref[i * 4 + 2] = b;
@@ -482,11 +592,11 @@ function generateARGB8888(w, h) {
     const g = Math.floor(py / h * 255);
     const b = 80;
     const a = 200;
-    // ARGB byte order
-    pixels[i * 4]     = a;
-    pixels[i * 4 + 1] = r;
-    pixels[i * 4 + 2] = g;
-    pixels[i * 4 + 3] = b;
+    // Little-endian bytes for 0xAARRGGBB
+    pixels[i * 4]     = b;
+    pixels[i * 4 + 1] = g;
+    pixels[i * 4 + 2] = r;
+    pixels[i * 4 + 3] = a;
     ref[i * 4]     = r;
     ref[i * 4 + 1] = g;
     ref[i * 4 + 2] = b;
@@ -504,7 +614,7 @@ function generateAlpha1(w, h) {
     const px = i % w, py = Math.floor(i / w);
     const a = (px + py) & 1;
     const byteIdx = i >> 3;
-    const bitIdx = 7 - (i & 7);
+    const bitIdx = i & 7;
     pixels[byteIdx] |= (a << bitIdx);
     ref[i * 4]     = 255;
     ref[i * 4 + 1] = 255;
@@ -523,7 +633,7 @@ function generateAlpha2(w, h) {
     const px = i % w, py = Math.floor(i / w);
     const a2 = ((px >> 1) + (py >> 1)) & 3;
     const byteIdx = i >> 2;
-    const shift = 6 - (i & 3) * 2;
+    const shift = (i & 3) * 2;
     pixels[byteIdx] |= (a2 << shift);
     ref[i * 4]     = 255;
     ref[i * 4 + 1] = 255;
@@ -543,9 +653,9 @@ function generateAlpha4(w, h) {
     const a4 = px & 0xF;
     const byteIdx = i >> 1;
     if ((i & 1) === 0) {
-      pixels[byteIdx] |= (a4 << 4);
-    } else {
       pixels[byteIdx] |= a4;
+    } else {
+      pixels[byteIdx] |= (a4 << 4);
     }
     ref[i * 4]     = 255;
     ref[i * 4 + 1] = 255;
@@ -595,6 +705,28 @@ const FORMAT_TESTS = [
   { name: 'Alpha8',                format: 0x00, indexed: false, gen: generateAlpha8 },
 ];
 
+const TEST_PURPOSES = {
+  0x0C: '1-bit indexed asymmetric marker pattern using palette entries 0 and 1 for inversion and shift diagnosis.',
+  0x0B: '2-bit indexed 2x2 block pattern across four palette entries.',
+  0x0A: '4-bit indexed diagonal ramp across the low 16 palette entries.',
+  0x09: '8-bit indexed full-range palette sampling across the texture.',
+  0x05: 'Combined 4-bit alpha and 4-bit palette index coverage.',
+  0x01: 'RGB565 gradient coverage across red, green, and blue channels.',
+  0x04: 'ARGB1555 color ramp with alternating 1-bit alpha coverage.',
+  0x08: 'RGBA5551 color ramp with opaque alpha bit set.',
+  0x42: 'RGB555 color ramp coverage without alpha.',
+  0x03: 'ARGB4444 packed nibble coverage with alpha gradient.',
+  0x07: 'RGBA4444 packed nibble coverage with opaque alpha.',
+  0x41: 'RGB444 packed nibble coverage without alpha.',
+  0x40: 'RGB888 byte-aligned color ramp coverage.',
+  0x06: 'RGBA8888 byte-aligned color plus alpha gradient coverage.',
+  0x02: 'ARGB8888 byte ordering verification with fixed alpha.',
+  0x0F: '1-bit alpha checkerboard coverage on white color.',
+  0x0E: '2-bit alpha block pattern coverage on white color.',
+  0x0D: '4-bit alpha horizontal ramp coverage on white color.',
+  0x00: '8-bit alpha horizontal ramp coverage on white color.'
+};
+
 
 // ── CPU reference renderer (for comparison) ──────────────────────
 function renderReferenceCPU(refRGBA, w, h, scale) {
@@ -614,14 +746,173 @@ function renderReferenceCPU(refRGBA, w, h, scale) {
   return canvas;
 }
 
+function buildActFromPalette(paletteRgba) {
+  const bytes = new Uint8Array(772);
+  for (let i = 0; i < 256; i++) {
+    const src = i * 4;
+    const dst = i * 3;
+    bytes[dst] = paletteRgba[src] || 0;
+    bytes[dst + 1] = paletteRgba[src + 1] || 0;
+    bytes[dst + 2] = paletteRgba[src + 2] || 0;
+  }
+  bytes[768] = 0x01;
+  bytes[769] = 0x00;
+  bytes[770] = 0x00;
+  bytes[771] = 0x00;
+  return bytes;
+}
+
+function formatSlug(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function canvasToBlob(canvas, type = 'image/png') {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error('Canvas export failed'));
+        return;
+      }
+      resolve(blob);
+    }, type);
+  });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function buildBundleManifest(bundleName, width, height) {
+  return {
+    bundleName,
+    version: 1,
+    generator: 'RetroStudio/test/d2-canvas-test.html',
+    generatedAt: new Date().toISOString(),
+    textureSize: { width, height },
+    sharedPalette: {
+      path: 'palettes/test_palette.act',
+      format: 'ACT',
+      appliesToIndexedFormats: true
+    },
+    textures: FORMAT_TESTS.map(test => {
+      const slug = `${test.format.toString(16).padStart(2, '0')}_${formatSlug(test.name)}`;
+      return {
+        slug,
+        name: test.name,
+        formatHex: `0x${test.format.toString(16).padStart(2, '0').toUpperCase()}`,
+        formatValue: test.format,
+        indexed: test.indexed,
+        palettePath: test.indexed ? 'palettes/test_palette.act' : null,
+        d2Path: `textures/${slug}.d2`,
+        referenceImagePath: `reference/${slug}.png`,
+        testing: TEST_PURPOSES[test.format] || 'Generated texture format validation image.',
+        notes: test.indexed
+          ? 'Use the shared ACT palette when packaging this texture for runtime tests.'
+          : 'This texture is self-contained and does not require a palette file.'
+      };
+    })
+  };
+}
+
+function isAlphaOnlyFormat(format) {
+  return format === D2_FORMAT.ALPHA8 ||
+         format === D2_FORMAT.ALPHA4 ||
+         format === D2_FORMAT.ALPHA2 ||
+         format === D2_FORMAT.ALPHA1;
+}
+
+async function exportTestBundle() {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('JSZip is not loaded');
+  }
+
+  const bundleBtn = document.getElementById('exportBundleBtn');
+  const originalText = bundleBtn.textContent;
+  bundleBtn.disabled = true;
+  bundleBtn.textContent = 'Exporting...';
+
+  try {
+    logEl.innerHTML = '';
+
+    const size = parseInt(document.getElementById('testSize').value, 10);
+    const w = size;
+    const h = size;
+    const palette = makeTestPalette();
+    const actBytes = buildActFromPalette(palette);
+    const zip = new JSZip();
+    const texturesDir = zip.folder('textures');
+    const referenceDir = zip.folder('reference');
+    const palettesDir = zip.folder('palettes');
+    const bundleName = `d2_texture_bundle_${w}x${h}`;
+    const manifest = buildBundleManifest(bundleName, w, h);
+
+    palettesDir.file('test_palette.act', actBytes);
+    log(`Added shared ACT palette: test_palette.act`, 'ok');
+
+    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+    log(`Added manifest.json`, 'ok');
+
+    for (const test of FORMAT_TESTS) {
+      const generated = test.indexed
+        ? test.gen(w, h, palette)
+        : test.gen(w, h);
+      const { referenceRGBA } = generated;
+
+      const d2File = buildStudioTestD2(test, w, h, generated);
+      const slug = `${test.format.toString(16).padStart(2, '0')}_${formatSlug(test.name)}`;
+      texturesDir.file(`${slug}.d2`, d2File);
+
+      const refCanvas = renderReferenceCPU(referenceRGBA, w, h, 1);
+      const refBlob = await canvasToBlob(refCanvas, 'image/png');
+      referenceDir.file(`${slug}.png`, refBlob);
+
+      log(`  Added ${slug}.d2 and ${slug}.png`, 'ok');
+    }
+
+    zip.file('README.txt', [
+      'D2 texture format export bundle',
+      '',
+      `Size: ${w}x${h}`,
+      'manifest.json: metadata describing each generated test texture and its purpose',
+      'palettes/test_palette.act: shared palette for indexed formats',
+      'textures/*.d2: raw D2TX texture files generated by the canvas harness',
+      'reference/*.png: CPU reference renders for comparison and package templating',
+      ''
+    ].join('\r\n'));
+
+    const zipBlob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 }
+    });
+
+    downloadBlob(zipBlob, `${bundleName}.zip`);
+    log(`Exported ${bundleName}.zip`, 'ok');
+  } finally {
+    bundleBtn.disabled = false;
+    bundleBtn.textContent = originalText;
+  }
+}
+
 
 // ── Compare GPU output against CPU reference ─────────────────────
 // Note: The shader discards alpha=0 pixels, leaving clear color (0,0,0,0).
 // So for reference pixels with alpha=0, we expect (0,0,0,0) in the GPU output.
-function comparePixels(gpuRGBA, refRGBA, w, h, tolerance = 1) {
+function comparePixels(gpuRGBA, refRGBA, w, h, tolerance = 1, format = null) {
   let maxDiff = 0;
   let mismatchCount = 0;
   let firstMismatch = null;
+  const alphaOnly = isAlphaOnlyFormat(format);
 
   for (let i = 0; i < w * h; i++) {
     const off = i * 4;
@@ -634,7 +925,8 @@ function comparePixels(gpuRGBA, refRGBA, w, h, tolerance = 1) {
     const expectedA = refAlpha === 0 ? 0 : refRGBA[off + 3];
     const expected = [expectedR, expectedG, expectedB, expectedA];
 
-    for (let c = 0; c < 4; c++) {
+    const channels = alphaOnly ? [3] : [0, 1, 2, 3];
+    for (const c of channels) {
       const diff = Math.abs(gpuRGBA[off + c] - expected[c]);
       if (diff > maxDiff) maxDiff = diff;
       if (diff > tolerance) {
@@ -687,12 +979,13 @@ function runAllTests() {
 
     try {
       // Generate test data
-      const { pixelData, referenceRGBA } = test.indexed
+      const generated = test.indexed
         ? test.gen(w, h, pal)
         : test.gen(w, h);
+      const { referenceRGBA } = generated;
 
       // Build D2TX file
-      const d2File = buildD2TX(test.format, w, h, pixelData);
+      const d2File = buildStudioTestD2(test, w, h, generated);
 
       // Render at 1:1 for pixel-accurate comparison
       gpu.setBlending(false);
@@ -717,7 +1010,7 @@ function runAllTests() {
       }
 
       // Compare
-      const result = comparePixels(gpuFlipped, referenceRGBA, w, h, 1);
+      const result = comparePixels(gpuFlipped, referenceRGBA, w, h, 1, test.format);
 
       // Build scaled display canvases using 2D context (no extra WebGL contexts)
       const gpuDisplayCanvas = renderReferenceCPU(gpuFlipped, w, h, scale);
@@ -726,7 +1019,6 @@ function runAllTests() {
       // Build card
       const status = result.pass ? 'pass' : 'fail';
       card.classList.add(status);
-      card.dataset.format = test.format;
       card.innerHTML = `
         <h3>
           <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
@@ -734,9 +1026,7 @@ function runAllTests() {
         </h3>
         <div class="canvases"></div>
         <div class="legend">Left: GPU (D2Canvas) &nbsp;|&nbsp; Right: CPU Reference</div>
-        <div class="upload-status">Click to send over BLE</div>
       `;
-      card.addEventListener('click', () => sendD2OverBle(test));
       const canvases = card.querySelector('.canvases');
       canvases.appendChild(gpuDisplayCanvas);
       canvases.appendChild(cpuCanvas);
@@ -756,16 +1046,13 @@ function runAllTests() {
     } catch (err) {
       failCount++;
       card.classList.add('fail');
-      card.dataset.format = test.format;
       card.innerHTML = `
         <h3>
           <span>0x${test.format.toString(16).padStart(2,'0')} ${test.name}</span>
           <span class="status fail">ERROR</span>
         </h3>
         <div style="color:#f44;font-size:11px;word-break:break-all">${err.message}</div>
-        <div class="upload-status">Click to send over BLE</div>
       `;
-      card.addEventListener('click', () => sendD2OverBle(test));
       log(`  ✗ ${test.name}: ${err.message}`, 'err');
     }
 
@@ -809,7 +1096,7 @@ function runBlitTests() {
 
   // Generate an i8 test texture
   const { pixelData: i8Pixels } = generateI8(size, size, pal);
-  const i8D2 = buildD2TX(0x09, size, size, i8Pixels);
+  const i8D2 = buildHardwareD2TX(0x09, size, size, i8Pixels);
 
   // Generate a special RGB565 texture for color key test:
   // Checkerboard of magenta (0xF81F) and cyan (0x07FF) — key = magenta → punches holes
@@ -839,7 +1126,7 @@ function runBlitTests() {
       ckRefAfterKey[i * 4 + 2] = b8; ckRefAfterKey[i * 4 + 3] = 255;
     }
   }
-  const ckD2 = buildD2TX(0x01, size, size, ckPixels);
+  const ckD2 = buildHardwareD2TX(0x01, size, size, ckPixels);
 
   const blitTests = [
     {
@@ -1001,241 +1288,14 @@ function runBlitTests() {
   gpu.destroy();
 }
 
-// ── BLE connection ───────────────────────────────────────────────
-let bleClient = null;
-const bleBtn = document.getElementById('bleBtn');
-console.log('[BLE] button:', bleBtn, 'RetroWatchBle:', typeof window.RetroWatchBle, 'bluetooth:', typeof navigator.bluetooth);
-
-bleBtn.addEventListener('click', async () => {
-  console.log('[BLE] click handler fired');
-  if (bleClient && bleClient.isConnected()) {
-    bleClient.disconnect();
-    bleClient = null;
-    bleBtn.textContent = 'Connect BLE';
-    bleBtn.classList.remove('connected');
-    log('[BLE] Disconnected');
-    return;
-  }
-  if (!window.RetroWatchBle) {
-    log('[BLE] retrowatch-ble-client-v2.js not loaded!', 'err');
-    return;
-  }
-  if (!navigator.bluetooth) {
-    log('[BLE] Web Bluetooth not available — use Chrome and serve over localhost or HTTPS', 'err');
-    return;
-  }
-  try {
-    bleBtn.textContent = 'Connecting…';
-    console.log('[BLE] requesting device…');
-    bleClient = new RetroWatchBle.RetroWatchBleClient();
-    bleClient.onDisconnect(() => {
-      bleBtn.textContent = 'Connect BLE';
-      bleBtn.classList.remove('connected');
-      log('[BLE] Disconnected');
-    });
-    await bleClient.connect();
-    const pong = await bleClient.ping('d2test');
-    console.log('[BLE] ping OK, pong:', pong);
-    bleBtn.textContent = 'Disconnect BLE';
-    bleBtn.classList.add('connected');
-    log('[BLE] Connected (MTU payload=' + bleClient.maxMessagePayloadBytes + ', ping OK)');
-  } catch (e) {
-    console.error('[BLE] connect error:', e);
-    bleBtn.textContent = 'Connect BLE';
-    bleBtn.classList.remove('connected');
-    bleClient = null;
-    log('[BLE] ' + e.message, 'err');
-  }
-});
-
-/**
- * Build a binary PMAP with a single palette entry from an RGBA8 palette.
- * @param {Uint8Array} pal  1024-byte RGBA palette (256 colors × 4)
- * @returns {Uint8Array} PMAP binary
- */
-function buildPMAP(pal) {
-  const colorCount = 256;
-  const dataLen = 8 + 2 + colorCount * 4;
-  const buf = new Uint8Array(dataLen);
-  const view = new DataView(buf.buffer);
-  buf[0] = 0x50; buf[1] = 0x4D; buf[2] = 0x41; buf[3] = 0x50; // "PMAP"
-  buf[4] = 1;    // version
-  view.setUint16(6, 1, true); // 1 palette
-  view.setUint16(8, colorCount, true);
-  buf.set(pal.subarray(0, colorCount * 4), 10);
-  return buf;
-}
-
-/**
- * Build a minimal STORE-only ZIP (RWA) containing the .d2 as Images/test.d2
- * and a tiny Lua script that displays it.
- * @param {Uint8Array} d2Bytes  The complete D2TX file
- * @param {Uint8Array|null} palette  If non-null, 1024-byte RGBA palette → include PMAP
- */
-function wrapD2InRwa(d2Bytes, palette) {
-  const lua = new TextEncoder().encode(
-    'function Setup()\n  Image.Create("test")\nend\n\nfunction Update(dt)\nend\n'
-  );
-
-  function crc32(data) {
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < data.length; i++) {
-      crc ^= data[i];
-      for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (0xEDB88320 & (-(crc & 1)));
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
-  }
-
-  const files = [
-    { name: 'Images/test.d2', data: d2Bytes },
-    { name: 'Lua/main.lua',   data: lua },
-  ];
-  if (palette) {
-    files.push({ name: 'palette_map.pmap', data: buildPMAP(palette) });
-  }
-
-  // Calculate total size
-  let totalSize = 22; // EOCD
-  for (const f of files) {
-    totalSize += 30 + f.name.length + f.data.length; // local header + data
-    totalSize += 46 + f.name.length;                  // central dir entry
-  }
-
-  const buf = new ArrayBuffer(totalSize);
-  const view = new DataView(buf);
-  const u8 = new Uint8Array(buf);
-  let pos = 0;
-
-  const entries = [];
-
-  for (const f of files) {
-    const nameBytes = new TextEncoder().encode(f.name);
-    const crc = crc32(f.data);
-    const localOffset = pos;
-
-    // Local file header
-    view.setUint32(pos, 0x04034b50, true); pos += 4;
-    view.setUint16(pos, 20, true); pos += 2;       // version needed
-    view.setUint16(pos, 0, true); pos += 2;        // flags
-    view.setUint16(pos, 0, true); pos += 2;        // compression: STORE
-    view.setUint16(pos, 0, true); pos += 2;        // mod time
-    view.setUint16(pos, 0, true); pos += 2;        // mod date
-    view.setUint32(pos, crc, true); pos += 4;
-    view.setUint32(pos, f.data.length, true); pos += 4; // compressed
-    view.setUint32(pos, f.data.length, true); pos += 4; // uncompressed
-    view.setUint16(pos, nameBytes.length, true); pos += 2;
-    view.setUint16(pos, 0, true); pos += 2;        // extra length
-    u8.set(nameBytes, pos); pos += nameBytes.length;
-    u8.set(f.data instanceof Uint8Array ? f.data : new Uint8Array(f.data), pos);
-    pos += f.data.length;
-
-    entries.push({ nameBytes, crc, size: f.data.length, localOffset });
-  }
-
-  // Central directory
-  const cdStart = pos;
-  for (const e of entries) {
-    view.setUint32(pos, 0x02014b50, true); pos += 4;
-    view.setUint16(pos, 20, true); pos += 2;       // version made by
-    view.setUint16(pos, 20, true); pos += 2;       // version needed
-    view.setUint16(pos, 0, true); pos += 2;        // flags
-    view.setUint16(pos, 0, true); pos += 2;        // compression
-    view.setUint16(pos, 0, true); pos += 2;        // time
-    view.setUint16(pos, 0, true); pos += 2;        // date
-    view.setUint32(pos, e.crc, true); pos += 4;
-    view.setUint32(pos, e.size, true); pos += 4;
-    view.setUint32(pos, e.size, true); pos += 4;
-    view.setUint16(pos, e.nameBytes.length, true); pos += 2;
-    view.setUint16(pos, 0, true); pos += 2;        // extra
-    view.setUint16(pos, 0, true); pos += 2;        // comment
-    view.setUint16(pos, 0, true); pos += 2;        // disk
-    view.setUint16(pos, 0, true); pos += 2;        // internal attrs
-    view.setUint32(pos, 0, true); pos += 4;        // external attrs
-    view.setUint32(pos, e.localOffset, true); pos += 4;
-    u8.set(e.nameBytes, pos); pos += e.nameBytes.length;
-  }
-  const cdSize = pos - cdStart;
-
-  // EOCD
-  view.setUint32(pos, 0x06054b50, true); pos += 4;
-  view.setUint16(pos, 0, true); pos += 2;
-  view.setUint16(pos, 0, true); pos += 2;
-  view.setUint16(pos, entries.length, true); pos += 2;
-  view.setUint16(pos, entries.length, true); pos += 2;
-  view.setUint32(pos, cdSize, true); pos += 4;
-  view.setUint32(pos, cdStart, true); pos += 4;
-  view.setUint16(pos, 0, true); pos += 2;
-
-  return new Uint8Array(buf);
-}
-
-async function sendD2OverBle(test) {
-  if (!bleClient || !bleClient.isConnected()) {
-    log('[BLE] Not connected — click Connect BLE first', 'err');
-    return;
-  }
-
-  const size = parseInt(document.getElementById('testSize').value);
-  const w = size, h = size;
-  const pal = makeTestPalette();
-
-  const { pixelData } = test.indexed ? test.gen(w, h, pal) : test.gen(w, h);
-  const d2File = buildD2TX(test.format, w, h, pixelData,
-    test.indexed ? { paletteIndex: 1 } : {});
-
-  // Wrap the .d2 in a minimal RWA so firmware renders it via the normal RWA pipeline
-  const rwaFile = wrapD2InRwa(d2File, test.indexed ? pal : null);
-
-  const safeName = test.name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-  const filename = `test_${safeName}.rwa`;
-
-  const statusEl = document.querySelector(`[data-format="${test.format}"] .upload-status`);
-  if (statusEl) {
-    statusEl.textContent = 'Sending ' + rwaFile.length + ' bytes…';
-    statusEl.className = 'upload-status sending';
-  }
-
-  log(`[BLE] Uploading ${filename} (${rwaFile.length} bytes, d2=${d2File.length} bytes, fmt=0x${test.format.toString(16)})…`);
-
-  try {
-    const result = await bleClient.fileTransfer(rwaFile, {
-      launch: true,
-      save: false,
-      path: filename,
-      onProgress: (sent, total) => {
-        if (statusEl) {
-          const pct = Math.round(sent / total * 100);
-          statusEl.textContent = `Sending… ${pct}%`;
-        }
-      },
-    });
-
-    if (result.status === 0) {
-      log(`[BLE] ✓ ${test.name} uploaded OK`, 'ok');
-      if (statusEl) {
-        statusEl.textContent = '✓ Sent OK';
-        statusEl.className = 'upload-status ok';
-      }
-    } else {
-      const err = result.error || {};
-      log(`[BLE] ✗ ${test.name} failed: ${err.name || 'status=' + result.status} (reason: ${err.reasonName || 'unknown'})`, 'err');
-      if (statusEl) {
-        statusEl.textContent = '✗ ' + (err.reasonName || err.name || 'Failed');
-        statusEl.className = 'upload-status err';
-      }
-    }
-  } catch (e) {
-    log(`[BLE] ✗ ${test.name}: ${e.message}`, 'err');
-    if (statusEl) {
-      statusEl.textContent = '✗ ' + e.message;
-      statusEl.className = 'upload-status err';
-    }
-  }
-}
-
 // ── Wire up buttons ──────────────────────────────────────────────
 document.getElementById('runBtn').addEventListener('click', runAllTests);
 document.getElementById('runBlitBtn').addEventListener('click', runBlitTests);
+document.getElementById('exportBundleBtn').addEventListener('click', () => {
+  exportTestBundle().catch(err => {
+    log(`Export failed: ${err.message}`, 'err');
+  });
+});
 
 // Auto-run on load
 window.addEventListener('load', () => {

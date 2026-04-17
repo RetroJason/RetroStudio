@@ -29,7 +29,7 @@ FORMAT_ENUM = {
     "ALPHA8":    0x0,
     "RGB565":    0x1,
     "ARGB8888":  0x2,
-    "RGB888":    0x2,  # same as ARGB8888
+    "RGB888":    0x40,
     "ARGB4444":  0x3,
     "RGB444":    0x3,
     "ARGB1555":  0x4,
@@ -52,7 +52,7 @@ BITS_PER_PIXEL = {
     "ALPHA8":    8,
     "RGB565":    16,
     "ARGB8888":  32,
-    "RGB888":    24,
+    "RGB888":    32,
     "ARGB4444":  16,
     "ARGB1555":  16,
     "AI44":      8,
@@ -173,13 +173,14 @@ def pack_pixels(values, bits):
     current_byte = 0
     bits_filled = 0
     for val in values:
-        current_byte = (current_byte << bits) | (val & ((1 << bits) - 1))
+        current_byte |= (val & ((1 << bits) - 1)) << bits_filled
         bits_filled += bits
         while bits_filled >= 8:
+            out.append(current_byte & 0xFF)
+            current_byte >>= 8
             bits_filled -= 8
-            out.append((current_byte >> bits_filled) & 0xFF)
     if bits_filled > 0:
-        out.append(current_byte << (8 - bits_filled))
+        out.append(current_byte & 0xFF)
     return out
 
 # ----------------------------
@@ -195,9 +196,9 @@ def convert_pixel_non_indexed(pixel, fmt):
         value = (r5 << 11) | (g6 << 5) | b5
         return struct.pack("<H", value)
     elif fmt == "ARGB8888":
-        return struct.pack("4B", a, r, g, b)
+        return struct.pack("4B", b, g, r, a)
     elif fmt == "RGB888":
-        return struct.pack("3B", r, g, b)
+        return struct.pack("4B", b, g, r, 0)
     elif fmt == "ARGB4444":
         a4 = a >> 4
         r4 = r >> 4
@@ -213,7 +214,7 @@ def convert_pixel_non_indexed(pixel, fmt):
         value = (a1 << 15) | (r5 << 10) | (g5 << 5) | b5
         return struct.pack("<H", value)
     elif fmt == "RGBA8888":
-        return struct.pack("4B", r, g, b, a)
+        return struct.pack("4B", a, b, g, r)
     elif fmt == "RGBA4444":
         r4 = r >> 4
         g4 = g >> 4

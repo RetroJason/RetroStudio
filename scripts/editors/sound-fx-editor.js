@@ -1083,7 +1083,6 @@ class SoundFXEditor extends CompoundEditor {
       console.log(`[SoundFXEditor] Successfully created new sound FX file via saveAsNewFile`);
       
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
       console.error('[SoundFXEditor] Failed to create new sound FX file:', error);
       alert(`Failed to create new sound FX file: ${error.message}`);
     }
@@ -1094,19 +1093,14 @@ class SoundFXEditor extends CompoundEditor {
     console.log('[SoundFXEditor] save() method called!');
     console.log(`[SoundFXEditor] save() called - isNewResource: ${this.isNewResource}, file: ${this.file}, path: ${this.path}`);
     
-    try {
-      if (this.isNewResource) {
-        console.log('[SoundFXEditor] New file detected, prompting for filename');
-        // For new files, prompt for filename and save as new
-        await this.saveAsNewFile();
-      } else {
-        console.log('[SoundFXEditor] Existing file, saving directly');
-        // For existing files, save normally
-        await this.saveExistingFile();
-      }
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      throw error;
+    if (this.isNewResource) {
+      console.log('[SoundFXEditor] New file detected, prompting for filename');
+      // For new files, prompt for filename and save as new
+      await this.saveAsNewFile();
+    } else {
+      console.log('[SoundFXEditor] Existing file, saving directly');
+      // For existing files, save normally
+      await this.saveExistingFile();
     }
   }
   
