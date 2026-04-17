@@ -63,6 +63,16 @@
     color: #99d3ff;
     font-size: 13px;
   }
+  .panelHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .panelHeader .panelTitle {
+    margin: 0;
+  }
   #treeHost {
     overflow: auto;
     max-height: 500px;
@@ -156,12 +166,19 @@
     white-space: pre;
     color: #d6e6f5;
   }
-  .logPanel {
-    margin-top: 10px;
+  .logToolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .logToolbar input {
+    flex: 1;
+    min-width: 0;
   }
   #log {
     width: 100%;
-    height: 220px;
+    height: 500px;
     overflow: auto;
     white-space: pre-wrap;
     background: #0e1217;
@@ -488,41 +505,27 @@
   </div>
 
   <div class="panel">
-    <h2 class="panelTitle">File Viewer / Editor</h2>
-    <div class="starterDownloads">
-      <h3 class="starterDownloadsTitle">Starter Downloads (Manual MSD Install)</h3>
-      <p class="starterDownloadsNote">Auto setup is temporarily disabled. Download these files and copy them to your watch over USB MSD.</p>
-      <ul>
-        <li>
-          <a href="NewSetup/Analog.rwa" download>Analog.rwa</a>
-          <div class="starterDest">Copy to: /watches/</div>
-        </li>
-        <li>
-          <a href="NewSetup/PlutoBoy.rwb" download>PlutoBoy.rwb</a>
-          <div class="starterDest">Copy to: /apps/</div>
-        </li>
-        <li>
-          <a href="NewSetup/Legend%20of%20Zelda,%20The%20-%20Link%27s%20Awakening%20(USA,%20Europe).gb" download>Legend of Zelda, The - Link's Awakening (USA, Europe).gb</a>
-          <div class="starterDest">Copy to: /roms/gb/</div>
-        </li>
-      </ul>
+    <div class="panelHeader">
+      <h2 class="panelTitle">Watch Logs</h2>
+      <button id="copyLogBtn" class="secondary">Copy All</button>
     </div>
-    <div id="viewerHost">
-      <div class="viewerHint">Select or double-click a file from the tree to view/edit.</div>
+    <div class="logToolbar">
+      <input
+        id="logFilterInput"
+        type="text"
+        placeholder="Filter logs: word +must -exclude"
+        style="padding:8px;border:1px solid #2e3a49;border-radius:8px;background:#121a24;color:#d7e6f5;"
+      />
     </div>
+    <div id="log"></div>
+    <div id="viewerHost" style="display:none"></div>
   </div>
-</div>
-
-<div class="panel logPanel">
-  <h2 class="panelTitle">Log</h2>
-  <div id="log"></div>
 </div>
 
 </div><!-- end #mainUI -->
 
 <div id="ctxMenu" class="menu">
   <button data-action="upload">Upload Here</button>
-  <button data-action="download">Download</button>
   <button data-action="rename">Rename</button>
   <button data-action="mkdir">New Folder</button>
   <button data-action="delete">Delete</button>
@@ -620,6 +623,8 @@ const launchInput = document.getElementById("launchInput");
 const uploadInput = document.getElementById("uploadInput");
 const viewerHost = document.getElementById("viewerHost");
 const logEl = document.getElementById("log");
+const logFilterInput = document.getElementById("logFilterInput");
+const copyLogBtn = document.getElementById("copyLogBtn");
 const ctxMenu = document.getElementById("ctxMenu");
 const transferModal = document.getElementById("transferModal");
 const transferTitle = document.getElementById("transferTitle");
@@ -641,10 +646,28 @@ let transferInProgress = false;
 let pendingUploadNode = null;
 let viewerRequestToken = 0;
 let activeEditorState = null;
+let watchLogPollTimer = null;
+let watchLogPollInFlight = false;
+let watchLogOffset = 0;
+let watchLogUnsupportedReported = false;
+let watchLogFirstFailureReported = false;
+let watchLogPartialLine = "";
+
+const WATCH_LOG_POLL_MS = 1000;
+const WATCH_LOG_CHUNK_BYTES = 240;
+const WATCH_LOG_MAX_CHUNKS_PER_POLL = 6;
+const ENABLE_WATCH_LOG_POLLING = true;
+
+const logFilterState = {
+  any: [],
+  must: [],
+  exclude: [],
+};
 
 const SETTINGS_HEADER = ["name", "type", "value", "[min]", "[max]", "[choices]", "[ui element]"];
 const SETTINGS_TYPES = ["int", "uint", "string", "float", "bool"];
 const SETTINGS_UI_ELEMENTS = ["check box", "slider", "numeric entry", "date time", "text", "list picker"];
+const TREE_ROOT_PATHS = ["/", "/d"];
 
 function showTransferProgress(title, sent = 0, total = 0) {
   transferTitle.textContent = title;
@@ -666,12 +689,143 @@ function hideTransferProgress() {
   transferLabel.textContent = "0 / 0 bytes";
 }
 
+function getLogText() {
+  return Array.from(logEl.children)
+    .map((child) => child?.dataset?.rawLine ?? child?.textContent ?? "")
+    .join("\n");
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const temp = document.createElement("textarea");
+  temp.value = text;
+  temp.setAttribute("readonly", "readonly");
+  temp.style.position = "fixed";
+  temp.style.opacity = "0";
+  temp.style.pointerEvents = "none";
+  document.body.appendChild(temp);
+  temp.focus();
+  temp.select();
+
+  try {
+    const ok = document.execCommand("copy");
+    if (!ok) {
+      throw new Error("Clipboard copy command failed");
+    }
+  } finally {
+    document.body.removeChild(temp);
+  }
+}
+
 function log(line, cls = "") {
   const el = document.createElement("div");
   el.className = cls;
   el.textContent = line;
+  el.dataset.rawLine = line;
+  applyLogFilterToEntry(el);
   logEl.appendChild(el);
-  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function parseLogFilter(raw) {
+  const next = {
+    any: [],
+    must: [],
+    exclude: [],
+  };
+
+  const terms = String(raw || "").trim().split(/\s+/).filter(Boolean);
+  for (const term of terms) {
+    if (term.length < 2) {
+      if (term !== "+" && term !== "-") {
+        next.any.push(term.toLowerCase());
+      }
+      continue;
+    }
+
+    const prefix = term[0];
+    const word = term.slice(1).toLowerCase();
+    if (!word) {
+      continue;
+    }
+
+    if (prefix === "+") {
+      next.must.push(word);
+    } else if (prefix === "-") {
+      next.exclude.push(word);
+    } else {
+      next.any.push(term.toLowerCase());
+    }
+  }
+
+  return next;
+}
+
+function lineMatchesLogFilter(line) {
+  const haystack = String(line || "").toLowerCase();
+
+  for (const word of logFilterState.exclude) {
+    if (haystack.includes(word)) {
+      return false;
+    }
+  }
+
+  for (const word of logFilterState.must) {
+    if (!haystack.includes(word)) {
+      return false;
+    }
+  }
+
+  if (logFilterState.any.length > 0) {
+    let foundAny = false;
+    for (const word of logFilterState.any) {
+      if (haystack.includes(word)) {
+        foundAny = true;
+        break;
+      }
+    }
+    if (!foundAny) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function applyLogFilterToEntry(el) {
+  const line = el?.dataset?.rawLine ?? el?.textContent ?? "";
+  el.style.display = lineMatchesLogFilter(line) ? "" : "none";
+}
+
+function applyLogFilterToAll() {
+  for (const child of logEl.children) {
+    applyLogFilterToEntry(child);
+  }
+}
+
+if (logFilterInput) {
+  logFilterInput.addEventListener("input", () => {
+    const parsed = parseLogFilter(logFilterInput.value);
+    logFilterState.any = parsed.any;
+    logFilterState.must = parsed.must;
+    logFilterState.exclude = parsed.exclude;
+    applyLogFilterToAll();
+  });
+}
+
+if (copyLogBtn) {
+  copyLogBtn.addEventListener("click", async () => {
+    try {
+      const text = getLogText();
+      await copyTextToClipboard(text);
+      log(`Copied ${logEl.children.length} log line(s) to clipboard`, "ok");
+    } catch (err) {
+      log(`Copy failed: ${err?.message || err}`, "err");
+    }
+  });
 }
 
 function setStatus(text, isOk) {
@@ -685,6 +839,101 @@ async function updateConnectedStatusWithVersion(name, sourceLabel) {
   setStatus(`Connected: ${name} | fw ${version}`, true);
   log(`PING ok (${sourceLabel}): ${version}`, "ok");
   await checkForFirmwareUpdate(version);
+  startWatchLogPolling();
+}
+
+async function pollWatchLogsOnce() {
+  if (watchLogPollInFlight || !client.isConnected()) {
+    return;
+  }
+
+  watchLogPollInFlight = true;
+  try {
+    let chunksRead = 0;
+    while (client.isConnected() && chunksRead < WATCH_LOG_MAX_CHUNKS_PER_POLL) {
+      const rsp = await client.logDump(watchLogOffset, WATCH_LOG_CHUNK_BYTES);
+      if (rsp.status !== BleApi.STATUS.OK) {
+        if (!watchLogFirstFailureReported) {
+          log(`Watch log polling failed: ${statusText(rsp.status)}`, "err");
+          watchLogFirstFailureReported = true;
+        }
+        if (!watchLogUnsupportedReported) {
+          log(`Watch log query unavailable (${statusText(rsp.status)})`, "muted");
+          watchLogUnsupportedReported = true;
+        }
+        return;
+      }
+
+      watchLogUnsupportedReported = false;
+
+      if (rsp.text) {
+        const chunkText = rsp.text.replace(/\r\n/g, "\n");
+        const combined = watchLogPartialLine + chunkText;
+        const parts = combined.split("\n");
+        const endedWithNewline = combined.endsWith("\n");
+
+        if (endedWithNewline) {
+          watchLogPartialLine = "";
+        } else {
+          watchLogPartialLine = parts.pop() || "";
+        }
+
+        for (const line of parts) {
+          if (line.length === 0) {
+            continue;
+          }
+          log(`[watch] ${line}`, "muted");
+        }
+      }
+
+      const prevOffset = watchLogOffset;
+      watchLogOffset = rsp.nextOffset & 0xffff;
+      chunksRead += 1;
+
+      if (!rsp.hasMore || watchLogOffset === prevOffset) {
+        break;
+      }
+    }
+  } catch (err) {
+    if (!watchLogFirstFailureReported) {
+      log(`Watch log polling failed: ${err?.message || err}`, "err");
+      watchLogFirstFailureReported = true;
+    }
+  } finally {
+    watchLogPollInFlight = false;
+  }
+}
+
+function startWatchLogPolling() {
+  if (!ENABLE_WATCH_LOG_POLLING) {
+    return;
+  }
+
+  if (watchLogPollTimer) {
+    return;
+  }
+  watchLogOffset = 0;
+  watchLogUnsupportedReported = false;
+  watchLogFirstFailureReported = false;
+  watchLogPartialLine = "";
+  watchLogPollTimer = setInterval(() => {
+    pollWatchLogsOnce();
+  }, WATCH_LOG_POLL_MS);
+  pollWatchLogsOnce();
+  log(`Watch log polling started (${WATCH_LOG_POLL_MS / 1000}s interval)`, "muted");
+}
+
+function stopWatchLogPolling() {
+  if (watchLogPollTimer) {
+    clearInterval(watchLogPollTimer);
+    watchLogPollTimer = null;
+    log("Watch log polling stopped", "muted");
+  }
+  watchLogPollInFlight = false;
+  watchLogOffset = 0;
+  watchLogUnsupportedReported = false;
+  watchLogFirstFailureReported = false;
+  watchLogPartialLine = "";
 }
 
 function stopReconnectLoop() {
@@ -787,6 +1036,11 @@ function joinPath(base, name) {
   const b = normalizePath(base);
   if (b === "/") return `/${name}`;
   return `${b}/${name}`;
+}
+
+function isMountRootPath(path) {
+  const p = normalizePath(path);
+  return p === "/" || p === "/d" || p === "/sd" || p === "/r";
 }
 
 function escapeHtml(text) {
@@ -1452,7 +1706,13 @@ function renderTree() {
   }
 
   const rootUl = document.createElement("ul");
-  rootUl.appendChild(renderTreeNode(rootNode));
+  if (rootNode.virtualRoot) {
+    for (const child of rootNode.children || []) {
+      rootUl.appendChild(renderTreeNode(child));
+    }
+  } else {
+    rootUl.appendChild(renderTreeNode(rootNode));
+  }
   treeHost.appendChild(rootUl);
 }
 
@@ -1475,7 +1735,11 @@ function renderTreeNode(node) {
 
   const name = document.createElement("span");
   name.className = `treeName ${node.isDir ? "dir" : "file"}`;
-  name.textContent = node.path === "/" ? "/" : node.name;
+  if (isMountRootPath(node.path)) {
+    name.textContent = node.path;
+  } else {
+    name.textContent = node.name;
+  }
 
   row.appendChild(twisty);
   row.appendChild(name);
@@ -1554,14 +1818,12 @@ function renderTreeNode(node) {
 }
 
 function showContextMenu(x, y, node) {
-  const isRoot = node.path === "/";
-  const isFile = !node.isDir;
+  const isRoot = isMountRootPath(node.path);
 
   for (const btn of ctxMenu.querySelectorAll("button")) {
     const action = btn.dataset.action;
     let disabled = false;
     if (action === "upload" && !node.isDir && node.path !== "/") disabled = false;
-    if (action === "download" && !isFile) disabled = true;
     if ((action === "delete" || action === "rename") && isRoot) disabled = true;
     btn.disabled = disabled;
   }
@@ -1597,22 +1859,30 @@ function resolveUploadPathForNode(node, fileName) {
 async function uploadFileViaTransport(file, options) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const remotePath = options.path;
+
   showTransferProgress(options.title, 0, bytes.length);
   transferInProgress = true;
 
-  const rsp = await client.otaUploadFirmware(bytes, {
-    launch: !!options.launch,
-    save: !!options.save,
-    path: remotePath,
-    chunksPerAck: 1,
-    allowOutOfOrder: false,
-    onProgress: (sent, total) => {
-      updateTransferProgress(sent, total, options.stage || "transferring");
-    },
-  });
-
-  transferInProgress = false;
-  hideTransferProgress();
+  let rsp;
+  try {
+    rsp = await client.otaUploadFirmware(bytes, {
+      launch: !!options.launch,
+      save: !!options.save,
+      path: remotePath,
+      chunkSize: 160,
+      chunksPerAck: 1,
+      allowOutOfOrder: false,
+      beginTimeoutMs: 12000,
+      chunkTimeoutMs: 12000,
+      commitTimeoutMs: 15000,
+      onProgress: (sent, total) => {
+        updateTransferProgress(sent, total, options.stage || "transferring");
+      },
+    });
+  } finally {
+    transferInProgress = false;
+    hideTransferProgress();
+  }
 
   if (rsp.status !== BleApi.STATUS.OK) {
     throw new Error(`${options.failPrefix}: ${formatOtaFailure(rsp)}`);
@@ -1687,7 +1957,7 @@ async function saveActiveEditor() {
 }
 
 async function actionDelete(node) {
-  if (!node || node.path === "/") return;
+  if (!node || isMountRootPath(node.path)) return;
   if (!confirm(`Delete ${node.path}?`)) return;
 
   await ensureConnected(`DELETE ${node.path}`);
@@ -1700,7 +1970,7 @@ async function actionDelete(node) {
 }
 
 async function actionRename(node) {
-  if (!node || node.path === "/") return;
+  if (!node || isMountRootPath(node.path)) return;
   const newName = prompt("Rename to:", node.name);
   if (!newName) return;
 
@@ -1729,31 +1999,31 @@ async function actionMkdir(node) {
   await rebuildTree();
 }
 
-async function actionDownload(node) {
-  if (!node || node.isDir) return;
-
-  await ensureConnected(`READ ${node.path}`);
-  const rsp = await client.readFileAll(node.path);
-  if (rsp.status !== BleApi.STATUS.OK) {
-    throw new Error(`READ failed: ${statusText(rsp.status)}`);
-  }
-
-  const blob = new Blob([rsp.data]);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = node.name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  log(`Downloaded ${node.path} (${rsp.data.length} bytes)`, "ok");
-}
-
 async function rebuildTree() {
   await ensureConnected("TREE");
-  log("Building recursive directory tree...", "muted");
-  rootNode = await buildTreeRecursive("/", "/");
+  log("Building recursive directory tree (/ and /d)...", "muted");
+
+  const rootChildren = [];
+  for (const rootPath of TREE_ROOT_PATHS) {
+    try {
+      rootChildren.push(await buildTreeRecursive(rootPath, rootPath));
+    } catch (err) {
+      log(`Tree root unavailable ${rootPath}: ${err.message}`, "muted");
+    }
+  }
+
+  if (!rootChildren.length) {
+    throw new Error("No readable filesystem roots.");
+  }
+
+  rootNode = {
+    name: "roots",
+    path: "/",
+    isDir: true,
+    virtualRoot: true,
+    children: rootChildren,
+  };
+
   renderTree();
   if (selectedNode) {
     const next = findNodeByPath(rootNode, selectedNode.path);
@@ -1783,6 +2053,7 @@ function findNodeByPath(node, path) {
 document.getElementById("connectBtn").addEventListener("click", async () => {
   try {
     stopReconnectLoop();
+    stopWatchLogPolling();
     manualDisconnectRequested = false;
     client.clearKnownDevice();
     const name = await client.connect();
@@ -1824,6 +2095,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
     welcomeProgressEl.classList.add("active");
     welcomeStatusEl.textContent = "Scanning for watch...";
     stopReconnectLoop();
+    stopWatchLogPolling();
     manualDisconnectRequested = false;
     client.clearKnownDevice();
 
@@ -1847,6 +2119,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
     setStatus(`Connected: ${name} | fw ${version}`, true);
     log(`Connected to ${name}, fw ${version}`, "ok");
     lastWatchVersion = version;
+    startWatchLogPolling();
 
     // Check for firmware update
     const entry = await loadPublishedFirmware();
@@ -1866,6 +2139,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
           setStatus(`Connected: ${rName} | fw ${rVer}`, true);
           log(`Reconnected after OTA: ${rName}, fw ${rVer}`, "ok");
           lastWatchVersion = rVer;
+          startWatchLogPolling();
         } catch (reconnErr) {
           log(`Post-OTA reconnect failed: ${reconnErr.message}`, "err");
         }
@@ -1895,6 +2169,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
 document.getElementById("disconnectBtn").addEventListener("click", async () => {
   manualDisconnectRequested = true;
   stopReconnectLoop();
+  stopWatchLogPolling();
   await client.disconnect();
   setStatus("Disconnected", false);
   log("Disconnected", "muted");
@@ -2021,7 +2296,6 @@ ctxMenu.addEventListener("click", async (e) => {
       uploadInput.click();
       return;
     }
-    if (action === "download") await actionDownload(node);
     if (action === "rename") await actionRename(node);
     if (action === "mkdir") await actionMkdir(node || rootNode);
     if (action === "delete") await actionDelete(node);
@@ -2038,6 +2312,7 @@ client.onDisconnect(() => {
     return;
   }
 
+  stopWatchLogPolling();
   setStatus("Disconnected (link dropped). Auto-reconnect in 5s...", false);
   log("BLE disconnected unexpectedly", "err");
   hideMainUI();

@@ -33,45 +33,52 @@ class TextureBuilder extends BaseBuilder {
       const textureJson = this.parseTextureJson(file.content);
       const meta = textureJson.metadata || {};
       const format = meta.outputPixelFormat || 'd2_mode_i8';
-      const paletteOffset = meta.paletteOffset || 0;
+      const paletteOffset = meta.paletteOffset ?? 0;
       const palettePath = meta.palettePath || '';
+      const sourceImagePath = meta.sourceImagePath || textureJson.sourceImagePath || textureJson.sourceImage || '';
+      const resolvedImagePath = this.resolveResourcePath(file.path, sourceImagePath);
+      const resolvedPalettePath = this.resolveResourcePath(file.path, palettePath);
+      const fmtEnum = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.I8;
 
-      // ── 2. Load the source .d2 (already built by the Texture Editor) ──
-      const sourceD2Path = file.path.replace(/\.texture$/i, '.d2');
-      const sourceD2Content = await this.loadFileContent(sourceD2Path);
-      if (!sourceD2Content) {
-        throw new Error(`Source .d2 not found: ${sourceD2Path}  — open in Texture Editor and apply a palette first`);
+      // ── 2. Load the source image and rebuild the D2 payload ───────
+      if (!resolvedImagePath) {
+        throw new Error(`Source image path missing in .texture: ${file.path}`);
       }
 
-      // Convert to Uint8Array
+      const sourceImageContent = await this.loadFileContent(resolvedImagePath);
+      if (!sourceImageContent) {
+        throw new Error(`Source image not found: ${resolvedImagePath}`);
+      }
+
+      const RWImageData = window.ImageData;
+      if (!RWImageData || typeof RWImageData.fromFile !== 'function') {
+        throw new Error('RetroStudio ImageData loader is not available');
+      }
+
+      const image = await RWImageData.fromFile(sourceImageContent, resolvedImagePath);
+      const width = image.width;
+      const height = image.height;
+      const rgbaFrame = image.frames?.[0];
+      if (!rgbaFrame || !rgbaFrame.colors) {
+        throw new Error(`Unable to decode source image pixels: ${resolvedImagePath}`);
+      }
+
+      const rgba = new Uint8ClampedArray(width * height * 4);
+      for (let index = 0; index < rgbaFrame.colors.length; index++) {
+        const color = rgbaFrame.colors[index];
+        const offset = index * 4;
+        rgba[offset] = color.r;
+        rgba[offset + 1] = color.g;
+        rgba[offset + 2] = color.b;
+        rgba[offset + 3] = Math.round((color.alpha ?? 1) * 255);
+      }
+
       let d2Bytes;
-      if (sourceD2Content instanceof ArrayBuffer) {
-        d2Bytes = new Uint8Array(sourceD2Content);
-      } else if (ArrayBuffer.isView(sourceD2Content)) {
-        d2Bytes = new Uint8Array(sourceD2Content.buffer, sourceD2Content.byteOffset, sourceD2Content.byteLength);
-      } else if (typeof sourceD2Content === 'string') {
-        // base64
-        const bin = atob(sourceD2Content);
-        d2Bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) d2Bytes[i] = bin.charCodeAt(i);
-      } else {
-        throw new Error(`Unexpected source .d2 content type: ${typeof sourceD2Content}`);
-      }
-
-      // Validate magic
-      if (d2Bytes.length < 32 ||
-          d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
-          d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
-        throw new Error(`Invalid D2TX magic in source .d2: ${sourceD2Path}`);
-      }
-
-      console.log(`${tag} Loaded source .d2: ${d2Bytes.length} bytes from ${sourceD2Path}`);
 
       // ── 3. Resolve palette index from the build-time palette registry ──
       let paletteIndex = 0;
+      let palette = null;
       if (palettePath) {
-        // Load palette colors for PMAP registration
-        let palette = null;
         const embeddedPalette = textureJson.palette;
         if (Array.isArray(embeddedPalette) && embeddedPalette.length > 0) {
           palette = embeddedPalette.map(c => {
@@ -84,21 +91,50 @@ class TextureBuilder extends BaseBuilder {
           });
         } else {
           // Load from palette file
-          const paletteContent = await this.loadFileContent(palettePath);
-          if (!paletteContent) throw new Error(`Palette not found: ${palettePath}`);
+          const paletteContent = await this.loadFileContent(resolvedPalettePath);
+          if (!paletteContent) throw new Error(`Palette not found: ${resolvedPalettePath}`);
           const PaletteClass = window.Palette;
           if (!PaletteClass) throw new Error('Palette class not available');
           const paletteObj = new PaletteClass();
-          await paletteObj.loadFromContent(paletteContent, palettePath);
+          await paletteObj.loadFromContent(paletteContent, resolvedPalettePath);
           palette = paletteObj.colors.map(c => typeof c === 'string' ? c : '#000000');
         }
 
-        paletteIndex = TextureBuilder.getPaletteIndex(palettePath, palette);
-        console.log(`${tag} Palette index ${paletteIndex} for ${palettePath} (${palette.length} colors)`);
+        paletteIndex = TextureBuilder.getPaletteIndex(resolvedPalettePath, palette);
+        console.log(`${tag} Palette index ${paletteIndex} for ${resolvedPalettePath} (${palette.length} colors)`);
       }
 
-      // ── 4. Patch the .d2 header with build-time palette info ──────
-      // Make a mutable copy so we don't modify the source
+      const D2FileClass = window.D2File;
+      if (!D2FileClass) {
+        throw new Error('D2File builder is not available');
+      }
+
+      if (this.isIndexedFormatEnum(fmtEnum)) {
+        if (!palette || palette.length === 0) {
+          throw new Error(`Indexed texture requires a palette: ${file.path}`);
+        }
+
+        const chunkSize = this.getIndexedPaletteColorCount(fmtEnum);
+        const paletteSlice = palette.slice(paletteOffset, paletteOffset + chunkSize);
+        if (paletteSlice.length !== chunkSize) {
+          throw new Error(`Palette slice out of range for ${file.path}: offset=${paletteOffset} size=${chunkSize} paletteLen=${palette.length}`);
+        }
+
+        const colorKeyOpts = (textureJson.useColorKey && format !== 'd2_mode_ai44')
+          ? { enabled: true, color: textureJson.transparentColor || '#FF00FF' }
+          : null;
+
+        const reduced = image.matchToPalette(0, paletteSlice, 0, null, colorKeyOpts);
+        if (!reduced || !reduced.indexedFrames || reduced.indexedFrames.length === 0) {
+          throw new Error(`Failed to match source image to palette: ${resolvedImagePath}`);
+        }
+
+        d2Bytes = D2FileClass.build(textureJson, reduced.indexedFrames[0].indexedData, width, height);
+      } else {
+        d2Bytes = D2FileClass.buildFromRGBA(textureJson, rgba, width, height);
+      }
+
+      // ── 4. Patch the rebuilt .d2 header with build-time palette info ─
       const output = new Uint8Array(d2Bytes.length);
       output.set(d2Bytes);
       const headerView = new DataView(output.buffer, output.byteOffset, output.byteLength);
@@ -123,7 +159,7 @@ class TextureBuilder extends BaseBuilder {
       const hHeight = headerView.getUint16(8, true);
       const hFormat = output[5];
       const hFlags  = output[13];
-      console.log(`${tag} Patched header: paletteIndex=${paletteIndex}, paletteOffset=${paletteOffset}, ${hWidth}×${hHeight}, fmt=0x${hFormat.toString(16)}, flags=0x${hFlags.toString(16)}`);
+      console.log(`${tag} Rebuilt header: paletteIndex=${paletteIndex}, paletteOffset=${paletteOffset}, ${hWidth}×${hHeight}, fmt=0x${hFormat.toString(16)}, flags=0x${hFlags.toString(16)}`);
 
       // ── 5. Save to build directory ────────────────────────────────
       const outUiPath = file.path.replace(/\.texture$/i, '.d2');
@@ -217,6 +253,44 @@ class TextureBuilder extends BaseBuilder {
     }
 
     return null;
+  }
+
+  resolveResourcePath(texturePath, resourcePath) {
+    if (!resourcePath) return '';
+    if (resourcePath.includes('/Sources/')) return resourcePath;
+    if (resourcePath.startsWith('Sources/')) {
+      const marker = texturePath.lastIndexOf('/Sources/');
+      if (marker >= 0) {
+        return texturePath.substring(0, marker + 1) + resourcePath;
+      }
+    }
+
+    const slash = texturePath.lastIndexOf('/');
+    return slash >= 0 ? `${texturePath.substring(0, slash + 1)}${resourcePath}` : resourcePath;
+  }
+
+  isIndexedFormatEnum(fmtEnum) {
+    return fmtEnum === D2_FORMAT.I8 ||
+           fmtEnum === D2_FORMAT.I4 ||
+           fmtEnum === D2_FORMAT.I2 ||
+           fmtEnum === D2_FORMAT.I1 ||
+           fmtEnum === D2_FORMAT.AI44;
+  }
+
+  getIndexedPaletteColorCount(fmtEnum) {
+    switch (fmtEnum) {
+      case D2_FORMAT.I8:
+        return 256;
+      case D2_FORMAT.I4:
+      case D2_FORMAT.AI44:
+        return 16;
+      case D2_FORMAT.I2:
+        return 4;
+      case D2_FORMAT.I1:
+        return 2;
+      default:
+        throw new Error(`Unsupported indexed format enum: ${fmtEnum}`);
+    }
   }
 
   /**

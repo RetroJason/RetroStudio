@@ -40,7 +40,7 @@ class D2File {
   static build(textureCfg, indexedData, width, height) {
     const meta     = textureCfg.metadata || {};
     const format   = meta.outputPixelFormat || textureCfg.outputPixelFormat || 'd2_mode_i8';
-    const fmtEnum  = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.I8;
+    const fmtEnum  = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.I8;
     const palOff   = meta.paletteOffset ?? textureCfg.paletteOffset ?? 0;
     const compress = textureCfg.compressionType || meta.compressionType || 'none';
     const rotation = textureCfg.rotation ?? 0;
@@ -97,6 +97,71 @@ class D2File {
   }
 
   /**
+   * Build a game-ready .d2 (D2TX) binary from source RGBA pixels.
+   * This is the shared direct-colour/alpha path used by previews and tests.
+   *
+   * @param {object} textureCfg  Parsed .texture JSON (or textureData.toJSON()).
+   * @param {Uint8Array|Uint8ClampedArray} rgba Source RGBA pixels.
+   * @param {number} width       Source image width (before rotation).
+   * @param {number} height      Source image height (before rotation).
+   * @returns {Uint8Array} Complete .d2 file bytes.
+   */
+  static buildFromRGBA(textureCfg, rgba, width, height) {
+    const meta     = textureCfg.metadata || {};
+    const format   = meta.outputPixelFormat || textureCfg.outputPixelFormat || 'd2_mode_rgba8888';
+    const fmtEnum  = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.RGBA8888;
+    const palOff   = meta.paletteOffset ?? textureCfg.paletteOffset ?? 0;
+    const compress = textureCfg.compressionType || meta.compressionType || 'none';
+    const rotation = textureCfg.rotation ?? 0;
+
+    let buildW = width;
+    let buildH = height;
+    let data = D2File.convertRGBAToFormat(rgba, format, width, height);
+
+    if (rotation === 90) {
+      const bpp = BITS_PER_PIXEL[fmtEnum] || 32;
+      if ((bpp % 8) === 0) {
+        data = D2File._rotateDirectBytes90CW(data, width, height, bpp);
+      } else {
+        data = D2File._rotateSubByteDirect90CW(data, width, height, fmtEnum, bpp);
+      }
+      buildW = height;
+      buildH = width;
+    }
+
+    let isRLE = false;
+    if (compress === 'rle') {
+      const RWImageData = window.ImageData;
+      if (RWImageData && typeof RWImageData.rleEncode === 'function') {
+        data = new Uint8Array(RWImageData.rleEncode(data));
+        isRLE = true;
+      } else {
+        console.warn('[D2File] RLE requested but ImageData.rleEncode not available');
+      }
+    }
+
+    let colorKey = -1;
+    if (textureCfg.useColorKey) {
+      const hex = textureCfg.transparentColor || '#FF00FF';
+      const r = parseInt(hex.substring(1, 3), 16) || 0;
+      const g = parseInt(hex.substring(3, 5), 16) || 0;
+      const b = parseInt(hex.substring(5, 7), 16) || 0;
+      colorKey = (Math.round(r * 31 / 255) << 11) | (Math.round(g * 63 / 255) << 5) | Math.round(b * 31 / 255);
+    }
+
+    const d2 = buildD2TX(buildW, buildH, fmtEnum, data, {
+      paletteOffset: palOff,
+      rle: isRLE,
+      preRotated: rotation === 90,
+      colorKey,
+    });
+
+    console.log(`[D2File] Built ${format} ${buildW}×${buildH} from RGBA → ${d2.length} bytes` +
+                `${isRLE ? ' (RLE)' : ''}${rotation === 90 ? ' (rot90)' : ''}`);
+    return d2;
+  }
+
+  /**
    * Convert RGBA8888 pixel data to any target D2 format.
    *
    * Input:  Uint8ClampedArray | Uint8Array of RGBA bytes (4 per pixel).
@@ -109,33 +174,42 @@ class D2File {
    * @param {string} formatStr  D2 format string e.g. 'd2_mode_rgba8888'.
    * @returns {Uint8Array}
    */
-  static convertRGBAToFormat(rgba, formatStr) {
+  static convertRGBAToFormat(rgba, formatStr, width = 0, height = 0) {
     const pixelCount = rgba.length / 4;
     const fmtEnum = FORMAT_STRING_TO_ENUM[formatStr];
 
     switch (fmtEnum) {
       // ── 32-bit ────────────────────────────────────────
-      case D2_FORMAT.RGBA8888:
-        return new Uint8Array(rgba.buffer ? rgba : new Uint8Array(rgba));
-
-      case D2_FORMAT.ARGB8888: {
+      case D2_FORMAT.RGBA8888: {
         const out = new Uint8Array(pixelCount * 4);
         for (let i = 0, o = 0; i < rgba.length; i += 4, o += 4) {
           out[o]     = rgba[i + 3]; // A
-          out[o + 1] = rgba[i];     // R
+          out[o + 1] = rgba[i + 2]; // B
           out[o + 2] = rgba[i + 1]; // G
-          out[o + 3] = rgba[i + 2]; // B
+          out[o + 3] = rgba[i];     // R
         }
         return out;
       }
 
-      // ── 24-bit ────────────────────────────────────────
+      case D2_FORMAT.ARGB8888: {
+        const out = new Uint8Array(pixelCount * 4);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 4) {
+          out[o]     = rgba[i + 2]; // B
+          out[o + 1] = rgba[i + 1]; // G
+          out[o + 2] = rgba[i];     // R
+          out[o + 3] = rgba[i + 3]; // A
+        }
+        return out;
+      }
+
+      // ── 32-bit xRGB ───────────────────────────────────
       case D2_FORMAT.RGB888: {
-        const out = new Uint8Array(pixelCount * 3);
-        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 3) {
-          out[o]     = rgba[i];
-          out[o + 1] = rgba[i + 1];
-          out[o + 2] = rgba[i + 2];
+        const out = new Uint8Array(pixelCount * 4);
+        for (let i = 0, o = 0; i < rgba.length; i += 4, o += 4) {
+          out[o]     = rgba[i + 2]; // B
+          out[o + 1] = rgba[i + 1]; // G
+          out[o + 2] = rgba[i];     // R
+          out[o + 3] = 0;
         }
         return out;
       }
@@ -244,39 +318,15 @@ class D2File {
       }
 
       case D2_FORMAT.ALPHA4: {
-        const out = new Uint8Array(Math.ceil(pixelCount / 2));
-        for (let i = 0; i < pixelCount; i++) {
-          const a4 = (rgba[i * 4 + 3] >> 4) & 0xF;
-          const byteIdx = i >> 1;
-          if ((i & 1) === 0) {
-            out[byteIdx] = a4 << 4;
-          } else {
-            out[byteIdx] |= a4;
-          }
-        }
-        return out;
+        return D2File._packSubByteRGBAAlpha(rgba, width, height, 4);
       }
 
       case D2_FORMAT.ALPHA2: {
-        const out = new Uint8Array(Math.ceil(pixelCount / 4));
-        for (let i = 0; i < pixelCount; i++) {
-          const a2 = (rgba[i * 4 + 3] >> 6) & 0x3;
-          const byteIdx = i >> 2;
-          const shift = 6 - ((i & 3) * 2);
-          out[byteIdx] |= a2 << shift;
-        }
-        return out;
+        return D2File._packSubByteRGBAAlpha(rgba, width, height, 2);
       }
 
       case D2_FORMAT.ALPHA1: {
-        const out = new Uint8Array(Math.ceil(pixelCount / 8));
-        for (let i = 0; i < pixelCount; i++) {
-          const a1 = rgba[i * 4 + 3] >= 128 ? 1 : 0;
-          const byteIdx = i >> 3;
-          const bitIdx = 7 - (i & 7);
-          if (a1) out[byteIdx] |= 1 << bitIdx;
-        }
-        return out;
+        return D2File._packSubByteRGBAAlpha(rgba, width, height, 1);
       }
 
       default:
@@ -387,6 +437,72 @@ class D2File {
       }
     }
     return out;
+  }
+
+  static _subByteShift(formatEnum, pixelIndex, bitsPerPixel) {
+    if (formatEnum === D2_FORMAT.I4 || formatEnum === D2_FORMAT.ALPHA4) {
+      return (pixelIndex & 1) === 0 ? 0 : 4;
+    }
+    if (formatEnum === D2_FORMAT.I2 || formatEnum === D2_FORMAT.ALPHA2) {
+      return (pixelIndex & 3) * 2;
+    }
+    if (formatEnum === D2_FORMAT.I1 || formatEnum === D2_FORMAT.ALPHA1) {
+      return pixelIndex & 7;
+    }
+    return 8 - bitsPerPixel - ((pixelIndex % (8 / bitsPerPixel)) * bitsPerPixel);
+  }
+
+  static _unpackSubBytePixels(data, formatEnum, bitsPerPixel, pixelCount) {
+    const out = new Uint8Array(pixelCount);
+    const mask = (1 << bitsPerPixel) - 1;
+    const pixelsPerByte = 8 / bitsPerPixel;
+
+    for (let i = 0; i < pixelCount; i++) {
+      const byteIdx = Math.floor(i / pixelsPerByte);
+      const shift = D2File._subByteShift(formatEnum, i, bitsPerPixel);
+      out[i] = (data[byteIdx] >> shift) & mask;
+    }
+
+    return out;
+  }
+
+  static _packSubBytePixels(values, formatEnum, bitsPerPixel) {
+    const out = new Uint8Array(Math.ceil((values.length * bitsPerPixel) / 8));
+    const mask = (1 << bitsPerPixel) - 1;
+    const pixelsPerByte = 8 / bitsPerPixel;
+
+    for (let i = 0; i < values.length; i++) {
+      const byteIdx = Math.floor(i / pixelsPerByte);
+      const shift = D2File._subByteShift(formatEnum, i, bitsPerPixel);
+      out[byteIdx] |= (values[i] & mask) << shift;
+    }
+
+    return out;
+  }
+
+  static _rotateSubByteDirect90CW(data, w, h, formatEnum, bitsPerPixel) {
+    const unpacked = D2File._unpackSubBytePixels(data, formatEnum, bitsPerPixel, w * h);
+    const rotated = D2File._rotateIndices90CW(unpacked, w, h);
+    return D2File._packSubBytePixels(rotated, formatEnum, bitsPerPixel);
+  }
+
+  static _packSubByteRGBAAlpha(rgba, width, height, bitsPerPixel) {
+    if (!width || !height) {
+      throw new Error('D2File: width/height required for sub-byte alpha packing');
+    }
+
+    const formatEnum = bitsPerPixel === 4 ? D2_FORMAT.ALPHA4 :
+                       bitsPerPixel === 2 ? D2_FORMAT.ALPHA2 : D2_FORMAT.ALPHA1;
+    const values = new Uint8Array(width * height);
+
+    for (let i = 0; i < values.length; i++) {
+      const alpha = rgba[i * 4 + 3];
+      values[i] = bitsPerPixel === 4 ? ((alpha >> 4) & 0xF) :
+                  bitsPerPixel === 2 ? ((alpha >> 6) & 0x3) :
+                  (alpha >= 128 ? 1 : 0);
+    }
+
+    return D2File._packSubBytePixels(values, formatEnum, bitsPerPixel);
   }
 
   /**

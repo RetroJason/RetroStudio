@@ -73,7 +73,7 @@ class D2Viewer extends ViewerBase {
     0x0D: 4,   // alpha4
     0x0E: 2,   // alpha2
     0x0F: 1,   // alpha1
-    0x40: 24,  // rgb888
+    0x40: 32,  // rgb888
     0x41: 16,  // rgb444
     0x42: 16,  // rgb555
   };

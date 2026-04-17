@@ -4,35 +4,47 @@ const RX_CHARACTERISTIC_UUID = "ed5c1401-2ac0-4349-ad36-dfe8831383ee";
 const TX_CHARACTERISTIC_UUID = "ed5c1402-2ac0-4349-ad36-dfe8831383ee";
 
 const MSG = {
-  NONE: 0x00,
-  PING: 0x01,
-  PONG: 0x02,
-  ERROR: 0x03,
-  TRANSPORT_INFO_REQ: 0x04,
-  TRANSPORT_INFO_RSP: 0x05,
-  SET_TIME_REQ: 0x06,
-  SET_TIME_RSP: 0x07,
-  LFS_LIST_REQ: 0x10,
-  LFS_LIST_RSP: 0x11,
-  LFS_READ_REQ: 0x12,
-  LFS_READ_RSP: 0x13,
-  LFS_WRITE_REQ: 0x14,
-  LFS_WRITE_RSP: 0x15,
-  LFS_DELETE_REQ: 0x16,
-  LFS_DELETE_RSP: 0x17,
-  LFS_MKDIR_REQ: 0x18,
-  LFS_MKDIR_RSP: 0x19,
-  LFS_STAT_REQ: 0x1a,
-  LFS_STAT_RSP: 0x1b,
-  LFS_RENAME_REQ: 0x1c,
-  LFS_RENAME_RSP: 0x1d,
-  OTA_BEGIN_REQ: 0x20,
-  OTA_BEGIN_RSP: 0x21,
-  OTA_CHUNK_REQ: 0x22,
-  OTA_CHUNK_RSP: 0x23,
-  OTA_COMMIT_REQ: 0x24,
-  OTA_COMMIT_RSP: 0x25,
+  NONE: 0x0000,
+  PING: 0x0001,
+  PONG: 0x0002,
+  ERROR: 0x0003,
+  TRANSPORT_INFO_REQ: 0x0004,
+  TRANSPORT_INFO_RSP: 0x0005,
+  SET_TIME_REQ: 0x0006,
+  SET_TIME_RSP: 0x0007,
+  LOG_DUMP_REQ: 0x0008,
+  LOG_DUMP_RSP: 0x0009,
+  LFS_LIST_REQ: 0x0100,
+  LFS_LIST_RSP: 0x0101,
+  LFS_READ_REQ: 0x0102,
+  LFS_READ_RSP: 0x0103,
+  LFS_WRITE_REQ: 0x0104,
+  LFS_WRITE_RSP: 0x0105,
+  LFS_DELETE_REQ: 0x0106,
+  LFS_DELETE_RSP: 0x0107,
+  LFS_MKDIR_REQ: 0x0108,
+  LFS_MKDIR_RSP: 0x0109,
+  LFS_STAT_REQ: 0x010a,
+  LFS_STAT_RSP: 0x010b,
+  LFS_RENAME_REQ: 0x010c,
+  LFS_RENAME_RSP: 0x010d,
+  FILE_BEGIN_REQ: 0x0200,
+  FILE_BEGIN_RSP: 0x0201,
+  FILE_CHUNK_REQ: 0x0202,
+  FILE_CHUNK_RSP: 0x0203,
+  FILE_COMMIT_REQ: 0x0204,
+  FILE_COMMIT_RSP: 0x0205,
+  FILE_LAUNCH_REQ: 0x0206,
+  FILE_LAUNCH_RSP: 0x0207,
 };
+
+// Backward-compatible aliases for existing UI codepaths.
+MSG.OTA_BEGIN_REQ = MSG.FILE_BEGIN_REQ;
+MSG.OTA_BEGIN_RSP = MSG.FILE_BEGIN_RSP;
+MSG.OTA_CHUNK_REQ = MSG.FILE_CHUNK_REQ;
+MSG.OTA_CHUNK_RSP = MSG.FILE_CHUNK_RSP;
+MSG.OTA_COMMIT_REQ = MSG.FILE_COMMIT_REQ;
+MSG.OTA_COMMIT_RSP = MSG.FILE_COMMIT_RSP;
 
 const STATUS = {
   OK: 0,
@@ -72,24 +84,25 @@ const STATUS_NAME_BY_CODE = Object.fromEntries(Object.entries(STATUS).map(([name
 
 function encodePacket(type, payloadBytes) {
   const payload = payloadBytes || new Uint8Array(0);
-  const totalSize = 3 + payload.length;
+  const totalSize = 4 + payload.length;
   const out = new Uint8Array(totalSize);
   out[0] = type & 0xff;
-  out[1] = totalSize & 0xff;
-  out[2] = (totalSize >> 8) & 0xff;
-  out.set(payload, 3);
+  out[1] = (type >> 8) & 0xff;
+  out[2] = totalSize & 0xff;
+  out[3] = (totalSize >> 8) & 0xff;
+  out.set(payload, 4);
   return out;
 }
 
 function decodePacket(buffer) {
   const bytes = new Uint8Array(buffer);
-  if (bytes.length < 3) {
+  if (bytes.length < 4) {
     throw new Error("Packet too short");
   }
 
-  const type = bytes[0];
-  const size = bytes[1] | (bytes[2] << 8);
-  if (size < 3) {
+  const type = bytes[0] | (bytes[1] << 8);
+  const size = bytes[2] | (bytes[3] << 8);
+  if (size < 4) {
     throw new Error("Packet has invalid total size");
   }
 
@@ -100,7 +113,7 @@ function decodePacket(buffer) {
   return {
     type,
     size,
-    payload: bytes.slice(3, size),
+    payload: bytes.slice(4, size),
   };
 }
 
@@ -173,7 +186,7 @@ function statusName(code) {
 }
 
 function msgTypeName(type) {
-  return MSG_NAME_BY_TYPE[type] || `0x${(type & 0xff).toString(16).padStart(2, "0")}`;
+  return MSG_NAME_BY_TYPE[type] || `0x${(type & 0xffff).toString(16).padStart(4, "0")}`;
 }
 
 function otaReasonName(reasonCode) {
@@ -181,7 +194,7 @@ function otaReasonName(reasonCode) {
 }
 
 function parseRspHeader(payload) {
-  if (payload.length < 3) {
+  if (!payload || payload.length < 3) {
     throw new Error("Response payload too short");
   }
   const status = payload[0];
@@ -210,6 +223,7 @@ class RetroWatchBleClient {
     this.disconnectListeners = new Set();
     this.pending = new Set();
     this.txLock = Promise.resolve();
+    this.requestLock = Promise.resolve();
 
     this.maxNotifyPayloadBytes = 20;
     this.maxMessagePayloadBytes = 17;
@@ -519,6 +533,90 @@ class RetroWatchBleClient {
     };
   }
 
+  async logDump(offset = 0, requestedLen = null) {
+    const reqId = this._nextRequestId();
+    let maxChunk = this._maxRspBodyBytes() - 5;
+    if (maxChunk < 1) {
+      maxChunk = 1;
+    }
+
+    const reqChunk = requestedLen == null ? maxChunk : Math.max(1, Math.min(requestedLen | 0, 0xffff));
+    const payload = concatBytes([
+      u16LE(reqId),
+      u16LE(offset & 0xffff),
+      u16LE(reqChunk),
+    ]);
+
+    const packet = await this.sendRequest(MSG.LOG_DUMP_REQ, payload, {
+      expectType: MSG.LOG_DUMP_RSP,
+      timeoutMs: 4000,
+      requestId: reqId,
+    });
+
+    const parsed = parseRspHeader(packet.payload);
+    if (parsed.status !== STATUS.OK) {
+      return {
+        requestId: parsed.requestId,
+        status: parsed.status,
+        hasMore: false,
+        nextOffset: offset & 0xffff,
+        chunk: new Uint8Array(0),
+        text: "",
+      };
+    }
+
+    if (parsed.body.length < 5) {
+      return {
+        requestId: parsed.requestId,
+        status: parsed.status,
+        hasMore: false,
+        nextOffset: offset & 0xffff,
+        chunk: new Uint8Array(0),
+        text: "",
+      };
+    }
+
+    const hasMore = parsed.body[0] !== 0;
+    const nextOffset = parsed.body[1] | (parsed.body[2] << 8);
+    const chunkLen = parsed.body[3] | (parsed.body[4] << 8);
+    const chunk = parsed.body.slice(5, 5 + chunkLen);
+
+    return {
+      requestId: parsed.requestId,
+      status: parsed.status,
+      hasMore,
+      nextOffset,
+      chunk,
+      text: bytesToText(chunk),
+    };
+  }
+
+  async logDumpAll(startOffset = 0, requestedLen = null, maxBytes = 64 * 1024) {
+    let text = "";
+    let offset = startOffset & 0xffff;
+    let loops = 0;
+
+    while (text.length < maxBytes && loops < 1024) {
+      loops += 1;
+      const rsp = await this.logDump(offset, requestedLen);
+      if (rsp.status !== STATUS.OK) {
+        return rsp;
+      }
+
+      text += rsp.text;
+      if (!rsp.hasMore) {
+        break;
+      }
+      offset = rsp.nextOffset;
+    }
+
+    return {
+      status: STATUS.OK,
+      text,
+      nextOffset: offset,
+    };
+  }
+
   async list(path = "/") {
     const reqId = this._nextRequestId();
     const pathBytes = textToBytes(path);
@@ -801,9 +899,11 @@ class RetroWatchBleClient {
       pathBytes,
     ]);
 
+    const beginTimeoutMs = opts.beginTimeoutMs == null ? 6000 : opts.beginTimeoutMs;
+
     const packet = await this.sendRequest(MSG.OTA_BEGIN_REQ, payload, {
       expectType: MSG.OTA_BEGIN_RSP,
-      timeoutMs: 6000,
+      timeoutMs: beginTimeoutMs,
       requestId: reqId,
     });
 
@@ -833,7 +933,7 @@ class RetroWatchBleClient {
     };
   }
 
-  async otaChunk(offset, chunkBytes) {
+  async otaChunk(offset, chunkBytes, opts = {}) {
     const reqId = this._nextRequestId();
     const payload = concatBytes([
       u16LE(reqId),
@@ -842,9 +942,11 @@ class RetroWatchBleClient {
       chunkBytes,
     ]);
 
+    const chunkTimeoutMs = opts.chunkTimeoutMs == null ? 6000 : opts.chunkTimeoutMs;
+
     const packet = await this.sendRequest(MSG.OTA_CHUNK_REQ, payload, {
       expectType: MSG.OTA_CHUNK_RSP,
-      timeoutMs: 6000,
+      timeoutMs: chunkTimeoutMs,
       requestId: reqId,
     });
 
@@ -879,13 +981,15 @@ class RetroWatchBleClient {
     };
   }
 
-  async otaCommit() {
+  async otaCommit(opts = {}) {
     const reqId = this._nextRequestId();
     const payload = u16LE(reqId);
 
+    const commitTimeoutMs = opts.commitTimeoutMs == null ? 10000 : opts.commitTimeoutMs;
+
     const packet = await this.sendRequest(MSG.OTA_COMMIT_REQ, payload, {
       expectType: MSG.OTA_COMMIT_RSP,
-      timeoutMs: 10000,
+      timeoutMs: commitTimeoutMs,
       requestId: reqId,
     });
 
@@ -913,6 +1017,11 @@ class RetroWatchBleClient {
 
   async otaUploadFirmware(data, opts = {}) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+
+    // Re-query transport limits before upload so chunk sizing matches the
+    // latest negotiated BLE MTU.
+    await this._refreshTransportInfo();
+
     const launch = opts.launch !== false;
     const save = !!opts.save;
     const path = opts.path ? String(opts.path) : "";
@@ -942,7 +1051,17 @@ class RetroWatchBleClient {
       estimatedAttMtu: this.maxNotifyPayloadBytes + 3,
     });
 
-    const beginRsp = await this.otaBegin(bytes.length, totalCrc32, { launch, save, path });
+    let beginRsp;
+    try {
+      beginRsp = await this.otaBegin(bytes.length, totalCrc32, {
+        launch,
+        save,
+        path,
+        beginTimeoutMs: opts.beginTimeoutMs,
+      });
+    } catch (err) {
+      throw new Error(`OTA begin failed: ${err?.message || err}`);
+    }
     if (beginRsp.status !== STATUS.OK) {
       const beginReason = beginRsp.body.length > 0 ? beginRsp.body[0] : 0;
       return {
@@ -986,7 +1105,9 @@ class RetroWatchBleClient {
       inFlight.push({
         offset: chunkOffset,
         length: chunk.length,
-        promise: this.otaChunk(chunkOffset, chunk),
+        promise: this.otaChunk(chunkOffset, chunk, {
+          chunkTimeoutMs: opts.chunkTimeoutMs,
+        }),
       });
 
       return true;
@@ -998,7 +1119,12 @@ class RetroWatchBleClient {
 
     while (inFlight.length > 0) {
       const current = inFlight.shift();
-      const rsp = await current.promise;
+      let rsp;
+      try {
+        rsp = await current.promise;
+      } catch (err) {
+        throw new Error(`OTA chunk failed at offset ${current.offset}: ${err?.message || err}`);
+      }
 
       if (rsp.status !== STATUS.OK) {
         return {
@@ -1036,7 +1162,14 @@ class RetroWatchBleClient {
       }
     }
 
-    const commitRsp = await this.otaCommit();
+    let commitRsp;
+    try {
+      commitRsp = await this.otaCommit({
+        commitTimeoutMs: opts.commitTimeoutMs,
+      });
+    } catch (err) {
+      throw new Error(`OTA commit failed: ${err?.message || err}`);
+    }
     if (commitRsp.status !== STATUS.OK) {
       const commitReason = commitRsp.body.length > 0 ? commitRsp.body[0] : 0;
       return {
@@ -1137,48 +1270,56 @@ class RetroWatchBleClient {
   async sendRequest(type, payload, opts = {}) {
     this._assertConnected();
 
-    const timeoutMs = opts.timeoutMs || 3000;
-    const expectType = opts.expectType;
-    const requestId = opts.requestId;
-    const requestIdInHeader = opts.requestIdInHeader !== false;
+    const runRequest = async () => {
+      this._assertConnected();
 
-    return new Promise(async (resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(entry);
-        reject(new Error(`Timed out waiting for BLE response (type=${msgTypeName(type)}, reqId=${requestId == null ? "n/a" : requestId})`));
-      }, timeoutMs);
+      const timeoutMs = opts.timeoutMs || 3000;
+      const expectType = opts.expectType;
+      const requestId = opts.requestId;
+      const requestIdInHeader = opts.requestIdInHeader !== false;
 
-      const entry = {
-        expectType,
-        requestId,
-        requestIdInHeader,
-        resolve: (packet) => {
-          clearTimeout(timer);
-          resolve(packet);
-        },
-        reject: (err) => {
+      return new Promise(async (resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pending.delete(entry);
+          reject(new Error(`Timed out waiting for BLE response (type=${msgTypeName(type)}, reqId=${requestId == null ? "n/a" : requestId})`));
+        }, timeoutMs);
+
+        const entry = {
+          expectType,
+          requestId,
+          requestIdInHeader,
+          resolve: (packet) => {
+            clearTimeout(timer);
+            resolve(packet);
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        };
+
+        this.pending.add(entry);
+
+        try {
+          this._emitDebug({
+            phase: "tx",
+            msgType: type,
+            msgName: msgTypeName(type),
+            requestId: requestId == null ? null : requestId,
+            payloadLen: payload ? payload.length : 0,
+          });
+          await this.sendRaw(type, payload);
+        } catch (err) {
+          this.pending.delete(entry);
           clearTimeout(timer);
           reject(err);
-        },
-      };
+        }
+      });
+    };
 
-      this.pending.add(entry);
-
-      try {
-        this._emitDebug({
-          phase: "tx",
-          msgType: type,
-          msgName: msgTypeName(type),
-          requestId: requestId == null ? null : requestId,
-          payloadLen: payload ? payload.length : 0,
-        });
-        await this.sendRaw(type, payload);
-      } catch (err) {
-        this.pending.delete(entry);
-        clearTimeout(timer);
-        reject(err);
-      }
-    });
+    const queued = this.requestLock.then(runRequest, runRequest);
+    this.requestLock = queued.catch(() => {});
+    return queued;
   }
 
   _onNotification(event) {

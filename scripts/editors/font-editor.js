@@ -397,14 +397,15 @@ class FontEditor extends EditorBase {
     const ctx = canvas.getContext('2d');
     const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-    // Convert RGBA to target format bytes
-    const formatBytes = D2File.convertRGBAToFormat(rgba, format);
-    const fmtEnum = FORMAT_STRING_TO_ENUM[format] || D2_FORMAT.ALPHA8;
-
-    // Build D2TX binary
-    const d2Bytes = buildD2TX(canvas.width, canvas.height, fmtEnum, formatBytes, {
-      paletteOffset: 0
-    });
+    const d2Bytes = D2File.buildFromRGBA({
+      outputPixelFormat: format,
+      metadata: {
+        outputPixelFormat: format,
+        paletteOffset: 0,
+      },
+      rotation: 0,
+      compressionType: 'none',
+    }, rgba, canvas.width, canvas.height);
 
     const d2Path = folder ? `${folder}/${base}.d2` : `${base}.d2`;
     const d2Storage = window.ProjectPaths?.normalizeStoragePath?.(d2Path) || d2Path;

@@ -354,7 +354,7 @@ Void Sprite.SetName(String name, String newName)
 
 Renames an object
 
-Void Sprite.SetPosition(String name, Int32 positionX, Int32 positionY, float positionZ)
+Void Sprite.SetPosition(Handle handle, Int32 positionX, Int32 positionY, float positionZ)
 
 Set the position of the object (screen relative)
 
@@ -426,7 +426,7 @@ Set the position and size of the object
 
 Gets the position and size of the object
 
-Void Sprite.SetRotation(String name, Int32 angle)
+Void Sprite.SetRotation(Handle handle, Int32 angle)
 
 Set the rotation angle (degrees)
 
@@ -540,7 +540,7 @@ Void TextBox.AddText(String name, String font, Int16 positionX, Int16 positionY,
 
 Create a text box at location specified
 
-Void TextBox.SetText(String name, String text)
+Void TextBox.SetText(Handle handle, String text)
 
 Update the text for the specified text box
 

@@ -1,6 +1,6 @@
 // textbox.js - TextBox Lua Extensions for RetroStudio Emulator
 // Provides firmware-parity TextBox API for rendering text using BMFont assets.
-// TextBox instances are identified by string name (matching firmware RWA pattern).
+// TextBox instances are created from a font asset name and return opaque handles.
 // Font assets are loaded from build output (.fnt BMFont binary + .d2 texture atlas).
 
 class LuaTextBoxExtensions extends BaseLuaExtension {
@@ -8,8 +8,11 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     super();
     this.gameEmulator = gameEmulator;
 
-    /** @type {Map<string, object>} name -> textbox runtime state */
+    /** @type {Map<number, object>} handle -> textbox runtime state */
     this.textboxes = new Map();
+
+    /** @type {number} Monotonic textbox handle allocator */
+    this._nextHandle = 1;
 
     /** @type {Map<string, object>} font name -> parsed BMFont data + d2Path */
     this.fontAssets = new Map();
@@ -44,6 +47,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
   reset() {
     this.textboxes.clear();
+    this._nextHandle = 1;
     this.gpuTextures.clear();
     this._activePaletteIndex = -1;
     this._activePaletteOffset = -1;
@@ -51,16 +55,23 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     console.log('[LuaTextBox] TextBox system reset');
   }
 
-  // ── Helper: get textbox by name from Lua stack ───────────────────
+  // ── Helper: get textbox by handle from Lua stack ─────────────────
 
-  _getTextBoxByNameArg(argIndex = 2) {
-    const name = this.luaState.raw_tostring(argIndex);
-    if (!name) {
-      throw new Error(`TextBox: bad argument #${argIndex - 1} (string name expected)`);
+  _getHandleArg(argIndex = 2) {
+    const raw = this.luaState.raw_tostring(argIndex);
+    if (raw === undefined || raw === null || raw === '') return null;
+    const handle = parseInt(raw, 10);
+    return Number.isFinite(handle) ? handle : null;
+  }
+
+  _getTextBoxByHandleArg(argIndex = 2) {
+    const handle = this._getHandleArg(argIndex);
+    if (handle === null) {
+      throw new Error(`TextBox: bad argument #${argIndex - 1} (valid textbox handle expected)`);
     }
-    const tb = this.textboxes.get(name);
+    const tb = this.textboxes.get(handle);
     if (!tb) {
-      throw new Error(`TextBox: unknown textbox "${name}"`);
+      throw new Error(`TextBox: bad argument #${argIndex - 1} (unknown textbox handle ${handle})`);
     }
     return tb;
   }
@@ -154,26 +165,26 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     return font;
   }
 
-  // ── Lua API: TextBox.Create(name, fontName, x, y, z, color, text) ──
+  // ── Lua API: TextBox.Create(fontName, x, y, z, color, text) ───────
 
   Create() {
     const L = this.luaState;
-    const name     = L.raw_tostring(2);
-    const fontName = L.raw_tostring(3);
-    const x        = parseFloat(L.raw_tostring(4)) || 0;
-    const y        = parseFloat(L.raw_tostring(5)) || 0;
-    const z        = parseFloat(L.raw_tostring(6)) || 0;
-    const color    = parseInt(L.raw_tostring(7)) || 0x00FFFFFF;
-    const text     = L.raw_tostring(8) || '';
+    const fontName = L.raw_tostring(2);
+    const x        = parseFloat(L.raw_tostring(3)) || 0;
+    const y        = parseFloat(L.raw_tostring(4)) || 0;
+    const z        = parseFloat(L.raw_tostring(5)) || 0;
+    const color    = parseInt(L.raw_tostring(6)) || 0x00FFFFFF;
+    const text     = L.raw_tostring(7) || '';
 
-    if (!name)     throw new Error('TextBox.Create: bad argument #1 (string name expected)');
-    if (!fontName) throw new Error('TextBox.Create: bad argument #2 (string font name expected)');
+    if (!fontName) throw new Error('TextBox.Create: bad argument #1 (string font name expected)');
 
     const fontAsset = this.fontAssets.get(fontName);
     if (!fontAsset) throw new Error(`TextBox.Create: font asset not found: "${fontName}"`);
 
+    const handle = this._nextHandle++;
+
     const state = {
-      _name: name,
+      _handle: handle,
       _fontName: fontName,
       _text: text,
       _posX: x,
@@ -192,20 +203,20 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
       _height: 368,
     };
 
-    this.textboxes.set(name, state);
-    console.log(`[LuaTextBox] Created textbox "${name}" with font "${fontName}": "${text}"`);
+    this.textboxes.set(handle, state);
+    console.log(`[LuaTextBox] Created textbox handle ${handle} with font "${fontName}": "${text}"`);
+    return handle;
   }
 
   Destroy() {
-    const name = this.luaState.raw_tostring(2);
-    if (!name) throw new Error('TextBox.Destroy: bad argument #1 (string name expected)');
-    this.textboxes.delete(name);
+    const tb = this._getTextBoxByHandleArg(2);
+    this.textboxes.delete(tb._handle);
   }
 
   // ── TextBox-specific: SetText / GetText ──────────────────────────
 
   SetText() {
-    const tb  = this._getTextBoxByNameArg(2);
+    const tb  = this._getTextBoxByHandleArg(2);
     const txt = this.luaState.raw_tostring(3);
     if (txt === undefined || txt === null) {
       throw new Error('TextBox.SetText: bad argument #2 (string expected)');
@@ -214,124 +225,124 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   }
 
   GetText() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._text || '';
   }
 
-  // ── Renderable API (firmware parity, string name as first arg) ──
+  // ── Renderable API (firmware parity, handle as first arg) ────────
 
   SetPosition() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
     tb._posY = parseFloat(this.luaState.raw_tostring(4)) || 0;
   }
 
   GetPosition() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return [tb._posX || 0, tb._posY || 0];
   }
 
   SetPositionX() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPositionX() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._posX || 0;
   }
 
   SetPositionY() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPositionY() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._posY || 0;
   }
 
   SetCenter() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._centerX = parseFloat(this.luaState.raw_tostring(3)) || 0;
     tb._centerY = parseFloat(this.luaState.raw_tostring(4)) || 0;
   }
 
   GetCenter() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return [tb._centerX || 0, tb._centerY || 0];
   }
 
   SetSize() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._width = parseFloat(this.luaState.raw_tostring(3)) || 0;
     tb._height = parseFloat(this.luaState.raw_tostring(4)) || 0;
   }
 
   GetSize() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return [tb._width || 0, tb._height || 0];
   }
 
   SetRotation() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetRotation() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._rotation || 0;
   }
 
   SetScale() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._scaleX = parseFloat(this.luaState.raw_tostring(3)) || 1;
     tb._scaleY = parseFloat(this.luaState.raw_tostring(4)) || 1;
   }
 
   GetScale() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return [tb._scaleX ?? 1, tb._scaleY ?? 1];
   }
 
   SetColor() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
   }
 
   GetColor() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._color ?? 0x00FFFFFF;
   }
 
   SetPaletteSlot() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetPaletteSlot() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._paletteSlot || 0;
   }
 
   SetVisible() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     const v = this.luaState.raw_tostring(3);
     tb._visible = v === 'true' || v === '1';
   }
 
   GetVisible() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._visible !== false;
   }
 
   SetAttributes() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     tb._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
   }
 
   GetAttributes() {
-    const tb = this._getTextBoxByNameArg(2);
+    const tb = this._getTextBoxByHandleArg(2);
     return tb._attributes || 0;
   }
 
