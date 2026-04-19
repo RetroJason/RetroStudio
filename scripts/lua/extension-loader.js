@@ -6,6 +6,11 @@ class LuaExtensionLoader {
     this.gameEmulator = gameEmulator;
     this.extensions = new Map();
     this.extensionConfig = null;
+    this.reloadToken = Date.now().toString();
+  }
+
+  buildScriptUrl(relativePath) {
+    return `${relativePath}?v=${this.reloadToken}`;
   }
 
   /**
@@ -33,16 +38,15 @@ class LuaExtensionLoader {
   async loadExtensionFile(categoryName) {
     try {
       const scriptId = `lua-extension-${categoryName.toLowerCase()}`;
-      
-      // Check if script is already loaded
-      if (document.getElementById(scriptId)) {
-        console.log(`[LuaExtensionLoader] ${categoryName} extension already loaded`);
-        return;
+
+      const existingScript = document.getElementById(scriptId);
+      if (existingScript) {
+        existingScript.remove();
       }
-      
+
       const script = document.createElement('script');
       script.id = scriptId;
-      script.src = `scripts/lua/${categoryName.toLowerCase()}.js`;
+      script.src = this.buildScriptUrl(`scripts/lua/${categoryName.toLowerCase()}.js`);
       
       return new Promise((resolve, reject) => {
         script.onload = () => {
@@ -100,16 +104,15 @@ class LuaExtensionLoader {
   async loadBaseExtensionFile() {
     try {
       const scriptId = 'lua-base-extension';
-      
-      // Check if script is already loaded
-      if (document.getElementById(scriptId)) {
-        console.log('[LuaExtensionLoader] Base extension class already loaded');
-        return;
+
+      const existingScript = document.getElementById(scriptId);
+      if (existingScript) {
+        existingScript.remove();
       }
-      
+
       const script = document.createElement('script');
       script.id = scriptId;
-      script.src = 'scripts/lua/base-lua-extension.js';
+      script.src = this.buildScriptUrl('scripts/lua/base-lua-extension.js');
       
       return new Promise((resolve, reject) => {
         script.onload = () => {
@@ -213,6 +216,8 @@ class LuaExtensionLoader {
         console.log(`[LuaExtensionLoader] Reset ${categoryName} extension`);
       }
     }
+    this.extensions.clear();
+    this.reloadToken = Date.now().toString();
   }
 
   /**

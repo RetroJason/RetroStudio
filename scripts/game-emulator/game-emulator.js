@@ -31,6 +31,7 @@ class GameEmulator {
     this.frameCount = 0;
     this.lastFrameTime = 0;
     this.extensionLoader = null; // Lua extension loader
+    this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
 
     // Initialize the game engine panel content
     this.initializeGameEnginePanel();
@@ -149,6 +150,20 @@ class GameEmulator {
     
     console.log('[GameEmulator] Initialized successfully');
     return true;
+  }
+
+  setClearColor(color) {
+    if (!Number.isFinite(color)) {
+      throw new Error(`[GameEmulator] SetClearColor invalid color: ${color}`);
+    }
+
+    const rgb = Number(color) >>> 0;
+    this.clearColor = {
+      r: ((rgb >> 16) & 0xFF) / 255,
+      g: ((rgb >> 8) & 0xFF) / 255,
+      b: (rgb & 0xFF) / 255,
+      a: 1,
+    };
   }
   
   // Initialize BuildSystem if it wasn't available during initial setup
@@ -1584,7 +1599,14 @@ class GameEmulator {
           console.log('[GameEmulator] Setup() function not found - this is optional, continuing...');
         } else {
           console.error('[GameEmulator] Setup() function failed during execution:', error);
-          this.updateStatus(`Setup() error: ${error.message}`, 'warning');
+          this.updateStatus(`Setup() error: ${error.message}`, 'error');
+
+          await this.showErrorPopup(
+            'Setup() Function Runtime Error',
+            'Your Setup() function exists but has a runtime error.',
+            `Lua Error: ${error.message}\n\nPlease fix the error in your Setup() function.`
+          );
+          return;
         }
         logRunPhase('luaSetup (optional/missing/error)');
       }
@@ -1733,7 +1755,12 @@ class GameEmulator {
         // Clear the GPU canvas and let each renderable extension draw.
         // Sprite/Image extensions use D2Canvas.blit() for hardware-accurate rendering.
         if (this._gpu) {
-          this._gpu.clear(0, 0, 0, 1);
+          this._gpu.clear(
+            this.clearColor.r,
+            this.clearColor.g,
+            this.clearColor.b,
+            this.clearColor.a
+          );
           const spriteExt = this.extensionLoader?.getExtension('Sprite');
           if (spriteExt) {
             spriteExt.renderFrame(this._gpu, deltaTime);
@@ -2069,8 +2096,14 @@ class GameEmulator {
   
   async loadExtensionLoader() {
     return new Promise((resolve, reject) => {
+      const existingScript = document.querySelector('script[data-lua-extension-loader="true"]');
+      if (existingScript) {
+        existingScript.remove();
+      }
+
       const script = document.createElement('script');
-      script.src = 'scripts/lua/extension-loader.js';
+      script.dataset.luaExtensionLoader = 'true';
+      script.src = `scripts/lua/extension-loader.js?v=${Date.now()}`;
       script.onload = () => {
         console.log('[GameEmulator] Extension loader loaded successfully');
         resolve();
@@ -2286,7 +2319,10 @@ class GameEmulator {
       
       <div class="game-main-area">
         <div class="game-canvas-container">
-          <canvas id="game-canvas" width="448" height="368"></canvas>
+          <div class="game-screen-frame">
+            <canvas id="game-canvas" width="448" height="368"></canvas>
+            <img class="game-screen-overlay" src="Resources/Images/cp-overlay.png" alt="" aria-hidden="true">
+          </div>
           <div class="game-info">Game running... (simulated)</div>
         </div>
         

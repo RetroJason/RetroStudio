@@ -519,6 +519,14 @@ System
 
 Get the screen size
 
+Table System.GetChargeState()
+
+Returns the current battery and charger state table. This legacy entry point is kept for compatibility.
+
+Void System.SetClearColor(Int32 color)
+
+Set the emulator clear color using a 24-bit RGB integer such as 0x112233.
+
 Void System.SetFrameRate(Int32 frameRate)
 
 Set the desired frame rate (frames per second)
@@ -891,22 +899,40 @@ UInt16 TileMap.GetAttributes(String name)
 
 Get the sprite attributes
 
-Time
-Int32 Time.HoursToDegrees()
+Battery
+Table Battery.GetChargeState()
 
-Returns the angle corresponding to the current time for positioning a watch hand
+Returns the current battery and charger state table with these fields:
+`plugged_in`, `battery_voltage_mv`, `charger_state`, `battery_percent`, `charger_main_fsm`, `charger_main_fsm_raw`, `charger_jeita_region`, `charger_die_temp_limit_exceeded`, `charger_ok_irq_status`, `charger_nok_irq_status`
+
+Time
+Float Time.HoursToDegrees(Bool smooth = true)
+
+Returns the angle corresponding to the current time for positioning the hour hand. When `smooth` is true or omitted, the calculation includes minutes, seconds, and milliseconds.
 
 Int32 Time.Hours()
 
-Returns the angle corresponding to the current time for positioning a watch hand
+Returns the current hour (24-hour format)
+
+Float Time.MinutesToDegrees(Bool smooth = true)
+
+Returns the angle corresponding to the current time for positioning the minute hand. When `smooth` is true or omitted, the calculation includes seconds and milliseconds.
 
 Int32 Time.Minutes()
 
 Returns the current minutes
 
+Float Time.SecondsToDegrees(Bool smooth = true)
+
+Returns the angle corresponding to the current time for positioning the second hand. When `smooth` is true or omitted, the calculation includes milliseconds for smooth sweeping.
+
 Int32 Time.Seconds()
 
 Returns the current seconds
+
+Int32 Time.Milliseconds()
+
+Returns the current milliseconds
 
 Int32 Time.Day()
 

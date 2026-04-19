@@ -1057,60 +1057,13 @@ class ProjectExplorer {
     // Render once after batch
     this.renderTree();
 
-    // Font source files (.ttf/.otf/.woff) — open a new FontEditor with the TTF pre-loaded
     const fontSourceExts = ['.ttf', '.otf', '.woff', '.woff2'];
     const fontSourceFiles = fileList.filter(f => {
       const ext = this.getFileExtension(f.name).toLowerCase();
       return fontSourceExts.includes(ext);
     });
-    if (fontSourceFiles.length > 0 && typeof FontEditor !== 'undefined') {
-      const tabManager = window.serviceContainer?.get?.('tabManager') || window.gameEmulator?.tabManager;
-      const componentRegistry = window.serviceContainer?.get?.('componentRegistry');
-      if (tabManager && componentRegistry) {
-        for (const ttfFile of fontSourceFiles) {
-          try {
-            const editorInfo = componentRegistry.editors.get('font-editor');
-            if (editorInfo) {
-              // Create font editor and pre-load the TTF
-              const editor = new FontEditor();
-              await editor.loadTtfFile(ttfFile);
-
-              const tabId = `new-font-${Date.now()}`;
-              const tabElement = document.createElement('div');
-              tabElement.className = 'tab';
-              tabElement.dataset.tabId = tabId;
-              const displayName = ttfFile.name.replace(/\.[^.]+$/, '');
-              tabElement.innerHTML = `
-                <span class="tab-title">${displayName}.font</span>
-                <span class="tab-close" data-action="close">×</span>
-              `;
-              const tabPane = document.createElement('div');
-              tabPane.className = 'tab-pane';
-              tabPane.dataset.tabId = tabId;
-              tabPane.appendChild(editor.getElement());
-
-              tabManager.tabBar.appendChild(tabElement);
-              tabManager.tabContentArea.appendChild(tabPane);
-              tabManager.dedicatedTabs.set(tabId, {
-                viewer: editor,
-                fileName: `${displayName}.font`,
-                fullPath: null,
-                isReadOnly: false,
-                componentInfo: editorInfo,
-                element: tabElement,
-                pane: tabPane
-              });
-              tabManager.markTabDirty(tabId);
-              tabManager.switchToTab(tabId);
-              console.log(`[ProjectExplorer] Opened FontEditor for dropped TTF: ${ttfFile.name}`);
-            }
-          } catch (e) {
-            console.warn(`[ProjectExplorer] Failed to open FontEditor for ${ttfFile.name}:`, e);
-          }
-        }
-        // Skip default tab opening only if all files were font sources
-        if (fontSourceFiles.length === fileList.length) return;
-      }
+    if (fontSourceFiles.length === fileList.length) {
+      return;
     }
 
     // For multi-drop, open all files in tabs after persistence is complete
@@ -1120,6 +1073,10 @@ class ProjectExplorer {
         
         // Open each file in a tab
         for (const file of fileList) {
+          const extension = this.getFileExtension(file.name).toLowerCase();
+          if (fontSourceExts.includes(extension)) {
+            continue;
+          }
           const filtered = this.filterFile(file, targetPath);
           const destPath = filtered.allowed ? filtered.path : (filtered.path || null);
           if (destPath) {
@@ -1299,7 +1256,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package'];
+        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font'];
         const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {

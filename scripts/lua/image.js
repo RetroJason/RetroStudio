@@ -163,36 +163,36 @@ class LuaImageExtensions extends BaseLuaExtension {
     return handle;
   }
 
-  SetPosition() {
+  SetX() {
+    const s = this._getImageByHandleArg(2);
+    s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetX() {
+    const s = this._getImageByHandleArg(2);
+    return (s && s._posX) || 0;
+  }
+
+  SetY() {
+    const s = this._getImageByHandleArg(2);
+    s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetY() {
+    const s = this._getImageByHandleArg(2);
+    return (s && s._posY) || 0;
+  }
+
+  SetXY() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
     s._posX = parseFloat(L.raw_tostring(3)) || 0;
     s._posY = parseFloat(L.raw_tostring(4)) || 0;
   }
 
-  GetPosition() {
+  GetXY() {
     const s = this._getImageByHandleArg(2);
     return [s._posX || 0, s._posY || 0];
-  }
-
-  SetPositionX() {
-    const s = this._getImageByHandleArg(2);
-    s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
-  }
-
-  GetPositionX() {
-    const s = this._getImageByHandleArg(2);
-    return (s && s._posX) || 0;
-  }
-
-  SetPositionY() {
-    const s = this._getImageByHandleArg(2);
-    s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
-  }
-
-  GetPositionY() {
-    const s = this._getImageByHandleArg(2);
-    return (s && s._posY) || 0;
   }
 
   SetCenter() {
@@ -220,12 +220,12 @@ class LuaImageExtensions extends BaseLuaExtension {
     return [(s && s._width) || 0, (s && s._height) || 0];
   }
 
-  SetRotation() {
+  SetAngle() {
     const s = this._getImageByHandleArg(2);
     s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
-  GetRotation() {
+  GetAngle() {
     const s = this._getImageByHandleArg(2);
     return (s && s._rotation) || 0;
   }
@@ -233,8 +233,13 @@ class LuaImageExtensions extends BaseLuaExtension {
   SetScale() {
     const L = this.luaState;
     const s = this._getImageByHandleArg(2);
-    s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
-    s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
+    const scaleX = Number.parseFloat(L.raw_tostring(3));
+    const scaleY = Number.parseFloat(L.raw_tostring(4));
+    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+      throw new Error('Image.SetScale: bad arguments #2/#3 (number expected)');
+    }
+    s._scaleX = scaleX;
+    s._scaleY = scaleY;
   }
 
   GetScale() {
@@ -244,7 +249,11 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetColor() {
     const s = this._getImageByHandleArg(2);
-    s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+    const color = Number(this.luaState.raw_tostring(3));
+    if (!Number.isInteger(color)) {
+      throw new Error('Image.SetColor: bad argument #2 (integer expected)');
+    }
+    s._color = color;
   }
 
   GetColor() {
@@ -264,8 +273,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
   SetVisible() {
     const s = this._getImageByHandleArg(2);
-    const v = this.luaState.raw_tostring(3);
-    s._visible = v === 'true' || v === '1';
+    s._visible = this._requireBooleanStackArg(3, 'Image.SetVisible', 'visible');
   }
 
   GetVisible() {

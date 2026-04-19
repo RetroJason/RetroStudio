@@ -1,6 +1,7 @@
 // font-builder.js
-// Build-time font processor: reads .font metadata, copies the pre-built .d2
-// (with header patching) and .fnt BMFont binary to build output.
+// Build-time font processor: reads .font metadata and emits the runtime .d2
+// and .fnt assets. If editor-generated sidecars already exist they are copied;
+// otherwise the builder regenerates them directly from the source font.
 
 console.log('[FontBuilder] Class definition loading');
 
@@ -18,13 +19,13 @@ class FontBuilder extends BaseBuilder {
    *   ...
    * }
    *
-   * The FontEditor already creates companion files alongside the .font:
+  * The FontEditor can create companion files alongside the .font:
    *   name.d2   — D2TX atlas texture
    *   name.fnt  — BMFont binary glyph data
    *   name.png  — source atlas image (not needed in build output)
    *
-   * This builder loads and patches the .d2 header, then copies both .d2 and
-   * .fnt to the build output directory.
+  * This builder prefers those sidecars when present, but it can also
+  * regenerate both outputs directly from the .font metadata + source font.
    */
   async build(file) {
     const tag = '[FontBuilder]';
@@ -46,21 +47,32 @@ class FontBuilder extends BaseBuilder {
 
       const basePath = file.path.replace(/\.font$/i, '');
 
-      // ── 2. Load the source .d2 ───────────────────────────────────
+      // ── 2. Load or generate runtime outputs ──────────────────────
       const sourceD2Path = basePath + '.d2';
       const sourceD2Content = await this._loadFileContent(sourceD2Path);
-      if (!sourceD2Content) {
-        throw new Error(`Source .d2 not found: ${sourceD2Path} — open in Font Editor and generate atlas first`);
-      }
+      const sourceFntPath = basePath + '.fnt';
+      const sourceFntContent = await this._loadFileContent(sourceFntPath);
 
       let d2Bytes = this._toUint8Array(sourceD2Content);
-      if (!d2Bytes || d2Bytes.length < 32 ||
-          d2Bytes[0] !== 0x44 || d2Bytes[1] !== 0x32 ||
-          d2Bytes[2] !== 0x54 || d2Bytes[3] !== 0x58) {
-        throw new Error(`Invalid D2TX magic in source .d2: ${sourceD2Path}`);
-      }
+      let fntBytes = this._toUint8Array(sourceFntContent);
+      let generatedFromSource = false;
 
-      console.log(`${tag} Loaded source .d2: ${d2Bytes.length} bytes from ${sourceD2Path}`);
+      const hasValidD2 = !!(d2Bytes && d2Bytes.length >= 32 &&
+        d2Bytes[0] === 0x44 && d2Bytes[1] === 0x32 &&
+        d2Bytes[2] === 0x54 && d2Bytes[3] === 0x58);
+      const hasValidFnt = !!(fntBytes && fntBytes.length >= 4 &&
+        fntBytes[0] === 0x42 && fntBytes[1] === 0x4D &&
+        fntBytes[2] === 0x46 && fntBytes[3] === 0x03);
+
+      if (hasValidD2 && hasValidFnt) {
+        console.log(`${tag} Loaded source sidecars: ${sourceD2Path}, ${sourceFntPath}`);
+      } else {
+        const generated = await this._generateOutputsFromMetadata(fontJson, basePath);
+        d2Bytes = generated.d2Bytes;
+        fntBytes = generated.fntBytes;
+        generatedFromSource = true;
+        console.log(`${tag} Generated runtime outputs from metadata for ${file.path}`);
+      }
 
       // Make a mutable copy for header patching
       const output = new Uint8Array(d2Bytes.length);
@@ -72,21 +84,13 @@ class FontBuilder extends BaseBuilder {
       console.log(`${tag} ✓ Saved .d2: ${d2OutputPath} (${output.length} bytes)`);
 
       // ── 4. Copy .fnt to build output ─────────────────────────────
-      const sourceFntPath = basePath + '.fnt';
-      const fntContent = await this._loadFileContent(sourceFntPath);
       let fntSaved = false;
       let fntOutputPath = null;
-      if (fntContent) {
-        const fntBytes = this._toUint8Array(fntContent);
-        if (fntBytes) {
-          fntOutputPath = this._toBuildOutputPath(basePath + '.fnt');
-          await this._saveFile(fntOutputPath, fntBytes);
-          fntSaved = true;
-          console.log(`${tag} ✓ Saved .fnt: ${fntOutputPath} (${fntBytes.length} bytes)`);
-        }
-      }
-      if (!fntSaved) {
-        console.warn(`${tag} .fnt not found at ${sourceFntPath} — skipping`);
+      if (fntBytes) {
+        fntOutputPath = this._toBuildOutputPath(basePath + '.fnt');
+        await this._saveFile(fntOutputPath, fntBytes);
+        fntSaved = true;
+        console.log(`${tag} ✓ Saved .fnt: ${fntOutputPath} (${fntBytes.length} bytes)`);
       }
 
       const headerView = new DataView(output.buffer, output.byteOffset, output.byteLength);
@@ -104,7 +108,8 @@ class FontBuilder extends BaseBuilder {
           height: hHeight,
           format: fontJson.outputPixelFormat || 'd2_mode_alpha8',
           binarySize: output.length - 32,
-          fntSaved
+          fntSaved,
+          generatedFromSource
         }
       };
 
@@ -154,6 +159,71 @@ class FontBuilder extends BaseBuilder {
       } catch (_) { /* not base64 */ }
     }
     return null;
+  }
+
+  async _generateOutputsFromMetadata(fontJson, basePath) {
+    if (typeof FontAtlasGenerator === 'undefined') {
+      throw new Error('FontAtlasGenerator is not available; cannot generate font atlas during build');
+    }
+    if (typeof D2File === 'undefined' || typeof D2File.buildFromRGBA !== 'function') {
+      throw new Error('D2File.buildFromRGBA is not available; cannot generate .d2 during build');
+    }
+    if (!fontJson || fontJson.type !== 'retrowatch-font') {
+      throw new Error('Invalid .font metadata; expected retrowatch-font JSON');
+    }
+    if (!fontJson.sourceFontPath) {
+      throw new Error(`.font metadata is missing sourceFontPath: ${basePath}.font`);
+    }
+    if (!fontJson.fontFamily) {
+      throw new Error(`.font metadata is missing fontFamily: ${basePath}.font`);
+    }
+    if (!fontJson.characters) {
+      throw new Error(`.font metadata is missing characters: ${basePath}.font`);
+    }
+
+    const sourceFontContent = await this._loadFileContent(fontJson.sourceFontPath);
+    const sourceFontBytes = this._toUint8Array(sourceFontContent);
+    if (!sourceFontBytes || sourceFontBytes.length === 0) {
+      throw new Error(`Source font not found: ${fontJson.sourceFontPath}`);
+    }
+
+    const generator = new FontAtlasGenerator();
+    const fontBuffer = sourceFontBytes.buffer.slice(
+      sourceFontBytes.byteOffset,
+      sourceFontBytes.byteOffset + sourceFontBytes.byteLength
+    );
+
+    await generator.loadFont(fontBuffer, fontJson.fontFamily);
+
+    const result = generator.generate({
+      fontFamily: fontJson.fontFamily,
+      fontSize: fontJson.fontSize,
+      chars: fontJson.characters,
+      padding: fontJson.padding ?? 0,
+      spacing: fontJson.spacing ?? 0,
+      antialiasing: !!fontJson.antialias,
+    });
+
+    if (!result?.canvas) {
+      throw new Error(`Font atlas generation failed for ${basePath}.font`);
+    }
+
+    const rgba = result.canvas.getContext('2d').getImageData(0, 0, result.width, result.height).data;
+    const outputPixelFormat = fontJson.outputPixelFormat || 'd2_mode_alpha8';
+    const d2Bytes = D2File.buildFromRGBA({
+      outputPixelFormat,
+      metadata: {
+        outputPixelFormat,
+        paletteOffset: 0,
+      },
+      rotation: 0,
+      compressionType: 'none',
+    }, rgba, result.width, result.height);
+
+    const pageName = basePath.split('/').pop() + '.png';
+    const fntBytes = generator.toBMFontBinary(result, pageName);
+
+    return { d2Bytes, fntBytes };
   }
 
   _toBuildOutputPath(path) {

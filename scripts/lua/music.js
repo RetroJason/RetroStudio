@@ -30,26 +30,6 @@ class LuaMusicExtensions extends BaseLuaExtension {
     return value;
   }
 
-  _optionalBooleanArg(args, index, defaultValue) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
-    if (raw === undefined || raw === null || raw === '') {
-      return defaultValue;
-    }
-    if (typeof raw === 'boolean') {
-      return raw;
-    }
-    if (typeof raw === 'string') {
-      const normalized = raw.toLowerCase();
-      if (normalized === 'true' || normalized === '1') {
-        return true;
-      }
-      if (normalized === 'false' || normalized === '0') {
-        return false;
-      }
-    }
-    throw new Error(`[Music] invalid boolean argument: ${raw}`);
-  }
-
   _requireAudioEngine(methodName) {
     this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine || this.audioEngine;
     if (!this.audioEngine) {
@@ -97,7 +77,7 @@ class LuaMusicExtensions extends BaseLuaExtension {
   Play(...args) {
     const resourceId = this._requireStringArg(args, 0, 'Play', 'resourceId');
     const volume = this._optionalNumberArg(args, 1, 1.0, 'Play', 'volume');
-    const loop = this._optionalBooleanArg(args, 2, true);
+    const loop = this._optionalBooleanArg(args, 2, true, '[Music] Play', 'loop');
     const resource = this._requireResource(resourceId, 'Play');
     this._requireAudioEngine('Play').startSong(resource.audioResource, volume, loop);
     return true;

@@ -212,6 +212,8 @@ class FontAtlasGenerator {
       if (!ok) continue;
 
       const totalH = y + rowH;
+      // Dave2D hardware: width <= 2048, height <= 1024
+      if (totalH > 1024) continue;
       const area = maxW * totalH;
       if (!best || area < best.area) {
         best = { atlasW: usedW, atlasH: totalH, placements: pl, area };
@@ -228,6 +230,11 @@ class FontAtlasGenerator {
       }
       best = { atlasW: sortedGlyphs.reduce((m, g) => Math.max(m, padW(g)), 0),
                atlasH: y, placements: pl, area: 0 };
+    }
+
+    // Dave2D hardware limit: width <= 2048, height <= 1024
+    if (best.atlasH > 1024) {
+      console.warn(`[FontAtlasGenerator] Atlas height ${best.atlasH} exceeds hardware limit of 1024`);
     }
 
     return best;

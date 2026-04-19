@@ -2172,6 +2172,26 @@ class TabManager {
   // Open a new editor with no file object - let editor handle filename prompting
   async openNewEditor(editorInfo) {
     console.log(`[TabManager] Opening new editor: ${editorInfo.displayName}`);
+
+    const isFontEditor = !!(
+      editorInfo?.name === 'font-editor' ||
+      editorInfo?.editorClass === window.FontEditor ||
+      (Array.isArray(editorInfo?.extensions) && editorInfo.extensions.includes('.font'))
+    );
+
+    if (isFontEditor) {
+      const focusedProject = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!focusedProject) {
+        throw new Error('No active project');
+      }
+
+      if (!window.ribbonToolbar || typeof window.ribbonToolbar.createFontResourceFromPicker !== 'function') {
+        throw new Error('Font picker is not available');
+      }
+
+      await window.ribbonToolbar.createFontResourceFromPicker(editorInfo, focusedProject);
+      return;
+    }
     
     // Create editor with no file object (new file mode)
     const Component = editorInfo.editorClass;

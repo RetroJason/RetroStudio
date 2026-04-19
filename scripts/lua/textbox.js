@@ -170,10 +170,12 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   Create() {
     const L = this.luaState;
     const fontName = L.raw_tostring(2);
-    const x        = parseFloat(L.raw_tostring(3)) || 0;
-    const y        = parseFloat(L.raw_tostring(4)) || 0;
-    const z        = parseFloat(L.raw_tostring(5)) || 0;
-    const color    = parseInt(L.raw_tostring(6)) || 0x00FFFFFF;
+    const x          = parseFloat(L.raw_tostring(3)) || 0;
+    const y          = parseFloat(L.raw_tostring(4)) || 0;
+    const zValue     = Number.parseFloat(L.raw_tostring(5));
+    const colorValue = Number.parseInt(L.raw_tostring(6), 10);
+    const z          = Number.isNaN(zValue) ? 0 : zValue;
+    const color      = Number.isNaN(colorValue) ? 0x00FFFFFF : colorValue;
     const text     = L.raw_tostring(7) || '';
 
     if (!fontName) throw new Error('TextBox.Create: bad argument #1 (string font name expected)');
@@ -231,35 +233,35 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
   // ── Renderable API (firmware parity, handle as first arg) ────────
 
-  SetPosition() {
+  SetX() {
+    const tb = this._getTextBoxByHandleArg(2);
+    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetX() {
+    const tb = this._getTextBoxByHandleArg(2);
+    return tb._posX || 0;
+  }
+
+  SetY() {
+    const tb = this._getTextBoxByHandleArg(2);
+    tb._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  }
+
+  GetY() {
+    const tb = this._getTextBoxByHandleArg(2);
+    return tb._posY || 0;
+  }
+
+  SetXY() {
     const tb = this._getTextBoxByHandleArg(2);
     tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
     tb._posY = parseFloat(this.luaState.raw_tostring(4)) || 0;
   }
 
-  GetPosition() {
+  GetXY() {
     const tb = this._getTextBoxByHandleArg(2);
     return [tb._posX || 0, tb._posY || 0];
-  }
-
-  SetPositionX() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
-  }
-
-  GetPositionX() {
-    const tb = this._getTextBoxByHandleArg(2);
-    return tb._posX || 0;
-  }
-
-  SetPositionY() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
-  }
-
-  GetPositionY() {
-    const tb = this._getTextBoxByHandleArg(2);
-    return tb._posY || 0;
   }
 
   SetCenter() {
@@ -284,20 +286,25 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     return [tb._width || 0, tb._height || 0];
   }
 
-  SetRotation() {
+  SetAngle() {
     const tb = this._getTextBoxByHandleArg(2);
     tb._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
-  GetRotation() {
+  GetAngle() {
     const tb = this._getTextBoxByHandleArg(2);
     return tb._rotation || 0;
   }
 
   SetScale() {
     const tb = this._getTextBoxByHandleArg(2);
-    tb._scaleX = parseFloat(this.luaState.raw_tostring(3)) || 1;
-    tb._scaleY = parseFloat(this.luaState.raw_tostring(4)) || 1;
+    const scaleX = Number.parseFloat(this.luaState.raw_tostring(3));
+    const scaleY = Number.parseFloat(this.luaState.raw_tostring(4));
+    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+      throw new Error('TextBox.SetScale: bad arguments #2/#3 (number expected)');
+    }
+    tb._scaleX = scaleX;
+    tb._scaleY = scaleY;
   }
 
   GetScale() {
@@ -307,7 +314,11 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
   SetColor() {
     const tb = this._getTextBoxByHandleArg(2);
-    tb._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+    const color = Number(this.luaState.raw_tostring(3));
+    if (!Number.isInteger(color)) {
+      throw new Error('TextBox.SetColor: bad argument #2 (integer expected)');
+    }
+    tb._color = color;
   }
 
   GetColor() {
@@ -327,8 +338,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
   SetVisible() {
     const tb = this._getTextBoxByHandleArg(2);
-    const v = this.luaState.raw_tostring(3);
-    tb._visible = v === 'true' || v === '1';
+    tb._visible = this._requireBooleanStackArg(3, 'TextBox.SetVisible', 'visible');
   }
 
   GetVisible() {
@@ -414,6 +424,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
             pivotX: 0,
             pivotY: 0,
             filter: 'nearest',
+            tint: tb._color ?? 0x00FFFFFF,
           });
         }
 

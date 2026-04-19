@@ -10,6 +10,51 @@ class BaseLuaExtension {
     this.luaState = luaState;
   }
 
+  _coerceBooleanArg(raw, methodName, argName) {
+    if (typeof raw === 'boolean') {
+      return raw;
+    }
+
+    if (typeof raw === 'string') {
+      const normalized = raw.toLowerCase();
+      if (normalized === 'true' || normalized === '1') {
+        return true;
+      }
+      if (normalized === 'false' || normalized === '0') {
+        return false;
+      }
+    }
+
+    throw new Error(`${methodName} invalid boolean argument ${argName}: ${raw}`);
+  }
+
+  _optionalBooleanArg(args, index, defaultValue, methodName, argName) {
+    const stackIndex = index + 2;
+    if (this.luaState?.type?.(stackIndex) === 1) {
+      return this.luaState.toboolean(stackIndex) !== 0;
+    }
+
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(stackIndex);
+    if (raw === undefined || raw === null || raw === '') {
+      return defaultValue;
+    }
+
+    return this._coerceBooleanArg(raw, methodName, argName);
+  }
+
+  _requireBooleanStackArg(stackIndex, methodName, argName) {
+    if (this.luaState?.type?.(stackIndex) === 1) {
+      return this.luaState.toboolean(stackIndex) !== 0;
+    }
+
+    const raw = this.luaState?.raw_tostring?.(stackIndex);
+    if (raw === undefined || raw === null || raw === '') {
+      throw new Error(`${methodName} missing required boolean argument: ${argName}`);
+    }
+
+    return this._coerceBooleanArg(raw, methodName, argName);
+  }
+
   /**
    * Register a JavaScript method as a Lua C function
    * @param {string} luaFunctionName - Name to register in Lua
@@ -54,7 +99,7 @@ class BaseLuaExtension {
         local args = {...}
         -- Debug: print the arguments being passed
         --print("Lua calling ${className}.${luaFunctionName} with args:", unpack(args))
-        return js.global.${globalFunctionName}(unpack(args))          
+        return js.global.${globalFunctionName}(unpack(args))
     end
     `);
    }

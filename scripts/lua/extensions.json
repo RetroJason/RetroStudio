@@ -40,59 +40,59 @@
           "example": "local hero2 = Sprite.Clone(hero)"
         },
         {
-          "name": "SetPosition",
-          "description": "Set sprite position",
-          "parameters": [
-            {"name": "handle", "type": "int32", "description": "Sprite handle"},
-            {"name": "x", "type": "int32", "description": "X position"},
-            {"name": "y", "type": "int32", "description": "Y position"}
-          ],
-          "example": "Sprite.SetPosition(hero, 100, 200)"
-        },
-        {
-          "name": "GetPosition",
-          "description": "Get sprite position",
-          "parameters": [
-            {"name": "handle", "type": "int32", "description": "Sprite handle"}
-          ],
-          "returns": {"type": "int32, int32", "description": "X and Y position"},
-          "example": "local x, y = Sprite.GetPosition(hero)"
-        },
-        {
-          "name": "SetPositionX",
+          "name": "SetX",
           "description": "Set sprite X position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"},
-            {"name": "x", "type": "int32", "description": "X position"}
+            {"name": "x", "type": "float", "description": "X position"}
           ],
-          "example": "Sprite.SetPositionX(hero, 100)"
+          "example": "Sprite.SetX(hero, 100)"
         },
         {
-          "name": "GetPositionX",
+          "name": "GetX",
           "description": "Get sprite X position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"}
           ],
-          "returns": {"type": "int32", "description": "X position"},
-          "example": "local x = Sprite.GetPositionX(hero)"
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = Sprite.GetX(hero)"
         },
         {
-          "name": "SetPositionY",
+          "name": "SetY",
           "description": "Set sprite Y position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"},
-            {"name": "y", "type": "int32", "description": "Y position"}
+            {"name": "y", "type": "float", "description": "Y position"}
           ],
-          "example": "Sprite.SetPositionY(hero, 200)"
+          "example": "Sprite.SetY(hero, 200)"
         },
         {
-          "name": "GetPositionY",
+          "name": "GetY",
           "description": "Get sprite Y position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"}
           ],
-          "returns": {"type": "int32", "description": "Y position"},
-          "example": "local y = Sprite.GetPositionY(hero)"
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = Sprite.GetY(hero)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set sprite X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Sprite.SetXY(hero, 100, 200)"
+        },
+        {
+          "name": "GetXY",
+          "description": "Get sprite X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = Sprite.GetXY(hero)"
         },
         {
           "name": "SetCenter",
@@ -133,22 +133,22 @@
           "example": "local w, h = Sprite.GetSize(hero)"
         },
         {
-          "name": "SetRotation",
+          "name": "SetAngle",
           "description": "Set sprite rotation in degrees",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"},
-            {"name": "angle", "type": "int32", "description": "Rotation angle in degrees"}
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
           ],
-          "example": "Sprite.SetRotation(hero, 45)"
+          "example": "Sprite.SetAngle(hero, 45)"
         },
         {
-          "name": "GetRotation",
+          "name": "GetAngle",
           "description": "Get sprite rotation in degrees",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Sprite handle"}
           ],
-          "returns": {"type": "int32", "description": "Rotation in degrees"},
-          "example": "local angle = Sprite.GetRotation(hero)"
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = Sprite.GetAngle(hero)"
         },
         {
           "name": "SetScale",
@@ -309,59 +309,59 @@
           "example": "local logo2 = Image.Clone(logo)"
         },
         {
-          "name": "SetPosition",
-          "description": "Set image position",
-          "parameters": [
-            {"name": "handle", "type": "int32", "description": "Image handle"},
-            {"name": "x", "type": "int32", "description": "X position"},
-            {"name": "y", "type": "int32", "description": "Y position"}
-          ],
-          "example": "Image.SetPosition(logo, 100, 120)"
-        },
-        {
-          "name": "GetPosition",
-          "description": "Get image position",
-          "parameters": [
-            {"name": "handle", "type": "int32", "description": "Image handle"}
-          ],
-          "returns": {"type": "int32, int32", "description": "X and Y position"},
-          "example": "local x, y = Image.GetPosition(logo)"
-        },
-        {
-          "name": "SetPositionX",
+          "name": "SetX",
           "description": "Set image X position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"},
-            {"name": "x", "type": "int32", "description": "X position"}
+            {"name": "x", "type": "float", "description": "X position"}
           ],
-          "example": "Image.SetPositionX(logo, 100)"
+          "example": "Image.SetX(logo, 100)"
         },
         {
-          "name": "GetPositionX",
+          "name": "GetX",
           "description": "Get image X position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"}
           ],
-          "returns": {"type": "int32", "description": "X position"},
-          "example": "local x = Image.GetPositionX(logo)"
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = Image.GetX(logo)"
         },
         {
-          "name": "SetPositionY",
+          "name": "SetY",
           "description": "Set image Y position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"},
-            {"name": "y", "type": "int32", "description": "Y position"}
+            {"name": "y", "type": "float", "description": "Y position"}
           ],
-          "example": "Image.SetPositionY(logo, 120)"
+          "example": "Image.SetY(logo, 120)"
         },
         {
-          "name": "GetPositionY",
+          "name": "GetY",
           "description": "Get image Y position",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"}
           ],
-          "returns": {"type": "int32", "description": "Y position"},
-          "example": "local y = Image.GetPositionY(logo)"
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = Image.GetY(logo)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set image X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Image.SetXY(logo, 100, 120)"
+        },
+        {
+          "name": "GetXY",
+          "description": "Get image X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = Image.GetXY(logo)"
         },
         {
           "name": "SetCenter",
@@ -402,22 +402,22 @@
           "example": "local w, h = Image.GetSize(logo)"
         },
         {
-          "name": "SetRotation",
+          "name": "SetAngle",
           "description": "Set image rotation in degrees",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"},
-            {"name": "angle", "type": "int32", "description": "Rotation angle in degrees"}
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
           ],
-          "example": "Image.SetRotation(logo, 45)"
+          "example": "Image.SetAngle(logo, 45)"
         },
         {
-          "name": "GetRotation",
+          "name": "GetAngle",
           "description": "Get image rotation in degrees",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Image handle"}
           ],
-          "returns": {"type": "int32", "description": "Rotation in degrees"},
-          "example": "local angle = Image.GetRotation(logo)"
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = Image.GetAngle(logo)"
         },
         {
           "name": "SetScale",
@@ -547,7 +547,6 @@
           "name": "Create",
           "description": "Create a textbox instance bound to a font asset",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Unique textbox name (used to reference it later)"},
             {"name": "fontName", "type": "string", "description": "Font asset name (matches .fnt filename without extension)"},
             {"name": "x", "type": "float", "description": "X position"},
             {"name": "y", "type": "float", "description": "Y position"},
@@ -555,13 +554,14 @@
             {"name": "color", "type": "int32", "description": "Text color (0x00RRGGBB)"},
             {"name": "text", "type": "string", "description": "Initial text string"}
           ],
+          "returns": {"type": "int32", "description": "Opaque textbox handle"},
           "example": "local title = TextBox.Create(\"myfont\", 10, 20, 0, 0x00FFFFFF, \"Hello World\")"
         },
         {
           "name": "Destroy",
           "description": "Remove a textbox from the scene",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "example": "TextBox.Destroy(title)"
         },
@@ -569,7 +569,7 @@
           "name": "SetText",
           "description": "Set the text content of a textbox",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "text", "type": "string", "description": "New text string"}
           ],
           "example": "TextBox.SetText(title, \"New Text\")"
@@ -578,212 +578,212 @@
           "name": "GetText",
           "description": "Get the text content of a textbox",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "string", "description": "Current text string"},
-          "example": "local t = TextBox.GetText(\"title\")"
+          "example": "local t = TextBox.GetText(title)"
         },
         {
-          "name": "SetPosition",
-          "description": "Set textbox position",
+          "name": "SetX",
+          "description": "Set textbox X position",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "x", "type": "float", "description": "X position"}
+          ],
+          "example": "TextBox.SetX(title, 100)"
+        },
+        {
+          "name": "GetX",
+          "description": "Get textbox X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = TextBox.GetX(title)"
+        },
+        {
+          "name": "SetY",
+          "description": "Set textbox Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "TextBox.SetY(title, 200)"
+        },
+        {
+          "name": "GetY",
+          "description": "Get textbox Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = TextBox.GetY(title)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set textbox X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "x", "type": "float", "description": "X position"},
             {"name": "y", "type": "float", "description": "Y position"}
           ],
-          "example": "TextBox.SetPosition(\"title\", 100, 200)"
+          "example": "TextBox.SetXY(title, 100, 200)"
         },
         {
-          "name": "GetPosition",
-          "description": "Get textbox position",
+          "name": "GetXY",
+          "description": "Get textbox X and Y position",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "float, float", "description": "X and Y position"},
-          "example": "local x, y = TextBox.GetPosition(\"title\")"
-        },
-        {
-          "name": "SetPositionX",
-          "description": "Set textbox X position",
-          "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
-            {"name": "x", "type": "float", "description": "X position"}
-          ],
-          "example": "TextBox.SetPositionX(\"title\", 100)"
-        },
-        {
-          "name": "GetPositionX",
-          "description": "Get textbox X position",
-          "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
-          ],
-          "returns": {"type": "float", "description": "X position"},
-          "example": "local x = TextBox.GetPositionX(\"title\")"
-        },
-        {
-          "name": "SetPositionY",
-          "description": "Set textbox Y position",
-          "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
-            {"name": "y", "type": "float", "description": "Y position"}
-          ],
-          "example": "TextBox.SetPositionY(\"title\", 200)"
-        },
-        {
-          "name": "GetPositionY",
-          "description": "Get textbox Y position",
-          "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
-          ],
-          "returns": {"type": "float", "description": "Y position"},
-          "example": "local y = TextBox.GetPositionY(\"title\")"
+          "example": "local x, y = TextBox.GetXY(title)"
         },
         {
           "name": "SetCenter",
           "description": "Set textbox center of rotation",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "centerX", "type": "float", "description": "Center X"},
             {"name": "centerY", "type": "float", "description": "Center Y"}
           ],
-          "example": "TextBox.SetCenter(\"title\", 50, 10)"
+          "example": "TextBox.SetCenter(title, 50, 10)"
         },
         {
           "name": "GetCenter",
           "description": "Get textbox center of rotation",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "float, float", "description": "Center X and Y"},
-          "example": "local cx, cy = TextBox.GetCenter(\"title\")"
+          "example": "local cx, cy = TextBox.GetCenter(title)"
         },
         {
           "name": "SetSize",
           "description": "Set textbox display size",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "width", "type": "float", "description": "Width"},
             {"name": "height", "type": "float", "description": "Height"}
           ],
-          "example": "TextBox.SetSize(\"title\", 200, 30)"
+          "example": "TextBox.SetSize(title, 200, 30)"
         },
         {
           "name": "GetSize",
           "description": "Get textbox display size",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "float, float", "description": "Width and height"},
-          "example": "local w, h = TextBox.GetSize(\"title\")"
+          "example": "local w, h = TextBox.GetSize(title)"
         },
         {
-          "name": "SetRotation",
+          "name": "SetAngle",
           "description": "Set textbox rotation in degrees",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
           ],
-          "example": "TextBox.SetRotation(\"title\", 45)"
+          "example": "TextBox.SetAngle(title, 45)"
         },
         {
-          "name": "GetRotation",
+          "name": "GetAngle",
           "description": "Get textbox rotation in degrees",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "float", "description": "Rotation in degrees"},
-          "example": "local angle = TextBox.GetRotation(\"title\")"
+          "example": "local angle = TextBox.GetAngle(title)"
         },
         {
           "name": "SetScale",
           "description": "Set textbox scale",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
             {"name": "scaleY", "type": "float", "description": "Vertical scale"}
           ],
-          "example": "TextBox.SetScale(\"title\", 2.0, 2.0)"
+          "example": "TextBox.SetScale(title, 2.0, 2.0)"
         },
         {
           "name": "GetScale",
           "description": "Get textbox scale",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
-          "example": "local sx, sy = TextBox.GetScale(\"title\")"
+          "example": "local sx, sy = TextBox.GetScale(title)"
         },
         {
           "name": "SetColor",
           "description": "Set textbox text color (0x00RRGGBB)",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
           ],
-          "example": "TextBox.SetColor(\"title\", 0x00FF0000)"
+          "example": "TextBox.SetColor(title, 0x00FF0000)"
         },
         {
           "name": "GetColor",
           "description": "Get textbox text color",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "int32", "description": "Color value"},
-          "example": "local color = TextBox.GetColor(\"title\")"
+          "example": "local color = TextBox.GetColor(title)"
         },
         {
           "name": "SetPaletteSlot",
           "description": "Set which palette slot this textbox uses",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
           ],
-          "example": "TextBox.SetPaletteSlot(\"title\", 1)"
+          "example": "TextBox.SetPaletteSlot(title, 1)"
         },
         {
           "name": "GetPaletteSlot",
           "description": "Get textbox palette slot",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "int32", "description": "Palette slot index"},
-          "example": "local slot = TextBox.GetPaletteSlot(\"title\")"
+          "example": "local slot = TextBox.GetPaletteSlot(title)"
         },
         {
           "name": "SetVisible",
           "description": "Set textbox visibility",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "visible", "type": "boolean", "description": "Visibility state"}
           ],
-          "example": "TextBox.SetVisible(\"title\", false)"
+          "example": "TextBox.SetVisible(title, false)"
         },
         {
           "name": "GetVisible",
           "description": "Get textbox visibility",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "boolean", "description": "Visibility state"},
-          "example": "local vis = TextBox.GetVisible(\"title\")"
+          "example": "local vis = TextBox.GetVisible(title)"
         },
         {
           "name": "SetAttributes",
           "description": "Set textbox attribute flags",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"},
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
             {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
           ],
-          "example": "TextBox.SetAttributes(\"title\", 0x08)"
+          "example": "TextBox.SetAttributes(title, 0x08)"
         },
         {
           "name": "GetAttributes",
           "description": "Get textbox attribute flags",
           "parameters": [
-            {"name": "name", "type": "string", "description": "Textbox name"}
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
           ],
           "returns": {"type": "int32", "description": "Attribute flags bitmask"},
-          "example": "local attr = TextBox.GetAttributes(\"title\")"
+          "example": "local attr = TextBox.GetAttributes(title)"
         }
       ]
     },
@@ -1116,23 +1116,29 @@
       "functions": [
         {
           "name": "HoursToDegrees",
-          "description": "Returns the angle corresponding to the current time for positioning a watch hand",
-          "parameters": [],
-          "returns": {"type": "int32", "description": "Angle in degrees for hour hand"},
+          "description": "Returns the angle corresponding to the current time for positioning the hour hand. By default it uses minutes, seconds, and milliseconds for smooth movement.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include smaller time units for smooth motion. When false, keep the legacy stepped behavior."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the hour hand"},
           "example": "Time.HoursToDegrees()"
         },
         {
           "name": "MinutesToDegrees",
-          "description": "Returns the angle corresponding to the current minutes for positioning a watch hand",
-          "parameters": [],
-          "returns": {"type": "int32", "description": "Angle in degrees for minute hand"},
+          "description": "Returns the angle corresponding to the current time for positioning the minute hand. By default it uses seconds and milliseconds for smooth movement.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include smaller time units for smooth motion. When false, keep the legacy stepped behavior."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the minute hand"},
           "example": "Time.MinutesToDegrees()"
         },
         {
           "name": "SecondsToDegrees",
-          "description": "Returns the angle corresponding to the current seconds for positioning a watch hand",
-          "parameters": [],
-          "returns": {"type": "int32", "description": "Angle in degrees for second hand"},
+          "description": "Returns the angle corresponding to the current time for positioning the second hand. By default it uses milliseconds for smooth sweeping.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include milliseconds for smooth motion. When false, keep the legacy stepped behavior."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the second hand"},
           "example": "Time.SecondsToDegrees()"
         },
         {
@@ -1155,6 +1161,13 @@
           "parameters": [],
           "returns": {"type": "int32", "description": "Current seconds (0-59)"},
           "example": "Time.Seconds()"
+        },
+        {
+          "name": "Milliseconds",
+          "description": "Returns the current milliseconds",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current milliseconds (0-999)"},
+          "example": "Time.Milliseconds()"
         },
         {
           "name": "Day",
@@ -1213,6 +1226,51 @@
           },
           "example": "System.LogLua(\"Debug message\")",
           "js_implementation": "system.LogLua"
+        },
+        {
+          "name": "SetClearColor",
+          "description": "Set the emulator clear color using a 24-bit RGB integer",
+          "parameters": [
+            {
+              "name": "color",
+              "type": "number",
+              "description": "RGB color value like 0x112233"
+            }
+          ],
+          "returns": {
+            "type": "void",
+            "description": "No return value"
+          },
+          "example": "System.SetClearColor(0x000000)",
+          "js_implementation": "system.SetClearColor"
+        },
+        {
+          "name": "GetChargeState",
+          "description": "Returns the current battery and charger state table. This is the same data as Battery.GetChargeState() and includes whether external power is present, battery voltage/percent, and charger status strings.",
+          "parameters": [],
+          "returns": {
+            "type": "table",
+            "description": "Table fields: plugged_in (boolean), battery_voltage_mv (int32), charger_state (string: off|precharge|normal_charge|finishing_charge), battery_percent (int32), charger_main_fsm (string), charger_main_fsm_raw (int32), charger_jeita_region (string), charger_die_temp_limit_exceeded (boolean), charger_ok_irq_status (int32), charger_nok_irq_status (int32)"
+          },
+          "example": "local state = System.GetChargeState()\nif state.plugged_in then\n  print(string.format('Charging: %s (%d%%)', state.charger_state, state.battery_percent))\nend",
+          "js_implementation": "battery.GetChargeState"
+        }
+      ]
+    },
+    {
+      "name": "Battery",
+      "description": "Battery charge-state functions",
+      "functions": [
+        {
+          "name": "GetChargeState",
+          "description": "Returns the current battery and charger state as a table with power, voltage, percentage, and charger status fields.",
+          "parameters": [],
+          "returns": {
+            "type": "table",
+            "description": "Table fields: plugged_in (boolean), battery_voltage_mv (int32), charger_state (string: off|precharge|normal_charge|finishing_charge), battery_percent (int32), charger_main_fsm (string), charger_main_fsm_raw (int32), charger_jeita_region (string), charger_die_temp_limit_exceeded (boolean), charger_ok_irq_status (int32), charger_nok_irq_status (int32)"
+          },
+          "example": "local state = Battery.GetChargeState()\nprint(string.format('%d%% %dmV', state.battery_percent, state.battery_voltage_mv))\nif state.charger_state ~= 'off' then\n  print('charger: ' .. state.charger_state)\nend",
+          "js_implementation": "battery.GetChargeState"
         }
       ]
     }

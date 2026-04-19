@@ -30,26 +30,6 @@ class LuaSFXExtensions extends BaseLuaExtension {
     return value;
   }
 
-  _optionalBooleanArg(args, index, defaultValue) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
-    if (raw === undefined || raw === null || raw === '') {
-      return defaultValue;
-    }
-    if (typeof raw === 'boolean') {
-      return raw;
-    }
-    if (typeof raw === 'string') {
-      const normalized = raw.toLowerCase();
-      if (normalized === 'true' || normalized === '1') {
-        return true;
-      }
-      if (normalized === 'false' || normalized === '0') {
-        return false;
-      }
-    }
-    throw new Error(`[SFX] invalid boolean argument: ${raw}`);
-  }
-
   _requireAudioEngine(methodName) {
     this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine || this.audioEngine;
     if (!this.audioEngine) {
@@ -96,7 +76,7 @@ class LuaSFXExtensions extends BaseLuaExtension {
    */
   Play(...args) {
     const resourceId = this._requireStringArg(args, 0, 'Play', 'resourceId');
-    const shouldRepeat = this._optionalBooleanArg(args, 1, false);
+    const shouldRepeat = this._optionalBooleanArg(args, 1, false, '[SFX] Play', 'shouldRepeat');
     const resource = this._requireResource(resourceId, 'Play');
     const audioEngine = this._requireAudioEngine('Play');
     if (typeof audioEngine.startSound !== 'function') {

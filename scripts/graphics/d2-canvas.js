@@ -39,6 +39,7 @@
  *    srcX, srcY, srcW, srcH,              // source rect (default full)
  *    filter: 'nearest' | 'bilinear',       // default 'nearest'
  *    aa: false,                            // 4× supersampled AA
+ *    tint: 0x00RRGGBB,                    // RGB tint multiply (default 0x00FFFFFF)
  *  });
  *
  *  gpu.present();                          // flush to screen (swaps frame if needed)
@@ -187,6 +188,7 @@ uniform int   u_colorKey;       // RGB565 color key (-1 = disabled)
 uniform bool  u_filter;         // true = bilinear, false = nearest
 uniform bool  u_aa;             // true = 4× SSAA
 uniform bool  u_preRotated;     // true = texture stored rotated 90° CW
+uniform vec4  u_tint;           // RGBA tint multiplier (default white)
 
 out vec4 fragColor;
 
@@ -495,6 +497,9 @@ void main() {
     fragColor = sampleTexture(uv);
   }
 
+  // Apply tint — multiplies RGB, preserves texture alpha
+  fragColor.rgb *= u_tint.rgb;
+
   // Color key check — done once in main() to avoid per-sample overhead
   if (u_colorKey >= 0) {
     if (toRGB565(fragColor) == u_colorKey) fragColor.a = 0.0;
@@ -558,7 +563,7 @@ class D2Canvas {
       'u_rotation', 'u_pivot',
       'u_texData', 'u_palette', 'u_format', 'u_texWidth', 'u_texHeight',
       'u_texStride', 'u_palOffset', 'u_colorKey', 'u_filter', 'u_aa',
-      'u_preRotated',
+      'u_preRotated', 'u_tint',
     ];
     for (const n of names) this._uloc[n] = gl.getUniformLocation(this._program, n);
 
@@ -872,6 +877,14 @@ class D2Canvas {
     gl.uniform1i(u.u_filter, filter ? 1 : 0);
     gl.uniform1i(u.u_aa, aa ? 1 : 0);
     gl.uniform1i(u.u_preRotated, tex.preRotated ? 1 : 0);
+
+    // Tint color (0x00RRGGBB → vec4)
+    const tint = opts.tint ?? 0x00FFFFFF;
+    gl.uniform4f(u.u_tint,
+      ((tint >> 16) & 0xFF) / 255,
+      ((tint >>  8) & 0xFF) / 255,
+      ( tint        & 0xFF) / 255,
+      1.0);
 
     // Draw fullscreen quad (4 vertices, triangle strip)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

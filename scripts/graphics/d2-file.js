@@ -310,6 +310,36 @@ class D2File {
         return out;
       }
 
+      case D2_FORMAT.AI44: {
+        const out = new Uint8Array(pixelCount);
+        for (let i = 0, pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, i += 4) {
+          const alphaNibble = Math.round((rgba[i + 3] / 255) * 15) & 0xF;
+          const paletteNibble = alphaNibble > 0 ? 0xF : 0x0;
+          out[pixelIndex] = (alphaNibble << 4) | paletteNibble;
+        }
+        return out;
+      }
+
+      case D2_FORMAT.I8: {
+        const out = new Uint8Array(pixelCount);
+        for (let i = 0, pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, i += 4) {
+          out[pixelIndex] = rgba[i + 3];
+        }
+        return out;
+      }
+
+      case D2_FORMAT.I4:
+      case D2_FORMAT.I2:
+      case D2_FORMAT.I1: {
+        const bitsPerPixel = BITS_PER_PIXEL[fmtEnum] || 8;
+        const maxIndex = (1 << bitsPerPixel) - 1;
+        const indices = new Uint8Array(pixelCount);
+        for (let i = 0, pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, i += 4) {
+          indices[pixelIndex] = Math.round((rgba[i + 3] / 255) * maxIndex);
+        }
+        return packIndexedPixels(indices, fmtEnum);
+      }
+
       // ── Alpha-only ────────────────────────────────────
       case D2_FORMAT.ALPHA8: {
         const out = new Uint8Array(pixelCount);

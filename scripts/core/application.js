@@ -43,6 +43,9 @@ class RetroStudioApplication {
       // 7. Start main systems
       await this.startSystems();
 
+      // 8. Preload Lua engine (heavy asm.js compile — do it now, not on first play)
+      await this.preloadLuaEngine();
+
       this.isInitialized = true;
       const loadTime = Date.now() - this.startTime;
       console.log(`✅ [RetroStudio] Application initialized in ${loadTime}ms`);
@@ -211,7 +214,7 @@ class RetroStudioApplication {
   loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = src + (src.includes('?') ? '&' : '?') + 'v=5';
+      script.src = src + (src.includes('?') ? '&' : '?') + 'v=6';
       script.onload = () => {
         console.log(`[Application] Loaded component script: ${src}`);
         resolve();
@@ -284,6 +287,26 @@ class RetroStudioApplication {
     adapterRegistry.initializeAllAdapters();
 
     console.log('[Application] Service adapters initialized');
+  }
+
+  // Preload the Lua VM so first play is fast
+  async preloadLuaEngine() {
+    const overlay = document.getElementById('appLoadingOverlay');
+    try {
+      const gameEmulator = this.services.get('gameEmulator');
+      if (gameEmulator) {
+        const t0 = performance.now();
+        await gameEmulator.loadLuaEngine();
+        console.log(`[Application] Lua engine preloaded in ${(performance.now() - t0).toFixed(0)}ms`);
+      }
+    } catch (e) {
+      console.error('[Application] Lua engine preload failed:', e);
+    } finally {
+      if (overlay) {
+        overlay.classList.add('hidden');
+        setTimeout(() => overlay.remove(), 400);
+      }
+    }
   }
 
   // Graceful shutdown

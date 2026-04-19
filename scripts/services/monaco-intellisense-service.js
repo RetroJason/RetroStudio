@@ -121,6 +121,8 @@ class MonacoIntelliSenseService {
         }
 
         const insertText = `${fullName}(${snippetParams})`; // Use fullName instead of func.name
+        const paramStrings = parameters.map(param => `${param.name}: ${param.type}`);
+        const signature = `${fullName}(${paramStrings.join(', ')})`;
         
         // Generate documentation
         let documentation = func.description;
@@ -151,7 +153,7 @@ class MonacoIntelliSenseService {
                 value: documentation,
                 isTrusted: true
             },
-            detail: `${category.name} function`,
+            detail: signature,
             sortText: `${category.name}_${func.name}`,
             filterText: `${category.name}.${func.name} ${func.name}`,
             additionalTextEdits: [],

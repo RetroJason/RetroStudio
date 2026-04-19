@@ -721,8 +721,19 @@ class LuaEditor extends EditorBase {
                 return;
               }
 
-              const hoverData = intelliSenseService.getHoverData(word.word);
-              if (!hoverData || !hoverData.markdown) {
+              const line = model.getLineContent(position.lineNumber);
+              const beforeWord = line.substring(0, word.startColumn - 1);
+              const categoryMatch = beforeWord.match(/(\w+)\.$/);
+
+              if (!categoryMatch) {
+                clearTimeout(timeout);
+                resolve(null);
+                return;
+              }
+
+              const fullName = `${categoryMatch[1]}.${word.word}`;
+              const hoverData = intelliSenseService.getHoverData(fullName);
+              if (!hoverData || !Array.isArray(hoverData.contents) || hoverData.contents.length === 0) {
                 clearTimeout(timeout);
                 resolve(null);
                 return;
@@ -735,7 +746,7 @@ class LuaEditor extends EditorBase {
                   position.lineNumber,
                   word.endColumn
                 ),
-                contents: [{ value: hoverData.markdown }]
+                contents: hoverData.contents
               };
 
               clearTimeout(timeout);

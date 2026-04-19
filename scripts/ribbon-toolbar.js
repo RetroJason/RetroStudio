@@ -6,12 +6,14 @@ class RibbonToolbar {
     this.buttons = {};
     this.componentRegistry = null;
     this.fileCounter = 1; // Counter for new file naming
+    this.ribbonColorValue = '0xFFFFFF';
     this.init();
   }
   
   init() {
     console.log('[RibbonToolbar] Initializing...');
     this.setupButtons();
+    this.setupColorPicker();
     
     // Wait for component registry to be available
     this.waitForComponentRegistry();
@@ -31,6 +33,55 @@ class RibbonToolbar {
     } catch (_) {}
     
     console.log('[RibbonToolbar] Initialized');
+  }
+
+  setupColorPicker() {
+    this.colorPicker = document.getElementById('ribbonColorPicker');
+    this.colorCopyButton = document.getElementById('ribbonColorCopyBtn');
+    this.colorValueElement = document.getElementById('ribbonColorValue');
+
+    if (!this.colorPicker || !this.colorCopyButton || !this.colorValueElement) {
+      console.error('[RibbonToolbar] Color picker controls not found in DOM');
+      return;
+    }
+
+    this.updateColorDisplay(this.colorPicker.value);
+
+    this.colorPicker.addEventListener('input', async () => {
+      const value = this.colorPicker.value;
+      this.updateColorDisplay(value);
+      await this.copyRibbonColor();
+    });
+
+    this.colorCopyButton.addEventListener('click', async () => {
+      await this.copyRibbonColor();
+    });
+  }
+
+  updateColorDisplay(cssColor) {
+    const normalizedColor = this.normalizeColorForClipboard(cssColor);
+    this.ribbonColorValue = normalizedColor;
+    this.colorValueElement.textContent = normalizedColor;
+    this.colorCopyButton.style.borderColor = cssColor;
+    this.colorCopyButton.style.boxShadow = `inset 0 0 0 1px ${cssColor}33`;
+  }
+
+  normalizeColorForClipboard(cssColor) {
+    if (typeof cssColor !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(cssColor)) {
+      throw new Error(`[RibbonToolbar] Invalid color picker value: ${cssColor}`);
+    }
+
+    return `0x${cssColor.slice(1).toUpperCase()}`;
+  }
+
+  async copyRibbonColor() {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      throw new Error('[RibbonToolbar] Clipboard API is unavailable');
+    }
+
+    await navigator.clipboard.writeText(this.ribbonColorValue);
+    console.log(`[RibbonToolbar] Copied ${this.ribbonColorValue} to clipboard`);
+    window.gameEmulator?.updateStatus?.(`Copied ${this.ribbonColorValue}`, 'success');
   }
 
   waitForComponentRegistry() {
@@ -126,6 +177,11 @@ class RibbonToolbar {
         alert('No active project');
         return;
       }
+
+      if (this.isFontEditor(editorInfo)) {
+        await this.createFontResourceFromPicker(editorInfo, focusedProject);
+        return;
+      }
       
       // Simply open a new editor with no file object - let the editor handle filename prompting
       if (window.gameEmulator && window.gameEmulator.tabManager) {
@@ -141,6 +197,269 @@ class RibbonToolbar {
     } catch (error) {
       console.error(`[RibbonToolbar] Failed to create ${editorInfo.displayName}:`, error);
     }
+  }
+
+  isFontEditor(editorInfo) {
+    if (!editorInfo) {
+      return false;
+    }
+
+    if (editorInfo.name === 'font-editor') {
+      return true;
+    }
+
+    const extensions = editorInfo.extensions || editorInfo.editorClass?.getFileExtensions?.() || [];
+    return Array.isArray(extensions) && extensions.includes('.font');
+  }
+
+  async createFontResourceFromPicker(editorInfo, focusedProject) {
+    const fontSources = await this.listFontSources(focusedProject);
+    const pickerOptions = await this.buildFontSelectionOptions(fontSources);
+
+    const selection = await window.ModalUtils.showSelectionList(
+      'Choose Font Source',
+      'Pick an existing font source or upload a new one. The .font metadata file will be created after you confirm the source.',
+      pickerOptions,
+      {
+        confirmText: 'OK',
+        cancelText: 'Cancel'
+      }
+    );
+
+    if (!selection) {
+      return;
+    }
+
+    let selectedSource = null;
+
+    if (selection === '__upload__') {
+      selectedSource = await this.uploadNewFontSource(focusedProject);
+      if (!selectedSource) {
+        return;
+      }
+    } else {
+      selectedSource = fontSources.find(source => source.path === selection) || null;
+      if (!selectedSource) {
+        throw new Error(`Selected font source was not found: ${selection}`);
+      }
+    }
+
+    const resourceName = await this.promptForFontResourceName(selectedSource.name);
+    if (!resourceName) {
+      return;
+    }
+
+    const sourcesRoot = window.ProjectPaths?.getSourcesRootUi?.() || 'Sources';
+    const fontFolder = `${focusedProject}/${sourcesRoot}/Fonts`;
+    const fullUiPath = `${fontFolder}/${resourceName}`;
+    const fileManager = window.serviceContainer?.get?.('fileManager');
+    const existing = fileManager ? await fileManager.fileExists(fullUiPath) : false;
+
+    if (existing) {
+      const shouldOverwrite = await window.ModalUtils.showConfirm(
+        'Overwrite Existing Font',
+        `${resourceName} already exists. Replace it?`,
+        { okText: 'Overwrite', cancelText: 'Cancel', danger: true }
+      );
+
+      if (!shouldOverwrite) {
+        return;
+      }
+    }
+
+    const fontFamily = selectedSource.name.replace(/\.[^.]+$/, '');
+    const metadata = {
+      type: 'retrowatch-font',
+      sourceFontPath: selectedSource.path,
+      fontFamily,
+      fontSize: 32,
+      outputPixelFormat: 'd2_mode_alpha8',
+      characters: window.FontEditor?.DEFAULT_CHARACTERS || 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+      padding: 1,
+      spacing: 1,
+      antialias: true
+    };
+
+    const newFile = new File(
+      [JSON.stringify(metadata, null, 2)],
+      resourceName,
+      { type: 'application/json' }
+    );
+
+    const projectExplorer = window.gameEditor?.projectExplorer || window.gameEmulator?.projectExplorer;
+    if (!projectExplorer) {
+      throw new Error('Project explorer is not available.');
+    }
+
+    await projectExplorer.addFileToProject(newFile, fontFolder, true, true);
+    projectExplorer.renderTree();
+
+    const tabManager = window.gameEmulator?.tabManager || window.serviceContainer?.get?.('tabManager');
+    if (!tabManager) {
+      throw new Error('Tab manager is not available.');
+    }
+
+    await tabManager.openInTab(fullUiPath, editorInfo, { isReadOnly: false });
+  }
+
+  async listFontSources(focusedProject) {
+    const fileManager = window.serviceContainer?.get?.('fileManager');
+    if (!fileManager) {
+      throw new Error('File manager is not available.');
+    }
+
+    const sourcesRoot = window.ProjectPaths?.getSourcesRootUi?.() || 'Sources';
+    const fontFolder = `${focusedProject}/${sourcesRoot}/Fonts`;
+    const supportedExtensions = new Set(['.ttf', '.otf', '.woff', '.woff2']);
+    const records = await fileManager.listFiles(fontFolder);
+
+    return records
+      .filter(record => {
+        const path = record.path || '';
+        const extension = path.slice(path.lastIndexOf('.')).toLowerCase();
+        return supportedExtensions.has(extension);
+      })
+      .sort((left, right) => (left.filename || left.name || '').localeCompare(right.filename || right.name || ''))
+      .map(record => ({
+        name: record.filename || record.name || (record.path || '').split('/').pop(),
+        path: record.path,
+        record
+      }));
+  }
+
+  async buildFontSelectionOptions(fontSources) {
+    const options = [
+      {
+        value: '__upload__',
+        label: '<span style="font-size: 16px; font-weight: 700;">Upload a new font</span>',
+        description: 'Import a .ttf, .otf, .woff, or .woff2 into Sources/Fonts.'
+      }
+    ];
+
+    for (const [index, source] of fontSources.entries()) {
+      const previewFamily = await this.loadFontPreviewFamily(source.record, index);
+      const sampleText = 'Retro Watch 12345';
+      const previewHtml = previewFamily
+        ? `<div style="font-family: '${previewFamily}', sans-serif; font-size: 22px; color: #aab3be; margin-top: 4px;">${sampleText}</div>`
+        : '';
+
+      options.push({
+        value: source.path,
+        label: `<span style="font-size: 16px; font-weight: 700;">${source.name}</span>${previewHtml}`,
+        description: source.path
+      });
+    }
+
+    return options;
+  }
+
+  async loadFontPreviewFamily(record, index) {
+    try {
+      const content = record.content ?? record.fileContent ?? record;
+      const buffer = this.coerceToArrayBuffer(content);
+      if (!(buffer instanceof ArrayBuffer)) {
+        return null;
+      }
+
+      const family = `font-picker-${Date.now()}-${index}`;
+      const face = new FontFace(family, buffer.slice(0));
+      await face.load();
+      document.fonts.add(face);
+      return family;
+    } catch (error) {
+      console.warn('[RibbonToolbar] Failed to load font preview:', error);
+      return null;
+    }
+  }
+
+  coerceToArrayBuffer(value) {
+    if (value instanceof ArrayBuffer) {
+      return value;
+    }
+
+    if (ArrayBuffer.isView(value)) {
+      return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+    }
+
+    if (typeof value === 'string') {
+      const binary = atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes.buffer;
+    }
+
+    return null;
+  }
+
+  async uploadNewFontSource(focusedProject) {
+    const file = await this.pickFontFile();
+    if (!file) {
+      return null;
+    }
+
+    const projectExplorer = window.gameEditor?.projectExplorer || window.gameEmulator?.projectExplorer;
+    if (!projectExplorer) {
+      throw new Error('Project explorer is not available.');
+    }
+
+    const sourcesRoot = window.ProjectPaths?.getSourcesRootUi?.() || 'Sources';
+    const fontFolder = `${focusedProject}/${sourcesRoot}/Fonts`;
+    await projectExplorer.addFileToProject(file, fontFolder, true, true);
+    projectExplorer.renderTree();
+
+    return {
+      name: file.name,
+      path: `${focusedProject}/${sourcesRoot}/Fonts/${file.name}`,
+      record: { path: `${focusedProject}/${sourcesRoot}/Fonts/${file.name}` }
+    };
+  }
+
+  pickFontFile() {
+    return new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.ttf,.otf,.woff,.woff2';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+
+      input.addEventListener('change', () => {
+        const [file] = input.files || [];
+        document.body.removeChild(input);
+        resolve(file || null);
+      }, { once: true });
+
+      input.click();
+    });
+  }
+
+  async promptForFontResourceName(sourceFilename) {
+    const suggestedName = `${sourceFilename.replace(/\.[^.]+$/, '')}.font`;
+    const result = await window.ModalUtils.showForm('Create Font', [
+      {
+        name: 'filename',
+        type: 'text',
+        label: 'Font name',
+        defaultValue: suggestedName,
+        required: true,
+        hint: 'Name of the .font metadata file.',
+        validator: value => {
+          const trimmed = value.trim();
+          return trimmed.length > 0 && !/[<>:"/\\|?*]/.test(trimmed);
+        }
+      }
+    ], {
+      okText: 'Create',
+      cancelText: 'Cancel'
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    const trimmed = result.filename.trim();
+    return trimmed.toLowerCase().endsWith('.font') ? trimmed : `${trimmed}.font`;
   }
   
   getNextFileCounter() {

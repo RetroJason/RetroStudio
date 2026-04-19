@@ -7,45 +7,62 @@ class LuaTimeExtensions extends BaseLuaExtension {
     this.gameEmulator = gameEmulator;
   }
 
+  _getCurrentTime() {
+    return new Date();
+  }
+
   /**
    * Get current hours as degrees for watch hand positioning
-   * Lua usage: Time.HoursToDegrees()
+   * Lua usage: Time.HoursToDegrees(smooth)
    */
-  HoursToDegrees() {
-    const now = new Date();
+  HoursToDegrees(...args) {
+    const smooth = this._optionalBooleanArg(args, 0, true, '[Time] HoursToDegrees', 'smooth');
+    const now = this._getCurrentTime();
     const hours = now.getHours() % 12; // Convert to 12-hour format
     const minutes = now.getMinutes();
-    // Calculate degrees: 30 degrees per hour + 0.5 degrees per minute
-    const degrees = (hours * 30) + (minutes * 0.5);
-    console.log(`[Lua Time] HoursToDegrees() = ${degrees}`);
-    return Math.floor(degrees);
+    const seconds = now.getSeconds();
+    const milliseconds = now.getMilliseconds();
+    const minuteFraction = smooth
+      ? minutes + (seconds / 60) + (milliseconds / 60000)
+      : minutes;
+    const degrees = (hours * 30) + (minuteFraction * 0.5);
+    console.log(`[Lua Time] HoursToDegrees(${smooth}) = ${degrees}`);
+    return smooth ? degrees : Math.floor(degrees);
   }
 
   /**
    * Get current minutes as degrees for watch hand positioning
-   * Lua usage: Time.MinutesToDegrees()
+   * Lua usage: Time.MinutesToDegrees(smooth)
    */
-  MinutesToDegrees() {
-    const now = new Date();
+  MinutesToDegrees(...args) {
+    const smooth = this._optionalBooleanArg(args, 0, true, '[Time] MinutesToDegrees', 'smooth');
+    const now = this._getCurrentTime();
     const minutes = now.getMinutes();
     const seconds = now.getSeconds();
-    // Calculate degrees: 6 degrees per minute + 0.1 degrees per second
-    const degrees = (minutes * 6) + (seconds * 0.1);
-    console.log(`[Lua Time] MinutesToDegrees() = ${degrees}`);
-    return Math.floor(degrees);
+    const milliseconds = now.getMilliseconds();
+    const secondFraction = smooth
+      ? seconds + (milliseconds / 1000)
+      : seconds;
+    const degrees = (minutes * 6) + (secondFraction * 0.1);
+    console.log(`[Lua Time] MinutesToDegrees(${smooth}) = ${degrees}`);
+    return smooth ? degrees : Math.floor(degrees);
   }
 
   /**
    * Get current seconds as degrees for watch hand positioning
-   * Lua usage: Time.SecondsToDegrees()
+   * Lua usage: Time.SecondsToDegrees(smooth)
    */
-  SecondsToDegrees() {
-    const now = new Date();
+  SecondsToDegrees(...args) {
+    const smooth = this._optionalBooleanArg(args, 0, true, '[Time] SecondsToDegrees', 'smooth');
+    const now = this._getCurrentTime();
     const seconds = now.getSeconds();
-    // Calculate degrees: 6 degrees per second
-    const degrees = seconds * 6;
-    console.log(`[Lua Time] SecondsToDegrees() = ${degrees}`);
-    return degrees;
+    const milliseconds = now.getMilliseconds();
+    const secondFraction = smooth
+      ? seconds + (milliseconds / 1000)
+      : seconds;
+    const degrees = secondFraction * 6;
+    console.log(`[Lua Time] SecondsToDegrees(${smooth}) = ${degrees}`);
+    return smooth ? degrees : Math.floor(degrees);
   }
 
   /**
@@ -53,7 +70,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Hours()
    */
   Hours() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const hours = now.getHours();
     console.log(`[Lua Time] Hours() = ${hours}`);
     return hours;
@@ -64,7 +81,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Minutes()
    */
   Minutes() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const minutes = now.getMinutes();
     console.log(`[Lua Time] Minutes() = ${minutes}`);
     return minutes;
@@ -75,10 +92,21 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Seconds()
    */
   Seconds() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const seconds = now.getSeconds();
     console.log(`[Lua Time] Seconds() = ${seconds}`);
     return seconds;
+  }
+
+  /**
+   * Get current milliseconds
+   * Lua usage: Time.Milliseconds()
+   */
+  Milliseconds() {
+    const now = this._getCurrentTime();
+    const milliseconds = now.getMilliseconds();
+    console.log(`[Lua Time] Milliseconds() = ${milliseconds}`);
+    return milliseconds;
   }
 
   /**
@@ -86,7 +114,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Day()
    */
   Day() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const day = now.getDate();
     console.log(`[Lua Time] Day() = ${day}`);
     return day;
@@ -97,7 +125,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Month()
    */
   Month() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const month = now.getMonth() + 1; // JavaScript months are 0-based
     console.log(`[Lua Time] Month() = ${month}`);
     return month;
@@ -108,7 +136,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.Year()
    */
   Year() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const year = now.getFullYear();
     console.log(`[Lua Time] Year() = ${year}`);
     return year;
@@ -119,7 +147,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    * Lua usage: Time.DayOfWeek()
    */
   DayOfWeek() {
-    const now = new Date();
+    const now = this._getCurrentTime();
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const dayOfWeek = days[now.getDay()];
     console.log(`[Lua Time] DayOfWeek() = ${dayOfWeek}`);
@@ -139,7 +167,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
     const format = (rawFormat === undefined || rawFormat === null || rawFormat === '')
       ? '%Y-%m-%d %H:%M:%S'
       : rawFormat;
-    const now = new Date();
+    const now = this._getCurrentTime();
     
     // Simple implementation of common format specifiers
     let result = format;

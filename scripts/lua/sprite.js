@@ -224,9 +224,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
      ════════════════════════════════════════════════════════════════════ */
 
   /**
-   * Sprite.SetPosition(handle, x, y)
+   * Sprite.SetXY(handle, x, y)
    */
-  SetPosition() {
+  SetXY() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
     s._posX = parseFloat(L.raw_tostring(3)) || 0;
@@ -234,35 +234,35 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   }
 
   /**
-   * x, y = Sprite.GetPosition(handle)
+   * x, y = Sprite.GetXY(handle)
    */
-  GetPosition() {
+  GetXY() {
     const s = this._getSpriteByHandleArg(2);
     return [s._posX || 0, s._posY || 0];
   }
 
   /**
-   * Sprite.SetPositionX(handle, x)
+   * Sprite.SetX(handle, x)
    */
-  SetPositionX() {
+  SetX() {
     const s = this._getSpriteByHandleArg(2);
     s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
-  /** int = Sprite.GetPositionX(handle) */
-  GetPositionX() {
+  /** float = Sprite.GetX(handle) */
+  GetX() {
     const s = this._getSpriteByHandleArg(2);
     return (s && s._posX) || 0;
   }
 
-  /** Sprite.SetPositionY(handle, y) */
-  SetPositionY() {
+  /** Sprite.SetY(handle, y) */
+  SetY() {
     const s = this._getSpriteByHandleArg(2);
     s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
-  /** int = Sprite.GetPositionY(handle) */
-  GetPositionY() {
+  /** float = Sprite.GetY(handle) */
+  GetY() {
     const s = this._getSpriteByHandleArg(2);
     return (s && s._posY) || 0;
   }
@@ -295,14 +295,14 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     return [(s && s._width) || 0, (s && s._height) || 0];
   }
 
-  /** Sprite.SetRotation(handle, angle) — degrees */
-  SetRotation() {
+  /** Sprite.SetAngle(handle, angle) — degrees */
+  SetAngle() {
     const s = this._getSpriteByHandleArg(2);
     s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
   }
 
-  /** int = Sprite.GetRotation(handle) */
-  GetRotation() {
+  /** float = Sprite.GetAngle(handle) */
+  GetAngle() {
     const s = this._getSpriteByHandleArg(2);
     return (s && s._rotation) || 0;
   }
@@ -311,8 +311,13 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   SetScale() {
     const L = this.luaState;
     const s = this._getSpriteByHandleArg(2);
-    s._scaleX = parseFloat(L.raw_tostring(3)) || 1;
-    s._scaleY = parseFloat(L.raw_tostring(4)) || 1;
+    const scaleX = Number.parseFloat(L.raw_tostring(3));
+    const scaleY = Number.parseFloat(L.raw_tostring(4));
+    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
+      throw new Error('Sprite.SetScale: bad arguments #2/#3 (number expected)');
+    }
+    s._scaleX = scaleX;
+    s._scaleY = scaleY;
   }
 
   /** sx, sy = Sprite.GetScale(handle) */
@@ -324,7 +329,11 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetColor(handle, 0x00FFFFFF) */
   SetColor() {
     const s = this._getSpriteByHandleArg(2);
-    s._color = parseInt(this.luaState.raw_tostring(3)) || 0x00FFFFFF;
+    const color = Number(this.luaState.raw_tostring(3));
+    if (!Number.isInteger(color)) {
+      throw new Error('Sprite.SetColor: bad argument #2 (integer expected)');
+    }
+    s._color = color;
   }
 
   /** int = Sprite.GetColor(handle) */
@@ -348,8 +357,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /** Sprite.SetVisible(handle, true) */
   SetVisible() {
     const s = this._getSpriteByHandleArg(2);
-    const v = this.luaState.raw_tostring(3);
-    s._visible = v === 'true' || v === '1';
+    s._visible = this._requireBooleanStackArg(3, 'Sprite.SetVisible', 'visible');
   }
 
   /** bool = Sprite.GetVisible(handle) */

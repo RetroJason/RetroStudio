@@ -4,9 +4,9 @@ local hand_minute
 local hand_seconds
 
 function Update(delta_t)
-  Image.SetRotation(hand_hour, Time.HoursToDegrees())
-  Image.SetRotation(hand_minute, Time.MinutesToDegrees())
-  Image.SetRotation(hand_seconds, Time.SecondsToDegrees())
+  Image.SetAngle(hand_hour, Time.HoursToDegrees())
+  Image.SetAngle(hand_minute, Time.MinutesToDegrees())
+  Image.SetAngle(hand_seconds, Time.SecondsToDegrees())
 
 end
 
