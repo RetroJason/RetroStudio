@@ -45,6 +45,40 @@
     border: 1px solid #314153;
     margin-bottom: 10px;
   }
+  .connectTracePanel {
+    margin-bottom: 10px;
+    border: 1px solid #2a3646;
+    border-radius: 8px;
+    background: #111821;
+    padding: 8px;
+  }
+  .connectTraceHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .connectTraceTitle {
+    color: #99d3ff;
+    font-size: 12px;
+    margin: 0;
+  }
+  .connectTraceHint {
+    color: #8ea9c4;
+    font-size: 11px;
+  }
+  #connectionTrace {
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    border: 1px solid #253342;
+    border-radius: 6px;
+    background: #0b1016;
+    padding: 8px;
+    font-size: 12px;
+    line-height: 1.35;
+  }
   .layout {
     display: grid;
     grid-template-columns: minmax(320px, 42%) minmax(360px, 58%);
@@ -431,6 +465,9 @@
     background: #1c222b; border: 1px solid #2e3a49;
     border-radius: 12px; max-width: 420px; width: 90%;
   }
+  .welcomeTraceHost {
+    width: min(760px, calc(100vw - 28px));
+  }
   .welcomeCard h2 {
     color: #7cc6ff; font-size: 22px; margin: 0 0 8px;
   }
@@ -478,6 +515,7 @@
     <div id="welcomeProgress" class="welcomeProgress"><div class="progressTrack"><div class="progressBar"></div></div></div>
     <div id="welcomeStatus" class="welcomeStatus"></div>
   </div>
+  <div id="welcomeConnectionTraceHost" class="welcomeTraceHost"></div>
 </div>
 
 <div id="mainUI">
@@ -497,6 +535,7 @@
   <span class="muted">Launch supports: .rwb .rwa .rwf .mod .xm .d2 (max 4MB)</span>
 </div>
 <div id="status">Disconnected</div>
+<div id="mainConnectionTraceHost"></div>
 
 <div class="layout">
   <div class="panel">
@@ -523,6 +562,17 @@
 </div>
 
 </div><!-- end #mainUI -->
+
+<div id="connectionTracePanel" class="connectTracePanel">
+  <div class="connectTraceHeader">
+    <div>
+      <h2 class="connectTraceTitle">Connection Attempt Log</h2>
+      <div class="connectTraceHint">Verbose BLE connect, discovery, ping, and protocol compatibility traces.</div>
+    </div>
+    <button id="clearConnectionTraceBtn" class="secondary">Clear</button>
+  </div>
+  <div id="connectionTrace"></div>
+</div>
 
 <div id="ctxMenu" class="menu">
   <button data-action="upload">Upload Here</button>
@@ -618,6 +668,11 @@ const BleApi = window.RetroWatchBle;
 const client = new BleApi.RetroWatchBleClient();
 
 const statusEl = document.getElementById("status");
+const connectionTracePanelEl = document.getElementById("connectionTracePanel");
+const connectionTraceEl = document.getElementById("connectionTrace");
+const clearConnectionTraceBtn = document.getElementById("clearConnectionTraceBtn");
+const welcomeConnectionTraceHost = document.getElementById("welcomeConnectionTraceHost");
+const mainConnectionTraceHost = document.getElementById("mainConnectionTraceHost");
 const treeHost = document.getElementById("treeHost");
 const launchInput = document.getElementById("launchInput");
 const uploadInput = document.getElementById("uploadInput");
@@ -639,8 +694,6 @@ const fileEditorCloseBtn = document.getElementById("fileEditorCloseBtn");
 let rootNode = null;
 let selectedNode = null;
 let contextNode = null;
-let reconnectTimer = null;
-let reconnectInFlight = false;
 let manualDisconnectRequested = false;
 let transferInProgress = false;
 let pendingUploadNode = null;
@@ -652,6 +705,7 @@ let watchLogOffset = 0;
 let watchLogUnsupportedReported = false;
 let watchLogFirstFailureReported = false;
 let watchLogPartialLine = "";
+let connectionTraceCaptureEnabled = false;
 
 const WATCH_LOG_POLL_MS = 1000;
 const WATCH_LOG_CHUNK_BYTES = 240;
@@ -728,6 +782,142 @@ function log(line, cls = "") {
   el.dataset.rawLine = line;
   applyLogFilterToEntry(el);
   logEl.appendChild(el);
+}
+
+function traceTimestamp() {
+  const now = new Date();
+  return `${now.toLocaleTimeString([], { hour12: false })}.${String(now.getMilliseconds()).padStart(3, "0")}`;
+}
+
+function connectionTrace(line, cls = "") {
+  if (!connectionTraceEl) {
+    return;
+  }
+
+  const el = document.createElement("div");
+  el.className = cls;
+  el.textContent = `[${traceTimestamp()}] ${line}`;
+  connectionTraceEl.appendChild(el);
+  connectionTraceEl.scrollTop = connectionTraceEl.scrollHeight;
+}
+
+function clearConnectionTrace() {
+  if (!connectionTraceEl) {
+    return;
+  }
+  connectionTraceEl.replaceChildren();
+}
+
+function beginConnectionTrace(label) {
+  clearConnectionTrace();
+  connectionTraceCaptureEnabled = true;
+  connectionTrace(`${label}: starting BLE connection attempt`, "muted");
+}
+
+function attachConnectionTracePanel(targetHost) {
+  if (!connectionTracePanelEl || !targetHost) {
+    return;
+  }
+  if (connectionTracePanelEl.parentElement === targetHost) {
+    return;
+  }
+  targetHost.appendChild(connectionTracePanelEl);
+}
+
+function stopConnectionTraceCapture(reason) {
+  if (!connectionTraceCaptureEnabled) {
+    return;
+  }
+  connectionTrace(reason || "connection trace capture paused", "muted");
+  connectionTraceCaptureEnabled = false;
+}
+
+function bytesToHex(bytes, maxLen = 48) {
+  if (!bytes || bytes.length === 0) {
+    return "";
+  }
+  const shown = Array.from(bytes.slice(0, maxLen)).map((value) => value.toString(16).padStart(2, "0")).join(" ");
+  if (bytes.length > maxLen) {
+    return `${shown} ...(+${bytes.length - maxLen} bytes)`;
+  }
+  return shown;
+}
+
+function connectionTraceClassForDebugPhase(phase) {
+  if (phase === "rx_decode_error" || phase === "device_disconnected" || phase.endsWith("_failed")) {
+    return "err";
+  }
+  if (phase === "gatt_service_inventory" || phase === "gatt_characteristic_inventory") {
+    return "muted";
+  }
+  if (phase === "transport_info") {
+    return "warn";
+  }
+  if (phase === "tx" || phase === "tx_raw" || phase === "rx" || phase.endsWith("_start")) {
+    return "muted";
+  }
+  return "ok";
+}
+
+function formatBleDebugEvent(evt) {
+  if (evt.phase && evt.label && evt.phase.endsWith("_start")) {
+    return `BLE step start: ${evt.label}${evt.timeoutMs ? ` timeout=${evt.timeoutMs}ms` : ""}`;
+  }
+  if (evt.phase && evt.label && evt.phase.endsWith("_ok")) {
+    return `BLE step ok: ${evt.label}`;
+  }
+  if (evt.phase && evt.label && evt.phase.endsWith("_failed")) {
+    return `BLE step failed: ${evt.label} error=${evt.error || "unknown error"}`;
+  }
+
+  switch (evt.phase) {
+    case "request_device_start":
+      return `requestDevice start: namePrefix=RetroWatch optionalService=${evt.serviceUuid}`;
+    case "request_device_selected":
+      return `requestDevice selected: name=${evt.name || "RetroWatch"} id=${evt.id || "(browser-hidden)"}`;
+    case "reconnect_start":
+      return `reconnect start: device=${evt.name || "RetroWatch"} service=${evt.serviceUuid} rx=${evt.rxCharacteristicUuid} tx=${evt.txCharacteristicUuid}`;
+    case "gatt_connected":
+      return `GATT connected: device=${evt.name || "RetroWatch"}`;
+    case "gatt_service_inventory":
+      return `GATT service: ${evt.serviceUuid} characteristics=${evt.characteristicCount}${evt.error ? ` error=${evt.error}` : ""}`;
+    case "gatt_characteristic_inventory":
+      return `GATT characteristic: service=${evt.serviceUuid} uuid=${evt.characteristicUuid} props=${(evt.properties || []).join(",") || "(none)"}`;
+    case "service_ready":
+      return `primary service ready: ${evt.serviceUuid}`;
+    case "characteristics_ready":
+      return `characteristics ready: write=${evt.rxCharacteristicUuid} notify=${evt.txCharacteristicUuid}`;
+    case "notifications_started":
+      return `notifications started on ${evt.txCharacteristicUuid}`;
+    case "transport_info":
+      return `transport info: status=${evt.statusName || statusText(evt.status)} notifyPayloadMax=${evt.notifyPayloadMax} messagePayloadMax=${evt.messagePayloadMax} estAttMtu=${evt.estimatedAttMtu}${evt.error ? ` error=${evt.error}` : ""}`;
+    case "tx":
+      return `TX request: ${evt.msgName} type=${msgTypeText(evt.msgType)} reqId=${evt.requestId == null ? "n/a" : evt.requestId} payloadLen=${evt.payloadLen} requestIdInHeader=${evt.requestIdInHeader ? "yes" : "no"}`;
+    case "tx_raw":
+      return `TX raw: ${evt.msgName} packetSize=${evt.packetSize} payload=[${evt.payloadHex || ""}] packet=[${evt.packetHex || ""}]`;
+    case "rx":
+      return `RX packet: ${evt.msgName} type=${msgTypeText(evt.msgType)} packetSize=${evt.packetSize} payloadLen=${evt.payloadLen} payload=[${evt.payloadHex || ""}]`;
+    case "rx_decode_error":
+      return `RX decode error: ${evt.error}`;
+    case "device_disconnected":
+      return `device disconnected: ${evt.name || "RetroWatch"}`;
+    default:
+      return `BLE ${evt.phase || "event"}: ${JSON.stringify(evt)}`;
+  }
+}
+
+client.setDebugLogger((evt) => {
+  if (!connectionTraceCaptureEnabled) {
+    return;
+  }
+  connectionTrace(formatBleDebugEvent(evt), connectionTraceClassForDebugPhase(evt.phase));
+});
+
+if (clearConnectionTraceBtn) {
+  clearConnectionTraceBtn.addEventListener("click", () => {
+    clearConnectionTrace();
+    connectionTrace("connection log cleared", "muted");
+  });
 }
 
 function parseLogFilter(raw) {
@@ -834,10 +1024,57 @@ function setStatus(text, isOk) {
   statusEl.style.background = isOk ? "#1d3323" : "#331f24";
 }
 
+async function runPingVariantProbe(payloadText, reasonLabel) {
+  const results = [];
+  const failures = [];
+
+  connectionTrace(`${reasonLabel}: probing ping compatibility with current and legacy headers`, "muted");
+
+  try {
+    connectionTrace(`${reasonLabel}: sending current-style ping payload="${payloadText}"`, "muted");
+    const currentText = await client.ping(payloadText);
+    connectionTrace(`${reasonLabel}: current-style ping ok text="${currentText}"`, "ok");
+    results.push({ style: "current", text: currentText });
+  } catch (err) {
+    const message = err?.message || String(err);
+    connectionTrace(`${reasonLabel}: current-style ping failed: ${message}`, "err");
+    failures.push(`current=${message}`);
+  }
+
+  try {
+    connectionTrace(`${reasonLabel}: sending legacy-header ping payload="${payloadText}"`, "muted");
+    const legacyRsp = await client.pingLegacy(payloadText);
+    if (legacyRsp.status !== BleApi.STATUS.OK) {
+      throw new Error(`status=${statusText(legacyRsp.status)} reqId=${legacyRsp.requestId} body=[${bytesToHex(legacyRsp.body)}]`);
+    }
+    connectionTrace(`${reasonLabel}: legacy-header ping ok reqId=${legacyRsp.requestId} text="${legacyRsp.text}" raw=[${bytesToHex(legacyRsp.rawPayload)}]`, "ok");
+    results.push({ style: "legacy", text: legacyRsp.text, requestId: legacyRsp.requestId });
+  } catch (err) {
+    const message = err?.message || String(err);
+    connectionTrace(`${reasonLabel}: legacy-header ping failed: ${message}`, "err");
+    failures.push(`legacy=${message}`);
+  }
+
+  if (results.length === 0) {
+    throw new Error(`both ping variants failed (${failures.join("; ")})`);
+  }
+
+  const current = results.find((entry) => entry.style === "current");
+  const legacy = results.find((entry) => entry.style === "legacy");
+  if (current && legacy && current.text !== legacy.text) {
+    connectionTrace(`${reasonLabel}: ping variant mismatch current="${current.text}" legacy="${legacy.text}"`, "warn");
+  }
+
+  const chosen = current || legacy;
+  connectionTrace(`${reasonLabel}: using ${chosen.style}-style ping result "${chosen.text}"`, chosen.style === "current" ? "ok" : "warn");
+  return chosen.text;
+}
+
 async function updateConnectedStatusWithVersion(name, sourceLabel) {
-  const version = await client.ping("version-probe");
+  const version = await runPingVariantProbe("version-probe", `${sourceLabel} firmware probe`);
   setStatus(`Connected: ${name} | fw ${version}`, true);
   log(`PING ok (${sourceLabel}): ${version}`, "ok");
+  stopConnectionTraceCapture(`${sourceLabel}: firmware probe succeeded; connection trace paused`);
   await checkForFirmwareUpdate(version);
   startWatchLogPolling();
 }
@@ -937,49 +1174,9 @@ function stopWatchLogPolling() {
 }
 
 function stopReconnectLoop() {
-  if (reconnectTimer) {
-    clearInterval(reconnectTimer);
-    reconnectTimer = null;
-  }
 }
 
 function startReconnectLoop() {
-  if (reconnectTimer) {
-    return;
-  }
-
-  log("Auto-reconnect enabled (5s interval)", "muted");
-  reconnectTimer = setInterval(async () => {
-    if (reconnectInFlight || client.isConnected() || !client.canReconnect()) {
-      return;
-    }
-
-    reconnectInFlight = true;
-    try {
-      setStatus("Reconnecting...", false);
-      const name = await client.reconnect();
-      await updateConnectedStatusWithVersion(name, "auto-reconnect");
-      log(`Auto-reconnected to ${name}`, "ok");
-      stopReconnectLoop();
-      showMainUI();
-
-      try {
-        await rebuildTree();
-      } catch (err) {
-        log(`Tree refresh after reconnect failed: ${err.message}`, "err");
-      }
-    } catch (err) {
-      log(`Auto-reconnect failed: ${err.message}`, "muted");
-
-      if ((err.message || "").includes("Primary service")) {
-        stopReconnectLoop();
-        client.clearKnownDevice();
-        setStatus("Disconnected (service unavailable). Click Connect to re-select device.", false);
-      }
-    } finally {
-      reconnectInFlight = false;
-    }
-  }, 5000);
 }
 
 function statusText(code) {
@@ -2052,16 +2249,20 @@ function findNodeByPath(node, path) {
 
 document.getElementById("connectBtn").addEventListener("click", async () => {
   try {
+    beginConnectionTrace("manual connect");
     stopReconnectLoop();
     stopWatchLogPolling();
     manualDisconnectRequested = false;
     client.clearKnownDevice();
+    connectionTrace("manual connect: cleared previous device selection and watch-log polling state", "muted");
     const name = await client.connect();
     await updateConnectedStatusWithVersion(name, "connect");
+    connectionTrace(`manual connect: connected to ${name} and completed firmware probe`, "ok");
     log(`Connected to ${name}`, "ok");
     await rebuildTree();
   } catch (err) {
     setStatus("Connect failed", false);
+    connectionTrace(`manual connect failed: ${err.message}`, "err");
     log(`Connect failed: ${err.message}`, "err");
   }
 });
@@ -2073,11 +2274,13 @@ const welcomeStatusEl = document.getElementById("welcomeStatus");
 const mainUI = document.getElementById("mainUI");
 
 function showMainUI() {
+  attachConnectionTracePanel(mainConnectionTraceHost);
   welcomeOverlay.style.display = "none";
   mainUI.style.display = "block";
 }
 
 function hideMainUI() {
+  attachConnectionTracePanel(welcomeConnectionTraceHost);
   mainUI.style.display = "none";
   welcomeOverlay.style.display = "flex";
   welcomeProgressEl.classList.remove("active");
@@ -2089,8 +2292,11 @@ const welcomeProgressEl = document.getElementById("welcomeProgress");
 const welcomeConnectBtn = document.getElementById("welcomeConnectBtn");
 const ENABLE_INITIAL_SETUP_WIZARD = false;
 
+attachConnectionTracePanel(welcomeConnectionTraceHost);
+
 welcomeConnectBtn.addEventListener("click", async () => {
   try {
+    beginConnectionTrace("welcome connect");
     welcomeConnectBtn.disabled = true;
     welcomeProgressEl.classList.add("active");
     welcomeStatusEl.textContent = "Scanning for watch...";
@@ -2098,22 +2304,26 @@ welcomeConnectBtn.addEventListener("click", async () => {
     stopWatchLogPolling();
     manualDisconnectRequested = false;
     client.clearKnownDevice();
+    connectionTrace("welcome connect: cleared previous device selection and watch-log polling state", "muted");
 
     // Step 1: browser picker (requestDevice)
     if (!navigator.bluetooth) throw new Error("Web Bluetooth not available");
+    connectionTrace(`welcome connect: requestDevice namePrefix=RetroWatch optionalService=${client.serviceUuid}`, "muted");
     client.device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: "RetroWatch" }],
       optionalServices: [client.serviceUuid],
     });
     client.knownDevice = client.device;
     const name = client.device.name || "RetroWatch";
+    connectionTrace(`welcome connect: selected device name=${name} id=${client.device.id || "(browser-hidden)"}`, "ok");
 
     // Step 2: GATT connect + service discovery
     welcomeStatusEl.textContent = `Connecting to ${name}...`;
+    connectionTrace(`welcome connect: reconnecting to ${name}`, "muted");
     await client.reconnect();
 
     welcomeStatusEl.textContent = `Checking firmware...`;
-    const version = await client.ping("version-probe");
+    const version = await runPingVariantProbe("version-probe", "welcome connect firmware probe");
 
     welcomeStatusEl.textContent = `Connected to ${name}. Checking firmware...`;
     setStatus(`Connected: ${name} | fw ${version}`, true);
@@ -2135,7 +2345,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
         await new Promise(r => setTimeout(r, 3000));
         try {
           const rName = await client.reconnect();
-          const rVer = await client.ping("post-ota-probe");
+          const rVer = await runPingVariantProbe("post-ota-probe", "post-OTA firmware probe");
           setStatus(`Connected: ${rName} | fw ${rVer}`, true);
           log(`Reconnected after OTA: ${rName}, fw ${rVer}`, "ok");
           lastWatchVersion = rVer;
@@ -2162,6 +2372,7 @@ welcomeConnectBtn.addEventListener("click", async () => {
     welcomeConnectBtn.disabled = false;
     welcomeProgressEl.classList.remove("active");
     welcomeStatusEl.textContent = `Failed: ${err.message}`;
+    connectionTrace(`welcome connect failed: ${err.message}`, "err");
     log(`Welcome connect failed: ${err.message}`, "err");
   }
 });
@@ -2187,10 +2398,12 @@ document.getElementById("rebuildBtn").addEventListener("click", async () => {
 document.getElementById("pingBtn").addEventListener("click", async () => {
   try {
     await ensureConnected("PING");
-    const echoed = await client.ping("tree-view-ping");
+    connectionTrace("manual ping: starting current + legacy header probe", "muted");
+    const echoed = await runPingVariantProbe("tree-view-ping", "manual ping");
     log(`PING ok: ${echoed}`, "ok");
     await checkForFirmwareUpdate(echoed);
   } catch (err) {
+    connectionTrace(`manual ping failed: ${err.message}`, "err");
     log(`PING failed: ${err.message}`, "err");
   }
 });
@@ -2313,12 +2526,12 @@ client.onDisconnect(() => {
   }
 
   stopWatchLogPolling();
-  setStatus("Disconnected (link dropped). Auto-reconnect in 5s...", false);
+  stopReconnectLoop();
+  setStatus("Disconnected (link dropped). Click Connect to reconnect.", false);
   log("BLE disconnected unexpectedly", "err");
   hideMainUI();
-  welcomeStatusEl.textContent = "Connection lost. Reconnecting...";
-  welcomeProgressEl.classList.add("active");
-  startReconnectLoop();
+  welcomeStatusEl.textContent = "Connection lost. Click Connect to reconnect.";
+  welcomeProgressEl.classList.remove("active");
 });
 
 setStatus("Disconnected", false);
