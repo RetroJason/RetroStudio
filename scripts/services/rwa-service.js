@@ -40,6 +40,11 @@ class RwaService {
   }
 
   async loadPackageSettings(projectName) {
+    this.ensureDeps();
+    if (!this.fileManager || typeof this.fileManager.loadFile !== 'function') {
+      throw new Error('FileManager unavailable');
+    }
+
     const defaults = this.getDefaultPackageSettings(projectName);
     const path = this.getPackageSettingsStoragePath(projectName);
     const rec = await this.fileManager.loadFile(path);
@@ -58,8 +63,6 @@ class RwaService {
   }
 
   normalizePackageKind(kind) {
-    const k = String(kind || 'rwa').toLowerCase();
-    if (k === 'rwg' || k === 'rwa') return k;
     return 'rwa';
   }
 
@@ -214,6 +217,8 @@ class RwaService {
       if (!this.fileManager) {
         if (this.services?.has?.('fileManager')) {
           this.fileManager = this.services.get('fileManager');
+        } else if (window.fileManager) {
+          this.fileManager = window.fileManager;
         } else if (window.FileManager) {
           this.fileManager = window.FileManager;
           if (!this.fileManager.storageService && window.fileIOService && this.fileManager.initialize) {

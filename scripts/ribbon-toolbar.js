@@ -7,6 +7,7 @@ class RibbonToolbar {
     this.componentRegistry = null;
     this.fileCounter = 1; // Counter for new file naming
     this.ribbonColorValue = '0xFFFFFF';
+    this.ribbonToolbar = null;
     this.init();
   }
   
@@ -14,6 +15,7 @@ class RibbonToolbar {
     console.log('[RibbonToolbar] Initializing...');
     this.setupButtons();
     this.setupColorPicker();
+    this.setupResponsiveRibbon();
     
     // Wait for component registry to be available
     this.waitForComponentRegistry();
@@ -110,7 +112,7 @@ class RibbonToolbar {
     const creatableEditors = this.componentRegistry.getCreatableEditors();
     console.log('[RibbonToolbar] Found creatable editors:', creatableEditors);
     
-    const createSection = document.querySelector('.ribbon-section:nth-child(2) .ribbon-buttons');
+    const createSection = document.querySelector('.ribbon-section[data-ribbon-group="create"] .ribbon-buttons');
     
     if (!createSection) {
       console.error('[RibbonToolbar] Create section not found in DOM');
@@ -131,6 +133,8 @@ class RibbonToolbar {
       btn.disabled = !hasProject;
       btn.style.opacity = hasProject ? '1' : '0.5';
     });
+
+    this.updateRibbonCompactState();
     
     console.log('[RibbonToolbar] Dynamic create buttons setup complete');
   }
@@ -167,6 +171,84 @@ class RibbonToolbar {
     
   console.log(`[RibbonToolbar] Successfully added create button for ${editorInfo.displayName}`);
   return button;
+  }
+
+  setupResponsiveRibbon() {
+    this.ribbonToolbar = document.querySelector('.ribbon-toolbar');
+    if (!this.ribbonToolbar) {
+      return;
+    }
+
+    this.ensureSectionOverflowMenus();
+
+    window.addEventListener('resize', () => {
+      this.updateRibbonCompactState();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!this.ribbonToolbar.contains(event.target)) {
+        this.closeAllCompactMenus();
+      }
+    });
+
+    requestAnimationFrame(() => this.updateRibbonCompactState());
+  }
+
+  ensureSectionOverflowMenus() {
+    const sections = this.ribbonToolbar.querySelectorAll('.ribbon-section[data-ribbon-group]');
+    sections.forEach((section) => {
+      if (section.querySelector('.ribbon-section-toggle')) {
+        return;
+      }
+
+      const label = section.querySelector('.ribbon-label')?.textContent?.trim() || 'Menu';
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'ribbon-section-toggle';
+      toggle.textContent = label;
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const shouldOpen = !section.classList.contains('compact-open');
+        this.closeAllCompactMenus();
+        if (shouldOpen) {
+          section.classList.add('compact-open');
+        }
+      });
+
+      const buttons = section.querySelector('.ribbon-buttons');
+      if (buttons) {
+        section.insertBefore(toggle, buttons);
+      } else {
+        section.appendChild(toggle);
+      }
+    });
+  }
+
+  closeAllCompactMenus() {
+    if (!this.ribbonToolbar) {
+      return;
+    }
+
+    this.ribbonToolbar.querySelectorAll('.ribbon-section.compact-open').forEach((section) => {
+      section.classList.remove('compact-open');
+    });
+  }
+
+  updateRibbonCompactState() {
+    if (!this.ribbonToolbar) {
+      return;
+    }
+
+    const sectionTops = Array.from(this.ribbonToolbar.querySelectorAll('.ribbon-section')).map((section) => {
+      return section.getBoundingClientRect().top;
+    });
+    const firstTop = sectionTops.length > 0 ? sectionTops[0] : 0;
+    const isWrapped = sectionTops.some((top) => Math.abs(top - firstTop) > 4);
+
+    this.ribbonToolbar.classList.toggle('ribbon-toolbar-compact', isWrapped);
+    if (!isWrapped) {
+      this.closeAllCompactMenus();
+    }
   }
 
   async createNewResourceFromEditor(editorInfo) {
@@ -585,18 +667,27 @@ class RibbonToolbar {
   setupButtons() {
   // File operations
   this.setupButton('saveBtn', async () => {
-    if (window.gameEmulator && window.gameEmulator.tabManager) {
-      try {
-        const count = await window.gameEmulator.tabManager.saveActiveTab();
-        if (count === 1) {
-          window.gameEmulator.updateStatus('Saved active file', 'success');
-        } else {
-          window.gameEmulator.updateStatus('Active file not modified', 'info');
-        }
-      } catch (error) {
-        console.error('[RibbonToolbar] Failed to save active file:', error);
-        window.gameEmulator.updateStatus(`Failed to save: ${error.message}`, 'error');
+    try {
+      const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!projectName) {
+        throw new Error('No active project selected.');
       }
+
+      const hostedStudioApi = window.retrowwwHostedStudio;
+      if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
+        throw new Error('Retrowww hosted project save service is unavailable.');
+      }
+
+      const summary = await hostedStudioApi.saveProject(projectName);
+      const revisionNumber = summary?.currentRevision?.revisionNumber;
+      const revisionSuffix = Number.isFinite(revisionNumber) ? ' revision ' + revisionNumber : '';
+      window.gameEmulator?.updateStatus?.('Saved ' + projectName + revisionSuffix, 'success');
+    } catch (error) {
+      console.error('[RibbonToolbar] Failed to save project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to save project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
     }
   });
     
@@ -618,6 +709,10 @@ class RibbonToolbar {
       if (!window.gameEmulator) return;
       const result = await window.gameEmulator.buildProject();
       this.showBuildSummaryPopup(result);
+    });
+
+    this.setupButton('publishBtn', async () => {
+      await this.publishProjectToRetrowww();
     });
 
     // Watch operations
@@ -642,6 +737,48 @@ class RibbonToolbar {
     } catch (e) {
       console.error('[RibbonToolbar] Export failed:', e);
       alert('Export failed: ' + (e?.message || e));
+    }
+  }
+
+  async publishProjectToRetrowww() {
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+
+      if (window.gameEmulator?.tabManager?.saveActiveTab) {
+        await window.gameEmulator.tabManager.saveActiveTab();
+      }
+
+      const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+      if (!svc || typeof svc.publishProject !== 'function') {
+        return alert('Project publish service unavailable');
+      }
+
+      const publishOptions = await (window.ModalUtils?.showForm?.('Publish to Retrowww', [
+        {
+          name: 'shareSource',
+          type: 'checkbox',
+          label: 'Share source with logged-in users',
+          defaultValue: false,
+          hint: 'When enabled, logged-in users can open this published Lua project in RetroStudio from the application page.',
+        }
+      ], { okText: 'Publish' }) ?? Promise.resolve(null));
+
+      if (!publishOptions) {
+        return;
+      }
+
+      window.gameEmulator?.updateStatus?.('Publishing project to Retrowww...', 'info');
+      const result = await svc.publishProject(project, {
+        shareSource: publishOptions.shareSource === true,
+      });
+      const version = result?.applicationVersion?.versionString || 'draft';
+      window.gameEmulator?.updateStatus?.(`Published ${project} as ${version}`, 'success');
+      const shareLabel = publishOptions.shareSource === true ? ' Shared source is enabled.' : ' Source remains private.';
+      alert(`Published ${project} to Retrowww as draft version ${version}.${shareLabel}`);
+    } catch (e) {
+      console.error('[RibbonToolbar] Publish failed:', e);
+      alert('Publish failed: ' + (e?.message || e));
     }
   }
 
@@ -897,6 +1034,12 @@ class RibbonToolbar {
         return;
       }
 
+      const hostedStudioApi = window.retrowwwHostedStudio;
+      if (hostedStudioApi && typeof hostedStudioApi.saveProject === 'function') {
+        window.gameEmulator?.updateStatus?.('Saving project to cloud before watch launch...', 'info');
+        await hostedStudioApi.saveProject(project, { skipTabSave: false });
+      }
+
       // Build the RWA (same as Export Runtime but skip download)
       window.gameEmulator?.updateStatus?.('Building runtime package...', 'info');
       console.log('[RibbonToolbar] watchLaunch: building RWA for project:', project);
@@ -921,9 +1064,9 @@ class RibbonToolbar {
       if (textEl) textEl.textContent = `Uploading ${pkg.filename}...`;
 
       // Path must include filename so firmware knows the file type
-      const rsp = await this.watchClient.otaUploadFirmware(bytes, {
-        launch: true,
-        save: false,
+      const BLE = window.RetroWatchBle;
+      const rsp = await this.watchClient.sendFile(bytes, {
+        flags: BLE.SEND_FILE_FLAG.PREVIEW,
         path: '/' + pkg.filename,
         chunksPerAck: 1,
         allowOutOfOrder: false,
@@ -935,7 +1078,6 @@ class RibbonToolbar {
       });
 
       console.log('[RibbonToolbar] watchLaunch: response status:', rsp.status);
-      const BLE = window.RetroWatchBle;
       if (rsp.status !== BLE.STATUS.OK) {
         const errDetail = rsp.error ? `${rsp.error.name}: ${rsp.error.reasonName}` : `status ${rsp.status}`;
         throw new Error(`Launch failed: ${errDetail}`);

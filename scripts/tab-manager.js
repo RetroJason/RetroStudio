@@ -149,6 +149,24 @@ class TabManager {
         this.switchToTab(tabId);
       }
     });
+
+    this.tabContentArea.addEventListener('click', async (e) => {
+      const actionTarget = e.target.closest('button[data-welcome-action], a[data-welcome-action]');
+      if (!actionTarget) return;
+
+      const action = actionTarget.dataset.welcomeAction;
+
+      if (action === 'refresh-projects') {
+        e.preventDefault();
+        await this.refreshWelcomePreviewProjects();
+        return;
+      }
+
+      if (action === 'open-project') {
+        e.preventDefault();
+        await this._handleWelcomeProjectOpen(actionTarget);
+      }
+    });
     
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
@@ -1309,7 +1327,16 @@ class TabManager {
         <div class="preview-pane">
           <div class="preview-header">
             <h3>Welcome to Game Engine Editor</h3>
-            <p>Select a resource from the Project Explorer to preview it here, or double-click to open in a new tab.</p>
+            <p>Open a recent project or select a resource from the Project Explorer to preview it here.</p>
+          </div>
+          <div class="welcome-recent-projects">
+            <div class="welcome-recent-projects-header">
+              <h4>Recent Projects</h4>
+              <button type="button" data-welcome-action="refresh-projects">Refresh</button>
+            </div>
+            <div class="welcome-recent-projects-list" data-welcome-recent-projects>
+              <p>Loading recent projects...</p>
+            </div>
           </div>
         </div>
       `;
@@ -1320,7 +1347,180 @@ class TabManager {
     this.previewFileName = null;
     this.previewViewer = null;
     
+    this.refreshWelcomePreviewProjects().catch((error) => {
+      console.error('[TabManager] Failed to refresh welcome projects:', error);
+    });
+
     console.log('[TabManager] Welcome preview tab shown');
+  }
+
+  _escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  _asRecord(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  }
+
+  _asCsvList(value) {
+    return typeof value === 'string'
+      ? value.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0)
+      : [];
+  }
+
+  _getWelcomeProjectPreviewUrl(summary) {
+    const project = this._asRecord(summary?.project) || {};
+    const revision = this._asRecord(summary?.currentRevision) || {};
+    const projectUuid = typeof project.uuid === 'string' ? project.uuid.trim() : '';
+    if (!projectUuid) {
+      return null;
+    }
+
+    const metadata = this._asRecord(revision.metadata) || {};
+    const manifest = this._asRecord(metadata.manifest) || {};
+    const display = this._asRecord(manifest.display) || {};
+    const packageMetadata = this._asRecord(metadata.package) || {};
+    const screenshotPaths = this._asCsvList(display.screenshots);
+
+    if (screenshotPaths.length > 0) {
+      return '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=screenshot&index=0';
+    }
+
+    const iconPath = typeof packageMetadata.iconPath === 'string'
+      ? packageMetadata.iconPath.trim()
+      : (typeof display.icon_path === 'string' ? display.icon_path.trim() : '');
+
+    return iconPath
+      ? '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=icon'
+      : null;
+  }
+
+  async _handleWelcomeProjectOpen(actionTarget) {
+    const projectUuid = actionTarget.dataset.projectUuid;
+    const projectName = actionTarget.dataset.projectNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
+      : actionTarget.dataset.projectName;
+    if (!projectUuid) {
+      console.error('[TabManager] Welcome action missing projectUuid');
+      return;
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.openProject !== 'function') {
+      throw new Error('Retrowww hosted project open service is unavailable.');
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      window.gameEmulator?.updateStatus?.('Opening ' + (projectName || 'project') + '...', 'info');
+      await hostedStudioApi.openProject(projectUuid, projectName);
+      window.gameEmulator?.updateStatus?.('Opened ' + (projectName || 'project'), 'success');
+    } catch (error) {
+      console.error('[TabManager] Failed to open recent project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to open project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
+  async refreshWelcomePreviewProjects() {
+    const previewPane = this.tabContentArea?.querySelector('[data-tab-id="preview"]');
+    const projectsContainer = previewPane?.querySelector('[data-welcome-recent-projects]');
+    if (!projectsContainer) {
+      return;
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.listProjects !== 'function') {
+      projectsContainer.innerHTML = '<p>Recent projects are only available in hosted RetroStudio.</p>';
+      return;
+    }
+
+    projectsContainer.innerHTML = '<p>Loading recent projects...</p>';
+
+    try {
+      const projects = await hostedStudioApi.listProjects();
+      if (!Array.isArray(projects) || projects.length === 0) {
+        projectsContainer.innerHTML = '<p>No saved projects yet.</p>';
+        return;
+      }
+
+      const sortedProjects = projects
+        .slice()
+        .sort((left, right) => {
+          const leftProject = left?.project || {};
+          const rightProject = right?.project || {};
+          const leftTimestamp = Date.parse(leftProject.latestSavedAt || leftProject.updatedAt || leftProject.createdAt || 0) || 0;
+          const rightTimestamp = Date.parse(rightProject.latestSavedAt || rightProject.updatedAt || rightProject.createdAt || 0) || 0;
+          return rightTimestamp - leftTimestamp;
+        });
+
+      projectsContainer.innerHTML = sortedProjects
+        .slice(0, 8)
+        .map((summary) => {
+          const project = summary.project || {};
+          const revision = summary.currentRevision || {};
+          const projectNameValue = String(project.displayName || project.slug || 'Project');
+          const projectName = this._escapeHtml(projectNameValue);
+          const projectUuid = this._escapeHtml(project.uuid || '');
+          const projectType = this._escapeHtml(String(project.projectType || 'retrostudio').replaceAll('_', ' '));
+          const revisionLabel = Number.isFinite(revision.revisionNumber)
+            ? 'Revision ' + revision.revisionNumber
+            : 'Unversioned';
+          const savedAt = project.latestSavedAt || project.updatedAt || project.createdAt || null;
+          const savedLabel = savedAt
+            ? new Date(savedAt).toLocaleString()
+            : 'Not saved yet';
+          const encodedProjectName = this._escapeHtml(encodeURIComponent(projectNameValue));
+          const previewUrl = this._getWelcomeProjectPreviewUrl(summary);
+
+          return `
+            <button
+              type="button"
+              class="welcome-recent-project-button"
+              data-welcome-action="open-project"
+              data-project-uuid="${projectUuid}"
+              data-project-name-encoded="${encodedProjectName}"
+            >
+              <span class="welcome-project-preview" aria-hidden="true">
+                <span class="welcome-project-preview-frame">
+                  ${previewUrl
+                    ? `<img src="${this._escapeHtml(previewUrl)}" alt="" class="welcome-project-preview-image" />`
+                    : `<img src="/retro-watch-co-logo.png" alt="" class="welcome-project-preview-logo" />`}
+                </span>
+              </span>
+              <span class="welcome-project-body">
+                <span class="welcome-project-type">${projectType}</span>
+                <span class="welcome-project-title">${projectName}</span>
+                <span class="welcome-project-meta">${this._escapeHtml(revisionLabel)}</span>
+                <span class="welcome-project-meta">${this._escapeHtml(savedLabel)}</span>
+              </span>
+            </button>
+          `;
+        })
+        .join('');
+
+      for (const projectButton of projectsContainer.querySelectorAll('.welcome-recent-project-button')) {
+        projectButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this._handleWelcomeProjectOpen(projectButton);
+        });
+      }
+    } catch (error) {
+      projectsContainer.innerHTML =
+        '<p>Failed to load recent projects: ' + this._escapeHtml(error && error.message ? error.message : String(error)) + '</p>';
+      throw error;
+    }
   }
   
   _closePreviewTab() {

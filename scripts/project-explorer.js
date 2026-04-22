@@ -173,7 +173,16 @@ class ProjectExplorer {
         title: projectName,
         author: '',
         version: '0.0.1',
+        versionCode: 1,
+        uniqueId: '',
+        category: '',
+        targetDeviceSlug: '',
+        shortDescription: '',
         description: '',
+        releaseChannel: '',
+        minFirmwareVersion: '',
+        sourceRevision: '',
+        buildId: '',
         icons: {
           icon32: `${sourcesRoot}/Package/icons/icon32.png`,
           icon128: ''

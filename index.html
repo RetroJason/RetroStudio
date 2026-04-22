@@ -27,7 +27,7 @@
     <!-- Ribbon Toolbar -->
     <div class="ribbon-toolbar">
       <!-- File Operations Section -->
-      <div class="ribbon-section">
+      <div class="ribbon-section" data-ribbon-group="file">
         <div class="ribbon-label">File</div>
         <div class="ribbon-buttons">
           <button id="saveBtn" class="ribbon-btn" title="Save Active File">
@@ -50,7 +50,7 @@
       </div>
       
       <!-- Create Objects Section -->
-      <div class="ribbon-section">
+      <div class="ribbon-section" data-ribbon-group="create">
         <div class="ribbon-label">Create</div>
         <div class="ribbon-buttons">
           <!-- Dynamic buttons will be added here by the ribbon toolbar -->
@@ -58,18 +58,22 @@
       </div>
       
       <!-- Project Build/Run Section -->
-      <div class="ribbon-section">
+      <div class="ribbon-section" data-ribbon-group="project">
         <div class="ribbon-label">Project</div>
         <div class="ribbon-buttons">
           <button id="buildBtn" class="ribbon-btn" title="Build Project">
             <div class="ribbon-icon">🔨</div>
             <div class="ribbon-text">Build</div>
           </button>
+          <button id="publishBtn" class="ribbon-btn" title="Store the .rws project and publish the .rwp draft to Retrowww">
+            <div class="ribbon-icon">☁️</div>
+            <div class="ribbon-text">Publish</div>
+          </button>
         </div>
       </div>
 
       <!-- Watch Section -->
-      <div class="ribbon-section">
+      <div class="ribbon-section" data-ribbon-group="watch">
         <div class="ribbon-label">Watch</div>
         <div class="ribbon-buttons">
           <button id="watchLaunchBtn" class="ribbon-btn" title="Build and launch on watch">
@@ -83,7 +87,7 @@
         </div>
       </div>
 
-      <div class="ribbon-section ribbon-section-right ribbon-color-section">
+      <div class="ribbon-section ribbon-section-right ribbon-color-section" data-ribbon-group="color">
         <div class="ribbon-label">Color</div>
         <div class="ribbon-color-picker-row">
           <input id="ribbonColorPicker" class="ribbon-color-picker" type="color" value="#ffffff" title="Pick a color and copy it as 0xRRGGBB">
@@ -226,7 +230,7 @@
   <script src="scripts/game-emulator/game-emulator.js"></script>
 
   <!-- BLE Watch Client -->
-  <script src="test/retrowatch-ble-client.js"></script>
+  <script src="test/retrowatch-ble-client-v2.js"></script>
   
   <!-- Application Bootstrap (components will be loaded dynamically after init) -->
   <script src="scripts/core/application.js?v=3"></script>

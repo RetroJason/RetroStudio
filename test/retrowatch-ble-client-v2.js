@@ -89,6 +89,11 @@ const UPLOAD_FLAG = {
   SAVE: 0x02,
 };
 
+const SEND_FILE_FLAG = {
+  PREVIEW: UPLOAD_FLAG.LAUNCH,
+  INSTALL: UPLOAD_FLAG.SAVE,
+};
+
 const MSG_NAME_BY_TYPE = Object.fromEntries(Object.entries(MSG).map(([name, value]) => [value, name]));
 const STATUS_NAME_BY_CODE = Object.fromEntries(Object.entries(STATUS).map(([name, value]) => [value, name]));
 
@@ -813,13 +818,12 @@ class RetroWatchBleClient {
 
   async fileBegin(totalSize, imageCrc32, opts = {}) {
     const reqId = this._nextRequestId();
-    const launch = opts.launch !== false;
-    const save = !!opts.save;
+    const flags = Number(opts.flags);
+    if (!Number.isInteger(flags)) {
+      throw new Error("fileBegin requires explicit flags");
+    }
     const pathText = opts.path ? String(opts.path) : "";
     const pathBytes = textToBytes(pathText);
-    let flags = 0;
-    if (launch) flags |= UPLOAD_FLAG.LAUNCH;
-    if (save) flags |= UPLOAD_FLAG.SAVE;
 
     const payload = concatBytes([
       u16LE(reqId),
@@ -979,10 +983,12 @@ class RetroWatchBleClient {
 
   /* ---- High-level helpers ---- */
 
-  async fileTransfer(data, opts = {}) {
+  async sendFile(data, opts = {}) {
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-    const launch = opts.launch !== false;
-    const save = !!opts.save;
+    const flags = Number(opts.flags);
+    if (!Number.isInteger(flags)) {
+      throw new Error("sendFile requires explicit flags");
+    }
     const path = opts.path ? String(opts.path) : "";
     const pathOverhead = 2 + 4 + 2;
     const autoChunk = this.maxMessagePayloadBytes - pathOverhead;
@@ -999,8 +1005,7 @@ class RetroWatchBleClient {
       msgName: msgTypeName(MSG.FILE_BEGIN_REQ),
       imageSize: bytes.length,
       imageCrc32: totalCrc32,
-      launch,
-      save,
+      flags: flags & 0xff,
       path,
       chunkSize,
       chunkWindow,
@@ -1009,7 +1014,7 @@ class RetroWatchBleClient {
       estimatedAttMtu: this.maxNotifyPayloadBytes + 3,
     });
 
-    const beginRsp = await this.fileBegin(bytes.length, totalCrc32, { launch, save, path });
+    const beginRsp = await this.fileBegin(bytes.length, totalCrc32, { flags, path });
     if (beginRsp.status !== STATUS.OK) {
       const beginReason = beginRsp.body.length > 0 ? beginRsp.body[0] : 0;
       return {
@@ -1340,6 +1345,7 @@ window.RetroWatchBle = {
   MSG,
   STATUS,
   FILE_ERROR_REASON,
+  SEND_FILE_FLAG,
   UPLOAD_FLAG,
   HEADER_SIZE,
   MAX_PAYLOAD,
