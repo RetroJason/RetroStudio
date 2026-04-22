@@ -1601,9 +1601,8 @@ async function uploadFileViaTransport(file, options) {
   showTransferProgress(options.title, 0, bytes.length);
   transferInProgress = true;
 
-  const rsp = await client.fileTransfer(bytes, {
-    launch: !!options.launch,
-    save: !!options.save,
+  const rsp = await client.sendFile(bytes, {
+    flags: options.flags,
     path: remotePath,
     chunksPerAck: 1,
     allowOutOfOrder: false,
@@ -1631,8 +1630,7 @@ async function uploadFilesToNode(files, node) {
     await uploadFileViaTransport(file, {
       title: `Uploading ${file.name}`,
       stage: "saving",
-      launch: false,
-      save: true,
+      flags: BleApi.SEND_FILE_FLAG.INSTALL,
       path: remotePath,
       failPrefix: `Upload failed for ${file.name}`,
     });
@@ -1647,34 +1645,13 @@ async function uploadFiles(files) {
   await uploadFilesToNode(files, selectedNode);
 }
 
-const ALLOWED_LAUNCH_EXTENSIONS = [".rwb", ".rwa", ".rwf", ".mod", ".xm", ".d2"];
-const MAX_LAUNCH_BYTES = 4 * 1024 * 1024;
-
-function validateLaunchFile(file) {
-  const lower = file.name.toLowerCase();
-  const okExt = ALLOWED_LAUNCH_EXTENSIONS.some((ext) => lower.endsWith(ext));
-  if (!okExt) {
-    return `Launch file type not supported: ${file.name}`;
-  }
-  if (file.size > MAX_LAUNCH_BYTES) {
-    return `Launch file too large (${file.size} bytes). Max is ${MAX_LAUNCH_BYTES} bytes.`;
-  }
-  return null;
-}
-
 async function launchFile(file) {
-  const validationError = validateLaunchFile(file);
-  if (validationError) {
-    throw new Error(validationError);
-  }
-
   await ensureConnected("LAUNCH");
   const remotePath = `/${file.name}`;
   await uploadFileViaTransport(file, {
     title: `Launching ${file.name}`,
     stage: "launching",
-    launch: true,
-    save: false,
+    flags: BleApi.SEND_FILE_FLAG.PREVIEW,
     path: remotePath,
     failPrefix: "Launch failed",
   });
@@ -2118,7 +2095,10 @@ async function downloadPublishedBinary() {
   if (!meta) throw new Error("No firmware published");
   const res = await fetch(`firmware/${meta.fileName}`);
   if (!res.ok) throw new Error(`GET binary failed: ${res.status}`);
-  return new Uint8Array(await res.arrayBuffer());
+  return {
+    bytes: new Uint8Array(await res.arrayBuffer()),
+    fileName: String(meta.fileName || "").trim(),
+  };
 }
 
 async function savePublishedFirmware(file, version, changeset) {
@@ -2296,17 +2276,19 @@ otaConfirmBtn.addEventListener("click", async () => {
   let didUpdate = false;
   try {
     log(`Downloading firmware v${entry.version} from server...`, "muted");
-    const bytes = await downloadPublishedBinary();
-    log(`Downloaded ${(bytes.length / 1024).toFixed(1)} KB`, "ok");
+    const firmware = await downloadPublishedBinary();
+    if (!firmware.fileName) {
+      throw new Error("Published firmware is missing fileName");
+    }
+    log(`Downloaded ${(firmware.bytes.length / 1024).toFixed(1)} KB`, "ok");
 
     await ensureConnected("OTA_UPDATE");
-    showTransferProgress(`OTA Update to v${entry.version}`, 0, bytes.length);
+    showTransferProgress(`OTA Update to v${entry.version}`, 0, firmware.bytes.length);
     transferInProgress = true;
 
-    const rsp = await client.fileTransfer(bytes, {
-      launch: true,
-      save: false,
-      path: "",
+    const rsp = await client.sendFile(firmware.bytes, {
+      flags: BleApi.SEND_FILE_FLAG.INSTALL,
+      path: `/${firmware.fileName}`,
       chunksPerAck: 1,
       allowOutOfOrder: false,
       onProgress: (sent, total) => {
@@ -2321,7 +2303,7 @@ otaConfirmBtn.addEventListener("click", async () => {
       throw new Error(`File transfer failed: ${formatTransferFailure(rsp)}`);
     }
 
-    log(`OTA update to v${entry.version} complete (${bytes.length} bytes)`, "ok");
+    log(`OTA update to v${entry.version} complete (${firmware.bytes.length} bytes)`, "ok");
     didUpdate = true;
   } catch (err) {
     transferInProgress = false;
@@ -2441,9 +2423,8 @@ async function uploadBytesViaOta(bytes, remotePath, label) {
   showTransferProgress(`Uploading ${label}`, 0, bytes.length);
   transferInProgress = true;
 
-  const rsp = await client.fileTransfer(bytes, {
-    launch: false,
-    save: true,
+  const rsp = await client.sendFile(bytes, {
+    flags: BleApi.SEND_FILE_FLAG.INSTALL,
     path: remotePath,
     chunksPerAck: 1,
     allowOutOfOrder: false,

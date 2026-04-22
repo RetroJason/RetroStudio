@@ -453,6 +453,13 @@ class GameEmulator {
           this.updateStatus('Saved all files, building project...', 'info');
         }
       }
+
+      const hostedStudioApi = window.retrowwwHostedStudio;
+      const focusedProjectName = this.projectExplorer?.getFocusedProjectName?.() || null;
+      if (hostedStudioApi && typeof hostedStudioApi.saveProject === 'function' && focusedProjectName) {
+        await hostedStudioApi.saveProject(focusedProjectName, { skipTabSave: true });
+        this.updateStatus('Saved project to cloud, building project...', 'info');
+      }
       
       // Debug project explorer structure
       console.log('[GameEditor] ProjectExplorer:', this.projectExplorer);
