@@ -2,12 +2,16 @@
 // Main game engine emulator that integrates audio engine and project explorer
 
 class GameEmulator {
-  constructor(contentContainer = null) {
+  constructor(contentContainer = null, options = {}) {
     this.contentContainer = contentContainer; // DOM element to render content into
+    this.options = this.resolveHostOptions(options);
     this.audioEngine = null;
     this.resourceManager = null;
     this.projectExplorer = null;
     this.buildSystem = null;
+    this.runtimePackage = null;
+    this.runtimeFileManager = null;
+    this.previousFileServices = null;
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
     this._inflightLoads = new Map(); // filename -> Promise
     
@@ -36,7 +40,135 @@ class GameEmulator {
     // Initialize the game engine panel content
     this.initializeGameEnginePanel();
 
-    this.initialize();
+    this.readyPromise = this.initialize();
+  }
+
+  resolveHostOptions(options = {}) {
+    const profile = options.hostProfile || options.profile || 'studio';
+    const baseByProfile = {
+      studio: {
+        hostProfile: 'studio',
+        runtimeOnly: false,
+        showConsole: true,
+        showReload: true,
+        showVolumeControls: true,
+        showKeyBindings: true,
+        overlayImagePath: 'Resources/Images/cp-overlay.png',
+        autoFocusCanvas: true,
+      },
+      embedded: {
+        hostProfile: 'embedded',
+        runtimeOnly: true,
+        showConsole: true,
+        showReload: false,
+        showVolumeControls: true,
+        showKeyBindings: false,
+        overlayImagePath: 'Resources/Images/cp-overlay.png',
+        autoFocusCanvas: true,
+      },
+      storefront: {
+        hostProfile: 'storefront',
+        runtimeOnly: true,
+        showConsole: false,
+        showReload: false,
+        showVolumeControls: true,
+        showKeyBindings: false,
+        overlayImagePath: 'Resources/Images/cp-overlay.png',
+        autoFocusCanvas: true,
+      },
+    };
+
+    const profileDefaults = baseByProfile[profile] || baseByProfile.studio;
+    return {
+      ...profileDefaults,
+      ...options,
+      hostProfile: profile,
+    };
+  }
+
+  whenReady() {
+    return this.readyPromise;
+  }
+
+  getActiveFileManager() {
+    if (this.runtimeFileManager) {
+      return this.runtimeFileManager;
+    }
+
+    if (window.serviceContainer?.has?.('fileManager')) {
+      return window.serviceContainer.get('fileManager');
+    }
+
+    return window.fileManager || null;
+  }
+
+  getActiveFileIOService() {
+    if (this.runtimeFileManager) {
+      return this.runtimeFileManager;
+    }
+
+    if (window.serviceContainer?.has?.('fileIOService')) {
+      return window.serviceContainer.get('fileIOService');
+    }
+
+    return window.fileIOService || null;
+  }
+
+  setRuntimePackage(runtimePackage) {
+    if (!runtimePackage || !Array.isArray(runtimePackage.files) || runtimePackage.files.length === 0) {
+      throw new Error('Runtime package must provide a non-empty files array.');
+    }
+
+    if (typeof window.RuntimeArchiveFileManager !== 'function') {
+      throw new Error('RuntimeArchiveFileManager is not available.');
+    }
+
+    this.runtimePackage = runtimePackage;
+    this.runtimeFileManager = new window.RuntimeArchiveFileManager(runtimePackage.files);
+  }
+
+  installRuntimeFileServices() {
+    if (!this.runtimeFileManager) {
+      throw new Error('No runtime file manager is configured.');
+    }
+
+    if (!this.previousFileServices) {
+      this.previousFileServices = {
+        fileManager: window.serviceContainer?.has?.('fileManager') ? window.serviceContainer.get('fileManager') : window.fileManager || null,
+        fileIOService: window.serviceContainer?.has?.('fileIOService') ? window.serviceContainer.get('fileIOService') : window.fileIOService || null,
+        windowFileManager: window.fileManager || null,
+        windowFileIOService: window.fileIOService || null,
+      };
+    }
+
+    window.serviceContainer?.registerSingleton?.('fileManager', this.runtimeFileManager);
+    window.serviceContainer?.registerSingleton?.('fileIOService', this.runtimeFileManager);
+    window.fileManager = this.runtimeFileManager;
+    window.fileIOService = this.runtimeFileManager;
+  }
+
+  restoreRuntimeFileServices() {
+    if (!this.previousFileServices) {
+      return;
+    }
+
+    const { fileManager, fileIOService, windowFileManager, windowFileIOService } = this.previousFileServices;
+
+    if (fileManager) {
+      window.serviceContainer?.registerSingleton?.('fileManager', fileManager);
+    }
+    if (fileIOService) {
+      window.serviceContainer?.registerSingleton?.('fileIOService', fileIOService);
+    }
+
+    window.fileManager = windowFileManager;
+    window.fileIOService = windowFileIOService;
+    this.previousFileServices = null;
+  }
+
+  destroy() {
+    this.stopProject();
+    this.restoreRuntimeFileServices();
   }
 
   // Set up project paths configuration to use correct folder names
@@ -85,57 +217,61 @@ class GameEmulator {
       services?.register?.('resourceManager', this.resourceManager);
     }
 
-    // Initialize or obtain BuildSystem
-    if (services) {
-      try {
-        this.buildSystem = services.get('buildSystem');
-        if (this.buildSystem) {
-          window.buildSystem = this.buildSystem; // Make available globally for builders
+    if (!this.options.runtimeOnly) {
+      // Initialize or obtain BuildSystem
+      if (services) {
+        try {
+          this.buildSystem = services.get('buildSystem');
+          if (this.buildSystem) {
+            window.buildSystem = this.buildSystem; // Make available globally for builders
+          }
+        } catch (e) {
+          console.log('[GameEditor] BuildSystem service not yet available');
+          this.buildSystem = null;
         }
-      } catch (e) {
-        console.log('[GameEditor] BuildSystem service not yet available');
+      } else {
+        console.log('[GameEditor] Service container not available, BuildSystem will be initialized later');
         this.buildSystem = null;
       }
-    } else {
-      console.log('[GameEditor] Service container not available, BuildSystem will be initialized later');
-      this.buildSystem = null;
     }
     
     // Listen for audio engine events
     this.audioEngine.addEventListener('resourceLoaded', this.onResourceLoaded.bind(this));
     this.audioEngine.addEventListener('resourceUpdated', this.onResourceUpdated.bind(this));
     
-    // Initialize or obtain TabManager
-    if (services) {
-      try {
-        this.tabManager = services.get('tabManager');
-      } catch (_) { /* not registered yet */ }
+    if (!this.options.runtimeOnly) {
+      // Initialize or obtain TabManager
+      if (services) {
+        try {
+          this.tabManager = services.get('tabManager');
+        } catch (_) { /* not registered yet */ }
+      }
+      if (!this.tabManager) {
+        this.tabManager = new TabManager();
+        services?.registerSingleton?.('tabManager', this.tabManager);
+      }
+      window.tabManager = this.tabManager; // Make available globally
+      
+      // Listen for tab changes to update save button state and project explorer
+      this.tabManager.addEventListener('tabSwitched', (data) => {
+        this.updateSaveButtonState();
+        // Project explorer highlighting is handled automatically in TabManager
+      });
+      
+      // Initialize or obtain ProjectExplorer
+      if (services) {
+        try {
+          this.projectExplorer = services.get('projectExplorer');
+        } catch (_) { /* not registered yet */ }
+      }
+      if (!this.projectExplorer) {
+        this.projectExplorer = new ProjectExplorer();
+        services?.register?.('projectExplorer', this.projectExplorer);
+      }
+      
+      // Listen for file added events from ProjectExplorer
+      document.addEventListener('projectFileAdded', this.handleFileAddedEvent.bind(this));
     }
-    if (!this.tabManager) {
-      this.tabManager = new TabManager();
-      services?.registerSingleton?.('tabManager', this.tabManager);
-    }
-    window.tabManager = this.tabManager; // Make available globally
-    
-    // Listen for tab changes to update save button state and project explorer
-    this.tabManager.addEventListener('tabSwitched', (data) => {
-      this.updateSaveButtonState();
-      // Project explorer highlighting is handled automatically in TabManager
-    });
-    
-    // Initialize or obtain ProjectExplorer
-    if (services) {
-      try {
-        this.projectExplorer = services.get('projectExplorer');
-      } catch (_) { /* not registered yet */ }
-    }
-    if (!this.projectExplorer) {
-      this.projectExplorer = new ProjectExplorer();
-      services?.register?.('projectExplorer', this.projectExplorer);
-    }
-    
-    // Listen for file added events from ProjectExplorer
-    document.addEventListener('projectFileAdded', this.handleFileAddedEvent.bind(this));
     
     // Set up UI event handlers
     this.setupUI();
@@ -146,7 +282,9 @@ class GameEmulator {
     this.addAudioContextResumeHandler();
     
     // Update initial UI state
-    this.updateSaveButtonState();
+    if (!this.options.runtimeOnly) {
+      this.updateSaveButtonState();
+    }
     
     console.log('[GameEmulator] Initialized successfully');
     return true;
@@ -243,7 +381,9 @@ class GameEmulator {
   setupUI() {
     // The ribbon toolbar handles its own button setup
     // Initialize console module
-    this.initializeConsole();
+    if (this.options.showConsole) {
+      this.initializeConsole();
+    }
     
     // TODO: Add proper keyboard shortcuts later without interfering with Monaco Editor
     console.log('[GameEmulator] UI setup complete - keyboard shortcuts disabled for now');
@@ -376,6 +516,10 @@ class GameEmulator {
   }
   
   async playProject() {
+    if (this.runtimeFileManager) {
+      return this.playRuntimePackage();
+    }
+
     console.log('[GameEmulator] Play project');
     this.updateStatus('Preparing to run project...', 'info');
 
@@ -498,6 +642,10 @@ class GameEmulator {
   }
   
   getAllBuildFiles() {
+    if (this.runtimeFileManager) {
+      return this.runtimeFileManager.getBuildFiles();
+    }
+
     // Get all files from the Build folder in project explorer
     const buildFiles = [];
     
@@ -999,7 +1147,7 @@ class GameEmulator {
     
     try {
       // Load the file from build storage
-      const fileManager = window.serviceContainer?.get('fileManager');
+      const fileManager = this.getActiveFileManager();
       if (!fileManager) {
         throw new Error('FileManager not available');
       }
@@ -1281,7 +1429,7 @@ class GameEmulator {
   async concatenateLuaScripts() {
     console.log('[GameEditor] Concatenating Lua scripts...');
     
-    if (!this.projectExplorer) {
+    if (!this.projectExplorer && !this.runtimeFileManager) {
       throw new Error('Project explorer not available');
     }
     
@@ -1342,7 +1490,7 @@ class GameEmulator {
     const luaFiles = [];
     
     // Get the FileIOService from ServiceContainer
-    const fileIOService = window.serviceContainer?.get?.('fileIOService');
+    const fileIOService = this.getActiveFileIOService();
     if (!fileIOService) {
       throw new Error('FileIOService is not available. Critical service missing from ServiceContainer.');
     }
@@ -1425,7 +1573,7 @@ class GameEmulator {
   async loadFileContent(filePath) {
     try {
       // Use the same loading mechanism as the file manager
-      const fileManager = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      const fileManager = this.getActiveFileManager();
       if (!fileManager) {
         console.error('[GameEditor] File manager not available');
         return null;
@@ -1722,6 +1870,46 @@ class GameEmulator {
         'An error occurred while executing the Lua script.',
         `Error: ${error.message}\n\nStack trace:\n${error.stack || 'No stack trace available'}`
       );
+    }
+  }
+
+  async playRuntimePackage(runtimePackage = null) {
+    if (runtimePackage) {
+      this.setRuntimePackage(runtimePackage);
+    }
+
+    if (!this.runtimeFileManager) {
+      throw new Error('No runtime package has been loaded.');
+    }
+
+    this.installRuntimeFileServices();
+    this.updateStatus('Preparing runtime package...', 'info');
+
+    const playStart = performance.now();
+    let phaseStart = playStart;
+    const logPhase = (label) => {
+      const now = performance.now();
+      const phaseMs = now - phaseStart;
+      const totalMs = now - playStart;
+      console.log(`[Timing][Runtime] ${label}: ${phaseMs.toFixed(1)}ms (total ${totalMs.toFixed(1)}ms)`);
+      phaseStart = now;
+    };
+
+    try {
+      const concatenatedScript = await this.concatenateLuaScripts();
+      logPhase('concatenateLuaScripts');
+
+      if (!concatenatedScript) {
+        throw new Error('No Lua scripts found in runtime package.');
+      }
+
+      await this.loadAndExecuteScript(concatenatedScript);
+      logPhase('loadAndExecuteScript');
+      console.log(`[Timing][Runtime] COMPLETE: ${(performance.now() - playStart).toFixed(1)}ms`);
+    } catch (error) {
+      console.error('[GameEmulator] Error running runtime package:', error);
+      this.updateStatus(`Error running runtime package: ${error.message}`, 'error');
+      throw error;
     }
   }
   
@@ -2146,25 +2334,29 @@ class GameEmulator {
   }
   
   captureLuaPrintOutput() {
-    try {
-      // Get the print buffer from Lua
-      const bufferSize = this.luaState.execute('return #_print_buffer');
-      if (bufferSize > 0) {
-        // Extract all items from the buffer and write directly to console
-        for (let i = 1; i <= bufferSize; i++) {
-          const output = this.luaState.execute(`return _print_buffer[${i}]`);
-          
-          // Write directly to GameConsole
-          this.gameConsole.writeToConsole(output, true);
-        }
-        
-        // Clear the buffer
-        this.luaState.execute('_print_buffer = {}');
-      }
-    } catch (error) {
-      // Silently ignore errors in print capture to avoid disrupting the game loop
-      console.warn('[GameEmulator] Error capturing print output:', error.message);
+    if (!this.luaState) {
+      throw new Error('Lua state is not initialized.');
     }
+
+    const bufferSize = this.luaState.execute('return #_print_buffer');
+    if (bufferSize <= 0) {
+      return;
+    }
+
+    if (!this.gameConsole) {
+      this.luaState.execute('_print_buffer = {}');
+      if (this.options.showConsole !== false) {
+        throw new Error('GameConsole is not initialized.');
+      }
+      return;
+    }
+
+    for (let i = 1; i <= bufferSize; i++) {
+      const output = this.luaState.execute(`return _print_buffer[${i}]`);
+      this.gameConsole.writeToConsole(output, true);
+    }
+
+    this.luaState.execute('_print_buffer = {}');
   }
 
   showGameEngine(scriptData) {
@@ -2299,6 +2491,94 @@ class GameEmulator {
     // Extract data from scriptData or use defaults
     const currentOutput = 'No output yet...'; // GameConsole handles all output display
     const output = scriptData?.output || currentOutput;
+    const overlay = this.options.overlayImagePath
+      ? `<img class="game-screen-overlay" src="${this.options.overlayImagePath}" alt="" aria-hidden="true">`
+      : '';
+    const reloadButton = this.options.showReload
+      ? `<button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
+          <span class="btn-icon">🔄</span>
+          <span class="btn-text">Reload</span>
+        </button>`
+      : '';
+    const volumeControls = this.options.showVolumeControls
+      ? `<div class="volume-controls">
+          <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
+          <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
+        </div>`
+      : '';
+    const utilityControls = (this.options.showKeyBindings || this.options.showConsole)
+      ? `<div class="utility-controls">
+          ${this.options.showKeyBindings ? '<button class="utility-btn" id="keyBindingsBtn" title="Show Keyboard Mapping">🎮</button>' : ''}
+          ${this.options.showConsole ? '<button class="utility-btn console-btn" id="consoleToggleBtn" title="Toggle Debug Console"></button>' : ''}
+        </div>`
+      : '';
+    const consolePanel = this.options.showConsole
+      ? `<div class="console-slide-panel" id="consoleSlidePanel">
+          <!-- GameConsole will be rendered here -->
+        </div>`
+      : '';
+    const keyBindingsPopup = this.options.showKeyBindings
+      ? `<div class="key-bindings-popup" id="keyBindingsPopup" style="display: none;">
+          <div class="key-bindings-container">
+            <div class="key-bindings-header">
+              <h4>🎮 Keyboard Mapping</h4>
+              <button class="close-popup-btn" id="closeKeyBindingsBtn">✕</button>
+            </div>
+            <div class="key-bindings-body">
+              <div class="key-mapping-grid">
+                <div class="key-mapping-section">
+                  <h5>D-Pad</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">↑</span><span class="button">Up</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">↓</span><span class="button">Down</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">←</span><span class="button">Left</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">→</span><span class="button">Right</span>
+                  </div>
+                </div>
+                <div class="key-mapping-section">
+                  <h5>Action Buttons</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">Z</span><span class="button">B Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">X</span><span class="button">A Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">A</span><span class="button">Y Button</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">S</span><span class="button">X Button</span>
+                  </div>
+                </div>
+                <div class="key-mapping-section">
+                  <h5>System</h5>
+                  <div class="key-mapping-item">
+                    <span class="key">Space</span><span class="button">Select</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">Enter</span><span class="button">Start</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">L-Shift</span><span class="button">L Shoulder</span>
+                  </div>
+                  <div class="key-mapping-item">
+                    <span class="key">R-Shift</span><span class="button">R Shoulder</span>
+                  </div>
+                </div>
+              </div>
+              <div class="input-status">
+                <strong>Click the canvas above to activate input capture</strong>
+              </div>
+            </div>
+          </div>
+        </div>`
+      : '';
 
     this.contentContainer.innerHTML = `
       <div class="game-controls">
@@ -2310,96 +2590,24 @@ class GameEmulator {
           <span class="btn-icon">⏹️</span>
           <span class="btn-text">Stop</span>
         </button>
-        <button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
-          <span class="btn-icon">🔄</span>
-          <span class="btn-text">Reload</span>
-        </button>
-        <div class="volume-controls">
-          <button class="mute-btn" id="muteBtn" title="Mute/Unmute Audio">🔊</button>
-          <input type="range" id="volumeSlider" min="0" max="100" value="75" title="Volume Control">
-        </div>
-        <div class="utility-controls">
-          <button class="utility-btn" id="keyBindingsBtn" title="Show Keyboard Mapping">🎮</button>
-          <button class="utility-btn console-btn" id="consoleToggleBtn" title="Toggle Debug Console"></button>
-        </div>
+        ${reloadButton}
+        ${volumeControls}
+        ${utilityControls}
       </div>
       
       <div class="game-main-area">
         <div class="game-canvas-container">
           <div class="game-screen-frame">
             <canvas id="game-canvas" width="448" height="368"></canvas>
-            <img class="game-screen-overlay" src="Resources/Images/cp-overlay.png" alt="" aria-hidden="true">
+            ${overlay}
           </div>
           <div class="game-info">Game running... (simulated)</div>
         </div>
         
-        <!-- Console Slide Panel -->
-        <div class="console-slide-panel" id="consoleSlidePanel">
-          <!-- GameConsole will be rendered here -->
-        </div>
+        ${consolePanel}
       </div>
       
-      <!-- Key Bindings Popup -->
-      <div class="key-bindings-popup" id="keyBindingsPopup" style="display: none;">
-        <div class="key-bindings-container">
-          <div class="key-bindings-header">
-            <h4>🎮 Keyboard Mapping</h4>
-            <button class="close-popup-btn" id="closeKeyBindingsBtn">✕</button>
-          </div>
-          <div class="key-bindings-body">
-            <div class="key-mapping-grid">
-              <div class="key-mapping-section">
-                <h5>D-Pad</h5>
-                <div class="key-mapping-item">
-                  <span class="key">↑</span><span class="button">Up</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">↓</span><span class="button">Down</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">←</span><span class="button">Left</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">→</span><span class="button">Right</span>
-                </div>
-              </div>
-              <div class="key-mapping-section">
-                <h5>Action Buttons</h5>
-                <div class="key-mapping-item">
-                  <span class="key">Z</span><span class="button">B Button</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">X</span><span class="button">A Button</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">A</span><span class="button">Y Button</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">S</span><span class="button">X Button</span>
-                </div>
-              </div>
-              <div class="key-mapping-section">
-                <h5>System</h5>
-                <div class="key-mapping-item">
-                  <span class="key">Space</span><span class="button">Select</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">Enter</span><span class="button">Start</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">L-Shift</span><span class="button">L Shoulder</span>
-                </div>
-                <div class="key-mapping-item">
-                  <span class="key">R-Shift</span><span class="button">R Shoulder</span>
-                </div>
-              </div>
-            </div>
-            <div class="input-status">
-              <strong>Click the canvas above to activate input capture</strong>
-            </div>
-          </div>
-        </div>
-      </div>
+      ${keyBindingsPopup}
     `;
 
     // Initialize empty console - only Lua print() should write to it
@@ -2433,9 +2641,11 @@ class GameEmulator {
         console.log('[GameEmulator] Input manager initialized successfully');
         
         // Focus the canvas to activate input capture
-        setTimeout(() => {
-          gameCanvas.focus();
-        }, 100);
+        if (this.options.autoFocusCanvas !== false) {
+          setTimeout(() => {
+            gameCanvas.focus();
+          }, 100);
+        }
       } else {
         console.error('[GameEmulator] Failed to initialize input manager');
         this.inputManager = null;
