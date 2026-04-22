@@ -6,7 +6,6 @@ This document defines RetroWatch package file types and how RetroStudio currentl
 
 - `.rwp`: Studio project archive (source of truth for editing)
 - `.rwa`: Lua runtime app package for normal firmware context
-- `.rwg`: Lua runtime app package for launcher game mode (max resources)
 - `.rwn`: Native app package (binary/native runtime, reserved/not exported by RetroStudio yet)
 
 All package types are ZIP-based containers with different intent and runtime handling.
@@ -18,10 +17,10 @@ Purpose:
 
 Contents:
 - Full project source tree (under `Sources/...`)
+- `package.ini` manifest at archive root
 - `rwp.json` manifest
 - Embedded deployable runtime package under `runtime/`:
-  - `runtime/<project>.rwa` or
-  - `runtime/<project>.rwg`
+  - `runtime/<project>.rwa`
 
 Notes:
 - `.rwp` is not directly executed by firmware.
@@ -42,9 +41,7 @@ Container format:
 - Each file path inside `build/` is added to ZIP after removing the `build/` prefix.
 - If `app.ini` is missing from `build/`, RetroStudio injects one.
 
-### `.rwa` / `.rwg` Runtime File Layout
-
-Runtime packages are content-equivalent (`.rwa` vs `.rwg` changes runtime mode, not file structure).
+### `.rwa` Runtime File Layout
 
 Typical layout:
 
@@ -89,9 +86,32 @@ Notes:
 | `SFX/*.sfx` | synthesized to `.wav` | `SFX/*.wav` |
 | other files | copied | same relative path |
 
-### `app.ini` Contract
+### `package.ini` Contract
 
-RetroStudio emits `app.ini` from package settings (`Sources/Package/app.package`) if not already produced by build output.
+RetroStudio emits `package.ini` at the `.rwp` root from package settings (`Sources/Package/app.package`).
+
+This file is the cloud ingest contract and must match the Retrowww schema.
+
+Required data now includes:
+
+- `unique_id`
+- `category`
+- `target_device_slug`
+- `version_code`
+- `short_description`
+- `long_description`
+- `icon_path`
+- `runtime_package`
+
+Additional packaging rule:
+
+- `[display].videos` must contain supported YouTube URLs only. Local uploaded video files may remain in the project for preview, but RetroStudio should not emit archive-relative video paths into `package.ini` because Retrowww rejects them.
+
+`app.ini` remains a runtime package concern for `.rwa` export.
+
+### Runtime `app.ini` Contract
+
+RetroStudio still emits `app.ini` into `.rwa` when runtime build output does not provide one.
 
 Default sections/keys:
 
@@ -102,7 +122,7 @@ author = <configured author>
 version = <configured version>
 description = <configured description>
 type = app
-runtime = rwa|rwg
+runtime = rwa
 icon32 = <path or empty>
 icon128 = <path or empty>
 
@@ -151,18 +171,7 @@ For indexed textures, D2TX header fields used with PMAP are:
 
 For full D2TX layout details, see `retrostudio-d2tx-format.md` in repository memory and the texture build pipeline.
 
-## 3) `.rwg` (Retro Watch Game - Lua / Launcher Mode)
-
-Purpose:
-- Deployable Lua app package for high-performance launcher mode.
-
-Runtime characteristics:
-- Launched through a special launcher app/profile.
-- Non-essential services disabled where possible.
-- Maximum clock/resources directed to the Lua app.
-- Content format is otherwise equivalent to `.rwa`.
-
-## 4) `.rwn` (Retro Watch Native)
+## 3) `.rwn` (Retro Watch Native)
 
 Purpose:
 - Deployable native app package.
@@ -174,7 +183,7 @@ Runtime characteristics:
 
 ## Shared Packaging Concept
 
-All package types are ZIP containers. RetroStudio currently assembles runtime packages from build outputs (`build/...`) and writes metadata to `app.ini`.
+All package types are ZIP containers. RetroStudio assembles runtime packages from build outputs (`build/...`), writes runtime metadata to `app.ini`, and writes cloud ingest metadata to `.rwp/package.ini`.
 
 ## Package Settings in RetroStudio
 
@@ -182,7 +191,7 @@ RetroStudio stores package settings in:
 - `Sources/Package/app.package`
 
 Settings include:
-- `packageKind`: `rwa` | `rwg`
+- `packageKind`: `rwa`
 - app metadata: title, author, version, description
 - icon references:
   - `icon32` (32x32)
@@ -210,14 +219,20 @@ Suggested project asset location:
   - Shows build summary popup.
 - `Export Runtime` button:
   - Builds outputs.
-  - Exports runtime package according to `packageKind` (`.rwa/.rwg`).
+  - Exports runtime package as `.rwa`.
   - Does not show the Build-button summary popup.
 - `Export RWP` button:
   - Exports source project archive.
+  - Writes root `package.ini` for Retrowww ingest.
   - Also embeds generated runtime package inside `runtime/`.
+
+- `Publish` button:
+  - Builds a `.rwp` package.
+  - Wraps it into a `.rws` workspace package.
+  - Sends `.rws` to Retrowww project storage and `.rwp` to the publish hook.
+  - Retrowww does not accept direct `.rwa` or `.rwb` website uploads.
 
 ## Notes for Firmware/Launcher
 
-- `.rwa` and `.rwg` are both Lua app packages; launcher behavior determines mode.
 - `.rwn` handling is runtime-specific to native app loader policy and is not currently emitted by RetroStudio.
-- Metadata fields in `app.ini` should be treated as contract points and can be extended in future revisions.
+- Metadata fields in `.rwp/package.ini` are the Retrowww cloud contract and should be kept aligned with `Docs/package-ini-spec.md` in the host repository.

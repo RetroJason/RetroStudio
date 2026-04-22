@@ -19,6 +19,15 @@ class PackageSettingsEditor extends EditorBase {
     if (typeof this._iconRenderToken !== 'number') this._iconRenderToken = 0;
     if (typeof this._shotRenderToken !== 'number') this._shotRenderToken = 0;
     if (typeof this._videoRenderToken !== 'number') this._videoRenderToken = 0;
+    if (!this._hostedPackageDefaults || typeof this._hostedPackageDefaults !== 'object') {
+      this._hostedPackageDefaults = null;
+    }
+    if (typeof this._hostedDefaultsRequestId !== 'number') {
+      this._hostedDefaultsRequestId = 0;
+    }
+    if (typeof this._hostedDefaultsDebounceTimer !== 'number') {
+      this._hostedDefaultsDebounceTimer = 0;
+    }
 
     this.initializeFromFile();
   }
@@ -72,7 +81,7 @@ class PackageSettingsEditor extends EditorBase {
     wrap.appendChild(title);
 
     const note = document.createElement('div');
-    note.textContent = 'Edits are saved to app.package. Use Save (Ctrl+S).';
+    note.textContent = 'Edit the hosted store fields here. Retrowww owns the author, title lineage, generated application ID, and publish version tracking. package.ini only publishes supported YouTube URLs; uploaded local videos stay inside the project for preview only.';
     note.style.cssText = 'opacity:0.8; font-size:12px; color:#9aa3b8;';
     wrap.appendChild(note);
 
@@ -80,17 +89,35 @@ class PackageSettingsEditor extends EditorBase {
     form.style.cssText = 'display:grid; grid-template-columns: 140px 1fr; gap:8px 10px; align-items:center;';
 
     this._ui.title = this.makeInputRow(form, 'Title', 'text');
+    this._ui.titleStatus = this.makeStatusRow(form);
     this._ui.author = this.makeInputRow(form, 'Author', 'text');
     this._ui.version = this.makeInputRow(form, 'Version', 'text');
+    this._ui.versionStatus = this.makeStatusRow(form);
+    this._ui.versionCode = this.makeInputRow(form, 'Version Code', 'number');
+    this._ui.uniqueId = this.makeInputRow(form, 'Application ID', 'text');
+    this._ui.category = this.makeSelectRow(form, 'Application Type', this.getFallbackCategoryOptions());
+    this._ui.targetDeviceSlug = this.makeSelectRow(form, 'Target Device', this.getFallbackTargetDeviceOptions());
+    this._ui.shortDescription = this.makeTextAreaRow(form, 'Short Description', 2);
     this._ui.description = this.makeTextAreaRow(form, 'Description', 3);
     this._ui.packageKind = this.makeSelectRow(form, 'Package Type', [
-      { value: 'rwa', label: 'App / Watch Face' },
-      { value: 'rwg', label: 'Game Mode (faster clock, high power)' }
+      { value: 'rwa', label: 'App / Watch Face (.rwa)' }
     ]);
+    this._ui.releaseChannel = this.makeSelectRow(form, 'Release Channel', [
+      { value: '', label: 'None' },
+      { value: 'dev', label: 'dev' },
+      { value: 'beta', label: 'beta' },
+      { value: 'stable', label: 'stable' }
+    ]);
+    this._ui.minFirmwareVersion = this.makeInputRow(form, 'Min Firmware Version', 'text');
+    this._ui.sourceRevision = this.makeInputRow(form, 'Source Revision', 'text');
+    this._ui.buildId = this.makeInputRow(form, 'Build ID', 'text');
+
+    this.configureFormUi();
 
     wrap.appendChild(form);
 
     const iconSection = document.createElement('div');
+    this._ui.iconSection = iconSection;
     iconSection.style.cssText = 'border:1px solid #3b4152; border-radius:6px; padding:10px; background:#191c23;';
     iconSection.innerHTML = '<strong>Icon 32x32 (launcher)</strong>';
 
@@ -144,7 +171,7 @@ class PackageSettingsEditor extends EditorBase {
 
     const videoSection = document.createElement('div');
     videoSection.style.cssText = 'border:1px solid #3b4152; border-radius:6px; padding:10px; background:#191c23;';
-    videoSection.innerHTML = '<strong>Videos</strong>';
+    videoSection.innerHTML = '<strong>Videos</strong><div style="margin-top:6px; font-size:12px; color:#9aa3b8;">Local video uploads preview in RetroStudio, but Retrowww package.ini only emits supported YouTube URLs.</div>';
 
     const videoActions = document.createElement('div');
     videoActions.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;';
@@ -191,6 +218,16 @@ class PackageSettingsEditor extends EditorBase {
     return area;
   }
 
+  makeStatusRow(container) {
+    const spacer = document.createElement('div');
+    spacer.setAttribute('aria-hidden', 'true');
+    const status = document.createElement('div');
+    status.style.cssText = 'min-height:16px; margin-top:-4px; margin-bottom:4px; font-size:12px; color:#9aa3b8;';
+    container.appendChild(spacer);
+    container.appendChild(status);
+    return status;
+  }
+
   makeSelectRow(container, labelText, options) {
     const label = document.createElement('label');
     label.textContent = labelText;
@@ -214,6 +251,217 @@ class PackageSettingsEditor extends EditorBase {
     b.textContent = text;
     b.style.cssText = 'padding:6px 10px; border-radius:4px; border:1px solid #4b5368; background:#272d3c; color:#e7ecf7; cursor:pointer;';
     return b;
+  }
+
+  getFallbackCategoryOptions() {
+    return [
+      { value: '', label: 'Select application type' },
+      { value: 'watch', label: 'Watch Face' },
+      { value: 'low_power_watch', label: 'Low-Power Watch Face' },
+      { value: 'lua_game', label: 'Lua Game' },
+      { value: 'lua_app', label: 'Lua App' },
+    ];
+  }
+
+  getFallbackTargetDeviceOptions() {
+    return [{ value: 'retrowatch-classic', label: 'RetroWatch Classic' }];
+  }
+
+  setSelectOptions(select, options) {
+    if (!select) return;
+
+    const currentValue = select.value;
+    select.innerHTML = '';
+    options.forEach((option) => {
+      const element = document.createElement('option');
+      element.value = option.value;
+      element.textContent = option.label;
+      select.appendChild(element);
+    });
+
+    if (currentValue && Array.from(select.options).every((option) => option.value !== currentValue)) {
+      const customOption = document.createElement('option');
+      customOption.value = currentValue;
+      customOption.textContent = currentValue;
+      select.appendChild(customOption);
+    }
+
+    select.value = currentValue || select.options[0]?.value || '';
+  }
+
+  hideRow(control) {
+    if (!control) return;
+    const label = control.previousElementSibling;
+    if (label) label.style.display = 'none';
+    control.style.display = 'none';
+  }
+
+  configureFormUi() {
+    [
+      this._ui.versionCode,
+      this._ui.uniqueId,
+      this._ui.targetDeviceSlug,
+      this._ui.packageKind,
+      this._ui.releaseChannel,
+      this._ui.minFirmwareVersion,
+      this._ui.sourceRevision,
+      this._ui.buildId,
+    ].forEach((control) => this.hideRow(control));
+
+    if (this._ui.author) {
+      this._ui.author.readOnly = true;
+      this._ui.author.style.opacity = '0.8';
+      this._ui.author.title = 'Set by the signed-in Retrowww account.';
+    }
+
+    if (this._ui.iconSection) {
+      this._ui.iconSection.style.display = 'none';
+    }
+  }
+
+  async loadHostedPackageDefaults(projectName, title) {
+    const hostedStudio = window.retrowwwHostedStudio;
+    if (!hostedStudio || typeof hostedStudio.getPackageDefaults !== 'function') {
+      return null;
+    }
+
+    return hostedStudio.getPackageDefaults(projectName || '', title || '');
+  }
+
+  setStatusMessage(element, tone, message) {
+    if (!element) return;
+    const palette = {
+      neutral: '#9aa3b8',
+      success: '#8ad1a1',
+      warning: '#e5c36b',
+      error: '#e09494',
+    };
+    element.textContent = message || '';
+    element.style.color = palette[tone] || palette.neutral;
+  }
+
+  compareDottedVersions(left, right) {
+    const normalizedLeft = String(left || '').trim();
+    const normalizedRight = String(right || '').trim();
+
+    if (!/^\d+(?:\.\d+)*$/.test(normalizedLeft) || !/^\d+(?:\.\d+)*$/.test(normalizedRight)) {
+      return null;
+    }
+
+    const leftSegments = normalizedLeft.split('.').map((segment) => Number.parseInt(segment, 10));
+    const rightSegments = normalizedRight.split('.').map((segment) => Number.parseInt(segment, 10));
+    const maxLength = Math.max(leftSegments.length, rightSegments.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+      const leftValue = leftSegments[index] ?? 0;
+      const rightValue = rightSegments[index] ?? 0;
+      if (leftValue > rightValue) return 1;
+      if (leftValue < rightValue) return -1;
+    }
+
+    return 0;
+  }
+
+  updateHostedValidationMessages() {
+    const titleStatus = this._hostedPackageDefaults?.titleStatus || null;
+
+    if (!titleStatus || titleStatus.state === 'empty') {
+      this.setStatusMessage(this._ui.titleStatus, 'neutral', '');
+    } else if (titleStatus.state === 'available') {
+      this.setStatusMessage(this._ui.titleStatus, 'success', 'Title is available.');
+    } else if (titleStatus.state === 'owned') {
+      this.setStatusMessage(
+        this._ui.titleStatus,
+        'success',
+        `Title is already linked to your app.`,
+      );
+    } else if (titleStatus.state === 'taken') {
+      this.setStatusMessage(
+        this._ui.titleStatus,
+        'error',
+        `Title is owned by ${titleStatus.ownerDisplayName}.`,
+      );
+    }
+
+    const currentVersion = String(this._ui.version?.value || '').trim();
+    const latestPublishedVersion = String(titleStatus?.latestPublishedVersion || '').trim();
+
+    if (!latestPublishedVersion) {
+      this.setStatusMessage(this._ui.versionStatus, 'neutral', '');
+      return;
+    }
+
+    const comparison = this.compareDottedVersions(currentVersion, latestPublishedVersion);
+    if (comparison == null) {
+      this.setStatusMessage(
+        this._ui.versionStatus,
+        'warning',
+        `Use a dotted numeric version greater than ${latestPublishedVersion}.`,
+      );
+      return;
+    }
+
+    if (comparison <= 0) {
+      this.setStatusMessage(
+        this._ui.versionStatus,
+        'error',
+        `Version must be greater than the last published version (${latestPublishedVersion}).`,
+      );
+      return;
+    }
+
+    this.setStatusMessage(
+      this._ui.versionStatus,
+      'success',
+      `Version is ahead of the last published version (${latestPublishedVersion}).`,
+    );
+  }
+
+  async applyHostedPackageDefaults(projectName, options = {}) {
+    const title = String(this.settings.title || projectName || '').trim();
+    const hostedDefaults = await this.loadHostedPackageDefaults(projectName, title);
+    if (!hostedDefaults) return;
+
+    this._hostedPackageDefaults = hostedDefaults;
+
+    if (Array.isArray(hostedDefaults.categoryOptions) && hostedDefaults.categoryOptions.length > 0) {
+      this.setSelectOptions(this._ui.category, hostedDefaults.categoryOptions);
+    }
+
+    if (Array.isArray(hostedDefaults.targetDeviceOptions) && hostedDefaults.targetDeviceOptions.length > 0) {
+      this.setSelectOptions(this._ui.targetDeviceSlug, hostedDefaults.targetDeviceOptions);
+    }
+
+    this.settings.author = String(hostedDefaults.defaults?.author || this.settings.author || '').trim();
+    this.settings.uniqueId = String(hostedDefaults.defaults?.uniqueId || this.settings.uniqueId || '').trim();
+    this.settings.targetDeviceSlug = String(hostedDefaults.defaults?.targetDeviceSlug || this.settings.targetDeviceSlug || '').trim();
+    this.settings.packageKind = String(hostedDefaults.defaults?.packageKind || this.settings.packageKind || 'rwa').trim();
+    this.settings.versionCode = Number.parseInt(String(hostedDefaults.defaults?.versionCode ?? this.settings.versionCode ?? 1), 10) || 1;
+
+    if ((!String(this.settings.version || '').trim() || options.replaceVersion === true) && hostedDefaults.defaults?.versionString) {
+      this.settings.version = String(hostedDefaults.defaults.versionString).trim();
+    }
+
+    this.updateHostedValidationMessages();
+  }
+
+  scheduleHostedDefaultsRefresh(options = {}) {
+    if (this._hostedDefaultsDebounceTimer) {
+      window.clearTimeout(this._hostedDefaultsDebounceTimer);
+    }
+
+    const requestId = ++this._hostedDefaultsRequestId;
+    this._hostedDefaultsDebounceTimer = window.setTimeout(async () => {
+      try {
+        await this.applyHostedPackageDefaults(this.getProjectNameFromPath(this.path), options);
+        if (requestId !== this._hostedDefaultsRequestId) {
+          return;
+        }
+        this.renderFromSettings();
+      } catch (error) {
+        console.error('[PackageSettingsEditor] Failed to refresh hosted package defaults:', error);
+      }
+    }, 250);
   }
 
   getProjectNameFromPath(path) {
@@ -240,7 +488,16 @@ class PackageSettingsEditor extends EditorBase {
       title: projectName || '',
       author: '',
       version: '0.0.1',
+      versionCode: 1,
+      uniqueId: '',
+      category: '',
+      targetDeviceSlug: '',
+      shortDescription: '',
       description: '',
+      releaseChannel: '',
+      minFirmwareVersion: '',
+      sourceRevision: '',
+      buildId: '',
       icons: { icon32: '', icon128: '' },
       screenshots: [],
       videos: []
@@ -275,6 +532,13 @@ class PackageSettingsEditor extends EditorBase {
     if (!Array.isArray(this.settings.screenshots)) this.settings.screenshots = [];
     if (!Array.isArray(this.settings.videos)) this.settings.videos = [];
 
+    try {
+      await this.applyHostedPackageDefaults(project, { replaceVersion: !String(this.settings.version || '').trim() });
+    } catch (error) {
+      console.error('[PackageSettingsEditor] Failed to load Retrowww package defaults:', error);
+      window.gameEmulator?.updateStatus?.('Failed to load Retrowww package defaults', 'error');
+    }
+
     await this.backfillDefaultsFromPackageFolder(project, fm);
 
     if (!this.settings.icons.icon32) {
@@ -291,11 +555,42 @@ class PackageSettingsEditor extends EditorBase {
   }
 
   installHandlers() {
-    const fields = [this._ui.title, this._ui.author, this._ui.version, this._ui.description, this._ui.packageKind];
+    const fields = [
+      this._ui.title,
+      this._ui.author,
+      this._ui.version,
+      this._ui.versionCode,
+      this._ui.uniqueId,
+      this._ui.category,
+      this._ui.targetDeviceSlug,
+      this._ui.shortDescription,
+      this._ui.description,
+      this._ui.packageKind,
+      this._ui.releaseChannel,
+      this._ui.minFirmwareVersion,
+      this._ui.sourceRevision,
+      this._ui.buildId
+    ];
     fields.forEach((el) => {
       if (!el || el._pkgBound) return;
-      el.addEventListener('input', () => this.syncSettingsFromUi());
-      el.addEventListener('change', () => this.syncSettingsFromUi());
+      el.addEventListener('input', () => {
+        this.syncSettingsFromUi();
+        if (el === this._ui.title) {
+          this.scheduleHostedDefaultsRefresh();
+        }
+        if (el === this._ui.version) {
+          this.updateHostedValidationMessages();
+        }
+      });
+      el.addEventListener('change', () => {
+        this.syncSettingsFromUi();
+        if (el === this._ui.title) {
+          this.scheduleHostedDefaultsRefresh();
+        }
+        if (el === this._ui.version) {
+          this.updateHostedValidationMessages();
+        }
+      });
       el._pkgBound = true;
     });
 
@@ -333,9 +628,19 @@ class PackageSettingsEditor extends EditorBase {
     this._ui.title.value = this.settings.title || '';
     this._ui.author.value = this.settings.author || '';
     this._ui.version.value = this.settings.version || '0.0.1';
+    this._ui.versionCode.value = String(this.settings.versionCode ?? 1);
+    this._ui.uniqueId.value = this.settings.uniqueId || '';
+    this._ui.category.value = this.settings.category || '';
+    this._ui.targetDeviceSlug.value = this.settings.targetDeviceSlug || '';
+    this._ui.shortDescription.value = this.settings.shortDescription || '';
     this._ui.description.value = this.settings.description || '';
     this._ui.packageKind.value = (String(this.settings.packageKind || 'rwa').toLowerCase() === 'rwg') ? 'rwg' : 'rwa';
+    this._ui.releaseChannel.value = this.settings.releaseChannel || '';
+    this._ui.minFirmwareVersion.value = this.settings.minFirmwareVersion || '';
+    this._ui.sourceRevision.value = this.settings.sourceRevision || '';
+    this._ui.buildId.value = this.settings.buildId || '';
     this._ui.icon32Path.textContent = this.settings.icons?.icon32 || '(not set)';
+    this.updateHostedValidationMessages();
     this.renderIconPreview();
     this.renderScreenshotCarousel();
     this.renderVideoCarousel();
@@ -618,8 +923,17 @@ class PackageSettingsEditor extends EditorBase {
     this.settings.title = this._ui.title.value || '';
     this.settings.author = this._ui.author.value || '';
     this.settings.version = this._ui.version.value || '0.0.1';
+    this.settings.versionCode = Number.parseInt(this._ui.versionCode.value || '1', 10) || 1;
+    this.settings.uniqueId = this._ui.uniqueId.value || '';
+    this.settings.category = this._ui.category.value || '';
+    this.settings.targetDeviceSlug = this._ui.targetDeviceSlug.value || '';
+    this.settings.shortDescription = this._ui.shortDescription.value || '';
     this.settings.description = this._ui.description.value || '';
     this.settings.packageKind = (String(this._ui.packageKind.value || 'rwa').toLowerCase() === 'rwg') ? 'rwg' : 'rwa';
+    this.settings.releaseChannel = this._ui.releaseChannel.value || '';
+    this.settings.minFirmwareVersion = this._ui.minFirmwareVersion.value || '';
+    this.settings.sourceRevision = this._ui.sourceRevision.value || '';
+    this.settings.buildId = this._ui.buildId.value || '';
     this.markDirty();
   }
 

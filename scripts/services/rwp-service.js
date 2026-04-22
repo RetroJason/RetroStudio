@@ -16,6 +16,298 @@ class RwpService {
     return (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) ? window.ProjectPaths.normalizeStoragePath(uiPath) : uiPath;
   }
 
+  getDefaultManagedIconPath() {
+    return `${this.getSourcesRootUi()}/Package/icons/icon32.png`;
+  }
+
+  async loadProjectAssetRecord(projectName, assetPath) {
+    this.ensureDeps();
+    if (!this.fileManager || typeof this.fileManager.loadFile !== 'function') {
+      throw new Error('FileManager unavailable');
+    }
+
+    const normalizedAssetPath = String(assetPath || '').trim().replace(/^\/+/, '');
+    if (!normalizedAssetPath) {
+      return null;
+    }
+
+    const candidates = [];
+    const pushCandidate = (candidate) => {
+      if (!candidate || candidates.includes(candidate)) return;
+      candidates.push(candidate);
+    };
+
+    pushCandidate(normalizedAssetPath);
+    if (projectName && !normalizedAssetPath.startsWith(`${projectName}/`)) {
+      pushCandidate(`${projectName}/${normalizedAssetPath}`);
+    }
+
+    for (const candidate of candidates) {
+      const record = await this.fileManager.loadFile(candidate);
+      if (record) {
+        return record;
+      }
+    }
+
+    return null;
+  }
+
+  async ensureManagedPackageIcon(projectName, settings) {
+    const configuredIconPath = String(settings?.icons?.icon32 || '').trim();
+    const defaultIconPath = this.getDefaultManagedIconPath();
+    const effectiveIconPath = configuredIconPath || defaultIconPath;
+    const iconRecord = await this.loadProjectAssetRecord(projectName, effectiveIconPath);
+
+    if (iconRecord) {
+      if (!settings.icons) settings.icons = {};
+      settings.icons.icon32 = effectiveIconPath;
+      return settings;
+    }
+
+    if (configuredIconPath && configuredIconPath !== defaultIconPath) {
+      throw new Error(`Package Settings: Icon 32x32 file is missing: ${configuredIconPath}.`);
+    }
+
+    const ribbonToolbar = window.ribbonToolbar;
+    if (!ribbonToolbar || typeof ribbonToolbar.createDefaultIcon32File !== 'function' || typeof ribbonToolbar.saveAssetToProject !== 'function') {
+      throw new Error('Package Settings: Unable to create the required default icon32 asset.');
+    }
+
+    const iconFile = await ribbonToolbar.createDefaultIcon32File();
+    const savedPath = await ribbonToolbar.saveAssetToProject(iconFile, projectName, 'icons', 'icon32.png');
+    if (!settings.icons) settings.icons = {};
+    settings.icons.icon32 = savedPath;
+    return settings;
+  }
+
+  getCanonicalProjectSlug(projectName) {
+    return String(projectName || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  async loadPackageSettings(projectName) {
+    this.ensureDeps();
+    const rwaService = window.serviceContainer?.get?.('rwaService') || window.rwaService;
+    if (!rwaService || typeof rwaService.loadPackageSettings !== 'function') {
+      throw new Error('Runtime package service unavailable');
+    }
+    return rwaService.loadPackageSettings(projectName);
+  }
+
+  getPackageSettingsStoragePath(projectName) {
+    return `${projectName}/${this.getSourcesRootUi()}/Package/app.package`;
+  }
+
+  async applyPackageSettingsOverride(projectName, override = {}) {
+    if (!projectName || !override || typeof override !== 'object') {
+      return;
+    }
+
+    this.ensureDeps();
+    if (!this.fileManager || typeof this.fileManager.saveFile !== 'function' || typeof this.fileManager.loadFile !== 'function') {
+      throw new Error('FileManager unavailable');
+    }
+
+    const packageSettingsPath = this.getPackageSettingsStoragePath(projectName);
+    const existingRecord = await this.fileManager.loadFile(packageSettingsPath);
+    const currentSettings = await this.loadPackageSettings(projectName);
+    const nextSettings = {
+      ...currentSettings,
+      ...override,
+    };
+    const metadata = { binaryData: false };
+
+    if (existingRecord?.builderId) {
+      metadata.builderId = existingRecord.builderId;
+    }
+
+    const saved = await this.fileManager.saveFile(
+      packageSettingsPath,
+      JSON.stringify(nextSettings, null, 2),
+      metadata,
+    );
+
+    if (!saved) {
+      throw new Error('Failed to update imported package settings.');
+    }
+  }
+
+  async getRetroStudioVersion() {
+    const response = await fetch('version.json', { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error('RetroStudio version.json is required for package trace metadata.');
+    }
+
+    const payload = await response.json();
+    if (!payload || typeof payload.version !== 'string' || payload.version.trim().length === 0) {
+      throw new Error('RetroStudio version.json must contain a non-empty version string.');
+    }
+
+    return payload.version.trim();
+  }
+
+  async getHostedPackageDefaults(projectName, title) {
+    const hostedStudio = window.retrowwwHostedStudio;
+    if (!hostedStudio || typeof hostedStudio.getPackageDefaults !== 'function') {
+      return null;
+    }
+
+    return hostedStudio.getPackageDefaults(projectName, title);
+  }
+
+  async resolveEffectivePackageSettings(projectName, settings) {
+    const hostedDefaults = await this.getHostedPackageDefaults(projectName, settings.title || projectName);
+    const defaults = hostedDefaults?.defaults || {};
+
+    return {
+      ...settings,
+      author: String(defaults.author || settings.author || '').trim(),
+      uniqueId: String(settings.uniqueId || defaults.uniqueId || '').trim(),
+      targetDeviceSlug: String(settings.targetDeviceSlug || defaults.targetDeviceSlug || '').trim(),
+      packageKind: String(settings.packageKind || defaults.packageKind || 'rwa').trim(),
+      versionCode: Number.parseInt(String(settings.versionCode || defaults.versionCode || 1), 10) || 1,
+    };
+  }
+
+  buildPackageIni(projectName, settings, runtimePkg, retroStudioVersion, options = {}) {
+    const uniqueId = String(settings.uniqueId || '').trim();
+    const category = String(settings.category || '').trim();
+    const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim();
+    const shortDescription = String(settings.shortDescription || '').trim();
+    const longDescription = String(settings.description || '').trim();
+    const versionString = String(settings.version || '').trim();
+    const rawVersionCode = Number.parseInt(String(settings.versionCode ?? ''), 10);
+    const iconPath = String(settings.icons?.icon32 || '').trim();
+    const releaseChannel = String(settings.releaseChannel || '').trim();
+    const minFirmwareVersion = String(settings.minFirmwareVersion || '').trim();
+    const sourceRevision = String(settings.sourceRevision || '').trim();
+    const buildId = String(settings.buildId || '').trim();
+    const authorLabel = String(settings.author || '').trim();
+
+    if (!uniqueId) throw new Error('Package Settings: Unique ID is required.');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(uniqueId)) {
+      throw new Error('Package Settings: Unique ID must use lowercase letters, numbers, and hyphens only.');
+    }
+    if (!category) throw new Error('Package Settings: Category is required.');
+    if (!targetDeviceSlug) throw new Error('Package Settings: Target Device Slug is required.');
+    if (!shortDescription) throw new Error('Package Settings: Short Description is required.');
+    if (!longDescription) throw new Error('Package Settings: Description is required.');
+    if (!versionString) throw new Error('Package Settings: Version is required.');
+    if (!Number.isInteger(rawVersionCode) || rawVersionCode < 1) {
+      throw new Error('Package Settings: Version Code must be an integer greater than or equal to 1.');
+    }
+    if (!iconPath) throw new Error('Package Settings: Icon 32x32 is required for package.ini.');
+
+    const screenshots = Array.isArray(settings.screenshots) ? settings.screenshots.filter(Boolean) : [];
+    const videos = Array.isArray(settings.videos) ? settings.videos.filter(Boolean) : [];
+    const externalVideoUrls = videos.filter((value) => /^https?:\/\//i.test(String(value || '').trim()));
+
+    const lines = [
+      '[package]',
+      'manifest_version=1',
+      `unique_id=${uniqueId}`,
+      `title=${String(settings.title || projectName).trim()}`,
+      `category=${category}`,
+      `target_device_slug=${targetDeviceSlug}`,
+      '',
+      '[release]',
+      `version_string=${versionString}`,
+      `version_code=${rawVersionCode}`,
+      `runtime_package=runtime/${runtimePkg.filename}`,
+    ];
+
+    if (options.shareSource === true) lines.push('share_source=true');
+
+    if (releaseChannel) lines.push(`release_channel=${releaseChannel}`);
+    if (minFirmwareVersion) lines.push(`min_firmware_version=${minFirmwareVersion}`);
+
+    lines.push(
+      '',
+      '[display]',
+      `short_description=${shortDescription}`,
+      `long_description=${longDescription}`,
+      `icon_path=${iconPath}`,
+    );
+
+    if (authorLabel) lines.push(`author_label=${authorLabel}`);
+    if (screenshots.length) lines.push(`screenshots=${screenshots.join(',')}`);
+    if (externalVideoUrls.length) lines.push(`videos=${externalVideoUrls.join(',')}`);
+
+    lines.push(
+      '',
+      '[trace]',
+      'build_tool=RetroStudio',
+      `build_tool_version=${retroStudioVersion}`,
+    );
+
+    if (sourceRevision) lines.push(`source_revision=${sourceRevision}`);
+    if (buildId) lines.push(`build_id=${buildId}`);
+    lines.push(`built_at_utc=${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}`);
+
+    return lines.join('\n') + '\n';
+  }
+
+  async buildWorkspacePackage(projectName, options = {}) {
+    const projectPackage = options.projectPackage || await this.exportProject(projectName, {
+      returnBlob: true,
+      skipDownload: true,
+    });
+    const zip = new JSZip();
+    zip.file(projectPackage.fileName, new Uint8Array(await projectPackage.blob.arrayBuffer()), {
+      binary: true,
+    });
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    return {
+      blob,
+      fileName: `${projectName}.rws`,
+      projectPackageFileName: projectPackage.fileName,
+    };
+  }
+
+  async publishProject(projectName, options = {}) {
+    const projectPackage = await this.exportProject(projectName, {
+      returnBlob: true,
+      skipDownload: true,
+      shareSource: options.shareSource === true,
+    });
+    const workspacePackage = await this.buildWorkspacePackage(projectName, { projectPackage });
+    const formData = new FormData();
+    formData.set('projectFile', new File([workspacePackage.blob], workspacePackage.fileName, { type: 'application/zip' }));
+    formData.set('packageFile', new File([projectPackage.blob], projectPackage.fileName, { type: 'application/zip' }));
+
+    const response = await fetch('/api/retrostudio/publish', {
+      method: 'POST',
+      body: formData,
+      credentials: 'same-origin',
+    });
+
+    const responseText = await response.text();
+    let payload = null;
+    if (responseText) {
+      try {
+        payload = JSON.parse(responseText);
+      } catch (error) {
+        payload = null;
+      }
+    }
+
+    if (!response.ok) {
+      const errorMessage = payload?.error || responseText || `Publish hook failed with status ${response.status}.`;
+      throw new Error(errorMessage);
+    }
+
+    return payload;
+  }
+
   // Walk the project explorer for a given project's Sources tree and return UI file paths
   getProjectSourceFileUiPaths(projectName) {
   this.ensureDeps();
@@ -54,6 +346,14 @@ class RwpService {
     this.ensureDeps();
     if (!this.fileManager) throw new Error('FileManager unavailable');
 
+    const packageSettings = await this.ensureManagedPackageIcon(
+      projectName,
+      await this.resolveEffectivePackageSettings(
+        projectName,
+        await this.loadPackageSettings(projectName)
+      )
+    );
+
     const uiPaths = this.getProjectSourceFileUiPaths(projectName);
     const manifestFiles = [];
     const zip = new JSZip();
@@ -91,8 +391,8 @@ class RwpService {
           binary = true;
         }
 
-        // Use the UI path inside the ZIP (preserve project/Sources/...)
-        const zipPath = uiPath;
+        // ZIP entries must be storage-relative so package.ini paths like Sources/... resolve.
+        const zipPath = storagePath;
         // Add file bytes to zip; JSZip will compress on generateAsync
         zip.file(zipPath, bytes, { binary: true });
         manifestFiles.push({ path: zipPath, builderId: rec.builderId || null, binary: !!binary });
@@ -110,6 +410,10 @@ class RwpService {
     const runtimeBytes = new Uint8Array(await runtimePkg.blob.arrayBuffer());
     zip.file(`runtime/${runtimePkg.filename}`, runtimeBytes, { binary: true });
 
+    const retroStudioVersion = await this.getRetroStudioVersion();
+    const packageIni = this.buildPackageIni(projectName, packageSettings, runtimePkg, retroStudioVersion, options);
+    zip.file('package.ini', new TextEncoder().encode(packageIni), { binary: true });
+
     // Build manifest and append to ZIP as rwp.json
     const manifest = {
       format: 'retro-watch-project',
@@ -121,7 +425,8 @@ class RwpService {
       runtimePackage: {
         path: `runtime/${runtimePkg.filename}`,
         kind: runtimePkg.packageKind
-      }
+      },
+      packageIniPath: 'package.ini'
     };
     const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest, null, 0));
     zip.file('rwp.json', manifestBytes, { binary: true });
@@ -228,6 +533,10 @@ class RwpService {
       // Backward compatibility fallback
       try { await explorer.ensurePackageScaffold(projectName); } catch (_) {}
     }
+
+    if (options.packageSettingsOverride) {
+      await this.applyPackageSettingsOverride(projectName, options.packageSettingsOverride);
+    }
     
     // Then initialize project configuration
     if (explorer.initializeProjectConfig) {
@@ -267,9 +576,14 @@ class RwpService {
   }
 
   stripProjectPrefix(uiPath) {
-    // Convert "AnyProject/Resources/..." to "Resources/..."
-    const parts = (uiPath || '').split('/');
-    if (parts.length <= 1) return uiPath;
+    const normalizedPath = String(uiPath || '').replace(/\\/g, '/');
+    if (!normalizedPath) return normalizedPath;
+    if (window.ProjectPaths?.parseProjectPath) {
+      return window.ProjectPaths.parseProjectPath(normalizedPath).rest || normalizedPath;
+    }
+
+    const parts = normalizedPath.split('/');
+    if (parts.length <= 1) return normalizedPath;
     return parts.slice(1).join('/');
   }
 
