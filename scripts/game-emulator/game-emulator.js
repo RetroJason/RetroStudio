@@ -1,6 +1,8 @@
 // game-emulator.js
 // Main game engine emulator that integrates audio engine and project explorer
 
+const console = window.RetroStudioLogger?.createConsole('GameEmulator') ?? window.console;
+
 class GameEmulator {
   constructor(contentContainer = null, options = {}) {
     this.contentContainer = contentContainer; // DOM element to render content into
@@ -260,10 +262,12 @@ class GameEmulator {
     this.audioEngine = this.getService('audioEngine');
     if (!this.audioEngine) {
       this.audioEngine = new AudioEngine();
-      const audioSuccess = await this.audioEngine.initialize();
-      if (!audioSuccess) {
-        console.error('[GameEmulator] Failed to initialize audio engine');
-        return false;
+      if (!this.options.runtimeOnly) {
+        const audioSuccess = await this.audioEngine.initialize();
+        if (!audioSuccess) {
+          console.error('[GameEmulator] Failed to initialize audio engine');
+          return false;
+        }
       }
       this.registerExternalService('audioEngine', this.audioEngine);
     }

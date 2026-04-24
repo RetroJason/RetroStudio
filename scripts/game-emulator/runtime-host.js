@@ -1,4 +1,6 @@
 (function () {
+  const console = window.RetroStudioLogger?.createConsole('RuntimeHost') ?? window.console;
+
   function getDefaultPathResolver() {
     return {
       getSourcesRootUi: function () { return 'Sources'; },

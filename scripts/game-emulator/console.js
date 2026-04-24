@@ -1,6 +1,8 @@
 // console.js
 // Modular debug console with filtering, downloading, and real-time output capture
 
+const console = window.RetroStudioLogger?.createConsole('GameConsole') ?? window.console;
+
 class GameConsole {
   constructor(options = {}) {
     this.containerId = options.containerId || 'console-container';

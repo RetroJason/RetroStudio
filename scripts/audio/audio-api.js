@@ -24,6 +24,27 @@ class AudioEngine extends EventTarget {
     this.nextInstanceId = 1;
     
     this.isInitialized = false;
+    this.initializationPromise = null;
+  }
+
+  async ensureInitialized() {
+    if (this.isInitialized) {
+      return true;
+    }
+
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = this.initialize();
+
+    try {
+      return await this.initializationPromise;
+    } finally {
+      if (!this.isInitialized) {
+        this.initializationPromise = null;
+      }
+    }
   }
   
   /**
@@ -49,6 +70,7 @@ class AudioEngine extends EventTarget {
       await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js');
       this.workletNode = new AudioWorkletNode(this.audioContext, 'mixer-worklet');
       this.workletNode.connect(this.audioContext.destination);
+      this.setMasterVolume(this.masterVolume.left, this.masterVolume.right);
       
       // Handle worklet messages
       this.workletNode.port.onmessage = (e) => {
@@ -75,8 +97,9 @@ class AudioEngine extends EventTarget {
    * @returns {Promise<string>} Resource ID
    */
   async loadResource(data, type, name = null) {
-    if (!this.isInitialized) {
-      throw new Error('AudioEngine not initialized');
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      throw new Error('AudioEngine failed to initialize');
     }
     
     const resourceId = `res_${this.nextResourceId++}`;
@@ -148,6 +171,11 @@ class AudioEngine extends EventTarget {
    * @returns {boolean} Success status
    */
   async startSong(resourceId, volume = 1.0, loop = true) {
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      return false;
+    }
+
     const resource = this.resources.get(resourceId);
     if (!resource) {
       console.warn(`[AudioEngine] Song resource not found: ${resourceId}`);
@@ -260,6 +288,11 @@ class AudioEngine extends EventTarget {
    * @returns {string|null} Instance ID for the playing sound, or null on failure
    */
   async startSound(resourceId, volume = 1.0) {
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      return null;
+    }
+
     const resource = this.resources.get(resourceId);
     if (!resource) {
       console.warn(`[AudioEngine] Sound resource not found: ${resourceId}`);
@@ -360,6 +393,10 @@ class AudioEngine extends EventTarget {
   setMasterVolume(left, right = null) {
     this.masterVolume.left = Math.max(0, left);
     this.masterVolume.right = Math.max(0, right !== null ? right : left);
+
+    if (!this.workletNode) {
+      return;
+    }
     
     // Send to worklet
     const avgVolume = (this.masterVolume.left + this.masterVolume.right) / 2;
