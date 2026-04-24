@@ -601,7 +601,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   }
 
   async _listBuildFiles(prefix) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return [];
 
     if (typeof fileManager.listFiles === 'function') {
@@ -609,7 +609,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
       return results.map(r => (typeof r === 'string') ? r : (r.path || r.name || ''));
     }
 
-    const projectExplorer = window.serviceContainer?.get('projectExplorer');
+    const projectExplorer = this._getService('projectExplorer');
     if (!projectExplorer) return [];
 
     const paths = [];
@@ -635,7 +635,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   }
 
   async _loadBinary(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
     const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')

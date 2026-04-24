@@ -31,7 +31,7 @@ class LuaMusicExtensions extends BaseLuaExtension {
   }
 
   _requireAudioEngine(methodName) {
-    this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine || this.audioEngine;
+    this.audioEngine = this._getService('audioEngine') || window.audioEngine || this.audioEngine;
     if (!this.audioEngine) {
       throw new Error(`[Music] ${methodName} requires an available audio engine`);
     }
@@ -59,8 +59,8 @@ class LuaMusicExtensions extends BaseLuaExtension {
   async initialize(luaState) {
     this.setLuaState(luaState);
     
-    this.audioEngine = window.serviceContainer?.get?.('audioEngine') || window.audioEngine;
-    this.resourceManager = window.serviceContainer?.get?.('resourceManager') || window.resourceManager;
+    this.audioEngine = this._getService('audioEngine') || window.audioEngine;
+    this.resourceManager = this._getService('resourceManager') || window.resourceManager;
     
     if (!this.audioEngine) {
       console.warn('[Music] AudioEngine not available');

@@ -5,19 +5,30 @@ class GameEmulator {
   constructor(contentContainer = null, options = {}) {
     this.contentContainer = contentContainer; // DOM element to render content into
     this.options = this.resolveHostOptions(options);
+    this.serviceResolver = typeof this.options.resolveService === 'function'
+      ? this.options.resolveService
+      : null;
+    this.serviceRegistrar = typeof this.options.registerService === 'function'
+      ? this.options.registerService
+      : null;
+    this.pathResolver = this.resolvePathResolver(this.options.pathResolver);
     this.audioEngine = null;
     this.resourceManager = null;
     this.projectExplorer = null;
     this.buildSystem = null;
     this.runtimePackage = null;
     this.runtimeFileManager = null;
-    this.previousFileServices = null;
+    this.hostServices = new Map();
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
     this._inflightLoads = new Map(); // filename -> Promise
     
     // Volume control properties
-    this.currentVolume = 75;
-    this.isMuted = false;
+    const configuredVolume = Number.isFinite(Number(this.options.initialVolume))
+      ? Number(this.options.initialVolume)
+      : 75;
+    this.currentVolume = this.options.startMuted ? 0 : configuredVolume;
+    this.previousVolume = configuredVolume > 0 ? configuredVolume : 75;
+    this.isMuted = this.options.startMuted || this.currentVolume === 0;
     
     // Input management
     this.inputManager = null; // Game input manager for keyboard capture
@@ -26,8 +37,7 @@ class GameEmulator {
     this.gameConsole = null;
     this.consoleInitialized = false;
     
-    // Set up project paths configuration
-    this.setupProjectPaths();
+    this.registerHostService('pathResolver', this.pathResolver);
     this.resourceMap = new Map(); // Centralized resource mapping: resourceId -> resource object
     this.luaState = null; // Lua execution state
     this.isRunning = false; // Game loop state
@@ -49,32 +59,41 @@ class GameEmulator {
       studio: {
         hostProfile: 'studio',
         runtimeOnly: false,
+        showPlaybackControls: true,
         showConsole: true,
         showReload: true,
         showVolumeControls: true,
         showKeyBindings: true,
         overlayImagePath: 'Resources/Images/cp-overlay.png',
         autoFocusCanvas: true,
+        initialVolume: 75,
+        startMuted: false,
       },
       embedded: {
         hostProfile: 'embedded',
         runtimeOnly: true,
+        showPlaybackControls: true,
         showConsole: true,
         showReload: false,
         showVolumeControls: true,
         showKeyBindings: false,
         overlayImagePath: 'Resources/Images/cp-overlay.png',
         autoFocusCanvas: true,
+        initialVolume: 75,
+        startMuted: false,
       },
       storefront: {
         hostProfile: 'storefront',
         runtimeOnly: true,
+        showPlaybackControls: true,
         showConsole: false,
         showReload: false,
         showVolumeControls: true,
         showKeyBindings: false,
         overlayImagePath: 'Resources/Images/cp-overlay.png',
         autoFocusCanvas: true,
+        initialVolume: 75,
+        startMuted: false,
       },
     };
 
@@ -86,32 +105,120 @@ class GameEmulator {
     };
   }
 
+  resolvePathResolver(pathResolver) {
+    return {
+      getSourcesRootUi: typeof pathResolver?.getSourcesRootUi === 'function'
+        ? pathResolver.getSourcesRootUi.bind(pathResolver)
+        : () => 'Sources',
+      getBuildRootUi: typeof pathResolver?.getBuildRootUi === 'function'
+        ? pathResolver.getBuildRootUi.bind(pathResolver)
+        : () => 'Game Objects',
+      getBuildStoragePrefix: typeof pathResolver?.getBuildStoragePrefix === 'function'
+        ? pathResolver.getBuildStoragePrefix.bind(pathResolver)
+        : () => 'build/',
+      normalizeStoragePath: typeof pathResolver?.normalizeStoragePath === 'function'
+        ? pathResolver.normalizeStoragePath.bind(pathResolver)
+        : (path) => path,
+      isBuildArtifact: typeof pathResolver?.isBuildArtifact === 'function'
+        ? pathResolver.isBuildArtifact.bind(pathResolver)
+        : (path) => typeof path === 'string' && path.startsWith('build/'),
+      resolveCompanionAssetPath: typeof pathResolver?.resolveCompanionAssetPath === 'function'
+        ? pathResolver.resolveCompanionAssetPath.bind(pathResolver)
+        : (buildPath, ext) => {
+            if (typeof buildPath !== 'string' || typeof ext !== 'string' || ext.length === 0) {
+              return null;
+            }
+
+            if (this.options.runtimeOnly) {
+              return buildPath.replace(/^build\//i, '').replace(/\.[^.]+$/i, ext);
+            }
+
+            const buildPrefix = typeof pathResolver?.getBuildStoragePrefix === 'function'
+              ? pathResolver.getBuildStoragePrefix()
+              : 'build/';
+            const sourcesRoot = typeof pathResolver?.getSourcesRootUi === 'function'
+              ? pathResolver.getSourcesRootUi()
+              : 'Sources';
+
+            if (!buildPath.startsWith(buildPrefix)) {
+              return null;
+            }
+
+            const rel = buildPath.substring(buildPrefix.length).replace(/\.[^.]+$/i, ext);
+            return `${sourcesRoot}/${rel}`;
+          },
+    };
+  }
+
+  getSourcesRootUi() {
+    return this.pathResolver.getSourcesRootUi();
+  }
+
+  getBuildRootUi() {
+    return this.pathResolver.getBuildRootUi();
+  }
+
+  getBuildStoragePrefix() {
+    return this.pathResolver.getBuildStoragePrefix();
+  }
+
+  normalizeStoragePath(path) {
+    return this.pathResolver.normalizeStoragePath(path);
+  }
+
+  registerExternalService(name, instance) {
+    this.serviceRegistrar?.(name, instance);
+  }
+
   whenReady() {
     return this.readyPromise;
   }
 
+  registerHostService(name, instance) {
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new Error('Host service name must be a non-empty string.');
+    }
+
+    this.hostServices.set(name, instance);
+    return instance;
+  }
+
+  getService(name) {
+    if (this.hostServices.has(name)) {
+      return this.hostServices.get(name);
+    }
+
+    if (this.serviceResolver) {
+      const resolvedService = this.serviceResolver(name);
+      if (resolvedService) {
+        return resolvedService;
+      }
+    }
+
+    switch (name) {
+      case 'gameEmulator':
+        return this;
+      default:
+        return null;
+    }
+  }
+
   getActiveFileManager() {
-    if (this.runtimeFileManager) {
-      return this.runtimeFileManager;
+    const fileManager = this.getService('fileManager');
+    if (fileManager) {
+      return fileManager;
     }
 
-    if (window.serviceContainer?.has?.('fileManager')) {
-      return window.serviceContainer.get('fileManager');
-    }
-
-    return window.fileManager || null;
+    return null;
   }
 
   getActiveFileIOService() {
-    if (this.runtimeFileManager) {
-      return this.runtimeFileManager;
+    const fileIOService = this.getService('fileIOService');
+    if (fileIOService) {
+      return fileIOService;
     }
 
-    if (window.serviceContainer?.has?.('fileIOService')) {
-      return window.serviceContainer.get('fileIOService');
-    }
-
-    return window.fileIOService || null;
+    return null;
   }
 
   setRuntimePackage(runtimePackage) {
@@ -132,38 +239,13 @@ class GameEmulator {
       throw new Error('No runtime file manager is configured.');
     }
 
-    if (!this.previousFileServices) {
-      this.previousFileServices = {
-        fileManager: window.serviceContainer?.has?.('fileManager') ? window.serviceContainer.get('fileManager') : window.fileManager || null,
-        fileIOService: window.serviceContainer?.has?.('fileIOService') ? window.serviceContainer.get('fileIOService') : window.fileIOService || null,
-        windowFileManager: window.fileManager || null,
-        windowFileIOService: window.fileIOService || null,
-      };
-    }
-
-    window.serviceContainer?.registerSingleton?.('fileManager', this.runtimeFileManager);
-    window.serviceContainer?.registerSingleton?.('fileIOService', this.runtimeFileManager);
-    window.fileManager = this.runtimeFileManager;
-    window.fileIOService = this.runtimeFileManager;
+    this.registerHostService('fileManager', this.runtimeFileManager);
+    this.registerHostService('fileIOService', this.runtimeFileManager);
   }
 
   restoreRuntimeFileServices() {
-    if (!this.previousFileServices) {
-      return;
-    }
-
-    const { fileManager, fileIOService, windowFileManager, windowFileIOService } = this.previousFileServices;
-
-    if (fileManager) {
-      window.serviceContainer?.registerSingleton?.('fileManager', fileManager);
-    }
-    if (fileIOService) {
-      window.serviceContainer?.registerSingleton?.('fileIOService', fileIOService);
-    }
-
-    window.fileManager = windowFileManager;
-    window.fileIOService = windowFileIOService;
-    this.previousFileServices = null;
+    this.hostServices.delete('fileManager');
+    this.hostServices.delete('fileIOService');
   }
 
   destroy() {
@@ -171,31 +253,11 @@ class GameEmulator {
     this.restoreRuntimeFileServices();
   }
 
-  // Set up project paths configuration to use correct folder names
-  setupProjectPaths() {
-    if (!window.ProjectPaths) {
-      window.ProjectPaths = {
-        getSourcesRootUi: () => 'Sources',
-        getBuildRootUi: () => 'Game Objects',
-        normalizeStoragePath: (path) => path,
-        isBuildArtifact: (path) => path && path.includes('Game Objects/')
-      };
-      console.log('[GameEmulator] ProjectPaths configured: Sources -> "Sources", Build -> "Game Objects"');
-    }
-  }
-
   async initialize() {
     console.log('=== Game Engine Emulator ===');
-    
-    // Prefer singletons from the service container to avoid duplicate instances
-    const services = window.serviceContainer;
 
     // Initialize or obtain AudioEngine
-    if (services) {
-      try {
-        this.audioEngine = services.get('audioEngine');
-      } catch (_) { /* not registered yet */ }
-    }
+    this.audioEngine = this.getService('audioEngine');
     if (!this.audioEngine) {
       this.audioEngine = new AudioEngine();
       const audioSuccess = await this.audioEngine.initialize();
@@ -203,36 +265,22 @@ class GameEmulator {
         console.error('[GameEmulator] Failed to initialize audio engine');
         return false;
       }
-      services?.register?.('audioEngine', this.audioEngine);
+      this.registerExternalService('audioEngine', this.audioEngine);
     }
+    this.registerHostService('audioEngine', this.audioEngine);
+    this.setVolume(this.currentVolume);
+    this.updateMuteButton();
 
     // Initialize or obtain ResourceManager
-    if (services) {
-      try {
-        this.resourceManager = services.get('resourceManager');
-      } catch (_) { /* not registered yet */ }
-    }
+    this.resourceManager = this.getService('resourceManager');
     if (!this.resourceManager) {
       this.resourceManager = new ResourceManager(this.audioEngine);
-      services?.register?.('resourceManager', this.resourceManager);
+      this.registerExternalService('resourceManager', this.resourceManager);
     }
+    this.registerHostService('resourceManager', this.resourceManager);
 
     if (!this.options.runtimeOnly) {
-      // Initialize or obtain BuildSystem
-      if (services) {
-        try {
-          this.buildSystem = services.get('buildSystem');
-          if (this.buildSystem) {
-            window.buildSystem = this.buildSystem; // Make available globally for builders
-          }
-        } catch (e) {
-          console.log('[GameEditor] BuildSystem service not yet available');
-          this.buildSystem = null;
-        }
-      } else {
-        console.log('[GameEditor] Service container not available, BuildSystem will be initialized later');
-        this.buildSystem = null;
-      }
+      this.buildSystem = this.getService('buildSystem');
     }
     
     // Listen for audio engine events
@@ -240,34 +288,17 @@ class GameEmulator {
     this.audioEngine.addEventListener('resourceUpdated', this.onResourceUpdated.bind(this));
     
     if (!this.options.runtimeOnly) {
-      // Initialize or obtain TabManager
-      if (services) {
-        try {
-          this.tabManager = services.get('tabManager');
-        } catch (_) { /* not registered yet */ }
-      }
-      if (!this.tabManager) {
-        this.tabManager = new TabManager();
-        services?.registerSingleton?.('tabManager', this.tabManager);
-      }
-      window.tabManager = this.tabManager; // Make available globally
+      this.tabManager = this.getService('tabManager');
       
-      // Listen for tab changes to update save button state and project explorer
-      this.tabManager.addEventListener('tabSwitched', (data) => {
-        this.updateSaveButtonState();
-        // Project explorer highlighting is handled automatically in TabManager
-      });
+      if (this.tabManager) {
+        // Listen for tab changes to update save button state and project explorer
+        this.tabManager.addEventListener('tabSwitched', (data) => {
+          this.updateSaveButtonState();
+          // Project explorer highlighting is handled automatically in TabManager
+        });
+      }
       
-      // Initialize or obtain ProjectExplorer
-      if (services) {
-        try {
-          this.projectExplorer = services.get('projectExplorer');
-        } catch (_) { /* not registered yet */ }
-      }
-      if (!this.projectExplorer) {
-        this.projectExplorer = new ProjectExplorer();
-        services?.register?.('projectExplorer', this.projectExplorer);
-      }
+      this.projectExplorer = this.getService('projectExplorer');
       
       // Listen for file added events from ProjectExplorer
       document.addEventListener('projectFileAdded', this.handleFileAddedEvent.bind(this));
@@ -307,18 +338,9 @@ class GameEmulator {
   // Initialize BuildSystem if it wasn't available during initial setup
   initializeBuildSystemIfNeeded() {
     if (!this.buildSystem) {
-      const services = window.serviceContainer;
-      if (services) {
-        try {
-          console.log('[GameEditor] Late-initializing BuildSystem from service container');
-          this.buildSystem = services.get('buildSystem');
-          if (this.buildSystem) {
-            window.buildSystem = this.buildSystem;
-            return true;
-          }
-        } catch (e) {
-          console.log('[GameEditor] BuildSystem service not yet available');
-        }
+      this.buildSystem = this.getService('buildSystem');
+      if (this.buildSystem) {
+        return true;
       }
     }
     return !!this.buildSystem;
@@ -598,13 +620,6 @@ class GameEmulator {
         }
       }
 
-      const hostedStudioApi = window.retrowwwHostedStudio;
-      const focusedProjectName = this.projectExplorer?.getFocusedProjectName?.() || null;
-      if (hostedStudioApi && typeof hostedStudioApi.saveProject === 'function' && focusedProjectName) {
-        await hostedStudioApi.saveProject(focusedProjectName, { skipTabSave: true });
-        this.updateStatus('Saved project to cloud, building project...', 'info');
-      }
-      
       // Debug project explorer structure
       console.log('[GameEditor] ProjectExplorer:', this.projectExplorer);
       console.log('[GameEditor] ProjectData structure:', this.projectExplorer?.projectData?.structure);
@@ -650,7 +665,7 @@ class GameEmulator {
     const buildFiles = [];
     
   const project = this.projectExplorer?.getFocusedProjectName?.();
-  const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
+  const buildRoot = this.getBuildRootUi();
   const buildNode = project ? this.projectExplorer.projectData.structure[project]?.children?.[buildRoot] : this.projectExplorer?.projectData?.structure?.[buildRoot];
   if (!buildNode) {
       return buildFiles;
@@ -915,7 +930,7 @@ class GameEmulator {
   findMainLuaScript() {
     // Look for main.lua in the Lua directory
   const project = this.projectExplorer?.getFocusedProjectName?.();
-  const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
+  const sourcesRoot = this.getSourcesRootUi();
   const luaFolder = project ? this.projectExplorer.projectData.structure[project]?.children?.[sourcesRoot]?.children?.Lua?.children
                 : this.projectExplorer.projectData.structure[sourcesRoot]?.Lua?.children;
     if (luaFolder && luaFolder['main.lua']) {
@@ -1260,9 +1275,10 @@ class GameEmulator {
     try {
       // Prefer storage backend to enumerate possible build files
       const candidates = [];
-      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
+      const fileIOService = this.getActiveFileIOService();
+      if (fileIOService && typeof fileIOService.listFiles === 'function') {
         console.log(`[GameEditor] Listing build files for ${filename}...`);
-        const buildRecords = await window.fileIOService.listFiles('build');
+        const buildRecords = await fileIOService.listFiles(this.getBuildStoragePrefix());
         console.log(`[GameEditor] Found ${buildRecords.length} build records:`, buildRecords);
         for (const rec of buildRecords) {
           const recPath = rec.path || rec;
@@ -1287,7 +1303,7 @@ class GameEmulator {
         for (const path of candidates) {
         try {
             console.log(`[GameEditor] Attempting to load candidate: ${path}`);
-            const rec = window.fileIOService ? await window.fileIOService.loadFile(path) : null;
+            const rec = fileIOService ? await fileIOService.loadFile(path) : null;
           if (!rec) {
             console.log(`[GameEditor] No record found for: ${path}`);
             continue;
@@ -1320,9 +1336,10 @@ class GameEmulator {
     console.log(`[GameEditor] ${filename} not found in build files, checking Resources in storage...`);
   try {
       const resourceCandidates = [];
-      if (window.fileIOService && typeof window.fileIOService.listFiles === 'function') {
-    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Resources';
-    const resRecords = await window.fileIOService.listFiles(sourcesRoot);
+      const fileIOService = this.getActiveFileIOService();
+      if (fileIOService && typeof fileIOService.listFiles === 'function') {
+    const sourcesRoot = this.getSourcesRootUi();
+    const resRecords = await fileIOService.listFiles(sourcesRoot);
         for (const rec of resRecords) {
           const recPath = rec.path || rec;
           if ((recPath || '').endsWith(filename)) {
@@ -1346,7 +1363,7 @@ class GameEmulator {
           for (const key of resourceCandidates) {
           try {
               const path = key;
-              const rec = await window.fileIOService.loadFile(path);
+              const rec = await fileIOService.loadFile(path);
             if (!rec) continue;
             let buf;
             if (rec.content instanceof ArrayBuffer) {
@@ -1579,7 +1596,9 @@ class GameEmulator {
         return null;
       }
       
-      const normalizedPath = window.ProjectPaths?.normalizeStoragePath?.(filePath) || filePath;
+      const normalizedPath = fileManager === this.runtimeFileManager
+        ? filePath
+        : this.normalizeStoragePath(filePath);
       console.log(`[GameEditor] Loading file content: ${normalizedPath}`);
       
       const result = await fileManager.loadFile(normalizedPath);
@@ -2494,7 +2513,17 @@ class GameEmulator {
     const overlay = this.options.overlayImagePath
       ? `<img class="game-screen-overlay" src="${this.options.overlayImagePath}" alt="" aria-hidden="true">`
       : '';
-    const reloadButton = this.options.showReload
+    const playbackControls = this.options.showPlaybackControls !== false
+      ? `<button class="game-control-btn" id="playPauseBtn" title="Play/Pause Game">
+          <span class="btn-icon">▶️</span>
+          <span class="btn-text">Play</span>
+        </button>
+        <button class="game-control-btn" id="stopBtn" title="Stop Game">
+          <span class="btn-icon">⏹️</span>
+          <span class="btn-text">Stop</span>
+        </button>`
+      : '';
+    const reloadButton = this.options.showPlaybackControls !== false && this.options.showReload
       ? `<button class="game-control-btn" id="reloadBtn" title="Rebuild and Reload Game">
           <span class="btn-icon">🔄</span>
           <span class="btn-text">Reload</span>
@@ -2580,20 +2609,10 @@ class GameEmulator {
         </div>`
       : '';
 
+    const controls = `${playbackControls}${reloadButton}${volumeControls}${utilityControls}`;
+
     this.contentContainer.innerHTML = `
-      <div class="game-controls">
-        <button class="game-control-btn" id="playPauseBtn" title="Play/Pause Game">
-          <span class="btn-icon">▶️</span>
-          <span class="btn-text">Play</span>
-        </button>
-        <button class="game-control-btn" id="stopBtn" title="Stop Game">
-          <span class="btn-icon">⏹️</span>
-          <span class="btn-text">Stop</span>
-        </button>
-        ${reloadButton}
-        ${volumeControls}
-        ${utilityControls}
-      </div>
+      ${controls ? `<div class="game-controls">${controls}</div>` : ''}
       
       <div class="game-main-area">
         <div class="game-canvas-container">
@@ -2611,6 +2630,8 @@ class GameEmulator {
     `;
 
     // Initialize empty console - only Lua print() should write to it
+  this.setVolume(this.currentVolume);
+  this.updateMuteButton();
     
     // Setup event listeners
     this.setupGameEngineEvents();

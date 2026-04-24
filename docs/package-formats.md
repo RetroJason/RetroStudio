@@ -121,10 +121,8 @@ title = <project or configured title>
 author = <configured author>
 version = <configured version>
 description = <configured description>
-type = app
+type = <configured category>
 runtime = rwa
-icon32 = <path or empty>
-icon128 = <path or empty>
 
 [display]
 fps = 30
@@ -134,6 +132,8 @@ orientation = auto
 screenshots = <comma-separated>
 videos = <comma-separated>
 ```
+
+`type` is emitted from package settings `category` (for example `watch`, `low_power_watch`, `lua_app`, or `lua_game`). RetroStudio now fails export if it has to synthesize `app.ini` and no category is configured. Watch-face runtime packages (`watch`, `low_power_watch`) omit runtime icon fields entirely, because device install should not consume the package icon from `.rwa` metadata.
 
 ### `palette_map.pmap` (PMAP) Binary Format
 

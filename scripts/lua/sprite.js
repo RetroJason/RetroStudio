@@ -655,9 +655,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
      ════════════════════════════════════════════════════════════════════ */
 
   _buildPrefix() {
-    return (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
-      ? window.ProjectPaths.getBuildStoragePrefix()
-      : 'build/';
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.getBuildStoragePrefix?.() || 'build/';
   }
 
   /**
@@ -667,7 +666,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     try {
       const buildPrefix = this._buildPrefix();
 
-      const fileManager = window.serviceContainer?.get('fileManager');
+      const fileManager = this._getService('fileManager');
       if (!fileManager) {
         console.warn('[LuaSprite] FileManager not available — sprites will not load');
         return;
@@ -712,7 +711,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * List all files under a storage prefix.
    */
   async _listBuildFiles(prefix) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return [];
 
     // Try fileManager.listFiles if available
@@ -722,17 +721,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
       return results.map(r => (typeof r === 'string') ? r : (r.path || r.name || ''));
     }
 
-    // Fallback: scan project explorer build tree
-    const projectExplorer = window.serviceContainer?.get('projectExplorer');
-    if (!projectExplorer) return [];
-
-    const paths = [];
-    const buildRoot = (window.ProjectPaths && typeof window.ProjectPaths.getBuildRootUi === 'function')
-      ? window.ProjectPaths.getBuildRootUi()
-      : 'Game Objects';
-
-    this._collectPaths(projectExplorer.projectData?.structure, '', buildRoot, prefix, paths);
-    return paths;
+    throw new Error('[LuaSprite] FileManager.listFiles() is required for sprite asset discovery');
   }
 
   _collectPaths(node, currentPath, buildRoot, prefix, out) {
@@ -750,12 +739,11 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   }
 
   async _loadBinary(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;

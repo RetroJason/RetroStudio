@@ -17,17 +17,13 @@ class MonacoIntelliSenseService {
      */
     async loadExtensions(extensionFilePath = 'scripts/lua/extensions.json') {
         try {
-            console.log('[MonacoIntelliSenseService] Loading extensions from:', extensionFilePath);
-            
-            const response = await fetch(extensionFilePath);
-            if (!response.ok) {
-                throw new Error(`Failed to load extensions: ${response.status}`);
+            console.log('[MonacoIntelliSenseService] Loading extensions from simulator component:', extensionFilePath);
+
+            if (!window.EmbeddedRuntimePlayer || typeof window.EmbeddedRuntimePlayer.getExtensionDefinitions !== 'function') {
+                throw new Error('Simulator component extension provider is unavailable.');
             }
-            
-            const text = await response.text();
-            // Remove JSON comments for parsing
-            const cleanJson = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-            this.extensionData = JSON.parse(cleanJson);
+
+            this.extensionData = await window.EmbeddedRuntimePlayer.getExtensionDefinitions(extensionFilePath);
             
             console.log('[MonacoIntelliSenseService] Loaded extension data:', this.extensionData.name, 'v' + this.extensionData.version);
             

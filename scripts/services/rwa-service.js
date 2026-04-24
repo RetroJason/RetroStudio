@@ -29,6 +29,7 @@ class RwaService {
       formatVersion: 1,
       projectName,
       packageKind: 'rwa',
+      category: '',
       title: projectName,
       author: '',
       version: '1.0.0',
@@ -37,6 +38,18 @@ class RwaService {
       screenshots: [],
       videos: []
     };
+  }
+
+  getAppManifestType(settings) {
+    const category = String(settings?.category || '').trim();
+    if (!category) {
+      throw new Error('Package Settings: Category is required for app.ini.');
+    }
+    return category;
+  }
+
+  categoryOmitsRuntimeIcons(category) {
+    return category === 'watch' || category === 'low_power_watch';
   }
 
   async loadPackageSettings(projectName) {
@@ -71,17 +84,17 @@ class RwaService {
     const shots = Array.isArray(s.screenshots) ? s.screenshots : [];
     const vids = Array.isArray(s.videos) ? s.videos : [];
     const icons = s.icons || {};
+    const manifestType = this.getAppManifestType(s);
+    const includeRuntimeIcons = !this.categoryOmitsRuntimeIcons(manifestType);
 
-    return [
+    const lines = [
       '[app]',
       `title = ${s.title || projectName}`,
       `author = ${s.author || 'Unknown'}`,
       `version = ${s.version || '1.0.0'}`,
       `description = ${s.description || 'Exported from RetroStudio'}`,
-      'type = app',
+      `type = ${manifestType}`,
       `runtime = ${this.normalizePackageKind(s.packageKind)}`,
-      `icon32 = ${icons.icon32 || ''}`,
-      `icon128 = ${icons.icon128 || ''}`,
       '',
       '[display]',
       'fps = 30',
@@ -91,7 +104,13 @@ class RwaService {
       `screenshots = ${shots.join(',')}`,
       `videos = ${vids.join(',')}`,
       ''
-    ].join('\n');
+    ];
+
+    if (includeRuntimeIcons) {
+      lines.splice(7, 0, `icon32 = ${icons.icon32 || ''}`, `icon128 = ${icons.icon128 || ''}`);
+    }
+
+    return lines.join('\n');
   }
 
   async buildRuntimePackage(projectName, options = {}) {
@@ -153,6 +172,17 @@ class RwaService {
       zip.file('app.ini', new TextEncoder().encode(ini), { binary: true });
     }
 
+    const framesetPaths = await this.collectRuntimeFramesets();
+    for (const storagePath of framesetPaths) {
+      const rec = await this.fileManager.loadFile(storagePath);
+      if (!rec) continue;
+
+      const normalized = this.normalizeRecord(rec);
+      if (!normalized) continue;
+
+      zip.file(storagePath, normalized.bytes, { binary: true });
+    }
+
     const blob = await zip.generateAsync({
       type: 'blob',
       compression: 'DEFLATE',
@@ -164,8 +194,21 @@ class RwaService {
       packageKind,
       filename: outputName,
       settings: packageSettings,
-      fileCount: buildPaths.length
+      fileCount: buildPaths.length + framesetPaths.length
     };
+  }
+
+  async collectRuntimeFramesets() {
+    if (!this.fileManager || typeof this.fileManager.listFiles !== 'function') {
+      return [];
+    }
+
+    const sourcesRoot = this.getSourcesRootUi().replace(/\/$/, '');
+    const records = await this.fileManager.listFiles(sourcesRoot);
+
+    return (records || [])
+      .map((rec) => rec?.path || rec)
+      .filter((p) => typeof p === 'string' && p.startsWith(`${sourcesRoot}/`) && p.toLowerCase().endsWith('.frameset'));
   }
 
   async exportProject(projectName, options = {}) {

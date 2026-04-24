@@ -272,7 +272,15 @@ class RetroStudioApplication {
 
     // Create and start main game emulator with content container
     const gameEngineContent = document.getElementById('gameEngineContent');
-    const gameEmulator = new GameEmulator(gameEngineContent);
+    if (!window.RuntimeSimulatorHost || typeof window.RuntimeSimulatorHost.createStudioSimulator !== 'function') {
+      throw new Error('RuntimeSimulatorHost.createStudioSimulator is unavailable.');
+    }
+
+    const simulatorHost = window.RuntimeSimulatorHost.createStudioSimulator({
+      runtimeHostElement: gameEngineContent,
+      hostProfile: 'studio',
+    });
+    const gameEmulator = simulatorHost.gameEmulator;
     this.services.registerSingleton('gameEmulator', gameEmulator);
     
     // Make legacy globals available for backward compatibility

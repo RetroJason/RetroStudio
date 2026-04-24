@@ -4,6 +4,7 @@
 class BaseLuaExtension {
   constructor() {
     this.luaState = null;
+    this.gameEmulator = null;
   }
 
   setLuaState(luaState) {
@@ -53,6 +54,22 @@ class BaseLuaExtension {
     }
 
     return this._coerceBooleanArg(raw, methodName, argName);
+  }
+
+  _getGameEmulator() {
+    return this.gameEmulator || null;
+  }
+
+  _getService(name) {
+    const emulator = this._getGameEmulator();
+    if (emulator && typeof emulator.getService === 'function') {
+      const service = emulator.getService(name);
+      if (service) {
+        return service;
+      }
+    }
+
+    return null;
   }
 
   /**

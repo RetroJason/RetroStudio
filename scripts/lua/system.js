@@ -7,10 +7,23 @@ class LuaSystemExtensions extends BaseLuaExtension {
     this.gameEmulator = gameEmulator;
   }
 
+  _buildChargeState() {
+    return {
+      plugged_in: false,
+      battery_voltage_mv: 4200,
+      charger_state: 'off',
+      battery_percent: 100,
+      charger_main_fsm: 'charger_disabled',
+      charger_main_fsm_raw: 0,
+      charger_jeita_region: 'charger_disabled',
+      charger_die_temp_limit_exceeded: false,
+      charger_ok_irq_status: 0,
+      charger_nok_irq_status: 0,
+    };
+  }
+
   _resolveGameEmulator() {
-    const emulator = this.gameEmulator
-      || window.serviceContainer?.get?.('gameEmulator')
-      || window.gameEmulator;
+    const emulator = this.gameEmulator || this._getService('gameEmulator') || window.gameEmulator;
 
     if (!emulator) {
       throw new Error('[System] SetClearColor emulator backend unavailable');
@@ -59,6 +72,14 @@ class LuaSystemExtensions extends BaseLuaExtension {
       b: (rgb & 0xFF) / 255,
       a: 1,
     };
+  }
+
+  /**
+   * Return the simulated battery/charger state table.
+   * Lua usage: System.GetChargeState()
+   */
+  GetChargeState() {
+    return this._buildChargeState();
   }
 }
 

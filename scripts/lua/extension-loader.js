@@ -9,6 +9,10 @@ class LuaExtensionLoader {
     this.reloadToken = Date.now().toString();
   }
 
+  getExtensionClassName(categoryName) {
+    return `Lua${categoryName}Extensions`;
+  }
+
   buildScriptUrl(relativePath) {
     return `${relativePath}?v=${this.reloadToken}`;
   }
@@ -37,11 +41,16 @@ class LuaExtensionLoader {
    */
   async loadExtensionFile(categoryName) {
     try {
+      const className = this.getExtensionClassName(categoryName);
+      if (typeof window[className] === 'function') {
+        return;
+      }
+
       const scriptId = `lua-extension-${categoryName.toLowerCase()}`;
 
       const existingScript = document.getElementById(scriptId);
       if (existingScript) {
-        existingScript.remove();
+        return;
       }
 
       const script = document.createElement('script');
@@ -103,11 +112,15 @@ class LuaExtensionLoader {
    */
   async loadBaseExtensionFile() {
     try {
+      if (typeof window.BaseLuaExtension === 'function') {
+        return;
+      }
+
       const scriptId = 'lua-base-extension';
 
       const existingScript = document.getElementById(scriptId);
       if (existingScript) {
-        existingScript.remove();
+        return;
       }
 
       const script = document.createElement('script');
@@ -139,7 +152,7 @@ class LuaExtensionLoader {
   async initializeCategory(category, luaState) {
     try {
       const categoryName = category.name;
-      const className = `Lua${categoryName}Extensions`;
+      const className = this.getExtensionClassName(categoryName);
       
       // Check if the extension class exists
       if (window[className]) {
@@ -217,7 +230,6 @@ class LuaExtensionLoader {
       }
     }
     this.extensions.clear();
-    this.reloadToken = Date.now().toString();
   }
 
   /**

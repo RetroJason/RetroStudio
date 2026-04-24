@@ -127,12 +127,12 @@ class LuaImageExtensions extends BaseLuaExtension {
       return;
     }
 
-    const { centerX, centerY } = this._resolveFrameCenter(frame);
+    const { centerX, centerY } = this._resolveFrameCenter(frame, asset);
     state._posX = displayCenterX - centerX;
     state._posY = displayCenterY - centerY;
   }
 
-  _resolveFrameCenter(frame) {
+  _resolveFrameCenter(frame, asset = null) {
     const w = Math.max(0, Number(frame?.w) || 0);
     const h = Math.max(0, Number(frame?.h) || 0);
 
@@ -142,10 +142,41 @@ class LuaImageExtensions extends BaseLuaExtension {
     const rawX = Number(frame?.centerX);
     const rawY = Number(frame?.centerY);
 
-    const centerX = Number.isFinite(rawX) && rawX >= 0 && rawX <= w ? rawX : fallbackX;
-    const centerY = Number.isFinite(rawY) && rawY >= 0 && rawY <= h ? rawY : fallbackY;
+    const hasExplicitCenterX = Number.isFinite(rawX) && rawX >= 0 && rawX <= w;
+    const hasExplicitCenterY = Number.isFinite(rawY) && rawY >= 0 && rawY <= h;
 
-    return { centerX, centerY };
+    if (hasExplicitCenterX || hasExplicitCenterY) {
+      return {
+        centerX: hasExplicitCenterX ? rawX : fallbackX,
+        centerY: hasExplicitCenterY ? rawY : fallbackY,
+      };
+    }
+
+    // Watch-hand style image assets rely on an implicit base-center pivot when
+    // no explicit frame center metadata exists. Midpoint fallback renders them
+    // as tiny slashes around the dial center in the standalone runtime.
+    if (this._shouldUseNeedlePivotFallback(frame, asset)) {
+      return {
+        centerX: fallbackX,
+        centerY: Math.max(0, h - Math.round(w / 2)),
+      };
+    }
+
+    return { centerX: fallbackX, centerY: fallbackY };
+  }
+
+  _shouldUseNeedlePivotFallback(frame, asset) {
+    if (!frame || !asset || !Array.isArray(asset.frames) || asset.frames.length !== 1) {
+      return false;
+    }
+
+    const w = Math.max(0, Number(frame?.w) || 0);
+    const h = Math.max(0, Number(frame?.h) || 0);
+    if (w <= 0 || h <= 0) {
+      return false;
+    }
+
+    return h >= (w * 4);
   }
 
   Destroy() {
@@ -365,7 +396,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       const flipX = !!(s._attributes & 0x08);
       const flipY = !!(s._attributes & 0x04);
 
-      const resolvedCenter = this._resolveFrameCenter(frame);
+      const resolvedCenter = this._resolveFrameCenter(frame, asset);
       const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
       const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
 
@@ -531,7 +562,7 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   async _loadFramesForTexture(d2Path, texWidth, texHeight) {
-    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: texWidth, h: texHeight }];
+    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: texWidth, h: texHeight, centerX: Math.round((texWidth || 0) / 2), centerY: Math.round((texHeight || 0) / 2) }];
 
     const framesetStoragePath = this._toCompanionSourcePath(d2Path, '.frameset');
     if (!framesetStoragePath) return fallback;
@@ -548,6 +579,8 @@ class LuaImageExtensions extends BaseLuaExtension {
       const y = Math.max(0, parseInt(src.y, 10) || 0);
       const w = Math.max(1, parseInt(src.w, 10) || texWidth || 1);
       const h = Math.max(1, parseInt(src.h, 10) || texHeight || 1);
+      const rawCenterX = Number(src.centerX);
+      const rawCenterY = Number(src.centerY);
       out.push({
         id: Number.isFinite(src.id) ? src.id : i,
         name: src.name || `frame_${i}`,
@@ -555,6 +588,8 @@ class LuaImageExtensions extends BaseLuaExtension {
         y,
         w,
         h,
+        centerX: Number.isFinite(rawCenterX) ? rawCenterX : Math.round(w / 2),
+        centerY: Number.isFinite(rawCenterY) ? rawCenterY : Math.round(h / 2),
       });
     }
 
@@ -564,25 +599,17 @@ class LuaImageExtensions extends BaseLuaExtension {
   _toCompanionSourcePath(buildPath, ext) {
     if (!buildPath || !ext) return null;
 
-    const buildPrefix = this._buildPrefix();
-    if (!buildPath.startsWith(buildPrefix)) return null;
-
-    const rel = buildPath.substring(buildPrefix.length).replace(/\.d2$/i, ext);
-    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
-      ? window.ProjectPaths.getSourcesRootUi()
-      : 'Sources';
-
-    return `${sourcesRoot}/${rel}`;
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.resolveCompanionAssetPath?.(buildPath, ext) || null;
   }
 
   _buildPrefix() {
-    return (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
-      ? window.ProjectPaths.getBuildStoragePrefix()
-      : 'build/';
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.getBuildStoragePrefix?.() || 'build/';
   }
 
   async _listBuildFiles(prefix) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return [];
 
     if (typeof fileManager.listFiles === 'function') {
@@ -590,16 +617,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       return results.map((r) => (typeof r === 'string') ? r : (r.path || r.name || ''));
     }
 
-    const projectExplorer = window.serviceContainer?.get('projectExplorer');
-    if (!projectExplorer) return [];
-
-    const paths = [];
-    const buildRoot = (window.ProjectPaths && typeof window.ProjectPaths.getBuildRootUi === 'function')
-      ? window.ProjectPaths.getBuildRootUi()
-      : 'Game Objects';
-
-    this._collectPaths(projectExplorer.projectData?.structure, '', buildRoot, prefix, paths);
-    return paths;
+    throw new Error('[LuaImage] FileManager.listFiles() is required for image asset discovery');
   }
 
   _collectPaths(node, currentPath, buildRoot, prefix, out) {
@@ -616,12 +634,11 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   async _loadBinary(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;
@@ -644,12 +661,11 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   async _loadJson(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;
