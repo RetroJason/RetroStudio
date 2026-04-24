@@ -999,6 +999,12 @@ class RibbonToolbar {
 
     window.gameEmulator?.updateStatus?.('Connecting to watch...', 'info');
     const name = await this.watchClient.connect();
+    const unixSeconds = Math.floor(Date.now() / 1000);
+    const tzOffsetMinutesEast = -new Date().getTimezoneOffset();
+    const timeResponse = await this.watchClient.setTimeUnix(unixSeconds, tzOffsetMinutesEast);
+    if (timeResponse.status !== BLE.STATUS.OK) {
+      throw new Error(`SET_TIME failed: ${BLE.getStatusName(timeResponse.status)}`);
+    }
     const fwVersion = await this.watchClient.ping('version-probe');
     this.updateWatchButtonState();
     window.gameEmulator?.updateStatus?.(`Connected to ${name} — fw ${fwVersion}`, 'success');
