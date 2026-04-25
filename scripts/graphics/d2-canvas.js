@@ -553,19 +553,21 @@ class D2Canvas {
     if (!gl) throw new Error('D2Canvas: WebGL 2 not available');
     this.gl = gl;
 
-    // Compile program
-    this._program = this._buildProgram(gl, VERT_SRC, FRAG_SRC);
-
-    // Cache uniform locations
+    this._program = null;
     this._uloc = {};
-    const names = [
-      'u_dstPos', 'u_dstSize', 'u_canvasSize', 'u_srcUV0', 'u_srcUV1',
-      'u_rotation', 'u_pivot',
-      'u_texData', 'u_palette', 'u_format', 'u_texWidth', 'u_texHeight',
-      'u_texStride', 'u_palOffset', 'u_colorKey', 'u_filter', 'u_aa',
-      'u_preRotated', 'u_tint',
-    ];
-    for (const n of names) this._uloc[n] = gl.getUniformLocation(this._program, n);
+    this._pendingProgram = null;
+    this._pendingVertexShader = null;
+    this._pendingFragmentShader = null;
+    this._parallelShaderCompile = gl.getExtension('KHR_parallel_shader_compile');
+
+    // Compile program. When supported, let the browser/GPU driver complete
+    // shader compilation asynchronously so cold startup does not block the UI thread.
+    if (this._parallelShaderCompile) {
+      this._beginProgramBuild(gl, VERT_SRC, FRAG_SRC);
+    } else {
+      this._program = this._buildProgram(gl, VERT_SRC, FRAG_SRC);
+      this._cacheUniformLocations();
+    }
 
     // Create empty VAO (vertex-less rendering)
     this._vao = gl.createVertexArray();
@@ -815,7 +817,10 @@ class D2Canvas {
    */
   blit(tex, opts = {}) {
     const gl = this.gl;
-    const prog = this._program;
+    const prog = this._ensureProgramReady();
+    if (!prog) {
+      return false;
+    }
     gl.useProgram(prog);
     gl.bindVertexArray(this._vao);
 
@@ -888,6 +893,7 @@ class D2Canvas {
 
     // Draw fullscreen quad (4 vertices, triangle strip)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    return true;
   }
 
   /** No-op for now; WebGL presents automatically. */
@@ -919,9 +925,105 @@ class D2Canvas {
   destroy() {
     const gl = this.gl;
     if (this._program) { gl.deleteProgram(this._program); this._program = null; }
+    if (this._pendingProgram) { gl.deleteProgram(this._pendingProgram); this._pendingProgram = null; }
+    if (this._pendingVertexShader) { gl.deleteShader(this._pendingVertexShader); this._pendingVertexShader = null; }
+    if (this._pendingFragmentShader) { gl.deleteShader(this._pendingFragmentShader); this._pendingFragmentShader = null; }
     if (this._vao) { gl.deleteVertexArray(this._vao); this._vao = null; }
     if (this._paletteTex) { gl.deleteTexture(this._paletteTex); this._paletteTex = null; }
     // Note: caller should delete any textures they created.
+  }
+
+  _cacheUniformLocations() {
+    const names = [
+      'u_dstPos', 'u_dstSize', 'u_canvasSize', 'u_srcUV0', 'u_srcUV1',
+      'u_rotation', 'u_pivot',
+      'u_texData', 'u_palette', 'u_format', 'u_texWidth', 'u_texHeight',
+      'u_texStride', 'u_palOffset', 'u_colorKey', 'u_filter', 'u_aa',
+      'u_preRotated', 'u_tint',
+    ];
+    for (const n of names) this._uloc[n] = this.gl.getUniformLocation(this._program, n);
+  }
+
+  _beginProgramBuild(gl, vSrc, fSrc) {
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, vSrc);
+    gl.compileShader(vs);
+
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, fSrc);
+    gl.compileShader(fs);
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+
+    this._pendingProgram = prog;
+    this._pendingVertexShader = vs;
+    this._pendingFragmentShader = fs;
+  }
+
+  _ensureProgramReady() {
+    if (this._program) {
+      return this._program;
+    }
+
+    if (!this._pendingProgram) {
+      return null;
+    }
+
+    const gl = this.gl;
+    const ext = this._parallelShaderCompile;
+    if (ext && !gl.getProgramParameter(this._pendingProgram, ext.COMPLETION_STATUS_KHR)) {
+      return null;
+    }
+
+    const prog = this._pendingProgram;
+    const vs = this._pendingVertexShader;
+    const fs = this._pendingFragmentShader;
+
+    this._pendingProgram = null;
+    this._pendingVertexShader = null;
+    this._pendingFragmentShader = null;
+
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const linkLog = gl.getProgramInfoLog(prog);
+      const vsLog = vs ? gl.getShaderInfoLog(vs) : '';
+      const fsLog = fs ? gl.getShaderInfoLog(fs) : '';
+      console.error('[D2Canvas] Link failed. Program log:', linkLog || '(empty)');
+      console.error('[D2Canvas] Vertex shader log:', vsLog || '(empty)');
+      console.error('[D2Canvas] Fragment shader log:', fsLog || '(empty)');
+      console.error('[D2Canvas] GL error:', gl.getError());
+      gl.deleteProgram(prog);
+      if (vs) gl.deleteShader(vs);
+      if (fs) gl.deleteShader(fs);
+      throw new Error('D2Canvas: Shader link failed:\n' + (linkLog || vsLog || fsLog || 'no details'));
+    }
+
+    if (vs) {
+      if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(vs);
+        gl.deleteProgram(prog);
+        gl.deleteShader(vs);
+        if (fs) gl.deleteShader(fs);
+        throw new Error(`D2Canvas: VERTEX shader compile failed:\n${log}`);
+      }
+      gl.deleteShader(vs);
+    }
+
+    if (fs) {
+      if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+        const log = gl.getShaderInfoLog(fs);
+        gl.deleteProgram(prog);
+        gl.deleteShader(fs);
+        throw new Error(`D2Canvas: FRAGMENT shader compile failed:\n${log}`);
+      }
+      gl.deleteShader(fs);
+    }
+
+    this._program = prog;
+    this._cacheUniformLocations();
+    return this._program;
   }
 
   /* ──────────────────────────────────────────────────────────────── */
