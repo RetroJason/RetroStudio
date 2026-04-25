@@ -352,20 +352,48 @@ class GameEmulator {
   
   // Load external scripts dynamically for self-contained module
   async loadScript(src) {
-    return new Promise((resolve, reject) => {
-      // Check if script is already loaded
-      const existingScript = document.querySelector(`script[src="${src}"]`);
+    if (!window.__retroStudioScriptLoads) {
+      window.__retroStudioScriptLoads = new Map();
+    }
+
+    if (window.__retroStudioScriptLoads.has(src)) {
+      return window.__retroStudioScriptLoads.get(src);
+    }
+
+    const loadPromise = new Promise((resolve, reject) => {
+      const normalizedSrc = new URL(src, window.location.href).href;
+
+      // Check if script is already loaded or currently loading
+      const existingScript = Array.from(document.querySelectorAll('script[src]')).find(
+        (scriptElement) => scriptElement.src === normalizedSrc
+      );
       if (existingScript) {
-        resolve();
+        if (existingScript.dataset.loadState === 'loaded') {
+          resolve();
+          return;
+        }
+
+        existingScript.addEventListener('load', () => resolve(), { once: true });
+        existingScript.addEventListener('error', (event) => reject(event), { once: true });
         return;
       }
-      
+
       const script = document.createElement('script');
       script.src = src;
-      script.onload = resolve;
-      script.onerror = reject;
+      script.dataset.loadState = 'loading';
+      script.onload = () => {
+        script.dataset.loadState = 'loaded';
+        resolve();
+      };
+      script.onerror = (event) => {
+        window.__retroStudioScriptLoads.delete(src);
+        reject(event);
+      };
       document.head.appendChild(script);
     });
+
+    window.__retroStudioScriptLoads.set(src, loadPromise);
+    return loadPromise;
   }
   
   // Initialize console module

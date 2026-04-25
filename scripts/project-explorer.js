@@ -466,6 +466,54 @@ class ProjectExplorer {
     this.updatePaletteFileVisuals();
   }
 
+  shouldHideNode(currentPath, data) {
+    if (!data) {
+      return false;
+    }
+
+    const pp = window.ProjectPaths?.parseProjectPath
+      ? window.ProjectPaths.parseProjectPath(currentPath)
+      : { rest: currentPath };
+    const rest = String(pp.rest || currentPath).replace(/\\/g, '/');
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+
+    if (data.type === 'folder') {
+      return rest === `${sourcesRoot}/Package`;
+    }
+
+    if (data.type === 'file') {
+      return rest === `${sourcesRoot}/config.json`;
+    }
+
+    return false;
+  }
+
+  shouldExpandNodeByDefault(currentPath, data) {
+    if (this.collapsedPaths.has(currentPath)) {
+      return false;
+    }
+
+    if (!data || data.type !== 'folder') {
+      return true;
+    }
+
+    const pp = window.ProjectPaths?.parseProjectPath
+      ? window.ProjectPaths.parseProjectPath(currentPath)
+      : { rest: currentPath };
+    const rest = String(pp.rest || currentPath).replace(/\\/g, '/');
+    const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi)
+      ? window.ProjectPaths.getBuildRootUi()
+      : 'Build';
+
+    if (rest === buildRoot) {
+      return false;
+    }
+
+    return true;
+  }
+
   // Reorganize project structure to show linked texture files as children of image files
   reorganizeLinkedFiles(structure) {
     const reorganized = JSON.parse(JSON.stringify(structure)); // Deep clone
@@ -575,6 +623,10 @@ class ProjectExplorer {
   renderNode(nodeData, container, path) {
     for (const [name, data] of Object.entries(nodeData)) {
       const currentPath = path ? `${path}/${name}` : name;
+      if (this.shouldHideNode(currentPath, data)) {
+        continue;
+      }
+
       const li = document.createElement('li');
       li.className = 'tree-node';
       
@@ -589,8 +641,7 @@ class ProjectExplorer {
       expand.className = 'tree-expand';
       const hasChildren = Object.keys(data.children || {}).length > 0;
       if ((data.type === 'folder' || data.type === 'file') && hasChildren) {
-        // Default expanded unless explicitly collapsed
-        const shouldExpand = !this.collapsedPaths.has(currentPath);
+        const shouldExpand = this.shouldExpandNodeByDefault(currentPath, data);
         expand.textContent = shouldExpand ? '▼' : '▶';
         if (shouldExpand) expand.classList.add('expanded');
         expand.addEventListener('click', (e) => {
@@ -637,6 +688,13 @@ class ProjectExplorer {
         // Delay single-click action to check for double-click
         clearTimeout(clickTimeout);
         clickTimeout = setTimeout(() => {
+          if (data.type === 'folder' && !currentPath.includes('/')) {
+            this.openPackageSettingsForProject(name, true).catch((error) => {
+              console.warn('[ProjectExplorer] Failed to open package settings from project root click:', error);
+            });
+            return;
+          }
+
           // Show in preview if it's a file (only if not double-clicked)
           if (data.type === 'file' && window.tabManager) {
             const isReadOnly = data.isReadOnly || data.isBuildFile;
@@ -738,8 +796,7 @@ class ProjectExplorer {
         const childrenUl = document.createElement('ul');
         childrenUl.className = 'tree-children';
         this.renderNode(data.children, childrenUl, currentPath);
-        // Default expanded unless explicitly collapsed
-        if (!this.collapsedPaths.has(currentPath)) {
+        if (this.shouldExpandNodeByDefault(currentPath, data)) {
           childrenUl.classList.add('expanded');
         }
         li.appendChild(childrenUl);
@@ -827,47 +884,7 @@ class ProjectExplorer {
   
   // Method to expand the Build folder after successful builds
   expandBuildFolder() {
-    try {
-      console.log('[ProjectExplorer] Attempting to expand Build folder...');
-      
-  // Find the Build folder node
-      const buildNodes = this.treeContainer.querySelectorAll('.tree-item');
-      console.log(`[ProjectExplorer] Found ${buildNodes.length} tree items to check`);
-      
-      for (const node of buildNodes) {
-        const textElement = node.querySelector('.tree-text');
-        if (textElement) {
-          const textContent = textElement.textContent.trim();
-          console.log(`[ProjectExplorer] Checking node text: "${textContent}"`);
-          
-          const buildRoot = (window.ProjectPaths && window.ProjectPaths.getBuildRootUi) ? window.ProjectPaths.getBuildRootUi() : 'Build';
-          if (textContent === buildRoot) {
-            console.log('[ProjectExplorer] Found Build folder node');
-            const expandButton = node.querySelector('.tree-expand');
-            const children = node.querySelector('.tree-children');
-            
-            console.log('[ProjectExplorer] Build folder elements:', {
-              expandButton: !!expandButton,
-              children: !!children,
-              isExpanded: children?.classList.contains('expanded')
-            });
-            
-            // Expand if not already expanded
-            if (expandButton && children && !children.classList.contains('expanded')) {
-              children.classList.add('expanded');
-              expandButton.textContent = '▼';
-              expandButton.classList.add('expanded');
-              console.log('[ProjectExplorer] Expanded Build folder after build');
-            } else {
-              console.log('[ProjectExplorer] Build folder already expanded or missing elements');
-            }
-            break;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[ProjectExplorer] Error expanding Build folder:', error);
-    }
+    // Build output stays collapsed unless the user explicitly expands it.
   }
   
   selectNode(item) {

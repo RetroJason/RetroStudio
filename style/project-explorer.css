@@ -52,23 +52,27 @@
 
 /* Build/Game Objects folder styling (read-only outputs) */
 .tree-item[data-path="Build"],
-.tree-item[data-path="Game Objects"] {
+.tree-item[data-path="Game Objects"],
+.tree-item[data-path="Build Output"] {
   color: #ff9800; /* Orange for build outputs */
 }
 
 .tree-item[data-path="Build"] .tree-icon,
-.tree-item[data-path="Game Objects"] .tree-icon {
+.tree-item[data-path="Game Objects"] .tree-icon,
+.tree-item[data-path="Build Output"] .tree-icon {
   color: #ff9800;
 }
 
 /* Build/Game Objects folder children inherit orange color */
 .tree-item[data-path^="Build/"],
-.tree-item[data-path^="Game Objects/"] {
+.tree-item[data-path^="Game Objects/"],
+.tree-item[data-path^="Build Output/"] {
   color: #ffb74d; /* Lighter orange for build folder contents */
 }
 
 .tree-item[data-path^="Build/"] .tree-icon,
-.tree-item[data-path^="Game Objects/"] .tree-icon {
+.tree-item[data-path^="Game Objects/"] .tree-icon,
+.tree-item[data-path^="Build Output/"] .tree-icon {
   color: #ffb74d;
 }
 

@@ -14,6 +14,7 @@ class RibbonToolbar {
   init() {
     console.log('[RibbonToolbar] Initializing...');
     this.setupButtons();
+    this.setupFileMenu();
     this.setupColorPicker();
     this.setupResponsiveRibbon();
     
@@ -179,19 +180,48 @@ class RibbonToolbar {
       return;
     }
 
-    this.ensureSectionOverflowMenus();
-
-    window.addEventListener('resize', () => {
-      this.updateRibbonCompactState();
-    });
-
     document.addEventListener('click', (event) => {
       if (!this.ribbonToolbar.contains(event.target)) {
+        this.closeFileMenu();
         this.closeAllCompactMenus();
       }
     });
 
     requestAnimationFrame(() => this.updateRibbonCompactState());
+  }
+
+  setupFileMenu() {
+    this.fileMenuSection = document.querySelector('.ribbon-section[data-ribbon-group="file"]');
+    this.fileMenuToggle = document.getElementById('fileMenuToggle');
+
+    if (!this.fileMenuSection || !this.fileMenuToggle) {
+      return;
+    }
+
+    this.fileMenuToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const shouldOpen = !this.fileMenuSection.classList.contains('file-menu-open');
+      this.closeFileMenu();
+      if (shouldOpen) {
+        this.fileMenuSection.classList.add('file-menu-open');
+        this.fileMenuToggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    this.fileMenuSection.querySelectorAll('.ribbon-buttons .ribbon-btn').forEach((button) => {
+      button.addEventListener('click', () => {
+        this.closeFileMenu();
+      });
+    });
+  }
+
+  closeFileMenu() {
+    if (!this.fileMenuSection || !this.fileMenuToggle) {
+      return;
+    }
+
+    this.fileMenuSection.classList.remove('file-menu-open');
+    this.fileMenuToggle.setAttribute('aria-expanded', 'false');
   }
 
   ensureSectionOverflowMenus() {
@@ -239,16 +269,9 @@ class RibbonToolbar {
       return;
     }
 
-    const sectionTops = Array.from(this.ribbonToolbar.querySelectorAll('.ribbon-section')).map((section) => {
-      return section.getBoundingClientRect().top;
-    });
-    const firstTop = sectionTops.length > 0 ? sectionTops[0] : 0;
-    const isWrapped = sectionTops.some((top) => Math.abs(top - firstTop) > 4);
-
-    this.ribbonToolbar.classList.toggle('ribbon-toolbar-compact', isWrapped);
-    if (!isWrapped) {
-      this.closeAllCompactMenus();
-    }
+    this.ribbonToolbar.classList.remove('ribbon-toolbar-compact');
+    this.closeFileMenu();
+    this.closeAllCompactMenus();
   }
 
   async createNewResourceFromEditor(editorInfo) {
@@ -712,7 +735,13 @@ class RibbonToolbar {
     });
 
     this.setupButton('publishBtn', async () => {
-      await this.publishProjectToRetrowww();
+      const projectExplorer = window.gameEmulator?.projectExplorer;
+      const project = projectExplorer?.getFocusedProjectName?.();
+      if (!project || !projectExplorer?.openPackageSettingsForProject) {
+        throw new Error('Package settings are unavailable for the active project.');
+      }
+
+      await projectExplorer.openPackageSettingsForProject(project, true);
     });
 
     // Watch operations

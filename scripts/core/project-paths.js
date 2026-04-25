@@ -4,7 +4,7 @@
 (function () {
   const DEFAULTS = {
   sourcesLabel: 'Sources',          // UI label for sources root
-  buildLabel: 'Game Objects',       // UI label for build root
+  buildLabel: 'Build Output',       // UI label for build root
     buildStoragePrefix: 'build/',     // Internal storage prefix for build artifacts
   };
 
