@@ -154,6 +154,9 @@
 
     async function runLoad(action) {
       try {
+        if (typeof config.beforeLoad === 'function') {
+          await config.beforeLoad();
+        }
         await action();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -240,7 +243,9 @@
     const initialRuntimeUrl = initialSearchParams.get(config.queryParam);
     if (initialRuntimeUrl) {
       urlInput.value = initialRuntimeUrl;
-      void runLoad(function () { return loadRuntimeFromUrl(initialRuntimeUrl); });
+      if (config.autoLoadInitialUrl !== false) {
+        void runLoad(function () { return loadRuntimeFromUrl(initialRuntimeUrl); });
+      }
     }
 
     return {

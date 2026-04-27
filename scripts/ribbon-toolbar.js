@@ -735,13 +735,7 @@ class RibbonToolbar {
     });
 
     this.setupButton('publishBtn', async () => {
-      const projectExplorer = window.gameEmulator?.projectExplorer;
-      const project = projectExplorer?.getFocusedProjectName?.();
-      if (!project || !projectExplorer?.openPackageSettingsForProject) {
-        throw new Error('Package settings are unavailable for the active project.');
-      }
-
-      await projectExplorer.openPackageSettingsForProject(project, true);
+      await this.publishProjectToRetrowww();
     });
 
     // Watch operations
