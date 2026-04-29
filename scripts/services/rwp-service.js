@@ -305,7 +305,10 @@ class RwpService {
       throw new Error(errorMessage);
     }
 
-    return payload;
+    return {
+      ...payload,
+      buildResult: projectPackage.buildResult,
+    };
   }
 
   // Walk the project explorer for a given project's Sources tree and return UI file paths
@@ -340,6 +343,15 @@ class RwpService {
     return files;
   }
 
+  shouldOmitSourceD2(uiPath, textureSourceBases) {
+    if (typeof uiPath !== 'string' || !uiPath.toLowerCase().endsWith('.d2')) {
+      return false;
+    }
+
+    const base = uiPath.substring(0, uiPath.length - '.d2'.length).toLowerCase();
+    return textureSourceBases.has(base);
+  }
+
   // Build a ZIP (.rwp) using JSZip with DEFLATE compression for all files
   async exportProject(projectName, options = {}) {
     if (!projectName) throw new Error('No project selected');
@@ -355,14 +367,26 @@ class RwpService {
     );
 
     const uiPaths = this.getProjectSourceFileUiPaths(projectName);
+    const textureSourceBases = new Set(
+      uiPaths
+        .filter((uiPath) => typeof uiPath === 'string' && uiPath.toLowerCase().endsWith('.texture'))
+        .map((uiPath) => uiPath.substring(0, uiPath.length - '.texture'.length).toLowerCase())
+    );
     const manifestFiles = [];
     const zip = new JSZip();
 
     for (const uiPath of uiPaths) {
       try {
+        if (this.shouldOmitSourceD2(uiPath, textureSourceBases)) {
+          console.log('[RwpService] Omitting source .d2 companion from RWP:', uiPath);
+          continue;
+        }
+
         const storagePath = this.normalizeToStorage(uiPath);
         const rec = await this.fileManager.loadFile(storagePath);
-        if (!rec) continue;
+        if (!rec) {
+          throw new Error(`Source file is missing from storage: ${storagePath}`);
+        }
 
         // Normalize content to {text or base64 string}
         let binary = !!rec.binaryData;
@@ -397,7 +421,8 @@ class RwpService {
         zip.file(zipPath, bytes, { binary: true });
         manifestFiles.push({ path: zipPath, builderId: rec.builderId || null, binary: !!binary });
       } catch (e) {
-        console.warn('[RwpService] Skipping file due to error:', uiPath, e);
+        console.error('[RwpService] Failed to export source file:', uiPath, e);
+        throw e;
       }
     }
 
@@ -438,9 +463,9 @@ class RwpService {
       this.downloadBlob(zipBlob, fileName);
     }
     if (options.returnBlob) {
-      return { blob: zipBlob, fileName };
+      return { blob: zipBlob, fileName, buildResult: runtimePkg.buildResult };
     }
-    return { fileName };
+    return { fileName, buildResult: runtimePkg.buildResult };
   }
 
   // Import from ZIP (.rwp). Requires manifest rwp.json

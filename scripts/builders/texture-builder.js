@@ -32,13 +32,24 @@ class TextureBuilder extends BaseBuilder {
       // ── 1. Parse the .texture JSON ────────────────────────────────
       const textureJson = this.parseTextureJson(file.content);
       const meta = textureJson.metadata || {};
-      const format = meta.outputPixelFormat || 'd2_mode_i8';
+      const format = meta.outputPixelFormat;
+      if (!format || typeof format !== 'string') {
+        throw new Error(`Texture metadata is missing outputPixelFormat: ${file.path}`);
+      }
       const paletteOffset = meta.paletteOffset ?? 0;
       const palettePath = meta.palettePath || '';
       const sourceImagePath = meta.sourceImagePath || textureJson.sourceImagePath || textureJson.sourceImage || '';
       const resolvedImagePath = this.resolveResourcePath(file.path, sourceImagePath);
       const resolvedPalettePath = this.resolveResourcePath(file.path, palettePath);
-      const fmtEnum = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.I8;
+      const fmtEnum = FORMAT_STRING_TO_ENUM[format];
+      if (fmtEnum === undefined) {
+        throw new Error(`Unsupported texture outputPixelFormat "${format}" in ${file.path}`);
+      }
+
+      const expectedColorDepth = this.getColorDepthForFormat(format);
+      if (textureJson.colorDepth !== undefined && Number(textureJson.colorDepth) !== expectedColorDepth) {
+        throw new Error(`Texture colorDepth (${textureJson.colorDepth}) does not match outputPixelFormat ${format} (${expectedColorDepth}-bit) in ${file.path}`);
+      }
 
       // ── 2. Load the source image and rebuild the D2 payload ───────
       if (!resolvedImagePath) {
@@ -355,7 +366,38 @@ class TextureBuilder extends BaseBuilder {
       'd2_mode_rgb444':   0x41,
       'd2_mode_rgb555':   0x42,
     };
-    return map[format] || 0x09; // default to i8
+    if (map[format] === undefined) {
+      throw new Error(`Unsupported texture format: ${format}`);
+    }
+    return map[format];
+  }
+
+  getColorDepthForFormat(format) {
+    const map = {
+      'd2_mode_alpha8': 8,
+      'd2_mode_rgb565': 16,
+      'd2_mode_argb8888': 32,
+      'd2_mode_argb4444': 16,
+      'd2_mode_argb1555': 16,
+      'd2_mode_ai44': 8,
+      'd2_mode_rgba8888': 32,
+      'd2_mode_rgba4444': 16,
+      'd2_mode_rgba5551': 16,
+      'd2_mode_i8': 8,
+      'd2_mode_i4': 4,
+      'd2_mode_i2': 2,
+      'd2_mode_i1': 1,
+      'd2_mode_alpha4': 4,
+      'd2_mode_alpha2': 2,
+      'd2_mode_alpha1': 1,
+      'd2_mode_rgb888': 24,
+      'd2_mode_rgb444': 12,
+      'd2_mode_rgb555': 15,
+    };
+    if (map[format] === undefined) {
+      throw new Error(`Unsupported texture format: ${format}`);
+    }
+    return map[format];
   }
 
   getBaseName(path) {

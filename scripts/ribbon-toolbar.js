@@ -795,6 +795,10 @@ class RibbonToolbar {
       const result = await svc.publishProject(project, {
         shareSource: publishOptions.shareSource === true,
       });
+      if (!result?.buildResult) {
+        throw new Error('Publish completed without a build summary result.');
+      }
+      this.showBuildSummaryPopup(result.buildResult);
       const version = result?.applicationVersion?.versionString || 'draft';
       window.gameEmulator?.updateStatus?.(`Published ${project} as ${version}`, 'success');
       const shareLabel = publishOptions.shareSource === true ? ' Shared source is enabled.' : ' Source remains private.';
@@ -809,22 +813,134 @@ class RibbonToolbar {
     const summary = result?.summary || {};
     const ok = result && result.success !== false;
     const title = ok ? 'Build Summary' : 'Build Failed';
-    const lines = [
-      `${title}`,
-      '',
-      `Success: ${ok ? 'yes' : 'no'}`,
-      `Total files: ${summary.total ?? 0}`,
-      `Built: ${summary.success ?? 0}`,
-      `Errors: ${summary.errors ?? 0}`,
-      `Time: ${summary.time != null ? summary.time + ' ms' : 'n/a'}`
-    ];
+    const outputFiles = Array.isArray(summary.outputFiles) ? summary.outputFiles : [];
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
 
-    if (!ok && result?.error) {
-      lines.push('', `Error: ${result.error}`);
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog build-summary-modal';
+
+    dialog.innerHTML = `
+      <div class="modal-header build-summary-header">
+        <h3 class="modal-title">${this.escapeHtml(title)}</h3>
+        <span class="build-summary-status ${ok ? 'success' : 'error'}">${ok ? 'Success' : 'Failed'}</span>
+      </div>
+      <div class="modal-body build-summary-body">
+        ${result?.error ? `<div class="build-summary-error">${this.escapeHtml(result.error)}</div>` : ''}
+        ${this.renderBuildOutputTree(outputFiles)}
+        <div class="build-summary-footer-panel">
+          <div class="build-summary-stat"><span>Total files</span><strong>${summary.total ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Built</span><strong>${summary.success ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Errors</span><strong>${summary.errors ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Time</span><strong>${summary.time != null ? this.escapeHtml(summary.time + ' ms') : 'n/a'}</strong></div>
+          <div class="build-summary-stat"><span>Output files</span><strong>${outputFiles.length}</strong></div>
+          <div class="build-summary-stat"><span>Output size</span><strong>${this.escapeHtml(summary.outputSize || '0 B')}</strong></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn modal-btn-primary" id="build-summary-ok">OK</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const okBtn = dialog.querySelector('#build-summary-ok');
+    const cleanup = () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' || event.key === 'Enter') {
+        event.preventDefault();
+        cleanup();
+      }
+    };
+
+    okBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) cleanup();
+    });
+    document.addEventListener('keydown', handleKeyDown);
+    setTimeout(() => okBtn.focus(), 0);
+  }
+
+  renderBuildOutputTree(outputFiles) {
+    if (!outputFiles.length) {
+      return '<div class="build-output-empty">No build outputs were produced.</div>';
     }
 
-    // Intentional popup only for the explicit Build button flow.
-    alert(lines.join('\n'));
+    const tree = this.createBuildOutputTree(outputFiles);
+    return `
+      <details class="build-output-tree">
+        <summary>
+          <span class="build-output-tree-label">Build output</span>
+          <span class="build-output-tree-count">${outputFiles.length} files</span>
+        </summary>
+        ${this.renderBuildOutputTreeNodes(tree.children)}
+      </details>
+    `;
+  }
+
+  createBuildOutputTree(outputFiles) {
+    const root = { children: new Map() };
+    for (const output of outputFiles) {
+      const path = String(output.path || '').replace(/\\/g, '/');
+      const parts = path.split('/').filter(Boolean);
+      let node = root;
+      parts.forEach((part, index) => {
+        if (!node.children.has(part)) {
+          node.children.set(part, { name: part, children: new Map(), output: null });
+        }
+        node = node.children.get(part);
+        if (index === parts.length - 1) {
+          node.output = output;
+        }
+      });
+    }
+    return root;
+  }
+
+  renderBuildOutputTreeNodes(children) {
+    const entries = Array.from(children.values()).sort((a, b) => {
+      const aIsFolder = a.children.size > 0 && !a.output;
+      const bIsFolder = b.children.size > 0 && !b.output;
+      if (aIsFolder !== bIsFolder) return aIsFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return `<ul class="build-output-tree-list">${entries.map((node) => this.renderBuildOutputTreeNode(node)).join('')}</ul>`;
+  }
+
+  renderBuildOutputTreeNode(node) {
+    if (node.children.size > 0 && !node.output) {
+      return `
+        <li class="build-output-tree-node folder">
+          <details>
+            <summary><span class="build-tree-expand-glyph">+</span><span class="build-tree-icon folder"></span><span class="build-tree-label">${this.escapeHtml(node.name)}</span></summary>
+            ${this.renderBuildOutputTreeNodes(node.children)}
+          </details>
+        </li>
+      `;
+    }
+
+    const outputSize = node.output?.size || `${node.output?.bytes ?? 0} B`;
+    return `
+      <li class="build-output-tree-node file">
+        <span class="build-tree-spacer"></span><span class="build-tree-icon file"></span><span class="build-tree-label">${this.escapeHtml(node.name)}</span><span class="build-tree-size">${this.escapeHtml(outputSize)}</span>
+      </li>
+    `;
+  }
+
+  escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   getPackageAssetFolder(projectName) {

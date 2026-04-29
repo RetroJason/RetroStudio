@@ -42,15 +42,15 @@ class LuaExtensionLoader {
   async loadExtensionFile(categoryName) {
     try {
       const className = this.getExtensionClassName(categoryName);
-      if (typeof window[className] === 'function') {
-        return;
-      }
-
       const scriptId = `lua-extension-${categoryName.toLowerCase()}`;
 
       const existingScript = document.getElementById(scriptId);
       if (existingScript) {
-        return;
+        existingScript.remove();
+      }
+
+      if (typeof window[className] === 'function') {
+        delete window[className];
       }
 
       const script = document.createElement('script');

@@ -261,6 +261,7 @@ class EditorBase extends ViewerBase {
       console.error('[EditorBase] Save failed:', error);
       // Keep the tab dirty since save failed
       alert(`Failed to save: ${error.message}`);
+      throw error;
     }
   }
   
@@ -471,8 +472,8 @@ class EditorBase extends ViewerBase {
         console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       }
     } catch (error) {
-      console.warn(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
-      // Continue with in-memory storage as fallback
+      console.error(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
+      throw error;
     }
     
     console.log(`[EditorBase] About to add file to project explorer - checking conditions...`);

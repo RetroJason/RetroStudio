@@ -214,7 +214,7 @@ class RetroStudioApplication {
   loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = src + (src.includes('?') ? '&' : '?') + 'v=6';
+      script.src = src + (src.includes('?') ? '&' : '?') + 'v=7';
       script.onload = () => {
         console.log(`[Application] Loaded component script: ${src}`);
         resolve();

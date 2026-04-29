@@ -46,6 +46,7 @@ class GameEmulator {
     this.isPaused = false; // Pause state
     this.frameCount = 0;
     this.lastFrameTime = 0;
+    this.compileOverlayHidden = false;
     this.extensionLoader = null; // Lua extension loader
     this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
 
@@ -1970,6 +1971,9 @@ class GameEmulator {
     this.isPaused = false; // Make sure we start unpaused
     this.lastFrameTime = performance.now();
     this.frameCount = 0;
+    this.compileOverlayHidden = false;
+    const compileOverlay = this.contentContainer?.querySelector('.simulator-compile-overlay');
+    compileOverlay?.classList.remove('hidden');
     
     // Update button appearance
     this.updatePlayPauseButton();
@@ -2019,7 +2023,8 @@ class GameEmulator {
           if (textboxExt) {
             textboxExt.renderFrame(this._gpu, deltaTime);
           }
-          this._gpu.present();
+          const didDrawFrame = this._gpu.present();
+          this.updateCompileOverlay(didDrawFrame);
         }
         
         // Always check for new print output from Lua (even when paused, to capture any buffered output)
@@ -2059,6 +2064,20 @@ class GameEmulator {
     
     // Update button appearance
     this.updatePlayPauseButton();
+  }
+
+  updateCompileOverlay(didDrawFrame) {
+    if (!didDrawFrame || this.compileOverlayHidden) {
+      return;
+    }
+
+    const overlay = this.contentContainer?.querySelector('.simulator-compile-overlay');
+    if (!overlay) {
+      throw new Error('Simulator compile overlay is not available.');
+    }
+
+    overlay.classList.add('hidden');
+    this.compileOverlayHidden = true;
   }
 
   /**
@@ -2651,6 +2670,10 @@ class GameEmulator {
           <div class="game-screen-frame">
             <canvas id="game-canvas" width="448" height="368"></canvas>
             ${overlay}
+            <div class="simulator-compile-overlay" aria-live="polite">
+              <div class="simulator-compile-spinner" aria-hidden="true"></div>
+              <div>Compiling simulator...</div>
+            </div>
           </div>
           <div class="game-info">Game running... (simulated)</div>
         </div>

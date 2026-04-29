@@ -22,6 +22,8 @@ class TextureData extends EventTarget {
     this.name = options.name || 'texture';
     this.sourceImage = options.sourceImage || null;
     this.rotation = options.rotation || 90; // Default to 90 (pre-rotated); || also converts 0 → 90 so old files get migrated
+    this.hasExplicitOutputPixelFormat = options.hasExplicitOutputPixelFormat === true ||
+      (options.outputPixelFormat !== undefined && options.outputPixelFormat !== null && options.outputPixelFormat !== '');
     
     // Metadata for .texture file format with auto-population
     this._metadata = {
@@ -64,7 +66,19 @@ class TextureData extends EventTarget {
   set palettePath(value) { this.updateMetadata('palettePath', value); }
 
   get outputPixelFormat() { return this._metadata.outputPixelFormat; }
-  set outputPixelFormat(value) { this.updateMetadata('outputPixelFormat', value); }
+  set outputPixelFormat(value) {
+    this.hasExplicitOutputPixelFormat = true;
+    this.updateMetadata('outputPixelFormat', value);
+  }
+
+  applySuggestedOutputPixelFormat(value) {
+    if (this.hasExplicitOutputPixelFormat) {
+      return false;
+    }
+
+    this.updateMetadata('outputPixelFormat', value);
+    return true;
+  }
 
   get scale() { return this._metadata.scale; }
   set scale(value) { this.updateMetadata('scale', value); }
@@ -107,6 +121,14 @@ class TextureData extends EventTarget {
     return ImageData.getTextureFormatColorCount(formatValue);
   }
 
+  static getFormatBitsPerPixel(formatValue) {
+    const format = ImageData.getTextureFormatOptions().find(option => option.value === formatValue);
+    if (!format) {
+      throw new Error(`Unsupported texture format: ${formatValue}`);
+    }
+    return Number(format.bitsPerPixel);
+  }
+
   // Serialize to JSON
   toJSON() {
     return {
@@ -144,6 +166,7 @@ class TextureData extends EventTarget {
       sourceImagePath: data.sourceImagePath || data.metadata?.sourceImagePath || '',
       palettePath: data.palettePath || data.metadata?.palettePath || '',
       outputPixelFormat: data.metadata?.outputPixelFormat,
+      hasExplicitOutputPixelFormat: !!data.metadata?.outputPixelFormat,
       scale: data.metadata?.scale,
       paletteOffset: data.metadata?.paletteOffset
     });
@@ -318,8 +341,9 @@ class TextureEditor extends EditorBase {
       // Color depth select is now secondary (for compatibility/display)
       if (this.colorDepthSelect) {
         this.colorDepthSelect.addEventListener('change', () => {
-          console.log('[TextureEditor] Color depth select changed:', this.colorDepthSelect.value);
-          // Color depth changes can suggest format changes but format select takes precedence
+          const colorDepth = Number(this.colorDepthSelect.value);
+          console.log('[TextureEditor] Color depth select changed:', colorDepth);
+          this.setOutputFormatForColorDepth(colorDepth);
         });
       }
     }, 100);
@@ -457,7 +481,7 @@ class TextureEditor extends EditorBase {
     this._gpuBlit(isPreRotated);
 
     // Persist .d2 alongside .texture (async, non-blocking)
-    this._saveD2File(d2Bytes);
+    this._saveTextureJsonAfterPreview();
 
     const formatStr = this.textureData.outputPixelFormat;
     console.log(`[TextureEditor] D2 preview: ${width}×${height} ${formatStr} (${d2Bytes.length} bytes)`);
@@ -515,31 +539,16 @@ class TextureEditor extends EditorBase {
   }
 
   /**
-   * Persist the .d2 binary AND the .texture JSON alongside each other.
+    * Persist the .texture JSON after a preview rebuild.
    * The .texture JSON is always saved so that palettePath, paletteOffset,
    * transparentColor, and the embedded palette are on disk for the D2 Viewer.
-   * @param {Uint8Array} d2Bytes
    */
-  async _saveD2File(d2Bytes) {
+  async _saveTextureJsonAfterPreview() {
     try {
       if (!this.path) return;
-
-      // Derive full path with project context (same logic as autoSaveLinkedTextureFile)
-      let fullPath = this.path;
-      const pe = window.gameEmulator?.projectExplorer;
-      let project = window.gameEmulator?.currentProject;
-      if (!project && pe) project = pe.getCurrentProject?.() || pe.getFocusedProjectName?.();
-      if (project && !fullPath.startsWith(project + '/')) {
-        fullPath = `${project}/${fullPath}`;
-      }
-
-      const d2Path = D2File.d2PathFrom(fullPath);
-      await D2File.save(d2Path, d2Bytes);
-
-      // Also persist the .texture JSON so palettePath/paletteOffset/transparentColor are on disk
       await this._saveTextureJson();
     } catch (e) {
-      console.warn('[TextureEditor] .d2 save failed (non-fatal):', e.message);
+      console.warn('[TextureEditor] .texture auto-save failed:', e.message);
     }
   }
 
@@ -2568,7 +2577,15 @@ class TextureEditor extends EditorBase {
     if (!this.textureData) return;
     
     // Update controls
-    if (this.colorDepthSelect) this.colorDepthSelect.value = this.textureData.colorDepth;
+    const selectedFormat = ImageData.getTextureFormatOptions().find(option => option.value === this.textureData.outputPixelFormat);
+    if (!selectedFormat) {
+      throw new Error(`Unsupported texture outputPixelFormat: ${this.textureData.outputPixelFormat}`);
+    }
+
+    if (this.colorDepthSelect) this.colorDepthSelect.value = selectedFormat.bitsPerPixel;
+    if (this.formatLabel) {
+      this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${selectedFormat.label}</span>`;
+    }
     if (this.compressionCheckbox) this.compressionCheckbox.checked = (this.textureData.compressionType === 'rle');
     if (this.preRotateCheckbox) {
       this.preRotateCheckbox.checked = (this.textureData.rotation === 90);
@@ -2586,6 +2603,27 @@ class TextureEditor extends EditorBase {
     
     this.updatePaletteVisibility();
     this.updateOptionsVisibility();
+  }
+
+  setOutputFormatForColorDepth(colorDepth) {
+    const formatByDepth = new Map([
+      [1, 'd2_mode_i1'],
+      [2, 'd2_mode_i2'],
+      [4, 'd2_mode_i4'],
+      [8, 'd2_mode_i8'],
+      [16, 'd2_mode_rgb565'],
+      [24, 'd2_mode_rgb888'],
+      [32, 'd2_mode_rgba8888'],
+    ]);
+
+    const format = formatByDepth.get(colorDepth);
+    if (!format) {
+      throw new Error(`Unsupported texture color depth: ${colorDepth}`);
+    }
+
+    this.textureData.outputPixelFormat = format;
+    this.textureData.colorDepth = colorDepth;
+    this._saveTextureJson();
   }
 
   // Override save method to handle image-to-texture conversion
@@ -3418,6 +3456,9 @@ class TextureEditor extends EditorBase {
         if (this.colorDepthSelect && format) {
           this.colorDepthSelect.value = format.bitsPerPixel;
         }
+        if (format) {
+          this.textureData.colorDepth = Number(format.bitsPerPixel);
+        }
         
         // Direct UI refresh so these work even if the metadata handler
         // isn't registered on the current textureData instance.
@@ -3427,6 +3468,7 @@ class TextureEditor extends EditorBase {
         this.updatePaletteVisibility();
         this.updateMetadataDisplay();
         this.checkAndAutoGenerateTexture();
+        await this._saveTextureJson();
         
         console.log('[TextureEditor] Selected format:', result);
       }
@@ -4157,7 +4199,7 @@ class TextureEditor extends EditorBase {
     this._gpuBlit(isPreRotated);
 
     // Persist .d2
-    this._saveD2File(d2);
+    this._saveTextureJsonAfterPreview();
 
     console.log(`[TextureEditor] D2 direct preview: ${format} (${d2.length} bytes)`);
   }
@@ -4505,16 +4547,18 @@ class TextureEditor extends EditorBase {
         suggestedDepth = 16;
       }
       
-      // Apply the detected format to textureData
-      this.textureData.outputPixelFormat = suggestedFormat;
-      this.textureData.colorDepth = suggestedDepth;
+      const appliedSuggestedFormat = this.textureData.applySuggestedOutputPixelFormat(suggestedFormat);
+      if (appliedSuggestedFormat) {
+        this.textureData.colorDepth = suggestedDepth;
+      }
       
-      // Update the dropdown
-      this.colorDepthSelect.value = suggestedDepth;
+      if (appliedSuggestedFormat) {
+        this.colorDepthSelect.value = suggestedDepth;
+      }
       
       // Update the format label to show the detected format
       const formats = ImageData.getTextureFormatOptions();
-      const formatInfo = formats.find(f => f.value === suggestedFormat);
+      const formatInfo = formats.find(f => f.value === this.textureData.outputPixelFormat);
       if (formatInfo && this.formatLabel) {
         this.formatLabel.innerHTML = `Output Format: <span style="color: #4a9eff;">${formatInfo.label}</span>`;
       }
@@ -4522,7 +4566,7 @@ class TextureEditor extends EditorBase {
       // Update the color depth label
       const paletteControlsPanel = this.element.querySelector('.palette-controls-panel');
       const label = paletteControlsPanel?.querySelector('label');
-      if (label && label.innerHTML.includes('Color Depth')) {
+      if (appliedSuggestedFormat && label && label.innerHTML.includes('Color Depth')) {
         label.innerHTML = `Color Depth: <span style="color: #4a9eff;">${suggestedDepth}-bit</span>`;
       }
       
@@ -4531,7 +4575,7 @@ class TextureEditor extends EditorBase {
       this.updatePaletteVisibility();
       
       const alphaNote = hasAlpha ? (hasSemiAlpha ? ' (with semi-transparent alpha)' : ' (with binary alpha)') : '';
-      console.log(`[TextureEditor] Detected ${uniqueColors > 256 ? '>256' : uniqueColors} unique colors${alphaNote}, auto-selected ${suggestedFormat} (${suggestedDepth}-bit)`);
+      console.log(`[TextureEditor] Detected ${uniqueColors > 256 ? '>256' : uniqueColors} unique colors${alphaNote}, ${appliedSuggestedFormat ? 'auto-selected' : 'kept explicit'} ${this.textureData.outputPixelFormat} (${this.textureData.colorDepth}-bit)`);
       
     } catch (error) {
       console.error('[TextureEditor] Error analyzing image colors:', error);

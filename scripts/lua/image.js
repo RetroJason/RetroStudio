@@ -1,6 +1,6 @@
 // image.js - Image Lua Extensions for RetroStudio Emulator
 // Provides Sprite-like rendering and transform APIs for static/multi-frame images.
-// Images are sourced from build .d2 textures with optional companion .frameset data.
+// Images are sourced from build .d2 textures with optional companion .d2fs frame data.
 
 class LuaImageExtensions extends BaseLuaExtension {
   constructor(gameEmulator) {
@@ -152,31 +152,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       };
     }
 
-    // Watch-hand style image assets rely on an implicit base-center pivot when
-    // no explicit frame center metadata exists. Midpoint fallback renders them
-    // as tiny slashes around the dial center in the standalone runtime.
-    if (this._shouldUseNeedlePivotFallback(frame, asset)) {
-      return {
-        centerX: fallbackX,
-        centerY: Math.max(0, h - Math.round(w / 2)),
-      };
-    }
-
     return { centerX: fallbackX, centerY: fallbackY };
-  }
-
-  _shouldUseNeedlePivotFallback(frame, asset) {
-    if (!frame || !asset || !Array.isArray(asset.frames) || asset.frames.length !== 1) {
-      return false;
-    }
-
-    const w = Math.max(0, Number(frame?.w) || 0);
-    const h = Math.max(0, Number(frame?.h) || 0);
-    if (w <= 0 || h <= 0) {
-      return false;
-    }
-
-    return h >= (w * 4);
   }
 
   Destroy() {
@@ -522,7 +498,7 @@ class LuaImageExtensions extends BaseLuaExtension {
           if (!header) continue;
 
           const imageName = d2Path.split('/').pop().replace(/\.d2$/i, '');
-          const frames = await this._loadFramesForTexture(d2Path, header.width, header.height);
+          const frames = await this._loadFramesForTexture(d2Path, header.width, header.height, header.flags);
 
           this.imageAssets.set(imageName, {
             name: imageName,
@@ -558,11 +534,25 @@ class LuaImageExtensions extends BaseLuaExtension {
       height: view.getUint16(8, true),
       paletteSlot: view.getUint16(10, true),
       paletteOffset: d2Bytes[12] || 0,
+      flags: d2Bytes[13] || 0,
     };
   }
 
-  async _loadFramesForTexture(d2Path, texWidth, texHeight) {
-    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: texWidth, h: texHeight, centerX: Math.round((texWidth || 0) / 2), centerY: Math.round((texHeight || 0) / 2) }];
+  async _loadFramesForTexture(d2Path, texWidth, texHeight, flags = 0) {
+    const preRotated = !!(flags & 0x02);
+    const logicalWidth = preRotated ? texHeight : texWidth;
+    const logicalHeight = preRotated ? texWidth : texHeight;
+    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: logicalWidth, h: logicalHeight, centerX: Math.round((logicalWidth || 0) / 2), centerY: Math.round((logicalHeight || 0) / 2) }];
+
+    const d2fsPath = d2Path.replace(/\.d2$/i, '.d2fs');
+    const d2fsRaw = await this._loadBinary(d2fsPath);
+    if (d2fsRaw) {
+      const frames = this._parseD2FS(new Uint8Array(d2fsRaw), d2fsPath);
+      if (frames.length === 0) {
+        throw new Error(`D2FS has no frames: ${d2fsPath}`);
+      }
+      return frames;
+    }
 
     const framesetStoragePath = this._toCompanionSourcePath(d2Path, '.frameset');
     if (!framesetStoragePath) return fallback;
@@ -594,6 +584,58 @@ class LuaImageExtensions extends BaseLuaExtension {
     }
 
     return out.length > 0 ? out : fallback;
+  }
+
+  _parseD2FS(bytes, path) {
+    if (!bytes || bytes.length < 16) {
+      throw new Error(`D2FS too small: ${path}`);
+    }
+
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x46 || bytes[3] !== 0x53) {
+      throw new Error(`Invalid D2FS magic: ${path}`);
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const version = view.getUint8(4);
+    if (version !== 1) {
+      throw new Error(`Unsupported D2FS version ${version}: ${path}`);
+    }
+
+    const frameCount = view.getUint16(6, true);
+    const frameSize = view.getUint16(12, true);
+    if (frameSize !== 16) {
+      throw new Error(`Unsupported D2FS frame size ${frameSize}: ${path}`);
+    }
+
+    const expectedLength = 16 + frameCount * frameSize;
+    if (bytes.length < expectedLength) {
+      throw new Error(`Truncated D2FS ${path}: expected ${expectedLength} bytes, got ${bytes.length}`);
+    }
+
+    const frames = [];
+    for (let index = 0; index < frameCount; index++) {
+      const offset = 16 + index * frameSize;
+      const flags = view.getUint8(offset + 14);
+      const frame = {
+        id: view.getUint16(offset + 0, true),
+        name: `frame_${index}`,
+        x: view.getUint16(offset + 2, true),
+        y: view.getUint16(offset + 4, true),
+        w: view.getUint16(offset + 6, true),
+        h: view.getUint16(offset + 8, true),
+      };
+
+      if (flags & 0x01) {
+        frame.centerX = view.getInt16(offset + 10, true);
+      }
+      if (flags & 0x02) {
+        frame.centerY = view.getInt16(offset + 12, true);
+      }
+
+      frames.push(frame);
+    }
+
+    return frames;
   }
 
   _toCompanionSourcePath(buildPath, ext) {

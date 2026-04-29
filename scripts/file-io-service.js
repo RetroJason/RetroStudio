@@ -663,8 +663,7 @@ class FileIOService {
 }
 
 // Create global instance and initialize it
-// Enable clearOnStartup to clean up old test files
-const fileIOService = new FileIOService({ clearOnStartup: true });
+const fileIOService = new FileIOService({ clearOnStartup: false });
 
 // Register with ServiceContainer immediately - before initialization completes
 if (!window.serviceContainer) {

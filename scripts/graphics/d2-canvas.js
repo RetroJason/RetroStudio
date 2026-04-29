@@ -559,6 +559,7 @@ class D2Canvas {
     this._pendingVertexShader = null;
     this._pendingFragmentShader = null;
     this._parallelShaderCompile = gl.getExtension('KHR_parallel_shader_compile');
+    this._frameHadDraw = false;
 
     // Compile program. When supported, let the browser/GPU driver complete
     // shader compilation asynchronously so cold startup does not block the UI thread.
@@ -621,6 +622,7 @@ class D2Canvas {
   /** Clear the framebuffer. RGB values in [0..1]. */
   clear(r = 0, g = 0, b = 0, a = 1) {
     const gl = this.gl;
+    this._frameHadDraw = false;
     gl.clearColor(r, g, b, a);
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
@@ -893,12 +895,14 @@ class D2Canvas {
 
     // Draw fullscreen quad (4 vertices, triangle strip)
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    this._frameHadDraw = true;
     return true;
   }
 
   /** No-op for now; WebGL presents automatically. */
   present() {
     this.gl.flush();
+    return this._frameHadDraw;
   }
 
   /* ──────────────────────────────────────────────────────────────── */

@@ -1207,7 +1207,11 @@ class ProjectExplorer {
   addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
     // Return a promise that resolves after persistence (if any)
     let persistResolve;
-    const persistDone = new Promise((resolve) => { persistResolve = resolve; });
+    let persistReject;
+    const persistDone = new Promise((resolve, reject) => {
+      persistResolve = resolve;
+      persistReject = reject;
+    });
   const parts = path.split('/');
     let current = this.projectData.structure;
     
@@ -1261,7 +1265,7 @@ class ProjectExplorer {
     
     // Add the file reference (not the content - content is in storage)
     const finalExt = this.getFileExtension(finalFileName).toLowerCase();
-    const builderId = finalExt === '.sfx' ? 'sfx' : (['.pal', '.act', '.aco'].includes(finalExt) ? 'pal' : undefined);
+    const builderId = file.builderId || (finalExt === '.sfx' ? 'sfx' : (['.pal', '.act', '.aco'].includes(finalExt) ? 'pal' : undefined));
 
     current[finalFileName] = {
       type: 'file',
@@ -1282,7 +1286,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font'];
+        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font', '.texture', '.frameset'];
         const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
@@ -1303,13 +1307,10 @@ class ProjectExplorer {
               }
             } catch (conversionError) {
               console.error(`[ProjectExplorer] Failed to convert ${fileName} to ACT:`, conversionError);
-              // Fall back to original content if conversion fails
-              finalContent = content;
-              
-              // Show error feedback
               if (window.gameEmulator && window.gameEmulator.setStatus) {
-                window.gameEmulator.setStatus(`Failed to convert ${fileName} - using original format`);
+                window.gameEmulator.setStatus(`Failed to convert ${fileName}`);
               }
+              throw conversionError;
             }
           }
           
@@ -1320,13 +1321,15 @@ class ProjectExplorer {
             });
             console.log(`[ProjectExplorer] Persisted ${needsConversion ? 'converted' : 'dropped'} file to storage: ${storageFullPath}`);
           }
-        }).catch(err => console.warn('[ProjectExplorer] Failed reading dropped file:', err)).finally(() => {
-          // Resolve persist promise regardless of success (so caller can proceed)
+        }).then(() => {
           persistResolve();
+        }).catch(err => {
+          console.error('[ProjectExplorer] Failed persisting dropped file:', err);
+          persistReject(err);
         });
       } catch (e) {
-        console.warn('[ProjectExplorer] Error persisting dropped file:', e);
-        persistResolve();
+        console.error('[ProjectExplorer] Error persisting dropped file:', e);
+        persistReject(e);
       }
     } else {
       // No persistence to perform

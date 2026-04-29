@@ -120,14 +120,15 @@ class RwaService {
     if (!this.fileManager) throw new Error('FileManager unavailable');
 
     const buildBeforeExport = options.buildBeforeExport !== false;
+    let buildResult = null;
     if (buildBeforeExport) {
       if (!this.buildSystem || typeof this.buildSystem.buildProject !== 'function') {
         throw new Error('BuildSystem unavailable');
       }
 
-      const result = await this.buildSystem.buildProject();
-      if (!result || result.success !== true) {
-        const msg = result?.error || 'Build failed';
+      buildResult = await this.buildSystem.buildProject();
+      if (!buildResult || buildResult.success !== true) {
+        const msg = buildResult?.error || 'Build failed';
         throw new Error(`Build failed: ${msg}`);
       }
     }
@@ -172,17 +173,6 @@ class RwaService {
       zip.file('app.ini', new TextEncoder().encode(ini), { binary: true });
     }
 
-    const framesetPaths = await this.collectRuntimeFramesets();
-    for (const storagePath of framesetPaths) {
-      const rec = await this.fileManager.loadFile(storagePath);
-      if (!rec) continue;
-
-      const normalized = this.normalizeRecord(rec);
-      if (!normalized) continue;
-
-      zip.file(storagePath, normalized.bytes, { binary: true });
-    }
-
     const blob = await zip.generateAsync({
       type: 'blob',
       compression: 'DEFLATE',
@@ -194,21 +184,9 @@ class RwaService {
       packageKind,
       filename: outputName,
       settings: packageSettings,
-      fileCount: buildPaths.length + framesetPaths.length
+      fileCount: buildPaths.length,
+      buildResult
     };
-  }
-
-  async collectRuntimeFramesets() {
-    if (!this.fileManager || typeof this.fileManager.listFiles !== 'function') {
-      return [];
-    }
-
-    const sourcesRoot = this.getSourcesRootUi().replace(/\/$/, '');
-    const records = await this.fileManager.listFiles(sourcesRoot);
-
-    return (records || [])
-      .map((rec) => rec?.path || rec)
-      .filter((p) => typeof p === 'string' && p.startsWith(`${sourcesRoot}/`) && p.toLowerCase().endsWith('.frameset'));
   }
 
   async exportProject(projectName, options = {}) {
