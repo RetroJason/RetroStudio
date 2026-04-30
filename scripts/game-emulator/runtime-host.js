@@ -116,6 +116,7 @@
       showVolumeControls: config.showVolumeControls,
       initialVolume: config.initialVolume,
       startMuted: config.startMuted,
+      autoFocusCanvas: config.autoFocusCanvas,
       overlayImagePath: config.overlayImagePath || 'Resources/Images/cp-overlay.png',
       pathResolver: config.pathResolver || getDefaultPathResolver(),
     });
