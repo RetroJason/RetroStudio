@@ -2360,25 +2360,41 @@ class GameEmulator {
   }
   
   async loadExtensionLoader() {
-    return new Promise((resolve, reject) => {
-      const existingScript = document.querySelector('script[data-lua-extension-loader="true"]');
-      if (existingScript) {
-        existingScript.remove();
-      }
+    if (typeof window.LuaExtensionLoader === 'function') {
+      return;
+    }
 
-      const script = document.createElement('script');
-      script.dataset.luaExtensionLoader = 'true';
-      script.src = `scripts/lua/extension-loader.js?v=${Date.now()}`;
-      script.onload = () => {
-        console.log('[GameEmulator] Extension loader loaded successfully');
-        resolve();
-      };
-      script.onerror = (error) => {
-        console.error('[GameEmulator] Failed to load extension loader:', error);
-        reject(new Error('Failed to load extension loader'));
-      };
-      document.head.appendChild(script);
-    });
+    if (!window.__luaExtensionLoaderPromise) {
+      window.__luaExtensionLoaderPromise = new Promise((resolve, reject) => {
+        const existingScript = document.querySelector('script[data-lua-extension-loader="true"]');
+        if (existingScript) {
+          reject(new Error('Lua extension loader script is present but window.LuaExtensionLoader is not registered.'));
+          return;
+        }
+
+        const script = document.createElement('script');
+        script.dataset.luaExtensionLoader = 'true';
+        script.src = `scripts/lua/extension-loader.js?v=${Date.now()}`;
+        script.onload = () => {
+          if (typeof window.LuaExtensionLoader !== 'function') {
+            reject(new Error('LuaExtensionLoader did not register after script load.'));
+            return;
+          }
+          console.log('[GameEmulator] Extension loader loaded successfully');
+          resolve();
+        };
+        script.onerror = (error) => {
+          console.error('[GameEmulator] Failed to load extension loader:', error);
+          reject(new Error('Failed to load extension loader'));
+        };
+        document.head.appendChild(script);
+      }).catch((error) => {
+        delete window.__luaExtensionLoaderPromise;
+        throw error;
+      });
+    }
+
+    return window.__luaExtensionLoaderPromise;
   }
 
   async loadLuaEngine() {
