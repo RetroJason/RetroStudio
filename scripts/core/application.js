@@ -123,6 +123,7 @@ class RetroStudioApplication {
     // Register core services
     this.services.registerService('audioEngine', AudioEngine);
     this.services.registerService('resourceManager', ResourceManager, ['audioEngine']);
+    this.services.registerService('studioAudioService', StudioAudioService, ['audioEngine', 'resourceManager']);
     this.services.registerService('buildSystem', BuildSystem);
     this.services.registerService('projectExplorer', ProjectExplorer);
     this.services.registerService('tabManager', TabManager);

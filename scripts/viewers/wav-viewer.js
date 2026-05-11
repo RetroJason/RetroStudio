@@ -20,9 +20,12 @@ class WavViewer extends ViewerBase {
     // Don't load audio resource immediately - wait for DOM to be ready
   }
 
-  // Helper to get game emulator from service container
-  get gameEmulator() {
-    return window.serviceContainer ? window.serviceContainer.get('gameEmulator') : null;
+  get audioHost() {
+    return window.serviceContainer?.get?.('studioAudioService') || null;
+  }
+
+  get audioEngine() {
+    return window.serviceContainer?.get?.('audioEngine') || this.audioHost?.audioEngine || null;
   }
   
   // Note: Event subscription is now handled centrally by TabManager
@@ -43,8 +46,8 @@ class WavViewer extends ViewerBase {
         this.stopAllPlayback();
         
         // Clear the resource from the audio engine
-        if (this.gameEmulator && this.gameEmulator.audioEngine) {
-          this.gameEmulator.audioEngine.unloadResource(this.audioResource.id);
+        if (this.audioEngine) {
+          this.audioEngine.unloadResource(this.audioResource.id);
           console.log(`[WavViewer] Unloaded resource ${this.audioResource.id} from audio engine`);
         }
         
@@ -220,10 +223,10 @@ class WavViewer extends ViewerBase {
     console.log('[WavViewer] loadAudioResource() called with forceReload:', forceReload);
     
     // Get game emulator from service container
-    const gameEmulator = this.gameEmulator;
-    console.log('[WavViewer] gameEmulator from service container:', !!gameEmulator);
+    const audioHost = this.audioHost;
+    console.log('[WavViewer] studio audio host available:', !!audioHost);
     
-    if (!gameEmulator) {
+    if (!audioHost || !this.audioEngine) {
       this.updateStatus('Audio engine not available');
       return;
     }
@@ -237,14 +240,15 @@ class WavViewer extends ViewerBase {
       this._isLoading = true;
       const seq = ++this._loadSeq;
       console.log('[WavViewer] Loading audio resource for:', this.getFileName(), forceReload ? '(forced reload)' : '');
+      const audioPath = this.path || this.getFileName();
 
       // First try to get already loaded resource, unless forcing reload
       let resourceId = null;
       if (!forceReload) {
-        resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
+        resourceId = audioHost.getLoadedResourceId(audioPath);
         if (resourceId) {
           // File already loaded
-          this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
+          this.audioResource = this.audioEngine.getResource(resourceId);
           console.log(`[WavViewer] File already loaded: ${this.getFileName()}`);
           this.updateStatus('Loaded');
           this.updateMetadata();
@@ -262,11 +266,11 @@ class WavViewer extends ViewerBase {
       console.log('[WavViewer] Full path:', this.path);
       this.updateStatus('Loading...');
 
-      resourceId = await gameEmulator.loadAudioFileOnDemand(this.getFileName(), forceReload);
+      resourceId = await audioHost.loadAudioFileOnDemand(audioPath, forceReload);
 
       if (resourceId) {
         if (seq === this._loadSeq) {
-          this.audioResource = gameEmulator.audioEngine.getResource(resourceId);
+          this.audioResource = this.audioEngine.getResource(resourceId);
           console.log(`[WavViewer] Loaded resource for: ${this.getFileName()}`);
           this.updateStatus('Loaded');
           this.updateMetadata();
@@ -298,11 +302,10 @@ class WavViewer extends ViewerBase {
   // Try to resolve the audio resource synchronously from the AudioEngine if missing
   _ensureAudioResource() {
     if (this.audioResource) return true;
-    const ge = this.gameEmulator;
-    if (!ge || !ge.audioEngine) return false;
-    const id = ge.getLoadedResourceId(this.getFileName());
+    if (!this.audioHost || !this.audioEngine) return false;
+    const id = this.audioHost.getLoadedResourceId(this.path || this.getFileName());
     if (!id) return false;
-    const res = ge.audioEngine.getResource(id);
+    const res = this.audioEngine.getResource(id);
     if (!res) return false;
     this.audioResource = res;
     this.updateStatus('Loaded');
@@ -653,21 +656,20 @@ class WavViewer extends ViewerBase {
   }
 
   async restartLoop() {
-    const gameEmulator = this.gameEmulator;
-    if (!this.isLooping || !gameEmulator || !this.audioResource) return;
+    if (!this.isLooping || !this.audioHost || !this.audioEngine || !this.audioResource) return;
     
     console.log('[WavViewer] Restarting loop');
     
     try {
-      const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
+      const resourceId = this.audioHost.getLoadedResourceId(this.path || this.getFileName());
       if (resourceId) {
         const volume = this.volumeControl ? this.volumeControl.getNormalizedValue() : 0.7;
         
         // Stop current playback
-        gameEmulator.audioEngine.stopAllSounds(resourceId);
+        this.audioEngine.stopAllSounds(resourceId);
         
         // Start new playback
-        await gameEmulator.audioEngine.startSound(resourceId, volume);
+        await this.audioEngine.startSound(resourceId, volume);
         
         // Reset start time for accurate position tracking
         this.startTime = Date.now();
@@ -687,13 +689,12 @@ class WavViewer extends ViewerBase {
   async playSound() {
     console.log('[WavViewer] playSound called, playButton:', this.playButton);
     
-    const gameEmulator = this.gameEmulator;
-    if (!gameEmulator || !this.audioResource) {
+    if (!this.audioHost || !this.audioEngine || !this.audioResource) {
       alert('Audio resource not available');
       return;
     }
     
-    const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
+    const resourceId = this.audioHost.getLoadedResourceId(this.path || this.getFileName());
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -703,10 +704,10 @@ class WavViewer extends ViewerBase {
       const volume = this.volumeControl ? this.volumeControl.getNormalizedValue() : 0.7;
       
       // Check if AudioContext is suspended and needs to be resumed
-      if (gameEmulator.audioEngine.audioContext.state === 'suspended') {
+      if (this.audioEngine.audioContext.state === 'suspended') {
         console.log('[WavViewer] AudioContext suspended, resuming...');
         try {
-          await gameEmulator.audioEngine.audioContext.resume();
+          await this.audioEngine.audioContext.resume();
           console.log('[WavViewer] AudioContext resumed');
         } catch (error) {
           console.warn('[WavViewer] Failed to resume AudioContext:', error);
@@ -714,7 +715,7 @@ class WavViewer extends ViewerBase {
         }
       }
       
-      const instanceId = await gameEmulator.audioEngine.startSound(resourceId, volume);
+      const instanceId = await this.audioEngine.startSound(resourceId, volume);
       
       if (instanceId) {
         // Set duration and start position tracking
@@ -828,24 +829,23 @@ class WavViewer extends ViewerBase {
     // Stop position tracking
     this.stopPositionTracking();
     
-    const gameEmulator = this.gameEmulator;
-    if (!gameEmulator) {
-      console.log('[WavViewer] No game emulator, skipping stop');
+    if (!this.audioHost || !this.audioEngine) {
+      console.log('[WavViewer] No studio audio host, skipping stop');
       return;
     }
     
     try {
-      const resourceId = gameEmulator.getLoadedResourceId(this.getFileName());
+      const resourceId = this.audioHost.getLoadedResourceId(this.path || this.getFileName());
       if (resourceId) {
         console.log('[WavViewer] Stopping all sounds for resource:', resourceId);
         // Stop all instances of this sound
-        gameEmulator.audioEngine.stopAllSounds(resourceId);
+        this.audioEngine.stopAllSounds(resourceId);
       }
     } catch (error) {
       console.error('[WavViewer] Error stopping all playback:', error);
       // Try emergency stop as fallback
       try {
-        gameEmulator.audioEngine.emergencyAudioStop();
+        this.audioEngine.emergencyAudioStop();
       } catch (emergencyError) {
         console.error('[WavViewer] Emergency stop also failed:', emergencyError);
       }

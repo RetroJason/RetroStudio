@@ -1751,13 +1751,14 @@ class ProjectExplorer {
     // Determine if path is file or folder from structure
     const node = this.getNodeByPath(path);
     const isFolder = node && node.type === 'folder';
+    const selectedName = path.split('/').pop() || path;
 
   // Build storage deletion list
-    const toDelete = [];
+    const toDelete = new Set();
     const collectPaths = (basePath, nodeData) => {
       if (!nodeData) return;
       if (nodeData.type === 'file') {
-        toDelete.push(basePath);
+        toDelete.add(basePath);
       } else if (nodeData.children) {
         for (const [name, child] of Object.entries(nodeData.children)) {
           collectPaths(`${basePath}/${name}`.replace(/\\/g, '/'), child);
@@ -1768,14 +1769,29 @@ class ProjectExplorer {
     if (isFolder) {
       collectPaths(path, node);
     } else {
-      toDelete.push(path);
+      toDelete.add(path);
+
+      if (this.isImageFile(selectedName)) {
+        const lastDot = selectedName.lastIndexOf('.');
+        const baseName = lastDot >= 0 ? selectedName.substring(0, lastDot) : selectedName;
+        const parentPath = path.includes('/') ? path.split('/').slice(0, -1).join('/') : '';
+        const companionExtensions = ['.texture', '.frameset', '.d2'];
+
+        for (const extension of companionExtensions) {
+          const companionName = `${baseName}${extension}`;
+          const companionPath = parentPath ? `${parentPath}/${companionName}` : companionName;
+          toDelete.add(companionPath);
+        }
+      }
     }
+
+    const deletedPaths = Array.from(toDelete);
 
   // Delete from storage (FileManager preferred)
     try {
       const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
       if (fm) {
-        for (const p of toDelete) {
+        for (const p of deletedPaths) {
       const storagePath = (window.ProjectPaths && window.ProjectPaths.normalizeStoragePath) ? window.ProjectPaths.normalizeStoragePath(p) : (p.startsWith('Build/') ? p.replace(/^Build\//, 'build/') : p);
           try {
             await fm.deleteFile(storagePath);
@@ -1790,15 +1806,30 @@ class ProjectExplorer {
     }
 
     // Remove from in-memory structure
-    const parts = path.split('/');
-    const name = parts.pop();
-    let current = this.projectData.structure;
-    for (const part of parts) {
-      if (current[part] && current[part].type === 'folder') {
-        current = current[part].children;
+    const removeFileNode = (targetPath) => {
+      const parts = targetPath.split('/');
+      const name = parts.pop();
+      let current = this.projectData.structure;
+      for (const part of parts) {
+        if (current[part] && current[part].type === 'folder') {
+          current = current[part].children;
+        } else {
+          return;
+        }
+      }
+
+      if (name && current[name]) {
+        delete current[name];
+      }
+    };
+
+    if (isFolder) {
+      removeFileNode(path);
+    } else {
+      for (const deletedPath of deletedPaths) {
+        removeFileNode(deletedPath);
       }
     }
-    delete current[name];
 
     // Re-render tree
     this.renderTree();
@@ -1807,7 +1838,7 @@ class ProjectExplorer {
     // Emit deletion event for other systems (e.g., TabManager)
     try {
       if (window.eventBus && typeof window.eventBus.emit === 'function') {
-        await window.eventBus.emit('file.deleted', { path, isFolder, deletedPaths: toDelete });
+        await window.eventBus.emit('file.deleted', { path, isFolder, deletedPaths });
       }
     } catch (e) {
       console.warn('[ProjectExplorer] Failed to emit file.deleted:', e);
@@ -2555,8 +2586,18 @@ class ProjectExplorer {
 
     // Get file extension
     const extension = fileName.includes('.') ? '.' + fileName.split('.').pop().toLowerCase() : '';
+    const musicExtensions = ['.mod', '.xm', '.s3m', '.it', '.mptm'];
     
     console.log(`[ProjectExplorer] Getting component for file: ${fileName}, extension: ${extension}, preferEditor: ${preferEditor}`);
+
+    if (musicExtensions.includes(extension)) {
+      const viewer = componentRegistry.getViewerForFile(filePath);
+      if (viewer) {
+        console.log(`[ProjectExplorer] Using viewer for music file: ${viewer.name}`);
+        return viewer;
+      }
+      console.warn(`[ProjectExplorer] No viewer found for music file ${fileName}`);
+    }
 
     let component = null;
     

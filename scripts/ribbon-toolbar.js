@@ -8,6 +8,8 @@ class RibbonToolbar {
     this.fileCounter = 1; // Counter for new file naming
     this.ribbonColorValue = '0xFFFFFF';
     this.ribbonToolbar = null;
+    this.hostedSaveStateIndicator = null;
+    this.hostedSaveStateLabel = null;
     this.init();
   }
   
@@ -16,6 +18,7 @@ class RibbonToolbar {
     this.setupButtons();
     this.setupFileMenu();
     this.setupColorPicker();
+    this.setupHostedSaveIndicator();
     this.setupResponsiveRibbon();
     
     // Wait for component registry to be available
@@ -36,6 +39,68 @@ class RibbonToolbar {
     } catch (_) {}
     
     console.log('[RibbonToolbar] Initialized');
+  }
+
+  setupHostedSaveIndicator() {
+    this.hostedSaveStateIndicator = document.getElementById('hostedSaveState');
+    this.hostedSaveStateLabel = document.getElementById('hostedSaveStateLabel');
+
+    if (!this.hostedSaveStateIndicator || !this.hostedSaveStateLabel) {
+      return;
+    }
+
+    window.addEventListener('retrowww-hosted-save-state', (event) => {
+      this.renderHostedSaveState(event?.detail || null);
+    });
+
+    const initialState = window.retrowwwHostedStudio?.getSaveState?.() || window.__retrowwwHostedSaveState || null;
+    this.renderHostedSaveState(initialState);
+  }
+
+  renderHostedSaveState(state) {
+    if (!this.hostedSaveStateIndicator || !this.hostedSaveStateLabel) {
+      return;
+    }
+
+    const projectName = String(state?.projectName || '').trim();
+    if (!projectName) {
+      this.hostedSaveStateIndicator.classList.add('is-hidden');
+      this.hostedSaveStateIndicator.removeAttribute('data-state');
+      this.hostedSaveStateIndicator.title = 'Hosted save status';
+      this.hostedSaveStateLabel.textContent = 'Saved';
+      return;
+    }
+
+    const indicatorState = String(state?.status || 'idle');
+    let label = 'No pending changes';
+    let title = 'Hosted save status for ' + projectName;
+
+    if (indicatorState === 'saving') {
+      label = 'Saving...';
+      title = 'Saving ' + projectName + ' to Retrowww';
+    } else if (indicatorState === 'pending') {
+      label = 'Unsaved changes';
+      title = projectName + ' has local changes that still need to be saved to Retrowww';
+    } else if (indicatorState === 'failed') {
+      label = 'Save failed';
+      title = state?.lastError
+        ? 'Failed to save ' + projectName + ': ' + state.lastError
+        : 'Failed to save ' + projectName;
+    } else if (indicatorState === 'saved') {
+      label = state?.lastSavedLabel ? 'Saved ' + state.lastSavedLabel : 'Saved';
+      title = 'Last saved ' + projectName;
+      if (state?.lastSavedLabel) {
+        title += ' at ' + state.lastSavedLabel;
+      }
+      if (Number.isFinite(state?.revisionNumber)) {
+        title += ' (revision ' + state.revisionNumber + ')';
+      }
+    }
+
+    this.hostedSaveStateIndicator.classList.remove('is-hidden');
+    this.hostedSaveStateIndicator.dataset.state = indicatorState;
+    this.hostedSaveStateIndicator.title = title;
+    this.hostedSaveStateLabel.textContent = label;
   }
 
   setupColorPicker() {
@@ -737,6 +802,9 @@ class RibbonToolbar {
     this.setupButton('publishBtn', async () => {
       await this.publishProjectToRetrowww();
     });
+    this.setupButton('shareBtn', async () => {
+      await this.shareProjectFromStudio();
+    });
 
     // Watch operations
     this.watchClient = null;
@@ -805,8 +873,243 @@ class RibbonToolbar {
       alert(`Published ${project} to Retrowww as draft version ${version}.${shareLabel}`);
     } catch (e) {
       console.error('[RibbonToolbar] Publish failed:', e);
+      await this.handlePublishFailure(e);
       alert('Publish failed: ' + (e?.message || e));
     }
+  }
+
+  async handlePublishFailure(error) {
+    const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+    if (!project) return;
+
+    const errorMessage = String(error?.message || error || '');
+    const fieldName = this.getPackageSettingsFieldFromPublishError(errorMessage);
+    if (!fieldName) return;
+
+    const sourcesRoot = window.ProjectPaths?.getSourcesRootUi?.() || 'Sources';
+    const packagePath = `${project}/${sourcesRoot}/Package/app.package`;
+
+    try {
+      const componentInfo = window.gameEmulator?.projectExplorer?._getComponentForFile?.(packagePath, true) || null;
+      await window.gameEmulator?.tabManager?.openInTab?.(packagePath, componentInfo, { isReadOnly: false });
+
+      const activeEditor = window.gameEmulator?.tabManager?.getActiveTab?.()?.viewer || null;
+      if (activeEditor && typeof activeEditor.focusField === 'function') {
+        activeEditor.focusField(fieldName);
+      }
+    } catch (openError) {
+      console.error('[RibbonToolbar] Failed to focus package settings after publish error:', openError);
+    }
+  }
+
+  getPackageSettingsFieldFromPublishError(errorMessage) {
+    const normalized = String(errorMessage || '').toLowerCase();
+
+    if (normalized.includes('application type is required') || normalized.includes('category is required')) {
+      return 'category';
+    }
+    if (normalized.includes('target device')) {
+      return 'targetDeviceSlug';
+    }
+    if (normalized.includes('short description')) {
+      return 'shortDescription';
+    }
+    if (normalized.includes('package settings: description is required')) {
+      return 'description';
+    }
+    if (normalized.includes('version code')) {
+      return 'versionCode';
+    }
+    if (normalized.includes('package settings: version is required')) {
+      return 'version';
+    }
+    if (normalized.includes('application id') || normalized.includes('unique id')) {
+      return 'uniqueId';
+    }
+    if (normalized.includes('at least one screenshot is required') || normalized.includes('screenshot')) {
+      return 'screenshots';
+    }
+
+    return null;
+  }
+
+  async shareProjectFromStudio() {
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+
+      const selection = await (window.ModalUtils?.showSelectionList?.(
+        'Share Project',
+        'Choose how to share the current project.',
+        [
+          {
+            value: 'preview',
+            label: 'Share Preview',
+            description: 'Publish a temporary draft preview page where someone can run it in the simulator, install it, and preview it on the watch.',
+          },
+          {
+            value: 'project',
+            label: 'Share Project',
+            description: 'Open RetroStudio with this project imported from a temporary link.',
+          },
+          {
+            value: 'collab',
+            label: 'Code Together',
+            description: 'Coming soon: edit the same project together with live updates.',
+          },
+        ],
+        { confirmText: 'Continue', cancelText: 'Cancel', defaultValue: 'preview' }
+      ) ?? Promise.resolve(null));
+
+      if (!selection) {
+        return;
+      }
+
+      if (selection === 'preview') {
+        await this.createPreviewShareLink(project);
+        return;
+      }
+
+      if (selection === 'project') {
+        await this.createProjectShareLink(project);
+        return;
+      }
+
+      alert('Code Together is coming soon.');
+    } catch (e) {
+      console.error('[RibbonToolbar] Share failed:', e);
+      alert('Share failed: ' + (e?.message || e));
+    }
+  }
+
+  async createPreviewShareLink(project) {
+    if (window.gameEmulator?.tabManager?.saveActiveTab) {
+      await window.gameEmulator.tabManager.saveActiveTab();
+    }
+
+    const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+    if (!svc || typeof svc.publishProject !== 'function') {
+      throw new Error('Project publish service unavailable');
+    }
+
+    window.gameEmulator?.updateStatus?.('Creating preview share link...', 'info');
+    const result = await svc.publishProject(project, {
+      shareSource: false,
+    });
+    if (!result?.buildResult) {
+      throw new Error('Preview publish completed without a build summary result.');
+    }
+    if (!result?.previewShareUrl) {
+      throw new Error('Preview publish did not return a share URL.');
+    }
+
+    this.showBuildSummaryPopup(result.buildResult);
+    window.gameEmulator?.updateStatus?.('Preview share link ready.', 'success');
+    this.showShareLinkDialog(
+      'Share Preview',
+      result.previewShareUrl,
+      'This temporary link opens a draft application details page for the current project.'
+    );
+  }
+
+  async createProjectShareLink(project) {
+    if (window.gameEmulator?.tabManager?.saveActiveTab) {
+      await window.gameEmulator.tabManager.saveActiveTab();
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
+      throw new Error('Retrowww hosted project save service is unavailable.');
+    }
+
+    window.gameEmulator?.updateStatus?.('Saving project before sharing...', 'info');
+    const summary = await hostedStudioApi.saveProject(project);
+    if (!summary?.project?.uuid) {
+      throw new Error('Project save did not return a project UUID.');
+    }
+
+    const response = await fetch(`/api/projects/${encodeURIComponent(summary.project.uuid)}/share`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(payload?.error || `Project share request failed with status ${response.status}.`);
+    }
+
+    if (!payload?.shareUrl) {
+      throw new Error('Project share request did not return a share URL.');
+    }
+
+    window.gameEmulator?.updateStatus?.('Project share link ready.', 'success');
+    this.showShareLinkDialog(
+      'Share Project',
+      payload.shareUrl,
+      'This temporary link opens RetroStudio with the current project loaded.'
+    );
+  }
+
+  showShareLinkDialog(title, shareUrl, description) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog';
+    dialog.innerHTML = `
+      <div class="modal-header">
+        <h3 class="modal-title">${this.escapeHtml(title)}</h3>
+      </div>
+      <div class="modal-body">
+        <p style="color: #cccccc; margin: 0 0 14px 0; line-height: 1.5;">${this.escapeHtml(description || '')}</p>
+        <label class="modal-label" for="share-link-input">Temporary link</label>
+        <input id="share-link-input" class="modal-input" type="text" readonly value="${this.escapeHtml(shareUrl)}">
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn modal-btn-secondary" id="share-link-close">Close</button>
+        <button class="modal-btn modal-btn-secondary" id="share-link-open">Open</button>
+        <button class="modal-btn modal-btn-primary" id="share-link-copy">Copy</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const input = dialog.querySelector('#share-link-input');
+    const closeBtn = dialog.querySelector('#share-link-close');
+    const openBtn = dialog.querySelector('#share-link-open');
+    const copyBtn = dialog.querySelector('#share-link-copy');
+
+    const cleanup = () => {
+      if (document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+      }
+    };
+
+    setTimeout(() => {
+      input?.focus();
+      input?.select();
+    }, 50);
+
+    closeBtn?.addEventListener('click', cleanup);
+    openBtn?.addEventListener('click', () => {
+      window.open(shareUrl, '_blank', 'noopener');
+    });
+    copyBtn?.addEventListener('click', async () => {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        throw new Error('Clipboard API is unavailable.');
+      }
+
+      await navigator.clipboard.writeText(shareUrl);
+      window.gameEmulator?.updateStatus?.('Share link copied to clipboard.', 'success');
+      cleanup();
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        cleanup();
+      }
+    });
   }
 
   showBuildSummaryPopup(result) {

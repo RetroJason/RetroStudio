@@ -950,7 +950,6 @@ class PackageSettingsEditor extends EditorBase {
 
     const sourcesRoot = this.getSourcesRoot();
     const packagePrefixStorage = `${sourcesRoot}/Package`;
-    const screenshotPrefixStorage = `${packagePrefixStorage}/screenshots/`;
     const iconPath = `${sourcesRoot}/Package/icons/icon32.png`;
 
     // Keep title/version sensible even when older package files are blank.
@@ -980,25 +979,49 @@ class PackageSettingsEditor extends EditorBase {
       }
     }
 
-    // If screenshots list is empty, auto-link existing package screenshots.
-    if (!Array.isArray(this.settings.screenshots) || this.settings.screenshots.length === 0) {
-      try {
-        const files = await fileManager.listFiles(screenshotPrefixStorage);
-        const rel = (files || [])
-          .map((f) => (typeof f === 'string' ? f : (f?.path || '')))
-          .filter((p) => typeof p === 'string' && p.startsWith(screenshotPrefixStorage))
-          .filter((p) => /\.(png|jpg|jpeg|gif|bmp|webp)$/i.test(p))
-          .sort()
-          .map((p) => p);
+  }
 
-        if (rel.length) {
-          this.settings.screenshots = rel;
-          this._screenshotIndex = 0;
-        }
-      } catch (_) {
-        // Ignore discovery failures.
-      }
+  clearFieldHighlights() {
+    const highlightableControls = [
+      this._ui.title,
+      this._ui.version,
+      this._ui.versionCode,
+      this._ui.uniqueId,
+      this._ui.category,
+      this._ui.targetDeviceSlug,
+      this._ui.shortDescription,
+      this._ui.description,
+      this._ui.screenshotStage,
+    ];
+
+    highlightableControls.forEach((control) => {
+      if (!control) return;
+      control.style.borderColor = '#4b5368';
+      control.style.boxShadow = 'none';
+      control.removeAttribute('aria-invalid');
+    });
+  }
+
+  focusField(fieldName) {
+    const control = this._ui?.[fieldName];
+    if (!control) return false;
+
+    this.clearFieldHighlights();
+    control.style.borderColor = '#d6a34c';
+    control.style.boxShadow = '0 0 0 2px rgba(214, 163, 76, 0.25)';
+    control.setAttribute('aria-invalid', 'true');
+
+    if (typeof control.focus === 'function') {
+      control.focus();
     }
+    if (typeof control.scrollIntoView === 'function') {
+      control.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    if ((control.tagName === 'INPUT' || control.tagName === 'TEXTAREA') && typeof control.select === 'function') {
+      control.select();
+    }
+
+    return true;
   }
 
   async ensureDefaultIcon32(force = false) {

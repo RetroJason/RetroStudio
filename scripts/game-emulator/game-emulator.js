@@ -44,9 +44,11 @@ class GameEmulator {
     this.luaState = null; // Lua execution state
     this.isRunning = false; // Game loop state
     this.isPaused = false; // Pause state
+    this.isStarting = false; // Run startup/build state
+    this.hasDeferredResourceInvalidation = false;
     this.frameCount = 0;
     this.lastFrameTime = 0;
-    this.compileOverlayHidden = false;
+    this.compileOverlayHidden = true;
     this.extensionLoader = null; // Lua extension loader
     this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
 
@@ -186,6 +188,37 @@ class GameEmulator {
     return instance;
   }
 
+  ensureAudioDebugIds() {
+    if (this.audioEngine && !this.audioEngine._debugId) {
+      GameEmulator._nextAudioDebugId = (GameEmulator._nextAudioDebugId || 1);
+      this.audioEngine._debugId = `audio_${GameEmulator._nextAudioDebugId++}`;
+    }
+
+    if (this.resourceManager && !this.resourceManager._debugId) {
+      GameEmulator._nextResourceManagerDebugId = (GameEmulator._nextResourceManagerDebugId || 1);
+      this.resourceManager._debugId = `resource_manager_${GameEmulator._nextResourceManagerDebugId++}`;
+    }
+  }
+
+  logLoadedAudioResources(label) {
+    const engineId = this.audioEngine?._debugId || 'audio_unknown';
+    const managerId = this.resourceManager?._debugId || 'resource_manager_unknown';
+    const engineResourceIds = this.audioEngine?.resources instanceof Map
+      ? Array.from(this.audioEngine.resources.keys())
+      : [];
+    const managerResources = typeof this.resourceManager?.listResources === 'function'
+      ? this.resourceManager.listResources().map((resource) => ({
+          resourceId: resource.resourceId,
+          name: resource.name,
+          type: resource.type,
+        }))
+      : [];
+
+    console.log(`[GameEmulator][AudioDebug] ${label}: engine=${engineId}, resourceManager=${managerId}, shared=${this.resourceManager?.audioEngine === this.audioEngine}`);
+    console.log('[GameEmulator][AudioDebug] Engine resource IDs:', engineResourceIds);
+    console.log('[GameEmulator][AudioDebug] ResourceManager resources:', managerResources);
+  }
+
   getService(name) {
     if (this.hostServices.has(name)) {
       return this.hostServices.get(name);
@@ -278,11 +311,17 @@ class GameEmulator {
 
     // Initialize or obtain ResourceManager
     this.resourceManager = this.getService('resourceManager');
+    if (this.resourceManager && this.resourceManager.audioEngine !== this.audioEngine) {
+      console.warn('[GameEmulator] Replacing ResourceManager bound to a different AudioEngine instance');
+      this.resourceManager = null;
+    }
     if (!this.resourceManager) {
       this.resourceManager = new ResourceManager(this.audioEngine);
       this.registerExternalService('resourceManager', this.resourceManager);
     }
     this.registerHostService('resourceManager', this.resourceManager);
+    this.ensureAudioDebugIds();
+    this.logLoadedAudioResources('after initialize services');
 
     if (!this.options.runtimeOnly) {
       this.buildSystem = this.getService('buildSystem');
@@ -446,6 +485,10 @@ class GameEmulator {
   
   addAudioContextResumeHandler() {
     const resumeHandler = async () => {
+      if (!this.audioEngine?.audioContext) {
+        return;
+      }
+
       if (this.audioEngine.audioContext.state === 'suspended') {
         console.log('[GameEditor] User interaction detected, resuming AudioContext...');
         try {
@@ -455,9 +498,11 @@ class GameEmulator {
           console.warn('[GameEditor] Failed to resume AudioContext:', error);
         }
       }
-      // Remove handler after first use
-      document.removeEventListener('click', resumeHandler);
-      document.removeEventListener('keydown', resumeHandler);
+
+      if (this.audioEngine.audioContext.state !== 'suspended') {
+        document.removeEventListener('click', resumeHandler);
+        document.removeEventListener('keydown', resumeHandler);
+      }
     };
     
     // Listen for any user interaction
@@ -575,8 +620,13 @@ class GameEmulator {
       return this.playRuntimePackage();
     }
 
+    if (this.isStarting) {
+      throw new Error('Play already in progress');
+    }
+
     console.log('[GameEmulator] Play project');
     this.updateStatus('Preparing to run project...', 'info');
+    this.isStarting = true;
 
     const playStart = performance.now();
     let phaseStart = playStart;
@@ -627,6 +677,8 @@ class GameEmulator {
         'An error occurred while trying to run your project.',
         `Error Details:\n${error.message}\n\nStack Trace:\n${error.stack || 'No stack trace available'}\n\nPlease check your project files and try again.`
       );
+    } finally {
+      this.isStarting = false;
     }
   }
   
@@ -771,19 +823,22 @@ class GameEmulator {
       return null;
     }
 
-    // Extract folder structure from path
-    // Expected formats: "test/Game Objects/SFX/sound.wav" or "build/SFX/sound.wav"
+    const normalizedPath = String(file.path).replace(/\\/g, '/');
+    const parsedPath = window.ProjectPaths?.parseProjectPath?.(normalizedPath);
+    const relativePath = String(parsedPath?.rest || normalizedPath);
+    const pathSegments = relativePath.split('/').filter(Boolean);
+
     let folderMatch = null;
-    
-    // Try "Game Objects/FolderName/" pattern first
-    const gameObjectsMatch = file.path.match(/Game Objects\/([^\/]+)\//);
-    if (gameObjectsMatch) {
-      folderMatch = gameObjectsMatch[1].toUpperCase();
-    } else {
-      // Fallback to "build/FolderName/" pattern
-      const buildMatch = file.path.match(/build\/([^\/]+)\//);
-      if (buildMatch) {
-        folderMatch = buildMatch[1].toUpperCase();
+    const buildRootUi = String(this.getBuildRootUi() || '').trim().toLowerCase();
+    const buildStorageRoot = String(window.ProjectPaths?.getBuildStoragePrefix?.() || 'build/')
+      .replace(/\/$/, '')
+      .trim()
+      .toLowerCase();
+
+    if (pathSegments.length >= 2) {
+      const rootSegment = pathSegments[0].toLowerCase();
+      if (rootSegment === buildRootUi || rootSegment === buildStorageRoot || rootSegment === 'game objects') {
+        folderMatch = pathSegments[1].toUpperCase();
       }
     }
 
@@ -874,6 +929,7 @@ class GameEmulator {
     
     const loadedCount = Array.from(this.resourceMap.values()).filter(r => r.loaded).length;
     console.log(`[GameEmulator] Preloaded ${loadedCount}/${this.resourceMap.size} resources into memory`);
+    this.logLoadedAudioResources('after preloadResources');
   }
 
   /**
@@ -1130,13 +1186,51 @@ class GameEmulator {
     return this.projectExplorer.getProjectFiles('sfx');
   }
   
-  getLoadedResourceId(filename) {
+  getLoadedResourceId(filePathOrName) {
+    const lookupPath = String(filePathOrName || '');
+    const lookupName = lookupPath.split('/').pop() || lookupPath.split('\\').pop() || lookupPath;
+
     for (const [path, id] of this.loadedAudioResources) {
-      if (path.endsWith(filename)) {
+      if (path === lookupPath || path.endsWith(lookupName)) {
         return id;
       }
     }
     return null;
+  }
+
+  applyResourceCacheInvalidation() {
+    console.log('[GameEmulator] Applying resource cache invalidation');
+
+    const audioResourceCount = this.loadedAudioResources.size;
+    for (const [path, resourceId] of this.loadedAudioResources.entries()) {
+      console.log(`[GameEmulator] Clearing cached audio resource: ${path} -> ${resourceId}`);
+
+      if (this.audioEngine) {
+        this.audioEngine.unloadResource(resourceId);
+      }
+
+      if (this.resourceManager) {
+        this.resourceManager.unloadResource(resourceId);
+      }
+    }
+
+    this.loadedAudioResources.clear();
+
+    if (this.resourceManager && typeof this.resourceManager.clear === 'function') {
+      this.resourceManager.clear();
+    }
+
+    if (this.resourceMap) {
+      for (const [resourceId, resource] of this.resourceMap.entries()) {
+        if (resource.loaded) {
+          resource.loaded = false;
+          resource.audioResource = null;
+        }
+      }
+    }
+
+    this.hasDeferredResourceInvalidation = false;
+    console.log(`[GameEmulator] Cleared ${audioResourceCount} audio resources and reset all resource cache`);
   }
 
   /**
@@ -1145,43 +1239,14 @@ class GameEmulator {
    */
   invalidateAllResourceCache() {
     console.log(`[GameEmulator] Invalidating ALL cached resources due to build operation`);
-    
-    // Clear all audio resources
-    const audioResourceCount = this.loadedAudioResources.size;
-    for (const [path, resourceId] of this.loadedAudioResources.entries()) {
-      console.log(`[GameEmulator] Clearing cached audio resource: ${path} -> ${resourceId}`);
-      
-      // Unload from audio engine
-      if (this.audioEngine) {
-        this.audioEngine.unloadResource(resourceId);
-      }
-      
-      // Unload from resource manager
-      if (this.resourceManager) {
-        this.resourceManager.unloadResource(resourceId);
-      }
+
+    if (this.isRunning) {
+      this.hasDeferredResourceInvalidation = true;
+      console.log('[GameEmulator] Deferring resource cache invalidation until the current run stops');
+      return;
     }
-    
-    // Clear the entire cache
-    this.loadedAudioResources.clear();
-    
-    // Clear resource manager cache
-    if (this.resourceManager && typeof this.resourceManager.clear === 'function') {
-      this.resourceManager.clear();
-    }
-    
-    // Clear resource mappings that might be cached
-    if (this.resourceMap) {
-      // Reset loaded status for all resources so they reload on next access
-      for (const [resourceId, resource] of this.resourceMap.entries()) {
-        if (resource.loaded) {
-          resource.loaded = false;
-          resource.audioResource = null;
-        }
-      }
-    }
-    
-    console.log(`[GameEmulator] Cleared ${audioResourceCount} audio resources and reset all resource cache`);
+
+    this.applyResourceCacheInvalidation();
   }
 
   /**
@@ -1200,8 +1265,8 @@ class GameEmulator {
         throw new Error('FileManager not available');
       }
       
-      // Convert UI path to storage path
-      const storagePath = resource.filePath.replace('test/Game Objects/', 'build/');
+      // Convert UI or project-relative build paths to the canonical storage path.
+      const storagePath = window.ProjectPaths?.normalizeStoragePath?.(resource.filePath) || resource.filePath;
       console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
       
       const fileData = await fileManager.loadFile(storagePath);
@@ -1240,6 +1305,7 @@ class GameEmulator {
       // Load through ResourceManager
       const resourceId = await this.resourceManager.loadFromFile(file, audioType);
       console.log(`[GameEmulator] Successfully loaded audio resource: ${resourceId}`);
+      this.logLoadedAudioResources(`after preloadAudioResource ${resource.id}`);
       
       return resourceId;
       
@@ -1250,19 +1316,21 @@ class GameEmulator {
   }
 
   // Load an audio file on demand (called by viewers)
-  async loadAudioFileOnDemand(filename, forceReload = false) {
-    console.log(`[GameEditor] Loading audio file on demand: ${filename}${forceReload ? ' (force reload)' : ''}`);
+  async loadAudioFileOnDemand(filePathOrName, forceReload = false) {
+    const lookupPath = String(filePathOrName || '');
+    const filename = lookupPath.split('/').pop() || lookupPath.split('\\').pop() || lookupPath;
+    console.log(`[GameEditor] Loading audio file on demand: ${lookupPath}${forceReload ? ' (force reload)' : ''}`);
     
     // Check if already loaded, unless forcing reload
     if (!forceReload) {
-      const existingId = this.getLoadedResourceId(filename);
+      const existingId = this.getLoadedResourceId(lookupPath);
       if (existingId) {
         console.log(`[GameEditor] File ${filename} already loaded with ID: ${existingId}`);
         return existingId;
       }
     } else {
       // Force reload: clear existing resource first
-      const existingId = this.getLoadedResourceId(filename);
+      const existingId = this.getLoadedResourceId(lookupPath);
       if (existingId) {
         console.log(`[GameEditor] Force reload: clearing existing resource ${existingId} for ${filename}`);
         if (this.audioEngine) {
@@ -1272,16 +1340,16 @@ class GameEmulator {
     }
     
     // Dedupe concurrent requests for the same filename
-    if (!forceReload && this._inflightLoads.has(filename)) {
-      console.log('[GameEditor] Returning in-flight load for', filename);
-      return this._inflightLoads.get(filename);
+    if (!forceReload && this._inflightLoads.has(lookupPath)) {
+      console.log('[GameEditor] Returning in-flight load for', lookupPath);
+      return this._inflightLoads.get(lookupPath);
     }
 
     const loadPromise = (async () => {
       // First try to find in pending files (regular project files)
     if (this.pendingAudioFiles) {
       for (const [fileKey, fileData] of this.pendingAudioFiles.entries()) {
-        if (fileKey.endsWith(filename)) {
+        if (fileKey === lookupPath || fileKey.endsWith(filename)) {
           try {
             console.log(`[GameEditor] Loading ${filename} (${fileData.audioType})...`);
             const resourceId = await this.resourceManager.loadFromFile(fileData.file, fileData.audioType);
@@ -1315,7 +1383,7 @@ class GameEmulator {
         console.log(`[GameEditor] Found ${buildRecords.length} build records:`, buildRecords);
         for (const rec of buildRecords) {
           const recPath = rec.path || rec;
-          if ((recPath || '').endsWith(filename)) {
+          if ((recPath || '') === lookupPath || (recPath || '').endsWith(filename)) {
             candidates.push(recPath);
             console.log(`[GameEditor] Found candidate: ${recPath}`);
           }
@@ -1350,9 +1418,12 @@ class GameEmulator {
           });
           const buf = rec.content instanceof ArrayBuffer ? rec.content : (rec.binaryData && rec.fileContent ? (() => { const bin = atob(rec.fileContent); const bytes = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return bytes.buffer; })() : new TextEncoder().encode(String(rec.fileContent || rec.content || '')).buffer);
           console.log(`[GameEditor] Converted to ArrayBuffer, length: ${buf.byteLength}`);
-          const file = new File([buf], filename, { type: 'audio/wav' });
+          const lower = filename.toLowerCase();
+          const isMod = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => lower.endsWith(ext));
+          const audioType = isMod ? 'mod' : 'wav';
+          const file = new File([buf], filename, { type: isMod ? 'application/octet-stream' : 'audio/wav' });
           console.log(`[GameEditor] Created File object:`, { name: file.name, size: file.size, type: file.type });
-          const resourceId = await this.resourceManager.loadFromFile(file, 'wav');
+          const resourceId = await this.resourceManager.loadFromFile(file, audioType);
           console.log(`[GameEditor] Successfully loaded audio resource: ${resourceId}`);
           this.loadedAudioResources.set(path, resourceId);
           this.updateStatus(`Loaded ${filename}`, 'success');
@@ -1375,7 +1446,7 @@ class GameEmulator {
     const resRecords = await fileIOService.listFiles(sourcesRoot);
         for (const rec of resRecords) {
           const recPath = rec.path || rec;
-          if ((recPath || '').endsWith(filename)) {
+          if ((recPath || '') === lookupPath || (recPath || '').endsWith(filename)) {
             resourceCandidates.push(recPath);
           }
         }
@@ -1430,14 +1501,14 @@ class GameEmulator {
     })();
 
     // Track in-flight and clean up when done
-    this._inflightLoads.set(filename, loadPromise);
+    this._inflightLoads.set(lookupPath, loadPromise);
     try {
       const id = await loadPromise;
       return id;
     } finally {
       // Remove only if this exact promise is still the one stored
-      if (this._inflightLoads.get(filename) === loadPromise) {
-        this._inflightLoads.delete(filename);
+      if (this._inflightLoads.get(lookupPath) === loadPromise) {
+        this._inflightLoads.delete(lookupPath);
       }
     }
   }
@@ -1751,6 +1822,9 @@ class GameEmulator {
         // Continue anyway - extensions are optional
         logRunPhase('loadLuaExtensions (failed)');
       }
+
+      await this.initializeInputManager();
+      logRunPhase('initializeInputManager');
       
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
@@ -1971,9 +2045,7 @@ class GameEmulator {
     this.isPaused = false; // Make sure we start unpaused
     this.lastFrameTime = performance.now();
     this.frameCount = 0;
-    this.compileOverlayHidden = false;
-    const compileOverlay = this.contentContainer?.querySelector('.simulator-compile-overlay');
-    compileOverlay?.classList.remove('hidden');
+    this.showCompileOverlay();
     
     // Update button appearance
     this.updatePlayPauseButton();
@@ -2029,6 +2101,10 @@ class GameEmulator {
         
         // Always check for new print output from Lua (even when paused, to capture any buffered output)
         this.captureLuaPrintOutput();
+
+        if (this.inputManager) {
+          this.inputManager.endFrame();
+        }
         
         // Debug input state every second (only when there's actual input)
         if (this.frameCount % 60 === 0) {
@@ -2040,6 +2116,11 @@ class GameEmulator {
         console.error('[GameEmulator] Error in Update() function:', error);
         this.stopGameLoop();
         this.updateStatus(`Update() error: ${error.message}`, 'error');
+        this.showErrorPopup(
+          'Simulator Runtime Error',
+          error.message || String(error),
+          error.stack || String(error)
+        );
         
         return;
       }
@@ -2060,6 +2141,7 @@ class GameEmulator {
     console.log('[GameEmulator] Stopping game loop...');
     this.isRunning = false;
     this.isPaused = false; // Reset pause state when stopping
+    this.hideCompileOverlay();
     this.updateStatus('Game loop stopped', 'info');
     
     // Update button appearance
@@ -2071,6 +2153,24 @@ class GameEmulator {
       return;
     }
 
+    this.hideCompileOverlay();
+
+    if (this.options.autoFocusCanvas !== false) {
+      this.focusGameCanvas();
+    }
+  }
+
+  showCompileOverlay() {
+    const overlay = this.contentContainer?.querySelector('.simulator-compile-overlay');
+    if (!overlay) {
+      throw new Error('Simulator compile overlay is not available.');
+    }
+
+    overlay.classList.remove('hidden');
+    this.compileOverlayHidden = false;
+  }
+
+  hideCompileOverlay() {
     const overlay = this.contentContainer?.querySelector('.simulator-compile-overlay');
     if (!overlay) {
       throw new Error('Simulator compile overlay is not available.');
@@ -2102,6 +2202,10 @@ class GameEmulator {
     if (this.audioEngine) {
       this.audioEngine.stopAllAudio();
     }
+
+    if (this.hasDeferredResourceInvalidation) {
+      this.applyResourceCacheInvalidation();
+    }
     
     this.updateStatus('Project stopped', 'info');
   }
@@ -2110,6 +2214,11 @@ class GameEmulator {
    * Toggle play/pause state - main control button
    */
   async togglePlayPause() {
+    if (this.isStarting) {
+      console.warn('[GameEmulator] Ignoring play/pause toggle while a run is already starting');
+      return;
+    }
+
     if (!this.isRunning) {
       // Not running, so start playing
       await this.playProject();
@@ -2686,7 +2795,7 @@ class GameEmulator {
           <div class="game-screen-frame">
             <canvas id="game-canvas" width="448" height="368"></canvas>
             ${overlay}
-            <div class="simulator-compile-overlay" aria-live="polite">
+            <div class="simulator-compile-overlay hidden" aria-live="polite">
               <div class="simulator-compile-spinner" aria-hidden="true"></div>
               <div>Compiling simulator...</div>
             </div>
@@ -2699,6 +2808,13 @@ class GameEmulator {
       
       ${keyBindingsPopup}
     `;
+
+    const gameScreenFrame = this.contentContainer.querySelector('.game-screen-frame');
+    if (gameScreenFrame) {
+      gameScreenFrame.addEventListener('mousedown', () => {
+        this.focusGameCanvas();
+      });
+    }
 
     // Initialize empty console - only Lua print() should write to it
   this.setVolume(this.currentVolume);
@@ -2734,9 +2850,7 @@ class GameEmulator {
         
         // Focus the canvas to activate input capture
         if (this.options.autoFocusCanvas !== false) {
-          setTimeout(() => {
-            gameCanvas.focus();
-          }, 100);
+          this.focusGameCanvas({ delay: 100 });
         }
       } else {
         console.error('[GameEmulator] Failed to initialize input manager');
@@ -2747,6 +2861,25 @@ class GameEmulator {
       console.error('[GameEmulator] Error initializing input manager:', error);
       this.inputManager = null;
     }
+  }
+
+  focusGameCanvas(options = {}) {
+    const delay = Number.isFinite(options?.delay) ? options.delay : 0;
+    const focusCanvas = () => {
+      const gameCanvas = this.contentContainer?.querySelector('#game-canvas');
+      if (!gameCanvas || typeof gameCanvas.focus !== 'function') {
+        return;
+      }
+
+      gameCanvas.focus();
+    };
+
+    if (delay > 0) {
+      setTimeout(focusCanvas, delay);
+      return;
+    }
+
+    focusCanvas();
   }
   
   /**
@@ -2823,18 +2956,21 @@ class GameEmulator {
     if (playPauseBtn) {
       playPauseBtn.addEventListener('click', () => {
         this.togglePlayPause();
+        this.focusGameCanvas();
       });
     }
 
     if (stopBtn) {
       stopBtn.addEventListener('click', () => {
         this.stopGame();
+        this.focusGameCanvas();
       });
     }
 
     if (reloadBtn) {
       reloadBtn.addEventListener('click', () => {
         this.reloadGame();
+        this.focusGameCanvas();
       });
     }
 

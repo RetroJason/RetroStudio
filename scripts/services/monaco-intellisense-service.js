@@ -13,9 +13,9 @@ class MonacoIntelliSenseService {
 
     /**
      * Load and process extension definitions from JSON
-     * @param {string} extensionFilePath - Path to the extensions.json file
+    * @param {string} extensionFilePath - Path to the canonical Lua API JSON file
      */
-    async loadExtensions(extensionFilePath = 'scripts/lua/extensions.json') {
+    async loadExtensions(extensionFilePath = 'scripts/lua/api.json') {
         try {
             console.log('[MonacoIntelliSenseService] Loading extensions from simulator component:', extensionFilePath);
 
@@ -64,7 +64,7 @@ class MonacoIntelliSenseService {
 
     /**
      * Process a single category of functions
-     * @param {Object} category - Category object from extensions.json
+    * @param {Object} category - Category object from the canonical Lua API contract
      */
     processCategory(category) {
         if (!category.functions || category.functions.length === 0) {
@@ -79,7 +79,7 @@ class MonacoIntelliSenseService {
     /**
      * Process a single function definition into Monaco formats
      * @param {Object} category - The category this function belongs to
-     * @param {Object} func - Function definition from extensions.json
+    * @param {Object} func - Function definition from the canonical Lua API contract
      */
     processFunctionDefinition(category, func) {
         const fullName = `${category.name}.${func.name}`;

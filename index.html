@@ -29,15 +29,21 @@
       <!-- File Operations Section -->
       <div class="ribbon-section" data-ribbon-group="file">
         <div class="ribbon-label">File</div>
-        <button id="fileMenuToggle" class="ribbon-file-toggle" type="button" aria-haspopup="menu" aria-expanded="false" title="Open file options">
-          <span class="ribbon-file-toggle-icon">☰</span>
-          <span class="ribbon-file-toggle-text">File</span>
-        </button>
-        <div class="ribbon-buttons">
+        <div class="ribbon-file-primary-row">
+          <button id="fileMenuToggle" class="ribbon-file-toggle" type="button" aria-haspopup="menu" aria-expanded="false" title="Open file options">
+            <span class="ribbon-file-toggle-icon">📄</span>
+            <span class="ribbon-file-toggle-text">File</span>
+          </button>
           <button id="saveBtn" class="ribbon-btn" title="Save Active File">
             <div class="ribbon-icon">💾</div>
             <div class="ribbon-text">Save</div>
           </button>
+        </div>
+        <div id="hostedSaveState" class="ribbon-save-state is-hidden" aria-live="polite" title="Hosted save status">
+          <span class="ribbon-save-state-dot" aria-hidden="true"></span>
+          <span id="hostedSaveStateLabel" class="ribbon-save-state-label">Saved</span>
+        </div>
+        <div class="ribbon-buttons">
           <button id="newProjectBtn" class="ribbon-btn" title="Create New Project">
             <div class="ribbon-icon">🧩</div>
             <div class="ribbon-text">New Project</div>
@@ -72,6 +78,10 @@
           <button id="publishBtn" class="ribbon-btn" title="Store the .rws project and publish the .rwp draft to Retrowww">
             <div class="ribbon-icon">☁️</div>
             <div class="ribbon-text">Publish</div>
+          </button>
+          <button id="shareBtn" class="ribbon-btn" title="Create a temporary share link for this project">
+            <div class="ribbon-icon">🔗</div>
+            <div class="ribbon-text">Share</div>
           </button>
         </div>
       </div>
@@ -230,7 +240,7 @@
   
   <!-- UI Management -->
   <script src="scripts/ribbon-toolbar.js?v=5"></script>
-  <script src="scripts/tab-manager.js?v=2"></script>
+  <script src="scripts/tab-manager.js?v=3"></script>
   <script src="scripts/project-explorer.js?v=6"></script>
   <script src="scripts/game-emulator/simulator-logger.js"></script>
   <script src="scripts/game-emulator/game-emulator.js?v=2"></script>

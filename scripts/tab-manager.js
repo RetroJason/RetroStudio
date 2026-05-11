@@ -24,6 +24,8 @@ class TabManager {
     
     // File extension to editor mapping
     this.editorRegistry = new Map();
+    this._boundWindowBlur = null;
+    this._boundVisibilityChange = null;
     
     this.initialize();
   }
@@ -122,7 +124,7 @@ class TabManager {
     this.setupContentRefreshListener();
   // Subscribe to file deletion events to close affected tabs
   this.setupFileDeletionListener();
-    
+
     // Tab clicking
     this.tabBar.addEventListener('click', async (e) => {
       const tab = e.target.closest('.tab');
@@ -573,7 +575,7 @@ class TabManager {
     this._cleanupPreview();
     
     // Create viewer/editor using provided componentInfo
-    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo);
+    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo, options);
     if (!viewerInfo) {
       this._hidePreviewWithAnimation();
       return null;
@@ -619,7 +621,7 @@ class TabManager {
     const fileName = fullPath.split('/').pop() || fullPath.split('\\').pop();
     
     // Create viewer/editor using provided componentInfo
-    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo);
+    const viewerInfo = await this._createViewerFromComponent(fullPath, fileName, componentInfo, options);
     if (!viewerInfo) return null;
 
     // Enforce single-instance editors: if the created viewer is an editor whose
@@ -1078,7 +1080,7 @@ class TabManager {
     }
   }
 
-  async _createViewerFromComponent(fullPath, fileName, componentInfo) {
+  async _createViewerFromComponent(fullPath, fileName, componentInfo, options = {}) {
     try {
       console.log(`TabManager: Creating viewer from component:`, {
         fullPath,
@@ -1170,6 +1172,20 @@ class TabManager {
           }
         };
       } else {
+        if (options.virtualViewer === true) {
+          const viewerOptions = options.viewerOptions || {};
+          const viewer = new Component(fullPath, viewerOptions);
+          return {
+            viewer,
+            element: viewer.getElement(),
+            componentInfo: {
+              type: 'viewer',
+              name: componentInfo.name,
+              displayName: componentInfo.displayName
+            }
+          };
+        }
+
         // For viewers, follow the same pattern as the old system
         // Load file using FileManager to get the file object
         let fileManager = null;
@@ -1195,8 +1211,44 @@ class TabManager {
 
         console.log(`[TabManager] Loaded file from storage: ${fullPath}, size: ${fileObj.size}`);
 
-        // Create viewer instance with just the fullPath (viewers expect constructor(path))
-        const viewer = new Component(fullPath);
+        // Reuse the exact file record we already loaded instead of making viewers
+        // perform a second storage lookup by path.
+        let viewer;
+        const extension = fileName.includes('.') ? '.' + fileName.split('.').pop().toLowerCase() : '';
+        const isMusicViewer = ['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)
+          && (componentInfo?.name === 'mod' || Component === window.ModViewer);
+
+        if (isMusicViewer) {
+          viewer = new Component(fullPath, {
+            resourceLoader: async () => {
+              const audioEngine = window.serviceContainer?.get?.('audioEngine') || null;
+              const resourceManager = window.serviceContainer?.get?.('resourceManager') || null;
+              if (!audioEngine || !resourceManager) {
+                throw new Error('Audio services are not available');
+              }
+
+              const resourceId = await resourceManager.loadFromFile(fileObj, 'mod', fileName);
+              const resource = audioEngine.getResource(resourceId);
+              if (!resource) {
+                throw new Error(`MOD resource not found after load: ${resourceId}`);
+              }
+
+              return {
+                resourceId,
+                resource,
+                title: fileName,
+                format: null,
+                status: 'Loaded',
+                ownsResource: false,
+              };
+            },
+            displayName: fileName,
+            initialStatus: `Loading ${fileName}...`,
+          });
+        } else {
+          // Create viewer instance with just the fullPath (viewers expect constructor(path))
+          viewer = new Component(fullPath);
+        }
 
         return {
           viewer,
@@ -1405,13 +1457,13 @@ class TabManager {
     const projectName = actionTarget.dataset.projectNameEncoded
       ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
       : actionTarget.dataset.projectName;
-    if (!projectUuid) {
-      console.error('[TabManager] Welcome action missing projectUuid');
+    if (!projectUuid && !projectName) {
+      console.error('[TabManager] Welcome action missing project identifier');
       return;
     }
 
     const hostedStudioApi = window.retrowwwHostedStudio;
-    if (!hostedStudioApi || typeof hostedStudioApi.openProject !== 'function') {
+    if (!hostedStudioApi) {
       throw new Error('Retrowww hosted project open service is unavailable.');
     }
 
@@ -1419,7 +1471,20 @@ class TabManager {
 
     try {
       window.gameEmulator?.updateStatus?.('Opening ' + (projectName || 'project') + '...', 'info');
-      await hostedStudioApi.openProject(projectUuid, projectName);
+      if (projectUuid) {
+        if (typeof hostedStudioApi.openProject !== 'function') {
+          throw new Error('Retrowww hosted project open service is unavailable.');
+        }
+
+        await hostedStudioApi.openProject(projectUuid, projectName);
+      } else {
+        if (typeof hostedStudioApi.focusProject !== 'function') {
+          throw new Error('Retrowww hosted local project focus service is unavailable.');
+        }
+
+        hostedStudioApi.focusProject(projectName);
+      }
+
       window.gameEmulator?.updateStatus?.('Opened ' + (projectName || 'project'), 'success');
     } catch (error) {
       console.error('[TabManager] Failed to open recent project:', error);
@@ -1440,7 +1505,7 @@ class TabManager {
     }
 
     const hostedStudioApi = window.retrowwwHostedStudio;
-    if (!hostedStudioApi || typeof hostedStudioApi.listProjects !== 'function') {
+    if (!hostedStudioApi || (typeof hostedStudioApi.listRecentProjects !== 'function' && typeof hostedStudioApi.listProjects !== 'function')) {
       projectsContainer.innerHTML = '<p>Recent projects are only available in hosted RetroStudio.</p>';
       return;
     }
@@ -1448,7 +1513,9 @@ class TabManager {
     projectsContainer.innerHTML = '<p>Loading recent projects...</p>';
 
     try {
-      const projects = await hostedStudioApi.listProjects();
+      const projects = typeof hostedStudioApi.listRecentProjects === 'function'
+        ? await hostedStudioApi.listRecentProjects()
+        : await hostedStudioApi.listProjects();
       if (!Array.isArray(projects) || projects.length === 0) {
         projectsContainer.innerHTML = '<p>No saved projects yet.</p>';
         return;
@@ -1459,8 +1526,14 @@ class TabManager {
         .sort((left, right) => {
           const leftProject = left?.project || {};
           const rightProject = right?.project || {};
-          const leftTimestamp = Date.parse(leftProject.latestSavedAt || leftProject.updatedAt || leftProject.createdAt || 0) || 0;
-          const rightTimestamp = Date.parse(rightProject.latestSavedAt || rightProject.updatedAt || rightProject.createdAt || 0) || 0;
+          const leftTimestampSource = left?.isLoadedLocally
+            ? (leftProject.latestSavedAt || leftProject.updatedAt || leftProject.createdAt || new Date().toISOString())
+            : (leftProject.latestSavedAt || leftProject.updatedAt || leftProject.createdAt || 0);
+          const rightTimestampSource = right?.isLoadedLocally
+            ? (rightProject.latestSavedAt || rightProject.updatedAt || rightProject.createdAt || new Date().toISOString())
+            : (rightProject.latestSavedAt || rightProject.updatedAt || rightProject.createdAt || 0);
+          const leftTimestamp = Date.parse(leftTimestampSource) || 0;
+          const rightTimestamp = Date.parse(rightTimestampSource) || 0;
           return rightTimestamp - leftTimestamp;
         });
 
@@ -1469,17 +1542,20 @@ class TabManager {
         .map((summary) => {
           const project = summary.project || {};
           const revision = summary.currentRevision || {};
-          const projectNameValue = String(project.displayName || project.slug || 'Project');
+          const projectNameValue = String(summary.localProjectName || project.displayName || project.slug || 'Project');
           const projectName = this._escapeHtml(projectNameValue);
           const projectUuid = this._escapeHtml(project.uuid || '');
-          const projectType = this._escapeHtml(String(project.projectType || 'retrostudio').replaceAll('_', ' '));
+          const projectTypeLabel = summary.localOnly
+            ? 'local draft'
+            : String(project.projectType || 'retrostudio').replaceAll('_', ' ');
+          const projectType = this._escapeHtml(projectTypeLabel);
           const revisionLabel = Number.isFinite(revision.revisionNumber)
             ? 'Revision ' + revision.revisionNumber
-            : 'Unversioned';
+            : (summary.localOnly ? 'Unpublished' : 'Unversioned');
           const savedAt = project.latestSavedAt || project.updatedAt || project.createdAt || null;
           const savedLabel = savedAt
             ? new Date(savedAt).toLocaleString()
-            : 'Not saved yet';
+            : (summary.localOnly ? 'Loaded in this session' : 'Not saved yet');
           const encodedProjectName = this._escapeHtml(encodeURIComponent(projectNameValue));
           const previewUrl = this._getWelcomeProjectPreviewUrl(summary);
 
@@ -1701,6 +1777,13 @@ class TabManager {
   _performTabClose(tabId, tabInfo) {
     // Notify viewer that tab is losing focus/being closed
     this._notifyTabBlur(tabId);
+    if (tabInfo.viewer && typeof tabInfo.viewer.cleanup === 'function') {
+      try {
+        tabInfo.viewer.cleanup();
+      } catch (error) {
+        console.error(`[TabManager] Viewer cleanup failed for ${tabId}:`, error);
+      }
+    }
     
     // Editor cleanup is already handled by editor.close()
     // Just handle DOM and tab management cleanup here
@@ -1823,6 +1906,24 @@ class TabManager {
       } else if (typeof viewer.onBlur === 'function') {
         viewer.onBlur();
       }
+    }
+  }
+
+  getAudioEngine() {
+    return window.serviceContainer?.get?.('audioEngine') || null;
+  }
+
+  stopAllManagedAudio(reason = 'tab blur') {
+    const audioEngine = this.getAudioEngine();
+    if (!audioEngine || typeof audioEngine.stopAllAudio !== 'function') {
+      return;
+    }
+
+    try {
+      audioEngine.stopAllAudio();
+      console.log(`[TabManager] Stopped all audio due to ${reason}`);
+    } catch (error) {
+      console.error(`[TabManager] Failed to stop audio due to ${reason}:`, error);
     }
   }
   
@@ -2450,6 +2551,15 @@ class TabManager {
   
   // Cleanup method
   destroy() {
+    if (this._boundWindowBlur) {
+      window.removeEventListener('blur', this._boundWindowBlur);
+      this._boundWindowBlur = null;
+    }
+    if (this._boundVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._boundVisibilityChange);
+      this._boundVisibilityChange = null;
+    }
+
     this._stopEventListeners();
     console.log('[TabManager] Destroyed and cleaned up event listeners');
   }

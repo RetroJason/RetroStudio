@@ -1,583 +1,1119 @@
-// BassoonTracker MOD/XM Editor with FileIOService Integration
-// Uses iframe isolation for multiple instances while avoiding ArrayBuffer serialization issues
-
 class ModXmTrackerEditor extends EditorBase {
   constructor(fileObject = null, readOnly = false) {
-    // Support legacy constructor signatures
-    if (arguments.length >= 2 && typeof arguments[0] === 'string') {
-      const path = arguments[0];
-      const convertedFileObject = path ? { path } : null;
-      super(convertedFileObject, readOnly);
-    } else if (arguments.length >= 2 && typeof arguments[0] === 'object' && typeof arguments[1] === 'string') {
-      const fileRecord = arguments[0];
-      super(fileRecord, readOnly);
-    } else {
-      super(fileObject, readOnly);
-    }
+    super(fileObject, readOnly);
 
-    this._container = null;
-    this._iframe = null;
     this._logPrefix = '[ModXmTrackerEditor]';
-    this._readyReceived = false;
-    this._initialLoadSent = false;
-    this._initialFileRecord = fileObject;
-    this._id = 'mod-xm-tracker-' + Math.random().toString(36).substring(2);
-    this._currentFilename = null;
+    this.catalogRoot = [];
+    this.catalogStack = [];
+    this.currentEntries = [];
+    this.selectedEntry = null;
+    this.importedContent = null;
+    this.loadedFileName = fileObject?.filename || fileObject?.name || this.getFileName();
+    this.rootReady = false;
 
-    try {
-      console.log(this._logPrefix, 'constructor completed', {
-        path: this.path, isNewResource: this.isNewResource, hasFileRecord: !!this.file, id: this._id
-      });
-    } catch(_) {}
+    // A new music import should remain unsaved until an actual module is chosen and imported.
+    this.isDirty = false;
+    this.hasUnsavedChanges = false;
   }
 
-  // Metadata
-  static getFileExtensions() { return ['.mod', '.xm']; }
+  get audioEngine() {
+    return window.serviceContainer?.get?.('audioEngine') || null;
+  }
+
+  ensureStateInitialized() {
+    if (!Array.isArray(this.catalogRoot)) {
+      this.catalogRoot = [];
+    }
+    if (!Array.isArray(this.catalogStack)) {
+      this.catalogStack = [];
+    }
+    if (!Array.isArray(this.currentEntries)) {
+      this.currentEntries = [];
+    }
+    if (typeof this.rootReady !== 'boolean') {
+      this.rootReady = false;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'selectedEntry')) {
+      this.selectedEntry = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'importedContent')) {
+      this.importedContent = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'loadedFileName')) {
+      this.loadedFileName = this.getFileName();
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'previewViewer')) {
+      this.previewViewer = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'previewArrayBuffer')) {
+      this.previewArrayBuffer = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'previewModuleId')) {
+      this.previewModuleId = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'activePreviewModuleId')) {
+      this.activePreviewModuleId = null;
+    }
+    if (!Object.prototype.hasOwnProperty.call(this, 'previewLoadingModuleId')) {
+      this.previewLoadingModuleId = null;
+    }
+  }
+
+  static getFileExtensions() { return ['.mod', '.xm', '.s3m', '.it']; }
   static getFileExtension() { return '.mod'; }
-  static getDisplayName() { return 'MOD/XM Tracker'; }
+  static getDisplayName() { return 'Music Importer'; }
   static getIcon() { return '🎵'; }
   static getCreateIcon() { return '🎵'; }
   static getPriority() { return 5; }
-  static getCapabilities() { return ['audio', 'music', 'tracker']; }
-  static canCreate = true;
+  static getCapabilities() { return ['audio', 'music', 'import']; }
   static getCreateLabel() { return 'Music'; }
-  static getDefaultFolder() { return 'Sources/Music'; }
-  static needsFilenamePrompt() { return true; }
+  static getDefaultFolder() { return 'Music'; }
+  static needsFilenamePrompt() { return false; }
+  static canCreate = true;
 
   createBody(body) {
-    body.style.cssText = 'display:block;width:100%;height:100%;padding:0;margin:0;overflow:hidden;position:relative;background:#1a1a1a;';
-    this._container = body;
-    this._iframe = document.createElement('iframe');
-    this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html';
-    this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
-    this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
-    this._iframe.setAttribute('referrerpolicy', 'same-origin');
-    this._iframe.setAttribute('loading', 'eager');
-    body.appendChild(this._iframe);
-    this._iframeRef = this._iframe;
-    window[`_iframe_${this._id}`] = this._iframe;
-    this._observeIframeRemoval();
-    this._setupIframeCommunication();
-  }
+    this.ensureStateInitialized();
 
-  _observeIframeRemoval() {
-    if (typeof MutationObserver === 'undefined' || !this._container) return;
-    this._mutationObserver = new MutationObserver(muts => {
-      for (const m of muts) {
-        if (m.type === 'childList') {
-          for (const n of m.removedNodes) {
-            if (n === this._iframe || n.contains?.(this._iframe)) {
-              console.error(this._logPrefix, 'iframe removed unexpectedly');
-              this._restoreIframe();
-              return;
-            }
+    body.innerHTML = `
+      <style>
+        .music-importer {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          height: 100%;
+          background: #121416;
+          color: #e6edf3;
+          font-family: 'Segoe UI', sans-serif;
+        }
+
+        .music-importer__toolbar {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          padding: 12px;
+          border-bottom: 1px solid #2a2f36;
+          background: #171b20;
+        }
+
+        .music-importer__toolbar button,
+        .music-importer__toolbar input {
+          border-radius: 6px;
+          border: 1px solid #3a4048;
+          background: #1d232a;
+          color: #e6edf3;
+          padding: 8px 10px;
+          font-size: 13px;
+        }
+
+        .music-importer__toolbar button {
+          cursor: pointer;
+        }
+
+        .music-importer__toolbar button:hover {
+          background: #28303a;
+        }
+
+        .music-importer__toolbar input {
+          flex: 1;
+          min-width: 180px;
+        }
+
+        .music-importer__content {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
+        }
+
+        .music-importer__browser {
+          display: grid;
+          grid-template-columns: minmax(420px, 1fr) 320px;
+          gap: 0;
+          flex: 1;
+          min-height: 0;
+        }
+
+        .music-importer__list {
+          overflow: auto;
+          padding: 14px;
+          border-right: 1px solid #2a2f36;
+        }
+
+        .music-importer__list-title {
+          margin: 0 0 12px;
+          font-size: 15px;
+          color: #f1f5f9;
+        }
+
+        .music-importer__entry-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr);
+          gap: 10px;
+          align-items: stretch;
+          margin-bottom: 8px;
+        }
+
+        .music-importer__entry-play,
+        .music-importer__entry {
+          border: 1px solid #313843;
+          border-radius: 10px;
+          background: #171d24;
+          color: inherit;
+        }
+
+        .music-importer__entry-play {
+          min-width: 84px;
+          padding: 0 12px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+
+        .music-importer__entry-play:hover:not(:disabled) {
+          background: #233449;
+          border-color: #4d77a4;
+        }
+
+        .music-importer__entry-play.is-active {
+          background: #2f6fb3;
+          border-color: #63a0df;
+          color: #f7fbff;
+        }
+
+        .music-importer__entry-play:disabled {
+          opacity: 0.6;
+          cursor: default;
+        }
+
+        .music-importer__entry {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 12px;
+          width: 100%;
+          padding: 10px 12px;
+          text-align: left;
+          cursor: pointer;
+        }
+
+        .music-importer__entry:hover {
+          background: #202a34;
+          border-color: #3f546a;
+        }
+
+        .music-importer__entry.is-selected {
+          background: #233449;
+          border-color: #4d77a4;
+        }
+
+        .music-importer__title {
+          font-size: 13px;
+          line-height: 1.35;
+        }
+
+        .music-importer__meta {
+          font-size: 11px;
+          color: #9aa4af;
+          align-self: center;
+          text-align: right;
+        }
+
+        .music-importer__details {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .music-importer__details {
+          padding: 16px;
+          overflow: auto;
+          background: linear-gradient(180deg, #15191e 0%, #12161b 100%);
+          align-content: start;
+        }
+
+        .music-importer__preview-card {
+          position: sticky;
+          top: 0;
+          z-index: 2;
+        }
+
+        .music-importer__panel {
+          border: 1px solid #2b3139;
+          border-radius: 10px;
+          background: #171b20;
+          padding: 14px;
+        }
+
+        .music-importer__panel h3 {
+          margin: 0 0 10px;
+          font-size: 14px;
+        }
+
+        .music-importer__panel p,
+        .music-importer__panel a,
+        .music-importer__panel li {
+          font-size: 13px;
+          line-height: 1.45;
+          color: #c7d0d9;
+        }
+
+        .music-importer__panel a {
+          color: #8bc5ff;
+        }
+
+        .music-importer__status {
+          min-height: 18px;
+          font-size: 12px;
+          color: #9aa4af;
+        }
+
+        .music-importer__status.is-error {
+          color: #ff8a8a;
+        }
+
+        .music-importer__actions {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        .music-importer__actions button {
+          border-radius: 6px;
+          border: 1px solid #3a4048;
+          background: #20262d;
+          color: #e6edf3;
+          padding: 9px 12px;
+          cursor: pointer;
+        }
+
+        .music-importer__actions button.primary {
+          background: #2f6fb3;
+          border-color: #4a88ca;
+        }
+
+        .music-importer__actions button:disabled {
+          opacity: 0.45;
+          cursor: default;
+        }
+
+        .music-importer__empty {
+          padding: 16px;
+          color: #9aa4af;
+          font-size: 13px;
+        }
+
+        .music-importer__preview-host {
+          min-height: 180px;
+          max-height: 220px;
+          border: 1px solid #2b3139;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #101418;
+        }
+
+        .music-importer__preview-frame {
+          border: 1px solid #2b3139;
+          border-radius: 12px;
+          padding: 10px;
+          background: rgba(18, 22, 27, 0.9);
+          box-shadow: 0 16px 32px rgba(0, 0, 0, 0.22);
+        }
+
+        .music-importer__preview-host .mod-player {
+          width: 100%;
+          min-width: 0;
+          padding: 10px;
+          gap: 8px;
+          box-sizing: border-box;
+        }
+
+        .music-importer__preview-host .song-title {
+          padding: 0;
+          margin-bottom: 2px;
+        }
+
+        .music-importer__preview-host .song-title h3 {
+          font-size: 15px;
+          line-height: 1.2;
+          margin: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .music-importer__preview-host .waveform-display {
+          min-height: 82px;
+          max-height: 82px;
+          margin: 0;
+        }
+
+        .music-importer__preview-host .waveform-display canvas {
+          width: 100% !important;
+          height: 82px !important;
+          display: block;
+        }
+
+        .music-importer__preview-host .player-main {
+          padding: 8px 10px;
+          gap: 8px;
+        }
+
+        .music-importer__preview-host .progress-container {
+          gap: 8px;
+        }
+
+        .music-importer__preview-host .play-pause-button {
+          width: 40px;
+          height: 40px;
+          min-width: 40px;
+          min-height: 40px;
+        }
+
+        .music-importer__preview-host .play-pause-button .play-icon {
+          font-size: 16px;
+        }
+
+        .music-importer__preview-host .time-display,
+        .music-importer__preview-host .volume-container,
+        .music-importer__preview-host .song-info,
+        .music-importer__preview-host .info-item,
+        .music-importer__preview-host .info-item strong,
+        .music-importer__preview-host .info-item span {
+          font-size: 11px;
+        }
+
+        .music-importer__preview-host .volume-container {
+          gap: 8px;
+        }
+
+        .music-importer__preview-host .volume-container label {
+          min-width: auto;
+        }
+
+        @media (max-width: 1100px) {
+          .music-importer__browser {
+            grid-template-columns: 1fr;
+          }
+
+          .music-importer__list {
+            border-right: 0;
+            border-bottom: 1px solid #2a2f36;
+          }
+
+          .music-importer__preview-card {
+            position: static;
+          }
+
+          .music-importer__preview-host {
+            max-height: none;
           }
         }
+
+        .music-importer__preview-host .viewer-content,
+        .music-importer__preview-host .viewer-body {
+          height: 100%;
+        }
+      </style>
+      <div class="music-importer">
+        <div class="music-importer__toolbar">
+          <button type="button" data-action="random">Random Pick</button>
+          <input type="text" data-role="search" placeholder="Search ModArchive by song title">
+          <button type="button" data-action="search">Search</button>
+        </div>
+        <div class="music-importer__content">
+          <div class="music-importer__browser">
+            <div class="music-importer__list" data-role="list"></div>
+            <div class="music-importer__details">
+              <div class="music-importer__preview-card">
+                <div class="music-importer__preview-frame">
+                  <div class="music-importer__preview-host" data-role="preview"></div>
+                </div>
+              </div>
+              <div class="music-importer__panel">
+                <h3>Music</h3>
+                <div data-role="summary"></div>
+              </div>
+              <div class="music-importer__panel">
+                <h3>Selection</h3>
+                <div data-role="details"></div>
+              </div>
+              <div class="music-importer__panel">
+                <h3>Actions</h3>
+                <div class="music-importer__actions">
+                  <button type="button" class="primary" data-action="import" disabled>Import To Project</button>
+                  <button type="button" data-action="open-link" disabled>Open ModArchive Page</button>
+                </div>
+                <div class="music-importer__status" data-role="status"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    this.rootElement = body.querySelector('.music-importer');
+    this.listElement = body.querySelector('[data-role="list"]');
+    this.summaryElement = body.querySelector('[data-role="summary"]');
+    this.detailsElement = body.querySelector('[data-role="details"]');
+    this.previewElement = body.querySelector('[data-role="preview"]');
+    this.statusElement = body.querySelector('[data-role="status"]');
+    this.searchInput = body.querySelector('[data-role="search"]');
+    this.importButton = body.querySelector('[data-action="import"]');
+    this.openLinkButton = body.querySelector('[data-action="open-link"]');
+
+    this.initializePreviewViewer();
+
+    body.querySelector('[data-action="random"]').addEventListener('click', () => {
+      this.pickRandomModule().catch((error) => this.showError(error));
+    });
+    body.querySelector('[data-action="search"]').addEventListener('click', () => {
+      this.searchCatalog().catch((error) => this.showError(error));
+    });
+    this.searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.searchCatalog().catch((error) => this.showError(error));
       }
     });
-    this._mutationObserver.observe(this._container, { childList: true, subtree: true });
+    this.importButton.addEventListener('click', () => {
+      this.importSelectedModule().catch((error) => this.showError(error));
+    });
+    this.openLinkButton.addEventListener('click', () => {
+      this.openSelectedModulePage();
+    });
+
+    this.renderSummary();
+    this.renderSelection();
+    this.loadRoot().catch((error) => this.showError(error));
   }
 
-  _setupIframeCommunication() {
-    this._messageHandler = (e) => {
-      const msg = e.data || {};
-      if (!msg.type) return;
-      if (msg.type === 'bt-ready') {
-        this._readyReceived = true;
-        this._maybeSendFile();
-      } else if (msg.type === 'module-loaded') {
-        // Final confirmation of full song structure; ensure tab reflects real filename
-        if (msg.title && msg.title.length > 0 && this._currentFilename && this._currentFilename.startsWith('untitled')) {
-          // Optionally update window title; keep existing filename until user saves
-          document.title = `RetroStudio - ${msg.title}`;
-        }
-        // Clear any internal duplicate load suppression flags
-        this._pendingModuleLoad = false;
-        // Mark export ready once tracker reports a module loaded and buildBinary exists
-        try {
-          const win = this._iframe?.contentWindow;
-          const deRef = win && (win.de || win.BassoonTracker || {});
-          if (deRef && typeof deRef.buildBinary === 'function') {
-            this._exportReady = true;
-          }
-        } catch(_){}
-      } else if (msg.type === 'file-load-result') {
-        if (msg.success) this._justLoadedExistingProjectFile = true; else console.error(this._logPrefix, 'File load failed', msg.error);
-      } else if (msg.type === 'bt-load-invoked') {
-        if (!msg.url || !msg.url.startsWith('buffer://')) {
-          if (this._justLoadedExistingProjectFile) {
-            this._justLoadedExistingProjectFile = false;
-            this._handleExistingProjectFileLoad(msg.url);
-          } else {
-            this._handleInternalFileLoad(msg.url);
-          }
-        }
-        if (msg.url) {
-          if (msg.url.startsWith('buffer://')) {
-            this._currentFilename = msg.filename || msg.url.substring(9);
-          } else {
-            const parts = msg.url.split('/');
-            this._currentFilename = parts[parts.length - 1];
-          }
-        }
+  initializePreviewViewer() {
+    if (!this.previewElement) {
+      throw new Error('Music preview host is missing.');
+    }
+    if (this.previewViewer) {
+      return;
+    }
+    if (typeof window.ModViewer !== 'function') {
+      throw new Error('MOD preview viewer is not available.');
+    }
+
+    this.previewViewer = new window.ModViewer('__modarchive_preview__.mod', {
+      deferLoad: true,
+      displayName: 'Music Preview',
+      initialStatus: 'Select a module to preview.',
+      initialFormat: 'MOD File',
+      onPlaybackStateChange: () => {
+        this.renderEntries(this.currentEntries);
+      },
+    });
+    this.previewElement.innerHTML = '';
+    this.previewElement.appendChild(this.previewViewer.getElement());
+  }
+
+  getContent() {
+    return this.importedContent || new Uint8Array();
+  }
+
+  async save() {
+    if (!(this.importedContent instanceof Uint8Array) || this.importedContent.length === 0) {
+      this.setStatus('No music module selected yet. Choose a track before saving.', true);
+      this.isDirty = false;
+      this.hasUnsavedChanges = false;
+      return false;
+    }
+
+    return super.save();
+  }
+
+  setContent(content) {
+    if (content instanceof Uint8Array) {
+      this.importedContent = content;
+      return;
+    }
+    if (content instanceof ArrayBuffer) {
+      this.importedContent = new Uint8Array(content);
+      return;
+    }
+    throw new Error('[MusicImporter] Unsupported content type for music module');
+  }
+
+  async loadRoot() {
+    this.setStatus('Loading top 20 ModArchive picks...');
+    this.catalogRoot = await this.fetchRootCatalog();
+    const topEntries = await this.loadEntriesForRoute('top-rated', ['top-rated']);
+    this.catalogStack = [
+      { label: 'ModArchive', entries: this.catalogRoot, kind: 'root' },
+      { label: 'Top 20 Rated', entries: topEntries, route: 'top-rated', kind: 'browse', baseParts: ['top-rated'] },
+    ];
+    this.selectedEntry = null;
+    this.rootReady = true;
+    this.renderEntries(topEntries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus('Loaded top 20 ModArchive picks.');
+  }
+
+  async navigateBack() {
+    if (this.catalogStack.length <= 1) {
+      return;
+    }
+
+    this.catalogStack.pop();
+    const current = this.catalogStack[this.catalogStack.length - 1];
+    this.selectedEntry = null;
+    this.renderEntries(current.entries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus(`Viewing ${current.label}.`);
+  }
+
+  async refreshCurrentView() {
+    if (!this.rootReady || this.catalogStack.length === 0) {
+      await this.loadRoot();
+      return;
+    }
+
+    const current = this.catalogStack[this.catalogStack.length - 1];
+    if (current.kind === 'root') {
+      await this.loadRoot();
+      return;
+    }
+
+    const refreshedEntries = await this.loadEntriesForRoute(current.route, current.baseParts);
+    current.entries = refreshedEntries;
+    this.selectedEntry = null;
+    this.renderEntries(refreshedEntries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus(`Refreshed ${current.label}.`);
+  }
+
+  async searchCatalog() {
+    const query = this.searchInput.value.trim();
+    if (!query) {
+      throw new Error('Search query is required.');
+    }
+
+    this.setStatus(`Searching ModArchive for "${query}"...`);
+
+    const route = `search/${encodeURIComponent(query)}`;
+    const entries = await this.loadEntriesForRoute(route, ['search', query]);
+    this.catalogStack = [
+      { label: 'ModArchive', entries: this.catalogRoot, kind: 'root' },
+      { label: `Search: ${query}`, entries, route, kind: 'search', baseParts: ['search', query] },
+    ];
+    this.selectedEntry = null;
+    this.renderEntries(entries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus(`Loaded search results for "${query}".`);
+  }
+
+  async pickRandomModule() {
+    this.setStatus('Loading a random ModArchive selection...');
+    const entries = await this.loadEntriesForRoute('random-list', ['random-list']);
+    const selectedEntry = entries[Math.floor(Math.random() * entries.length)] || null;
+
+    this.catalogStack = [
+      { label: 'ModArchive', entries: this.catalogRoot, kind: 'root' },
+      { label: 'Random 20', entries, route: 'random-list', kind: 'browse', baseParts: ['random-list'] },
+    ];
+    this.selectedEntry = selectedEntry;
+    this.renderEntries(entries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus(`Picked ${selectedEntry.title}.`);
+  }
+
+  async openEntry(entry) {
+    if (!entry) {
+      return;
+    }
+
+    if (entry.kind === 'download') {
+      this.selectedEntry = entry;
+      this.renderEntries(this.currentEntries);
+      this.renderSelection();
+      this.previewSelectedModule(entry)
+        .then(() => {
+          this.setStatus(`Preview ready for ${entry.title}.`);
+          this.renderEntries(this.currentEntries);
+        })
+        .catch((error) => this.showError(error));
+      return;
+    }
+
+    if (!entry.route) {
+      throw new Error(`Entry has no route: ${entry.title}`);
+    }
+
+    const entries = await this.loadEntriesForRoute(entry.route, entry.baseParts);
+    this.catalogStack.push({
+      label: entry.title,
+      entries,
+      route: entry.route,
+      kind: 'browse',
+      baseParts: entry.baseParts,
+    });
+    this.selectedEntry = null;
+    this.renderEntries(entries);
+    this.renderSummary();
+    this.renderSelection();
+    this.setStatus(`Loaded ${entry.title}.`);
+  }
+
+  renderEntries(entries) {
+    this.ensureStateInitialized();
+    this.currentEntries = Array.isArray(entries) ? entries : [];
+    this.listElement.innerHTML = '';
+
+    const heading = document.createElement('h3');
+    heading.className = 'music-importer__list-title';
+    heading.textContent = 'Browse Modules';
+    this.listElement.appendChild(heading);
+
+    if (this.currentEntries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'music-importer__empty';
+      empty.textContent = 'No entries found.';
+      this.listElement.appendChild(empty);
+      return;
+    }
+
+    this.currentEntries.forEach((entry) => {
+      const row = document.createElement('div');
+      row.className = 'music-importer__entry-row';
+
+      const playButton = document.createElement('button');
+      playButton.type = 'button';
+      playButton.className = 'music-importer__entry-play';
+
+      const isDownload = entry.kind === 'download';
+      const isActiveModule = isDownload && this.activePreviewModuleId === entry.moduleId;
+      const isPlayingModule = isActiveModule && this.previewViewer && this.previewViewer.isPlaying;
+      const isLoadingModule = isDownload && this.previewLoadingModuleId === entry.moduleId;
+
+      if (!isDownload) {
+        playButton.disabled = true;
+        playButton.textContent = 'Open';
+      } else if (isLoadingModule) {
+        playButton.disabled = true;
+        playButton.textContent = 'Loading';
+      } else if (isPlayingModule) {
+        playButton.classList.add('is-active');
+        playButton.textContent = 'Pause';
+      } else {
+        playButton.textContent = 'Play';
       }
-    };
-    window.addEventListener('message', this._messageHandler);
-    if (this._iframe) {
-      setTimeout(() => this._sendPing(), 50);
-      this._iframe.onload = () => setTimeout(() => this._sendPing(), 100);
-      let attempts = 0;
-      const pingInterval = setInterval(() => {
-        attempts++;
-        if (this._readyReceived || attempts >= 20) {
-          clearInterval(pingInterval);
+
+      playButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!isDownload) {
+          this.openEntry(entry).catch((error) => this.showError(error));
           return;
         }
-        this._sendPing();
-      }, 100);
-    }
-  }
 
-  _restoreIframe() {
-    if (!this._container) return;
-    this._container.innerHTML = '';
-    this._iframe = document.createElement('iframe');
-    this._iframe.id = `${this._id}-iframe`;
-    this._iframe.src = 'bt-host.html';
-    this._iframe.style.cssText = 'width:100%;height:100%;border:none;display:block;';
-    this._iframe.setAttribute('allow', 'autoplay; microphone; camera; fullscreen; geolocation; payment; usb');
-    this._iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock allow-same-origin');
-    this._iframe.setAttribute('referrerpolicy', 'same-origin');
-    this._iframe.setAttribute('loading', 'eager');
-    this._container.appendChild(this._iframe);
-    this._iframeRef = this._iframe;
-    window[`_iframe_${this._id}`] = this._iframe;
-    this._iframe.onload = () => setTimeout(() => this._sendPing(), 100);
-  }
+        this.toggleEntryPlayback(entry).catch((error) => this.showError(error));
+      });
 
-  _sendPing() {
-    if (!this._iframe) {
-      this._iframe = document.getElementById(`${this._id}-iframe`) || this._iframeRef || window[`_iframe_${this._id}`];
-      if (!this._iframe) { this._restoreIframe(); return; }
-    }
-    if (this._iframe.contentWindow) {
-      try { this._iframe.contentWindow.postMessage({ type: 'ping' }, '*'); } catch(_) {}
-    }
-  }
+      row.appendChild(playButton);
 
-  _maybeSendFile() {
-    if (!this._readyReceived || this._initialLoadSent || !this._iframe || !this._iframe.contentWindow) return;
-    
-    const isExisting = !this.isNewResource && this.path && !this.path.startsWith('temp://');
-    if (isExisting) {
-      const filename = this._initialFileRecord?.filename || (this.path ? this.path.split('/').pop() : 'untitled.mod');
-      this._iframe.contentWindow.postMessage({ type: 'load-file-from-service', filePath: this.path, filename }, '*');
-      this._justLoadedExistingProjectFile = true;
-    } else {
-      // For new resources, try to load a minimal demo or create empty song
-      console.log(`${this._logPrefix} Creating new resource - loading demo template`);
-      this._iframe.contentWindow.postMessage({ type: 'load-demo', forceLoad: true }, '*');
-    }
-    this._initialLoadSent = true;
-  }
-
-  // FileIOService integration methods
-  async reload() { 
-    console.log(`${this._logPrefix} reload called`);
-    this._maybeSendFile();
-    return true; 
-  }
-  
-  // Handle resize events from tab manager
-  resize() {
-    console.log(`${this._logPrefix} resize() called`);
-    // Force iframe to recalculate its size
-    if (this._iframe && this._container) {
-      // Trigger a style recalculation
-      this._iframe.style.display = 'none';
-      this._iframe.offsetHeight; // Force layout
-      this._iframe.style.display = 'block';
-    }
-  }
-  
-  updateFilePath(newPath) { 
-    console.log(`${this._logPrefix} updateFilePath called:`, newPath);
-    this.path = newPath;
-  }
-  
-  async loadPath(path) { 
-    console.log(`${this._logPrefix} loadPath called:`, path);
-    this.path = path;
-    this._maybeSendFile();
-    return true; 
-  }
-
-  // Called when a file is set/changed
-  setFile(fileRecord) {
-    console.log(`${this._logPrefix} setFile called:`, fileRecord);
-    this._initialFileRecord = fileRecord;
-    if (fileRecord && fileRecord.path) {
-      this.path = fileRecord.path;
-      this.isNewResource = false;
-    }
-    this._maybeSendFile();
-  }
-
-  // Cleanup resources
-  cleanup() {
-    if (this._messageHandler) {
-      window.removeEventListener('message', this._messageHandler);
-      this._messageHandler = null;
-    }
-    
-    // Stop observing DOM mutations
-    if (this._mutationObserver) {
-      this._mutationObserver.disconnect();
-      this._mutationObserver = null;
-    }
-    
-    // Clean up iframe references
-    if (this._iframe) {
-      this._iframe.src = 'about:blank'; // Stop any loading
-      this._iframe.remove?.();
-    }
-    
-    // Remove global reference
-    if (this._id && window[`_iframe_${this._id}`]) {
-      delete window[`_iframe_${this._id}`];
-    }
-    
-    this._iframe = null;
-    this._iframeRef = null;
-    
-    console.log(`${this._logPrefix} cleanup completed`);
-  }
-
-  _handleInternalFileLoad(url) {
-    console.log(`${this._logPrefix} handling internal file load:`, url);
-    
-    // Extract filename from URL 
-    let newFilename = 'untitled.mod';
-    try {
-      if (url) {
-        // Handle object URLs with fragment (blob:...#filename.mod)
-        if (url.includes('#')) {
-          newFilename = decodeURIComponent(url.split('#')[1]);
-        } else {
-          // Extract from regular URL path
-          const urlPath = url.split('/').pop().split('?')[0];
-          if (urlPath && urlPath.length > 0) {
-            newFilename = urlPath;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`${this._logPrefix} failed to extract filename from URL:`, e);
-    }
-
-  console.log(`${this._logPrefix} extracted filename: ${newFilename}`);
-
-  // Update tab to reflect the new file (internal source -> unsaved *)
-  this._updateTabForNewFile(newFilename, url, { internal: true });
-  }
-
-  _handleExistingProjectFileLoad(url) {
-    console.log(`${this._logPrefix} handling existing project file load:`, url);
-    // Extract filename similarly
-    let filename = 'song.mod';
-    try {
-      if (url) {
-        if (url.includes('#')) {
-          filename = decodeURIComponent(url.split('#')[1]);
-        } else {
-          const urlPath = url.split('/').pop().split('?')[0];
-          if (urlPath) filename = urlPath;
-        }
-      }
-    } catch(_) {}
-    this._updateTabForNewFile(filename, url, { existing: true });
-  }
-
-  async _handleSaveToProject(filename, dataArray, mimeType) {
-  // Deprecated: internal tracker save interception removed for deterministic path
-  }
-
-
-  _updateTabForNewFile(filename, sourceUrl, options = {}) {
-    console.log(`${this._logPrefix} updating tab for new file:`, { filename, sourceUrl, options });
-    
-    // Get the tab manager to update the tab
-    const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
-    if (!tabManager) {
-      console.warn(`${this._logPrefix} tabManager not available for tab update`);
-      return;
-    }
-
-    // Find the current tab
-    const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
-    if (!currentTabId) {
-      console.warn(`${this._logPrefix} no active tab found`);
-      return;
-    }
-
-    // Update the tab title and properties to reflect the new file
-    try {
-      const isTrackerFormat = filename.endsWith('.mod') || filename.endsWith('.xm');
-      const displayName = isTrackerFormat ? filename : `${filename}`;
-
-      let titleText = `🎵 ${displayName}`;
-      if (options.internal && !options.existing) {
-        // Internal (demo / drag-drop) load -> mark unsaved
-        this.isNewResource = true;
-        titleText += '*';
-      } else if (options.existing) {
-        // Existing project file -> clean state
-        this.isNewResource = false;
-      } else {
-        // Default to internal semantics if unspecified
-        this.isNewResource = true;
-        titleText += '*';
-      }
-      this._currentFilename = filename;
-      this._currentSourceUrl = sourceUrl;
-
-      if (tabManager.updateTabTitle) {
-        tabManager.updateTabTitle(currentTabId, titleText);
-      } else {
-        const tabElement = document.querySelector(`[data-tab-id="${currentTabId}"] .tab-title`);
-        if (tabElement) tabElement.textContent = titleText;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'music-importer__entry';
+      if (this.selectedEntry === entry) {
+        button.classList.add('is-selected');
       }
 
-      // Also mark tab dirty for visual consistency if TabManager available
-      try {
-        if (options.internal && !options.existing) {
-          if (window.tabManager && typeof window.tabManager.markTabDirty === 'function') {
-            window.tabManager.markTabDirty(currentTabId);
-          }
-          window.eventBus?.emit?.('editor.content.changed', { editor: this });
-        } else {
-          // Ensure clean state for existing file
-            if (window.tabManager && typeof window.tabManager.markTabClean === 'function') {
-              window.tabManager.markTabClean(currentTabId);
-            }
-        }
-      } catch(_) {}
+      const title = document.createElement('div');
+      title.className = 'music-importer__title';
+      title.textContent = entry.title;
+      button.appendChild(title);
 
-      // Update window title if this is the active tab
-      if (currentTabId === tabManager.getActiveTabId?.()) {
-        document.title = `RetroStudio - ${displayName}`;
-      }
+      const meta = document.createElement('div');
+      meta.className = 'music-importer__meta';
+      meta.textContent = entry.info || entry.icon || '';
+      button.appendChild(meta);
 
-  console.log(`${this._logPrefix} tab updated for file: ${displayName} (internal=${!!options.internal} existing=${!!options.existing})`);
+      button.addEventListener('click', () => {
+        this.openEntry(entry).catch((error) => this.showError(error));
+      });
 
-    } catch (e) {
-      console.error(`${this._logPrefix} failed to update tab:`, e);
-    }
-  }
-
-  // Save functionality - required for EditorBase
-  getContent() {
-  // Returns last exported bytes; may be empty until first save/export
-  if (this._lastCapturedModuleBytes instanceof Uint8Array) return this._lastCapturedModuleBytes;
-  return new Uint8Array(0);
-  }
-
-  // Create a default empty module if none exists
-  async _createDefaultModule() {
-    if (!this._iframe?.contentWindow) {
-      throw new Error('Tracker iframe not ready');
-    }
-    
-    return new Promise((resolve, reject) => {
-      const win = this._iframe.contentWindow;
-      const timeout = setTimeout(() => {
-        reject(new Error('Default module creation timeout'));
-      }, 5000);
-      
-      try {
-        // Try to create a new empty song/pattern
-        if (win.BassoonTracker && typeof win.BassoonTracker.newSong === 'function') {
-          win.BassoonTracker.newSong();
-          clearTimeout(timeout);
-          resolve();
-        } else if (win.Editor && typeof win.Editor.newSong === 'function') {
-          win.Editor.newSong();
-          clearTimeout(timeout);
-          resolve();
-        } else {
-          // Fallback: send a message to create new song
-          this._iframe.contentWindow.postMessage({ type: 'create-new-song' }, '*');
-          // Give it some time to process
-          setTimeout(() => {
-            clearTimeout(timeout);
-            resolve();
-          }, 1000);
-        }
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
+      row.appendChild(button);
+      this.listElement.appendChild(row);
     });
   }
 
+  renderSummary() {
+    this.ensureStateInitialized();
+    const current = this.catalogStack[this.catalogStack.length - 1];
+    const location = current ? current.label : 'ModArchive';
+    const fileLabel = this.path ? this.path : 'New music import';
 
-  // Override save to handle filename prompting for temporary files
-  async save() {
-    try {
-      // Check if we have any content to save
-      if (!this.isExportReady() || (this._lastCapturedModuleBytes && this._lastCapturedModuleBytes.length === 0)) {
-        // Try to create a minimal default module if none exists
-        console.log(`${this._logPrefix} No module loaded, creating default empty module`);
-        await this._createDefaultModule();
+    this.summaryElement.innerHTML = `
+      <p><strong>Current view:</strong> ${this.escapeHtml(location)}</p>
+      <p><strong>Target file:</strong> ${this.escapeHtml(fileLabel)}</p>
+      <p><strong>Workflow:</strong> Preview from the list, keep one module active at a time, then import the track you want into your project.</p>
+    `;
+  }
+
+  renderSelection() {
+    this.ensureStateInitialized();
+    if (!this.selectedEntry) {
+      this.detailsElement.innerHTML = `
+        <p>Select a module to stage it in the large preview player.</p>
+        <p>Existing MOD/XM editing is disabled; this front end is now strictly for importing music from ModArchive.</p>
+      `;
+      if (this.previewViewer) {
+        this.previewViewer.clearLoadedResource('Select a module to preview.', 'MOD File');
       }
-      
-      const freshBytes = await this._directInternalSave();
-      const isTemp = !this.path || this.path.startsWith('temp://');
-      if (isTemp || this.isNewResource) {
-        await this.saveNewResource(freshBytes);
-      } else {
-        await this.saveExistingResource(freshBytes);
-      }
-      this._clearUnsavedIndicator(); // ensure tab cleaned
-      
-    } catch (error) {
-      console.error(`${this._logPrefix} save failed:`, error);
-      alert(`Failed to save: ${error.message || 'Unknown error occurred'}`);
+      this.activePreviewModuleId = null;
+      this.previewLoadingModuleId = null;
+      this.importButton.disabled = true;
+      this.openLinkButton.disabled = true;
+      this.renderEntries(this.currentEntries);
+      return;
     }
+
+    const modulePageUrl = this.buildModulePageUrl(this.selectedEntry.moduleId);
+    this.detailsElement.innerHTML = `
+      <p><strong>Title:</strong> ${this.escapeHtml(this.selectedEntry.title)}</p>
+      <p><strong>Format:</strong> ${this.escapeHtml(this.selectedEntry.format)}</p>
+      <p><strong>Catalog info:</strong> ${this.escapeHtml(this.selectedEntry.details || this.selectedEntry.info || '')}</p>
+      <p><strong>Suggested filename:</strong> ${this.escapeHtml(this.buildSuggestedFilename(this.selectedEntry))}</p>
+      <p><strong>Source:</strong> ${this.escapeHtml(modulePageUrl)}</p>
+      <p><strong>Preview:</strong> Use the row play button or the hero player controls above.</p>
+    `;
+    this.importButton.disabled = false;
+    this.openLinkButton.disabled = false;
   }
 
-  async _invokeIframeSaveAndCapture(timeoutMs=5000) {
-    // Removed: legacy capture path no longer used
-    return this.getContent();
-  }
-
-  async _directInternalSave() {
-    if (!this._iframe?.contentWindow) throw new Error('Tracker iframe not ready');
-  const win = this._iframe.contentWindow;
-  const bytes = await new Promise((resolve, reject)=>{
-    let done=false;
-    try {
-      const invoke = ()=>{
-        const fn = win.RetroTrackerSave || (win.Editor && win.Editor.save && ((cb)=>win.Editor.save(null,cb)));
-        if (!fn) return false;
-        fn(async (blob)=>{
-          try {
-            if (!blob) {
-              reject(new Error('No data returned from tracker')); 
-              return;
-            }
-            const buf = await blob.arrayBuffer();
-            const arr = new Uint8Array(buf);
-            if (!arr.length) { 
-              reject(new Error('Empty module export - no content to save')); 
-              return; 
-            }
-            console.log(`${this._logPrefix} Successfully captured ${arr.length} bytes`);
-            this._lastCapturedModuleBytes = arr;
-            done=true; resolve(arr);
-          }catch(e){ 
-            console.error(`${this._logPrefix} Error processing saved data:`, e);
-            reject(e); 
-          }
-        });
-        return true;
-      };
-      if(!invoke()) reject(new Error('RetroTrackerSave function not available - tracker may not be ready'));
-      setTimeout(()=>{ if(!done) reject(new Error('RetroTrackerSave timeout - operation took too long')); },8000);
-    }catch(e){ 
-      console.error(`${this._logPrefix} Error in _directInternalSave:`, e);
-      reject(e); 
+  async previewSelectedModule(entry) {
+    if (!entry || entry.kind !== 'download') {
+      throw new Error('Select a downloadable music module to preview.');
     }
-  });
-  return bytes;
-  }
+    if (!this.previewViewer) {
+      throw new Error('Music preview viewer is not initialized.');
+    }
+    if (!this.audioEngine) {
+      throw new Error('Audio engine not available.');
+    }
 
-  isExportReady() {
-  return !!(this._iframe?.contentWindow && (this._iframe.contentWindow.RetroTrackerSave || (this._iframe.contentWindow.Editor && this._iframe.contentWindow.Editor.save)));
-  }
+    const filename = this.buildSuggestedFilename(entry);
+    const formatName = this.getFormatDisplayName(entry.format);
 
-  _resolveExporter() {
-  // Deprecated (exporter abstraction removed)
-  }
+    this.previewLoadingModuleId = entry.moduleId;
+    this.renderEntries(this.currentEntries);
 
-  // Provide a better initial filename when creating new resource
-  async saveNewResource(content, filename = null) {
-    // Always force standard prompt for new tracker resources; ignore provided filename param
-    let base = '';
     try {
-      base = this._currentFilename || '';
-      if (!base) {
-        const tm = window.serviceContainer?.get('tabManager') || window.tabManager;
-        const tabId = tm?.getActiveTabId?.() || tm?.activeTabId;
-        const tabEl = tabId ? document.querySelector(`[data-tab-id="${tabId}"] .tab-title`) : null;
-        if (tabEl) base = tabEl.textContent || '';
-      }
-    } catch(_) {}
-    base = (base || '').replace(/[*]+$/,'').replace(/^🎵\s*/, '');
-    let ext = '.mod';
-    if (/\.xm$/i.test(base)) ext = '.xm';
-    if (/\.(mod|xm)$/i.test(base)) base = base.replace(/\.(mod|xm)$/i,'');
-    if (!base) base = 'untitled';
-    // Monkey patch instance getFileName + static extension to seed dialog
-    const originalGetFileName = this.getFileName;
-    const originalStatic = this.constructor.getFileExtension;
-    this.constructor.getFileExtension = () => ext;
-    this.getFileName = () => base + ext; // EditorBase will strip extension for form default
-    try {
-      return await super.saveNewResource(content, null); // null -> force prompt
+      await this.previewViewer.setResourceLoader(async () => {
+        const buffer = await this.fetchModuleArrayBuffer(entry);
+        const resourceId = await this.audioEngine.loadResource(buffer.slice(0), 'mod', filename);
+        const resource = this.audioEngine.getResource(resourceId);
+        if (!resource) {
+          throw new Error(`Preview resource not found after load: ${resourceId}`);
+        }
+
+        this.previewArrayBuffer = buffer;
+        this.previewModuleId = entry.moduleId;
+
+        return {
+          resourceId,
+          resource,
+          title: entry.title,
+          format: formatName,
+          status: 'Preview ready.',
+          ownsResource: true,
+        };
+      }, {
+        displayName: entry.title,
+        formatName,
+        initialStatus: `Loading preview for ${entry.title}...`,
+      });
+
+      this.activePreviewModuleId = entry.moduleId;
     } finally {
-      this.getFileName = originalGetFileName;
-      this.constructor.getFileExtension = originalStatic;
+      if (this.previewLoadingModuleId === entry.moduleId) {
+        this.previewLoadingModuleId = null;
+      }
+      this.renderEntries(this.currentEntries);
     }
   }
 
-  async _captureModuleBytes(timeoutMs = 5000) {
-  // Removed legacy capture pathway; deterministic buildBinary export only
-  return this.getContent();
+  async toggleEntryPlayback(entry) {
+    if (!entry || entry.kind !== 'download') {
+      throw new Error('Select a downloadable music module to preview.');
+    }
+    if (!this.previewViewer) {
+      throw new Error('Music preview viewer is not initialized.');
+    }
+
+    this.selectedEntry = entry;
+    this.renderSelection();
+
+    const isCurrentModule = this.activePreviewModuleId === entry.moduleId;
+    const hasLoadedPreview = isCurrentModule && this.previewViewer.audioResource;
+    const isPlayingCurrent = hasLoadedPreview && this.previewViewer.isPlaying;
+
+    if (isPlayingCurrent) {
+      this.previewViewer.stopPlayback();
+      this.setStatus(`Paused ${entry.title}.`);
+      this.renderEntries(this.currentEntries);
+      return;
+    }
+
+    if (!hasLoadedPreview) {
+      await this.previewSelectedModule(entry);
+    }
+
+    await this.previewViewer.togglePlayback();
+    this.setStatus(`${this.previewViewer.isPlaying ? 'Playing' : 'Ready'} ${entry.title}.`);
+    this.renderEntries(this.currentEntries);
+  }
+
+  async fetchModuleArrayBuffer(entry) {
+    if (!entry || entry.kind !== 'download') {
+      throw new Error('Select a downloadable music module first.');
+    }
+
+    if (
+      this.previewModuleId === entry.moduleId &&
+      this.previewArrayBuffer instanceof ArrayBuffer &&
+      this.previewArrayBuffer.byteLength > 0
+    ) {
+      return this.previewArrayBuffer;
+    }
+
+    const response = await fetch(entry.downloadUrl, { method: 'GET' });
+    if (!response.ok) {
+      throw new Error(`Failed to download module: HTTP ${response.status}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+      throw new Error(`Downloaded module is empty: ${entry.title}`);
+    }
+
+    this.previewArrayBuffer = buffer;
+    this.previewModuleId = entry.moduleId;
+    return buffer;
+  }
+
+  async importSelectedModule() {
+    const entry = this.selectedEntry;
+    if (!entry || entry.kind !== 'download') {
+      throw new Error('Select a downloadable music module first.');
+    }
+
+    this.setStatus(`Downloading ${entry.title}...`);
+
+    const buffer = await this.fetchModuleArrayBuffer(entry);
+    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+      throw new Error(`Downloaded module is empty: ${entry.title}`);
+    }
+
+    this.importedContent = new Uint8Array(buffer);
+    const filename = this.buildSuggestedFilename(entry);
+
+    if (this.isNewResource) {
+      await this.saveNewResource(this.importedContent, filename);
+      this.loadedFileName = filename;
+    } else {
+      this.loadedFileName = this.getFileName();
+      await this.saveExistingResource(this.importedContent);
+      this.markClean();
+    }
+
+    this.setStatus(`Imported ${entry.title} into ${this.path || filename}.`);
+    this.renderSummary();
+  }
+
+  openSelectedModulePage() {
+    if (!this.selectedEntry || !this.selectedEntry.moduleId) {
+      return;
+    }
+
+    const url = this.buildModulePageUrl(this.selectedEntry.moduleId);
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async fetchRootCatalog() {
+    return [
+      {
+        kind: 'route',
+        title: 'Top 20 Rated',
+        info: 'Default list',
+        route: 'top-rated',
+        baseParts: ['top-rated'],
+      },
+      {
+        kind: 'route',
+        title: 'Random 20',
+        info: 'Fresh shuffle',
+        route: 'random-list',
+        baseParts: ['random-list'],
+      },
+    ];
+  }
+
+  async loadEntriesForRoute(route, baseParts = null) {
+    if (!route) {
+      throw new Error('Missing catalog route.');
+    }
+
+    const parts = Array.isArray(baseParts) && baseParts.length > 0 ? baseParts : route.split('/');
+    const section = parts[0];
+
+    const searchParams = new URLSearchParams();
+    if (section === 'top-rated') {
+      searchParams.set('action', 'top-rated');
+    } else if (section === 'random-list') {
+      searchParams.set('action', 'random-list');
+    } else if (section === 'search') {
+      searchParams.set('action', 'search');
+      searchParams.set('query', parts.slice(1).join('/'));
+    } else {
+      throw new Error(`Unsupported ModArchive route: ${route}`);
+    }
+
+    const response = await fetch(`${this.getApiBaseUrl()}?${searchParams.toString()}`, { method: 'GET' });
+    if (!response.ok) {
+      throw new Error(`Failed to load ModArchive route ${route}: HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const entries = Array.isArray(data?.entries) ? data.entries : null;
+    if (!entries) {
+      throw new Error(`ModArchive route ${route} returned an invalid payload.`);
+    }
+
+    return entries.map((entry) => this.createDownloadEntry(entry));
+  }
+
+  getApiBaseUrl() {
+    return '/api/retrostudio/modarchive';
+  }
+
+  buildDownloadProxyUrl(moduleId) {
+    const searchParams = new URLSearchParams({
+      action: 'download',
+      moduleId: String(moduleId || ''),
+    });
+    return `${this.getApiBaseUrl()}?${searchParams.toString()}`;
+  }
+
+  createDownloadEntry({ title, format, moduleId, info = '', details = '', downloadUrl = null }) {
+    const normalizedFormat = String(format || '').toLowerCase();
+    if (!normalizedFormat) {
+      throw new Error(`Missing music format for ${title}`);
+    }
+
+    const normalizedModuleId = String(moduleId || '').trim();
+    if (!normalizedModuleId) {
+      throw new Error(`Missing module id for ${title}`);
+    }
+
+    return {
+      kind: 'download',
+      title: title || '---',
+      info,
+      details,
+      format: normalizedFormat,
+      moduleId: normalizedModuleId,
+      downloadUrl: downloadUrl || this.buildDownloadProxyUrl(normalizedModuleId),
+    };
+  }
+
+  buildSuggestedFilename(entry) {
+    const extension = this.mapFormatToExtension(entry.format);
+    const baseName = this.slugify(entry.title || `module_${entry.moduleId}`);
+    return `${baseName}.${extension}`;
+  }
+
+  mapFormatToExtension(format) {
+    const normalized = String(format || '').toLowerCase();
+    if (['mod', 'xm', 's3m', 'it', 'mptm'].includes(normalized)) {
+      return normalized;
+    }
+    throw new Error(`Unsupported music format: ${format}`);
+  }
+
+  getFormatDisplayName(format) {
+    const normalized = `.${String(format || '').toLowerCase()}`;
+    const names = {
+      '.mod': 'ProTracker MOD',
+      '.xm': 'FastTracker II Extended Module',
+      '.s3m': 'Scream Tracker 3 Module',
+      '.it': 'Impulse Tracker Module',
+      '.mptm': 'OpenMPT Module',
+    };
+
+    const displayName = names[normalized];
+    if (!displayName) {
+      throw new Error(`Unsupported music format: ${format}`);
+    }
+
+    return displayName;
+  }
+
+  buildModulePageUrl(moduleId) {
+    return `https://modarchive.org/index.php?request=view_by_moduleid&query=${moduleId}`;
+  }
+
+  slugify(value) {
+    const slug = String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+    return slug || 'module';
+  }
+
+  formatFileSize(bytes) {
+    const size = Number(bytes);
+    if (!Number.isFinite(size) || size < 0) {
+      throw new Error(`Invalid file size: ${bytes}`);
+    }
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${Math.round(size / 1024)} KB`;
+    }
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  setStatus(message, isError = false) {
+    if (!this.statusElement) {
+      return;
+    }
+    this.statusElement.textContent = message;
+    this.statusElement.classList.toggle('is-error', isError);
+  }
+
+  showError(error) {
+    console.error(this._logPrefix, error);
+    this.setStatus(error.message || String(error), true);
   }
 
   destroy() {
-    console.log(`${this._logPrefix} destroy called`);
-    this.cleanup();
-    super.destroy?.();
+    if (this.previewViewer) {
+      this.previewViewer.destroy();
+      this.previewViewer = null;
+    }
+
+    super.destroy();
   }
 
-  _clearUnsavedIndicator() {
-    try {
-      const tabManager = window.serviceContainer?.get('tabManager') || window.tabManager;
-      if (!tabManager) return;
-      const currentTabId = tabManager.getActiveTabId?.() || tabManager.activeTabId;
-      if (!currentTabId) return;
-      const filename = this._currentFilename || this.getFileName?.() || 'song.mod';
-      const cleanTitle = `🎵 ${filename}`;
-      if (tabManager.updateTabTitle) {
-        tabManager.updateTabTitle(currentTabId, cleanTitle);
-      } else {
-        const tabElement = document.querySelector(`[data-tab-id="${currentTabId}"] .tab-title`);
-        if (tabElement) tabElement.textContent = cleanTitle;
-      }
-      // Mark tab clean visually
-      if (typeof tabManager.markTabClean === 'function') {
-        tabManager.markTabClean(currentTabId);
-      }
-      // Emit saved event
-      window.eventBus?.emit?.('editor.content.saved', { editor: this });
-    } catch(_) {}
+  escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }
 
-// Static metadata for auto-registration
-ModXmTrackerEditor.getFileExtensions = () => ['.mod', '.xm', '.s3m', '.it'];
-ModXmTrackerEditor.getDisplayName = () => 'MOD/XM Tracker';
-ModXmTrackerEditor.getIcon = () => '🎵';
-ModXmTrackerEditor.getPriority = () => 10;
-ModXmTrackerEditor.getCapabilities = () => ['audio-editing', 'tracker'];
-ModXmTrackerEditor.canCreate = true;
-
-// Export for global access
 window.ModXmTrackerEditor = ModXmTrackerEditor;
 
-// Register the component
 ModXmTrackerEditor.registerComponent();

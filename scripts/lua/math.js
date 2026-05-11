@@ -33,6 +33,19 @@ class LuaMathExtensions extends BaseLuaExtension {
     return value;
   }
 
+  _requireIntegerStackArg(stackIndex, methodName, argName) {
+    const raw = this.luaState?.raw_tostring?.(stackIndex);
+    if (raw === undefined || raw === null || raw === '') {
+      throw new Error(`[Math] ${methodName} missing required argument: ${argName}`);
+    }
+
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isFinite(value)) {
+      throw new Error(`[Math] ${methodName} invalid integer argument ${argName}: ${raw}`);
+    }
+    return value;
+  }
+
   /**
    * Sin function - uses Lua state to get parameters
    * Lua usage: Math.Sin(x)
@@ -230,9 +243,9 @@ class LuaMathExtensions extends BaseLuaExtension {
    * Random integer function
    * Lua usage: Math.Random(x, y)
    */
-  Random(...args) {
-    const min = this._requireIntegerArg(args, 0, 'Random', 'min');
-    const max = this._requireIntegerArg(args, 1, 'Random', 'max');
+  Random() {
+    const min = this._requireIntegerStackArg(2, 'Random', 'min');
+    const max = this._requireIntegerStackArg(3, 'Random', 'max');
     if (max <= min) {
       throw new Error(`[Math] Random requires max > min (min=${min}, max=${max})`);
     }

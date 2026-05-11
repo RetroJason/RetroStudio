@@ -216,7 +216,7 @@ class EmbeddedRuntimePlayer {
     return this.loadRwaFromArrayBuffer(arrayBuffer);
   }
 
-  static async getExtensionDefinitions(extensionFilePath = 'scripts/lua/extensions.json') {
+  static async getExtensionDefinitions(extensionFilePath = 'scripts/lua/api.json') {
     if (!EmbeddedRuntimePlayer._extensionDefinitionsCache) {
       EmbeddedRuntimePlayer._extensionDefinitionsCache = new Map();
     }

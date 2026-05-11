@@ -315,6 +315,8 @@ onmessage = async function(e) {
         log(`MOD loaded successfully: ${title}, duration: ${duration}s`);
         postMessage({ 
           type: 'mod-loaded', 
+          resourceId: e.data.resourceId || null,
+          analysisOnly: Boolean(e.data.analysisOnly),
           title: title,
           duration: duration
         });

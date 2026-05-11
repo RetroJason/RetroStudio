@@ -660,6 +660,69 @@ body.no-select {
   align-items: flex-start;
 }
 
+.ribbon-file-primary-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ribbon-save-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 148px;
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--studio-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--studio-foreground);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ribbon-save-state.is-hidden {
+  display: none;
+}
+
+.ribbon-save-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #7f8c8d;
+  box-shadow: 0 0 0 4px rgba(127, 140, 141, 0.16);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ribbon-save-state[data-state="idle"] .ribbon-save-state-dot,
+.ribbon-save-state[data-state="saved"] .ribbon-save-state-dot {
+  background: #41c77a;
+  box-shadow: 0 0 0 4px rgba(65, 199, 122, 0.16);
+}
+
+.ribbon-save-state[data-state="pending"] .ribbon-save-state-dot {
+  background: #f0b53a;
+  box-shadow: 0 0 0 4px rgba(240, 181, 58, 0.16);
+}
+
+.ribbon-save-state[data-state="saving"] .ribbon-save-state-dot {
+  background: #56b5ff;
+  box-shadow: 0 0 0 4px rgba(86, 181, 255, 0.16);
+}
+
+.ribbon-save-state[data-state="failed"] .ribbon-save-state-dot {
+  background: #ff6b5c;
+  box-shadow: 0 0 0 4px rgba(255, 107, 92, 0.18);
+}
+
+.ribbon-save-state-label {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ribbon-file-toggle {
   display: flex;
   flex-direction: column;
@@ -722,7 +785,7 @@ body.no-select {
   display: flex;
 }
 
-.ribbon-section[data-ribbon-group="file"] .ribbon-btn {
+.ribbon-section[data-ribbon-group="file"] .ribbon-buttons .ribbon-btn {
   width: 100%;
   min-width: 0;
   flex-direction: row;
@@ -731,11 +794,11 @@ body.no-select {
   text-align: left;
 }
 
-.ribbon-section[data-ribbon-group="file"] .ribbon-btn .ribbon-icon {
+.ribbon-section[data-ribbon-group="file"] .ribbon-buttons .ribbon-btn .ribbon-icon {
   min-width: 18px;
 }
 
-.ribbon-section[data-ribbon-group="file"] .ribbon-btn .ribbon-text {
+.ribbon-section[data-ribbon-group="file"] .ribbon-buttons .ribbon-btn .ribbon-text {
   font-size: 12px;
 }
 
@@ -1227,6 +1290,7 @@ body.no-select {
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 .project-explorer {
@@ -1278,7 +1342,7 @@ body.no-select {
 
 .main-content {
   flex: 1;
-  min-width: 300px;
+  min-width: 0;
   background: #1e1e1e;
 }
 

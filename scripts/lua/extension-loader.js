@@ -1,5 +1,5 @@
 // extension-loader.js - Automatic Lua Extension Loader
-// Loads and registers all Lua extensions based on extensions.json
+// Loads and registers all Lua extensions based on the canonical API contract.
 
 class LuaExtensionLoader {
   constructor(gameEmulator) {
@@ -26,13 +26,15 @@ class LuaExtensionLoader {
   }
 
   /**
-   * Load extension configuration from extensions.json
+   * Load extension configuration from the canonical API contract.
    */
   async loadExtensionConfig() {
     try {
-      const response = await fetch('scripts/lua/extensions.json');
+      const response = await fetch(this.buildScriptUrl('scripts/lua/api.json'), {
+        cache: 'no-store',
+      });
       if (!response.ok) {
-        throw new Error(`Failed to load extensions.json: ${response.status}`);
+        throw new Error(`Failed to load Lua API contract: ${response.status}`);
       }
       this.extensionConfig = await response.json();
       console.log(`[LuaExtensionLoader] Loaded extension config: ${this.extensionConfig.name} v${this.extensionConfig.version}`);

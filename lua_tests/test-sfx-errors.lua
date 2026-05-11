@@ -5,7 +5,7 @@ function Setup()
     -- Test 1: Try to play a non-existent sound effect
     System.LogLua("=== Test 1: Playing non-existent SFX ===")
     local success, error = pcall(function()
-        SFX.Play("SFX.NONEXISTENT", false)
+        SFX.Create("NONEXISTENT")
     end)
     
     if not success then
@@ -17,7 +17,7 @@ function Setup()
     -- Test 2: Try to stop a non-existent sound effect
     System.LogLua("=== Test 2: Stopping non-existent SFX ===")
     local success2, error2 = pcall(function()
-        SFX.Stop("SFX.NONEXISTENT")
+        SFX.Stop(999999)
     end)
     
     if not success2 then
@@ -29,7 +29,7 @@ function Setup()
     -- Test 3: Try to check playing status of non-existent sound
     System.LogLua("=== Test 3: Checking non-existent SFX playing status ===")
     local success3, error3 = pcall(function()
-        local isPlaying = SFX.IsPlaying("SFX.NONEXISTENT")
+        local isPlaying = SFX.IsPlaying(999999)
         System.LogLua("IsPlaying result: " .. tostring(isPlaying))
     end)
     
@@ -42,7 +42,7 @@ function Setup()
     -- Test 4: Try to set volume for non-existent sound
     System.LogLua("=== Test 4: Setting volume for non-existent SFX ===")
     local success4, error4 = pcall(function()
-        SFX.SetVolume("SFX.NONEXISTENT", 0.5)
+        SFX.SetVolume(999999, 0.5)
     end)
     
     if not success4 then

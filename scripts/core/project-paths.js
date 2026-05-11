@@ -68,13 +68,23 @@
       const sourcesUi = this.getSourcesRootUi();
       const buildUi = this.getBuildRootUi();
       const buildStorage = this.getBuildStoragePrefix().replace(/\/$/, ''); // e.g. 'build'
+      const sourceFolders = [
+        'Lua',
+        'Music',
+        'SFX',
+        'Images',
+        'Palettes',
+        'Sprites',
+        'Binary'
+      ];
       const nonProjectRoots = new Set([
         sourcesUi,
         buildUi,
         buildStorage,
         buildStorage.toUpperCase(), // 'BUILD' safeguard
         'Build',
-        'build'
+        'build',
+        ...sourceFolders
       ]);
 
       if (nonProjectRoots.has(first)) {

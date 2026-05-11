@@ -20,6 +20,57 @@ class RwpService {
     return `${this.getSourcesRootUi()}/Package/icons/icon32.png`;
   }
 
+  getPackageFieldValidationError(settings) {
+    const uniqueId = String(settings.uniqueId || '').trim();
+    const applicationType = String(settings.category || '').trim();
+    const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim();
+    const shortDescription = String(settings.shortDescription || '').trim();
+    const description = String(settings.description || '').trim();
+    const versionString = String(settings.version || '').trim();
+    const versionCode = Number.parseInt(String(settings.versionCode ?? ''), 10);
+    const iconPath = String(settings.icons?.icon32 || '').trim();
+    const screenshots = Array.isArray(settings.screenshots) ? settings.screenshots.filter(Boolean) : [];
+
+    if (!uniqueId) {
+      return { fieldName: 'uniqueId', message: 'Package Settings: Application ID is required.' };
+    }
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(uniqueId)) {
+      return {
+        fieldName: 'uniqueId',
+        message: 'Package Settings: Application ID must use lowercase letters, numbers, and hyphens only.',
+      };
+    }
+    if (!applicationType) {
+      return { fieldName: 'category', message: 'Package Settings: Application Type is required.' };
+    }
+    if (!targetDeviceSlug) {
+      return { fieldName: 'targetDeviceSlug', message: 'Package Settings: Target Device is required.' };
+    }
+    if (!shortDescription) {
+      return { fieldName: 'shortDescription', message: 'Package Settings: Short Description is required.' };
+    }
+    if (!description) {
+      return { fieldName: 'description', message: 'Package Settings: Description is required.' };
+    }
+    if (!versionString) {
+      return { fieldName: 'version', message: 'Package Settings: Version is required.' };
+    }
+    if (!Number.isInteger(versionCode) || versionCode < 1) {
+      return {
+        fieldName: 'versionCode',
+        message: 'Package Settings: Version Code must be an integer greater than or equal to 1.',
+      };
+    }
+    if (!iconPath) {
+      return { fieldName: 'icons.icon32', message: 'Package Settings: Icon 32x32 is required for package.ini.' };
+    }
+    if (screenshots.length === 0) {
+      return { fieldName: 'screenshots', message: 'Package Settings: At least one screenshot is required before publish.' };
+    }
+
+    return null;
+  }
+
   async loadProjectAssetRecord(projectName, assetPath) {
     this.ensureDeps();
     if (!this.fileManager || typeof this.fileManager.loadFile !== 'function') {
@@ -173,6 +224,11 @@ class RwpService {
   }
 
   buildPackageIni(projectName, settings, runtimePkg, retroStudioVersion, options = {}) {
+    const validationError = this.getPackageFieldValidationError(settings);
+    if (validationError) {
+      throw new Error(validationError.message);
+    }
+
     const uniqueId = String(settings.uniqueId || '').trim();
     const category = String(settings.category || '').trim();
     const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim();
@@ -186,20 +242,6 @@ class RwpService {
     const sourceRevision = String(settings.sourceRevision || '').trim();
     const buildId = String(settings.buildId || '').trim();
     const authorLabel = String(settings.author || '').trim();
-
-    if (!uniqueId) throw new Error('Package Settings: Unique ID is required.');
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(uniqueId)) {
-      throw new Error('Package Settings: Unique ID must use lowercase letters, numbers, and hyphens only.');
-    }
-    if (!category) throw new Error('Package Settings: Category is required.');
-    if (!targetDeviceSlug) throw new Error('Package Settings: Target Device Slug is required.');
-    if (!shortDescription) throw new Error('Package Settings: Short Description is required.');
-    if (!longDescription) throw new Error('Package Settings: Description is required.');
-    if (!versionString) throw new Error('Package Settings: Version is required.');
-    if (!Number.isInteger(rawVersionCode) || rawVersionCode < 1) {
-      throw new Error('Package Settings: Version Code must be an integer greater than or equal to 1.');
-    }
-    if (!iconPath) throw new Error('Package Settings: Icon 32x32 is required for package.ini.');
 
     const screenshots = Array.isArray(settings.screenshots) ? settings.screenshots.filter(Boolean) : [];
     const videos = Array.isArray(settings.videos) ? settings.videos.filter(Boolean) : [];
