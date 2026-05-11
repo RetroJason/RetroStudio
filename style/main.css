@@ -662,7 +662,7 @@ body.no-select {
 
 .ribbon-file-primary-row {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 8px;
 }
 
@@ -670,13 +670,14 @@ body.no-select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  width: 148px;
-  margin-top: 8px;
+  width: 112px;
+  min-height: 22px;
+  margin-top: 6px;
   padding: 6px 10px;
   border: 1px solid var(--studio-line);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--studio-foreground);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 210, 126, 0.06), rgba(28, 10, 8, 0.82));
+  color: var(--studio-muted);
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
@@ -721,6 +722,12 @@ body.no-select {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.ribbon-file-primary-row #saveBtn {
+  min-height: 52px;
+  min-width: 52px;
+  justify-content: center;
 }
 
 .ribbon-file-toggle {

@@ -2888,7 +2888,7 @@ class GameEmulator {
   async loadInputManagerScript() {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'scripts/input/game-input-manager.js';
+      script.src = 'scripts/input/game-input-manager.js?v=2';
       script.type = 'module';
       script.onload = () => {
         console.log('[GameEmulator] Input manager script loaded successfully');

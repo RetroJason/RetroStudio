@@ -78,7 +78,7 @@ class AudioEngine extends EventTarget {
       }
       
       // Load audio worklet
-      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js');
+      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js?v=2');
       this.workletNode = new AudioWorkletNode(this.audioContext, 'mixer-worklet');
       this.workletNode.connect(this.audioContext.destination);
       this.setMasterVolume(this.masterVolume.left, this.masterVolume.right);
@@ -509,7 +509,7 @@ class AudioEngine extends EventTarget {
   // Private methods
   
   _createModWorker() {
-    this.modWorker = new Worker('scripts/audio/openmpt-integration.js');
+    this.modWorker = new Worker('scripts/audio/openmpt-integration.js?v=2');
     this.modWorker.onmessage = (e) => {
       this._handleModWorkerMessage(e);
     };
