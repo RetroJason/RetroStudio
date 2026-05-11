@@ -38,6 +38,11 @@ class AudioEngine extends EventTarget {
     return this.lastSongStartError;
   }
 
+  _isOutputMuted(requestedVolume = 1.0) {
+    const volume = Number.isFinite(Number(requestedVolume)) ? Number(requestedVolume) : 1.0;
+    return volume <= 0 || (this.masterVolume.left <= 0 && this.masterVolume.right <= 0);
+  }
+
   async ensureInitialized() {
     if (this.isInitialized) {
       return true;
@@ -201,7 +206,9 @@ class AudioEngine extends EventTarget {
     }
     
     // Resume on-demand so playback does not depend on caller-specific resume logic.
-    if (this.audioContext.state === 'suspended') {
+    if (this.audioContext.state === 'suspended' && this._isOutputMuted(volume)) {
+      console.log('[AudioEngine] AudioContext suspended; starting muted song without requesting browser audio playback');
+    } else if (this.audioContext.state === 'suspended') {
       console.log('[AudioEngine] AudioContext suspended, resuming before song playback');
       try {
         await this.audioContext.resume();
@@ -357,7 +364,9 @@ class AudioEngine extends EventTarget {
     }
     
     // Resume on-demand so playback does not depend on caller-specific resume logic.
-    if (this.audioContext.state === 'suspended') {
+    if (this.audioContext.state === 'suspended' && this._isOutputMuted(volume)) {
+      console.log('[AudioEngine] AudioContext suspended; starting muted sound without requesting browser audio playback');
+    } else if (this.audioContext.state === 'suspended') {
       console.log('[AudioEngine] AudioContext suspended, resuming before sound playback');
       try {
         await this.audioContext.resume();

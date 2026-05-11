@@ -829,16 +829,29 @@ class GameEmulator {
     const pathSegments = relativePath.split('/').filter(Boolean);
 
     let folderMatch = null;
+    const resourceFolderAliases = {
+      sfx: 'SFX',
+      music: 'MUSIC',
+      graphics: 'GRAPHICS',
+      images: 'GRAPHICS',
+      data: 'DATA',
+      shaders: 'SHADERS',
+      palettes: 'PALETTES',
+    };
     const buildRootUi = String(this.getBuildRootUi() || '').trim().toLowerCase();
     const buildStorageRoot = String(window.ProjectPaths?.getBuildStoragePrefix?.() || 'build/')
       .replace(/\/$/, '')
       .trim()
       .toLowerCase();
 
+    if (this.options.runtimeOnly && pathSegments.length >= 2) {
+      folderMatch = resourceFolderAliases[pathSegments[0].toLowerCase()] || null;
+    }
+
     if (pathSegments.length >= 2) {
       const rootSegment = pathSegments[0].toLowerCase();
       if (rootSegment === buildRootUi || rootSegment === buildStorageRoot || rootSegment === 'game objects') {
-        folderMatch = pathSegments[1].toUpperCase();
+        folderMatch = resourceFolderAliases[pathSegments[1].toLowerCase()] || pathSegments[1].toUpperCase();
       }
     }
 

@@ -81,7 +81,7 @@ class PackageSettingsEditor extends EditorBase {
     wrap.appendChild(title);
 
     const note = document.createElement('div');
-    note.textContent = 'Edit the hosted store fields here. Retrowww owns the author, title lineage, generated application ID, and publish version tracking. package.ini only publishes supported YouTube URLs; uploaded local videos stay inside the project for preview only.';
+    note.textContent = 'Edit the hosted store fields here. Retrowww owns the authors list, title lineage, generated application ID, and publish version tracking. package.ini only publishes supported YouTube URLs; uploaded local videos stay inside the project for preview only.';
     note.style.cssText = 'opacity:0.8; font-size:12px; color:#9aa3b8;';
     wrap.appendChild(note);
 
@@ -90,7 +90,7 @@ class PackageSettingsEditor extends EditorBase {
 
     this._ui.title = this.makeInputRow(form, 'Title', 'text');
     this._ui.titleStatus = this.makeStatusRow(form);
-    this._ui.author = this.makeInputRow(form, 'Author', 'text');
+    this._ui.author = this.makeAuthorRow(form, 'Authors');
     this._ui.version = this.makeInputRow(form, 'Version', 'text');
     this._ui.versionStatus = this.makeStatusRow(form);
     this._ui.versionCode = this.makeInputRow(form, 'Version Code', 'number');
@@ -206,6 +206,33 @@ class PackageSettingsEditor extends EditorBase {
     return input;
   }
 
+  makeAuthorRow(container, labelText) {
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    label.style.cssText = 'color:#d7dbe4;';
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex; align-items:center; gap:8px; min-width:0;';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.style.cssText = 'flex:1; min-width:0; padding:6px; border-radius:4px; border:1px solid #4b5368; background:#0f131b; color:#e7ecf7;';
+    wrap.appendChild(input);
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.textContent = '+';
+    addButton.title = 'Add author';
+    addButton.setAttribute('aria-label', 'Add author');
+    addButton.style.cssText = 'width:32px; height:32px; border-radius:999px; border:1px solid #4b5368; background:#272d3c; color:#e7ecf7; cursor:pointer; font-size:18px; line-height:1;';
+    wrap.appendChild(addButton);
+
+    container.appendChild(label);
+    container.appendChild(wrap);
+    this._ui.authorAddButton = addButton;
+    return input;
+  }
+
   makeTextAreaRow(container, labelText, rows) {
     const label = document.createElement('label');
     label.textContent = labelText;
@@ -311,7 +338,7 @@ class PackageSettingsEditor extends EditorBase {
     if (this._ui.author) {
       this._ui.author.readOnly = true;
       this._ui.author.style.opacity = '0.8';
-      this._ui.author.title = 'Set by the signed-in Retrowww account.';
+      this._ui.author.title = 'Managed by the saved Retrowww project authors.';
     }
 
     if (this._ui.iconSection) {
@@ -326,6 +353,29 @@ class PackageSettingsEditor extends EditorBase {
     }
 
     return hostedStudio.getPackageDefaults(projectName || '', title || '');
+  }
+
+  async searchHostedUsers(query) {
+    const hostedStudio = window.retrowwwHostedStudio;
+    if (!hostedStudio || typeof hostedStudio.searchUsers !== 'function') {
+      throw new Error('Retrowww user search is unavailable.');
+    }
+
+    return hostedStudio.searchUsers(query || '');
+  }
+
+  async addHostedProjectCollaborator(userUuid) {
+    const hostedStudio = window.retrowwwHostedStudio;
+    if (!hostedStudio || typeof hostedStudio.addProjectCollaborator !== 'function') {
+      throw new Error('Retrowww collaborator editing is unavailable.');
+    }
+
+    const projectName = this.getProjectNameFromPath(this.path || this.file?.path);
+    if (!projectName) {
+      throw new Error('Project name is required before authors can be updated.');
+    }
+
+    return hostedStudio.addProjectCollaborator(projectName, userUuid);
   }
 
   setStatusMessage(element, tone, message) {
@@ -620,6 +670,18 @@ class PackageSettingsEditor extends EditorBase {
         await this.uploadVideo();
       });
       this._ui.btnVideoUpload._pkgBound = true;
+    }
+
+    if (this._ui.authorAddButton && !this._ui.authorAddButton._pkgBound) {
+      this._ui.authorAddButton.addEventListener('click', async () => {
+        try {
+          await this.openAuthorSearchDialog();
+        } catch (error) {
+          console.error('[PackageSettingsEditor] Failed to open author picker:', error);
+          window.gameEmulator?.updateStatus?.(error?.message || 'Failed to open author picker.', 'error');
+        }
+      });
+      this._ui.authorAddButton._pkgBound = true;
     }
   }
 
@@ -935,6 +997,167 @@ class PackageSettingsEditor extends EditorBase {
     this.settings.sourceRevision = this._ui.sourceRevision.value || '';
     this.settings.buildId = this._ui.buildId.value || '';
     this.markDirty();
+  }
+
+  async openAuthorSearchDialog() {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(7,10,16,0.82); display:flex; align-items:center; justify-content:center; z-index:9999;';
+
+    const panel = document.createElement('div');
+    panel.style.cssText = 'width:min(560px, calc(100vw - 24px)); max-height:min(78vh, 720px); overflow:hidden; border:1px solid #3b4152; border-radius:12px; background:#151b24; box-shadow:0 20px 60px rgba(0, 0, 0, 0.45); display:flex; flex-direction:column;';
+    overlay.appendChild(panel);
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid #2b3140;';
+    panel.appendChild(header);
+
+    const title = document.createElement('div');
+    title.textContent = 'Add project author';
+    title.style.cssText = 'font-size:16px; font-weight:600; color:#e7ecf7;';
+    header.appendChild(title);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.textContent = 'Close';
+    closeButton.style.cssText = 'padding:6px 10px; border-radius:4px; border:1px solid #4b5368; background:#272d3c; color:#e7ecf7; cursor:pointer;';
+    header.appendChild(closeButton);
+
+    const content = document.createElement('div');
+    content.style.cssText = 'padding:16px; display:flex; flex-direction:column; gap:12px;';
+    panel.appendChild(content);
+
+    const help = document.createElement('div');
+    help.textContent = 'Search by username or email, then add the user to this saved project.';
+    help.style.cssText = 'font-size:12px; color:#9aa3b8;';
+    content.appendChild(help);
+
+    const searchInput = document.createElement('input');
+    searchInput.type = 'search';
+    searchInput.placeholder = 'Search by username or email';
+    searchInput.style.cssText = 'padding:8px 10px; border-radius:6px; border:1px solid #4b5368; background:#0f131b; color:#e7ecf7;';
+    content.appendChild(searchInput);
+
+    const status = document.createElement('div');
+    status.style.cssText = 'min-height:18px; font-size:12px; color:#9aa3b8;';
+    content.appendChild(status);
+
+    const results = document.createElement('div');
+    results.style.cssText = 'display:flex; flex-direction:column; gap:8px; overflow:auto;';
+    content.appendChild(results);
+
+    const closeDialog = () => {
+      if (overlay.parentNode) {
+        overlay.parentNode.removeChild(overlay);
+      }
+    };
+
+    closeButton.addEventListener('click', closeDialog);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        closeDialog();
+      }
+    });
+
+    let searchRequestId = 0;
+    let searchDebounceTimer = 0;
+
+    const renderResults = (users) => {
+      results.innerHTML = '';
+      if (!Array.isArray(users) || users.length === 0) {
+        const empty = document.createElement('div');
+        empty.textContent = 'No matching users found.';
+        empty.style.cssText = 'padding:10px 12px; border:1px solid #2b3140; border-radius:8px; color:#9aa3b8; background:#10151e;';
+        results.appendChild(empty);
+        return;
+      }
+
+      users.forEach((user) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.style.cssText = 'display:flex; width:100%; align-items:flex-start; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid #2b3140; border-radius:8px; background:#10151e; color:#e7ecf7; cursor:pointer; text-align:left;';
+
+        const primary = document.createElement('div');
+        primary.style.cssText = 'display:flex; flex-direction:column; gap:4px; min-width:0;';
+
+        const name = document.createElement('div');
+        name.textContent = user.displayName || user.username || user.email;
+        name.style.cssText = 'font-size:14px; font-weight:600; color:#e7ecf7;';
+        primary.appendChild(name);
+
+        const meta = document.createElement('div');
+        meta.textContent = `${user.username} | ${user.email}`;
+        meta.style.cssText = 'font-size:12px; color:#9aa3b8;';
+        primary.appendChild(meta);
+
+        const action = document.createElement('span');
+        action.textContent = 'Add';
+        action.style.cssText = 'padding:4px 8px; border-radius:999px; border:1px solid #4b5368; font-size:12px; color:#d7dbe4;';
+
+        row.appendChild(primary);
+        row.appendChild(action);
+        row.addEventListener('click', async () => {
+          status.textContent = `Adding ${user.username}...`;
+          status.style.color = '#9aa3b8';
+          try {
+            await this.addHostedProjectCollaborator(user.uuid);
+            await this.applyHostedPackageDefaults(this.getProjectNameFromPath(this.path || this.file?.path));
+            this.markDirty();
+            this.renderFromSettings();
+            window.gameEmulator?.updateStatus?.(`Added ${user.username} to project authors.`, 'success');
+            closeDialog();
+          } catch (error) {
+            console.error('[PackageSettingsEditor] Failed to add author:', error);
+            status.textContent = error?.message || 'Failed to add author.';
+            status.style.color = '#e09494';
+          }
+        });
+        results.appendChild(row);
+      });
+    };
+
+    const runSearch = async () => {
+      const query = String(searchInput.value || '').trim();
+      if (query.length < 2) {
+        status.textContent = 'Type at least 2 characters to search.';
+        status.style.color = '#9aa3b8';
+        results.innerHTML = '';
+        return;
+      }
+
+      const requestId = ++searchRequestId;
+      status.textContent = 'Searching...';
+      status.style.color = '#9aa3b8';
+      try {
+        const users = await this.searchHostedUsers(query);
+        if (requestId !== searchRequestId) {
+          return;
+        }
+        status.textContent = `${users.length} result${users.length === 1 ? '' : 's'}.`;
+        status.style.color = '#9aa3b8';
+        renderResults(users);
+      } catch (error) {
+        if (requestId !== searchRequestId) {
+          return;
+        }
+        console.error('[PackageSettingsEditor] User search failed:', error);
+        status.textContent = error?.message || 'Search failed.';
+        status.style.color = '#e09494';
+        results.innerHTML = '';
+      }
+    };
+
+    searchInput.addEventListener('input', () => {
+      if (searchDebounceTimer) {
+        window.clearTimeout(searchDebounceTimer);
+      }
+      searchDebounceTimer = window.setTimeout(() => {
+        void runSearch();
+      }, 200);
+    });
+
+    document.body.appendChild(overlay);
+    searchInput.focus();
+    status.textContent = 'Type at least 2 characters to search.';
   }
 
   getSourcesRoot() {

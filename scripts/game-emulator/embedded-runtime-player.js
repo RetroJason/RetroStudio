@@ -114,7 +114,7 @@ class RuntimeArchiveFileManager {
   async getSourceScripts() {
     const scripts = [];
 
-    for (const record of this.records.values()) {
+    for (const record of this.uniqueRecords) {
       if (record.path.toLowerCase().endsWith('.lua')) {
         scripts.push({ path: record.path });
       }
@@ -134,7 +134,7 @@ class RuntimeArchiveFileManager {
   getBuildFiles() {
     const buildFiles = [];
 
-    for (const record of this.records.values()) {
+    for (const record of this.uniqueRecords) {
       buildFiles.push({
         name: record.filename,
         path: record.path,
