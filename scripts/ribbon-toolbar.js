@@ -784,6 +784,10 @@ class RibbonToolbar {
       await this.createNewProject();
     });
 
+    this.setupButton('idePreferencesBtn', async () => {
+      await window.EditorPreferences.showPreferencesDialog();
+    });
+
     // Import/Export RWP
     this.setupButton('exportRwpBtn', async () => {
       await this.exportProjectRwp();

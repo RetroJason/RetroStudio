@@ -6,6 +6,7 @@
 local lastSfxTime = 0
 local sfxInterval = 5.0  -- Play SFX every 5 seconds
 local gameTime = 0
+local musicHandle = nil
 
 function Setup()
     -- Initialize audio test
@@ -15,7 +16,8 @@ function Setup()
     -- Replace "MUSIC.TINYTUNE" with your actual music resource ID
     if Music then
         System.LogLua("Starting background music...")
-        Music.Play("MUSIC.TINYTUNE", 80, true)  -- 80% volume, looping enabled
+        musicHandle = Music.Create("MUSIC.TINYTUNE")
+        Music.Play(musicHandle, 0.8, true)
     else
         System.LogLua("Music extension not available")
     end
@@ -69,8 +71,8 @@ end
 
 -- Optional: Function to stop all audio (call this if needed for testing)
 function stopAllAudio()
-    if Music then
-        Music.Stop()
+    if Music and musicHandle ~= nil then
+        Music.Stop(musicHandle)
         System.LogLua("Background music stopped")
     end
     

@@ -66,29 +66,22 @@ class LuaEditor extends EditorBase {
       });
 
       // Create the Monaco Editor instance with all features restored
-      this.monacoEditor = monaco.editor.create(this.editorContainer, {
-        value: '', // Will be set when content loads
-        language: 'lua', // Restored Lua language support
-        theme: 'vs-dark',
-        automaticLayout: true,
-        minimap: { enabled: true }, // Restored minimap
-        scrollBeyondLastLine: false,
-        fontSize: 14,
-        lineNumbers: 'on',
-        renderWhitespace: 'selection', // Restored whitespace rendering
-        tabSize: 2,
-        insertSpaces: true,
-        wordWrap: 'on', // Restored word wrap
-        autoIndent: 'full', // Restored auto-indent (using Monaco's default rules)
-        bracketMatching: 'always', // Restored bracket matching
-        formatOnPaste: true, // Restored formatting
-        formatOnType: true,
-        readOnly: this.readOnly,
-        suggestOnTriggerCharacters: false,
-        acceptSuggestionOnCommitCharacter: false,
-        acceptSuggestionOnEnter: 'off',
-        quickSuggestions: { other: true, comments: false, strings: false }
-      });
+      this.monacoEditor = monaco.editor.create(
+        this.editorContainer,
+        window.EditorPreferences.buildMonacoOptions({
+          value: '',
+          language: 'lua',
+          theme: 'vs-dark',
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          autoIndent: 'full',
+          bracketMatching: 'always',
+          formatOnPaste: true,
+          formatOnType: true,
+          readOnly: this.readOnly,
+          acceptSuggestionOnCommitCharacter: false
+        })
+      );
 
       console.log(`[LuaEditor] Monaco editor created - instance: ${!!this.monacoEditor}, model: ${!!this.monacoEditor.getModel()}`);
       
@@ -202,6 +195,16 @@ class LuaEditor extends EditorBase {
     }
   }
 
+  applyEditorPreferences() {
+    if (!this.monacoEditor) {
+      return;
+    }
+
+    window.EditorPreferences.applyToMonacoEditor(this.monacoEditor, {
+      readOnly: this.readOnly
+    });
+  }
+
   getContent() {
     // Ensure Monaco editor reference is maintained
     if (!this.monacoEditor && this._monacoBackup) {
@@ -303,12 +306,12 @@ class LuaEditor extends EditorBase {
                     return;
                 }
                 
-                // Create Lua state and test the code (syntax check only)
+                // Create Lua state and test the code without executing it.
                 const L = new window.Lua.State();
                 
                 try {
-                    // Simple syntax check - just try to load the script
-                    L.execute(code);
+                    const compiledChunk = L.load(code, 'editor-check', 't');
+                    compiledChunk.free();
                     console.log('[LuaEditor] Code syntax check passed');
                 } catch (error) {
                     console.log('[LuaEditor] Lua syntax error:', error);
@@ -660,6 +663,7 @@ class LuaEditor extends EditorBase {
       
       // Register completion provider with timeout protection
       monaco.languages.registerCompletionItemProvider('lua', {
+        triggerCharacters: ['.'],
         provideCompletionItems: (model, position) => {
           return new Promise((resolve) => {
             // Set a timeout to prevent hanging
@@ -670,6 +674,9 @@ class LuaEditor extends EditorBase {
 
             try {
               const word = model.getWordUntilPosition(position);
+              const line = model.getLineContent(position.lineNumber);
+              const textBeforeWord = line.substring(0, word.startColumn - 1);
+              const contextMatch = textBeforeWord.match(/([A-Za-z_]\w*)\.$/);
               const range = {
                 startLineNumber: position.lineNumber,
                 endLineNumber: position.lineNumber,
@@ -677,8 +684,10 @@ class LuaEditor extends EditorBase {
                 endColumn: word.endColumn
               };
 
-              // Get all completion items and filter client-side for performance
-              const allItems = intelliSenseService.getCompletionItems();
+              const allItems = intelliSenseService.getCompletionItemsForContext({
+                categoryName: contextMatch ? contextMatch[1] : '',
+                currentWord: word.word || ''
+              });
               
               if (!Array.isArray(allItems)) {
                 clearTimeout(timeout);
@@ -760,16 +769,38 @@ class LuaEditor extends EditorBase {
         }
       });
 
-      // Temporarily disable signature help provider to isolate the issue
-      /*
       monaco.languages.registerSignatureHelpProvider('lua', {
         signatureHelpTriggerCharacters: ['(', ','],
         provideSignatureHelp: (model, position) => {
-          // Implementation temporarily disabled
-          return null;
+          const line = model.getLineContent(position.lineNumber);
+          const beforeCursor = line.substring(0, position.column - 1);
+          const callContext = intelliSenseService.getCallContext(beforeCursor);
+          if (!callContext) {
+            return null;
+          }
+
+          const signatureData = intelliSenseService.getSignatureHelp(callContext.fullName);
+          if (!signatureData) {
+            return null;
+          }
+
+          const parameterCount = Array.isArray(signatureData.signatures?.[0]?.parameters)
+            ? signatureData.signatures[0].parameters.length
+            : 0;
+          const activeParameter = parameterCount > 0
+            ? Math.min(callContext.activeParameter, parameterCount - 1)
+            : 0;
+
+          return {
+            value: {
+              signatures: signatureData.signatures,
+              activeSignature: 0,
+              activeParameter: activeParameter
+            },
+            dispose: () => {}
+          };
         }
       });
-      */
 
       LuaEditor._intelliSenseRegistered = true;
       console.log('[LuaEditor] IntelliSense providers registered successfully');
