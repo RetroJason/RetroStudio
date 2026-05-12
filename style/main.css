@@ -628,12 +628,14 @@ body.no-select {
 }
 
 .ribbon-label {
+  width: 100%;
   font-size: 11px;
   color: var(--studio-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 3px;
   font-weight: bold;
+  text-align: center;
 }
 
 .ribbon-buttons {
@@ -736,9 +738,11 @@ body.no-select {
   align-items: center;
   justify-content: center;
   gap: 0;
-  min-height: 0;
+  height: 52px;
+  min-height: 52px;
   min-width: 52px;
   padding: 8px 12px;
+  box-sizing: border-box;
   border: 1px solid var(--studio-line);
   border-radius: 6px;
   background: linear-gradient(180deg, rgba(255, 210, 126, 0.08), rgba(28, 10, 8, 0.96));
@@ -757,16 +761,10 @@ body.no-select {
 }
 
 .ribbon-file-toggle-icon {
-  font-size: 20px;
   line-height: 1;
-  margin-bottom: 4px;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
 }
 
 .ribbon-file-toggle-text {
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.2;
   text-align: center;
 }
 
@@ -884,14 +882,17 @@ body.no-select {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   background: linear-gradient(180deg, rgba(255, 210, 126, 0.08), rgba(28, 10, 8, 0.96));
   border: 1px solid var(--studio-line);
   border-radius: 6px;
+  height: 52px;
   padding: 8px 12px;
   color: var(--studio-foreground);
   cursor: pointer;
   transition: all 0.2s ease;
   min-width: 52px;
+  box-sizing: border-box;
   font-family: inherit;
 }
 
