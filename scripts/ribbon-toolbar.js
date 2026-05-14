@@ -949,18 +949,12 @@ class RibbonToolbar {
           {
             value: 'preview',
             label: 'Share',
-            description: 'Link to the application details page without an Edit button.',
+            description: 'Provide a preview link to friends.',
           },
           {
             value: 'source',
             label: 'Share with source',
-            description: 'Link to the same application details page with an Edit button for signed-in users only.',
-          },
-          {
-            value: 'collab',
-            label: 'Code Together',
-            description: 'Coming soon.',
-            disabled: true,
+            description: 'Provide a preview link to friends and give them permission to view the source in Studio.',
           },
         ],
         { confirmText: 'Continue', cancelText: 'Cancel', defaultValue: 'preview' }
