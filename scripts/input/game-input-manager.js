@@ -37,6 +37,21 @@ class GameInputManager {
       'ShiftLeft': 0x0400,  // L shoulder (bit 10)
       'ShiftRight': 0x0800  // R shoulder (bit 11)
     };
+
+    this.virtualButtonMap = {
+      b: 0x0001,
+      y: 0x0002,
+      select: 0x0004,
+      start: 0x0008,
+      up: 0x0010,
+      down: 0x0020,
+      left: 0x0040,
+      right: 0x0080,
+      a: 0x0100,
+      x: 0x0200,
+      l: 0x0400,
+      r: 0x0800
+    };
     
     // Reverse mapping for debugging
     this.buttonNames = {
@@ -318,6 +333,35 @@ class GameInputManager {
     this.frameKeys.released = 0;
     this.previousKeys = 0;
     console.log('[GameInputManager] Cleared all key states');
+  }
+
+  setVirtualButton(buttonName, isPressed) {
+    if (typeof buttonName !== 'string') {
+      throw new Error('Virtual button name must be a string.');
+    }
+
+    const normalizedButtonName = buttonName.trim().toLowerCase();
+    const button = this.virtualButtonMap[normalizedButtonName];
+    if (!button) {
+      throw new Error(`Unknown virtual game button: ${buttonName}`);
+    }
+
+    const virtualKey = `Virtual:${normalizedButtonName}`;
+    if (isPressed) {
+      if (!this.keyStates.has(virtualKey)) {
+        this.keyStates.set(virtualKey, true);
+        this.frameKeys.held |= button;
+        this.frameKeys.pressed |= button;
+      }
+      this.setCaptureActive(true);
+      return;
+    }
+
+    if (this.keyStates.has(virtualKey)) {
+      this.keyStates.delete(virtualKey);
+      this.frameKeys.held &= ~button;
+      this.frameKeys.released |= button;
+    }
   }
   
   /**
