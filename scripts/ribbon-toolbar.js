@@ -948,23 +948,19 @@ class RibbonToolbar {
         [
           {
             value: 'preview',
-            label: 'Share Preview',
-            description: 'Publish a temporary draft preview page where someone can run it in the simulator, install it, and preview it on the watch.',
+            label: 'Share',
+            description: 'Link to the application details page without an Edit button.',
           },
           {
             value: 'source',
-            label: 'Share Source',
-            description: 'Publish the same temporary draft preview page and allow signed-in users to open it in RetroStudio from the Edit button.',
-          },
-          {
-            value: 'project',
-            label: 'Share Project',
-            description: 'Open RetroStudio with this project imported from a temporary link.',
+            label: 'Share with source',
+            description: 'Link to the same application details page with an Edit button for signed-in users only.',
           },
           {
             value: 'collab',
             label: 'Code Together',
-            description: 'Coming soon: edit the same project together with live updates.',
+            description: 'Coming soon.',
+            disabled: true,
           },
         ],
         { confirmText: 'Continue', cancelText: 'Cancel', defaultValue: 'preview' }
@@ -984,12 +980,7 @@ class RibbonToolbar {
         return;
       }
 
-      if (selection === 'project') {
-        await this.createProjectShareLink(project);
-        return;
-      }
-
-      alert('Code Together is coming soon.');
+      throw new Error(`Unsupported share option: ${selection}`);
     } catch (e) {
       console.error('[RibbonToolbar] Share failed:', e);
       alert('Share failed: ' + (e?.message || e));
@@ -1020,11 +1011,11 @@ class RibbonToolbar {
     this.showBuildSummaryPopup(result.buildResult);
     window.gameEmulator?.updateStatus?.(options.shareSource === true ? 'Source share link ready.' : 'Preview share link ready.', 'success');
     this.showShareLinkDialog(
-      options.shareSource === true ? 'Share Source' : 'Share Preview',
+      options.shareSource === true ? 'Share with source' : 'Share',
       result.previewShareUrl,
       options.shareSource === true
-        ? 'This temporary link opens the same draft application details page and shows the Edit button to signed-in users.'
-        : 'This temporary link opens a draft application details page for the current project.'
+        ? 'This temporary link opens the application details page and shows the Edit button to signed-in users only.'
+        : 'This temporary link opens the application details page without an Edit button.'
     );
   }
 

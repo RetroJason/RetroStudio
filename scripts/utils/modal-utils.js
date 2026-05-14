@@ -45,11 +45,17 @@ class ModalUtils {
 
       // Build options HTML
       let optionsHtml = '';
-      options.forEach((option, index) => {
-        const isChecked = index === 0 || option.value === config.defaultValue;
+      const defaultOption = options.find(option => option.value === config.defaultValue && !option.disabled)
+        || options.find(option => !option.disabled)
+        || null;
+      options.forEach((option) => {
+        const isDisabled = option.disabled === true;
+        const isChecked = !isDisabled && defaultOption && option.value === defaultOption.value;
+        const optionOpacity = isDisabled ? '0.52' : '1';
+        const optionCursor = isDisabled ? 'not-allowed' : 'pointer';
         optionsHtml += `
-          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
-            <input type="radio" name="selection" value="${option.value}" ${isChecked ? 'checked' : ''} style="margin-right: 10px;">
+          <label data-disabled="${isDisabled ? 'true' : 'false'}" style="display: block; margin-bottom: 15px; cursor: ${optionCursor}; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s; opacity: ${optionOpacity};">
+            <input type="radio" name="selection" value="${option.value}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} style="margin-right: 10px;">
             <strong>${option.label}</strong><br>
             <small style="color: #aaa; margin-left: 20px;">${option.description}</small>
           </label>
@@ -78,10 +84,12 @@ class ModalUtils {
       const labels = dialog.querySelectorAll('label');
       labels.forEach(label => {
         label.addEventListener('mouseenter', () => {
+          if (label.dataset.disabled === 'true') return;
           label.style.borderColor = '#4CAF50';
           label.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
         });
         label.addEventListener('mouseleave', () => {
+          if (label.dataset.disabled === 'true') return;
           label.style.borderColor = '#444';
           label.style.backgroundColor = 'transparent';
         });
