@@ -128,7 +128,7 @@ class RwaService {
 
       buildResult = await this.buildSystem.buildProject();
       if (!buildResult || buildResult.success !== true) {
-        const msg = buildResult?.error || 'Build failed';
+        const msg = buildResult?.error || this.formatBuildFailures(buildResult?.results) || 'Build failed';
         throw new Error(`Build failed: ${msg}`);
       }
     }
@@ -193,6 +193,18 @@ class RwaService {
     const pkg = await this.buildRuntimePackage(projectName, options);
     this.downloadBlob(pkg.blob, pkg.filename);
     return pkg;
+  }
+
+  formatBuildFailures(buildResults) {
+    const failures = (Array.isArray(buildResults) ? buildResults : [])
+      .filter(result => result && result.success !== true && !result.skipped)
+      .map(result => {
+        const inputPath = result.inputPath || 'unknown file';
+        const message = result.error || 'Unknown build error';
+        return `${inputPath}: ${message}`;
+      });
+
+    return failures.join('; ');
   }
 
   normalizeRecord(rec) {

@@ -952,6 +952,11 @@ class RibbonToolbar {
             description: 'Publish a temporary draft preview page where someone can run it in the simulator, install it, and preview it on the watch.',
           },
           {
+            value: 'source',
+            label: 'Share Source',
+            description: 'Publish the same temporary draft preview page and allow signed-in users to open it in RetroStudio from the Edit button.',
+          },
+          {
             value: 'project',
             label: 'Share Project',
             description: 'Open RetroStudio with this project imported from a temporary link.',
@@ -970,7 +975,12 @@ class RibbonToolbar {
       }
 
       if (selection === 'preview') {
-        await this.createPreviewShareLink(project);
+        await this.createPreviewShareLink(project, { shareSource: false });
+        return;
+      }
+
+      if (selection === 'source') {
+        await this.createPreviewShareLink(project, { shareSource: true });
         return;
       }
 
@@ -986,7 +996,7 @@ class RibbonToolbar {
     }
   }
 
-  async createPreviewShareLink(project) {
+  async createPreviewShareLink(project, options = {}) {
     if (window.gameEmulator?.tabManager?.saveActiveTab) {
       await window.gameEmulator.tabManager.saveActiveTab();
     }
@@ -998,7 +1008,7 @@ class RibbonToolbar {
 
     window.gameEmulator?.updateStatus?.('Creating preview share link...', 'info');
     const result = await svc.publishProject(project, {
-      shareSource: false,
+      shareSource: options.shareSource === true,
     });
     if (!result?.buildResult) {
       throw new Error('Preview publish completed without a build summary result.');
@@ -1008,11 +1018,13 @@ class RibbonToolbar {
     }
 
     this.showBuildSummaryPopup(result.buildResult);
-    window.gameEmulator?.updateStatus?.('Preview share link ready.', 'success');
+    window.gameEmulator?.updateStatus?.(options.shareSource === true ? 'Source share link ready.' : 'Preview share link ready.', 'success');
     this.showShareLinkDialog(
-      'Share Preview',
+      options.shareSource === true ? 'Share Source' : 'Share Preview',
       result.previewShareUrl,
-      'This temporary link opens a draft application details page for the current project.'
+      options.shareSource === true
+        ? 'This temporary link opens the same draft application details page and shows the Edit button to signed-in users.'
+        : 'This temporary link opens a draft application details page for the current project.'
     );
   }
 

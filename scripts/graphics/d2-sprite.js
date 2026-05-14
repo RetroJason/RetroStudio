@@ -66,6 +66,16 @@ class D2Sprite {
     const paletteSlot   = opts.paletteSlot   ?? 0;
     const paletteOffset = opts.paletteOffset ?? 0;
 
+    if (!Number.isInteger(textureIndex) || textureIndex < 0 || textureIndex > 0xFFFF) {
+      throw new Error(`D2F build failed: textureIndex out of range (${textureIndex})`);
+    }
+    if (!Number.isInteger(paletteSlot) || paletteSlot < 0 || paletteSlot > 0xFF) {
+      throw new Error(`D2F build failed: paletteSlot out of range (${paletteSlot})`);
+    }
+    if (!Number.isInteger(paletteOffset) || paletteOffset < 0 || paletteOffset > 0xFF) {
+      throw new Error(`D2F build failed: paletteOffset out of range (${paletteOffset})`);
+    }
+
     const totalSize = D2F_HEADER_SIZE + frameCount * D2F_FRAME_SIZE;
     const buf  = new ArrayBuffer(totalSize);
     const view = new DataView(buf);
@@ -208,7 +218,10 @@ class D2Sprite {
         const frameId = frameIds[s];
 
         // Map frame id → d2f index
-        const d2fIndex = frameIdToIndex.get(frameId) ?? 0;
+        if (!frameIdToIndex.has(frameId)) {
+          throw new Error(`D2S build failed: animation "${anim.name || `anim_${a}`}" references unknown frame "${frameId}"`);
+        }
+        const d2fIndex = frameIdToIndex.get(frameId);
         view.setUint16(off + 0, d2fIndex, true);  // frame_id
 
         // Per-frame overrides (from sprite editor's frameOverrides map)
@@ -381,6 +394,10 @@ class D2Sprite {
   static setAnimation(state, animName) {
     const idx = state.d2s.animations.findIndex(a => a.name === animName);
     if (idx < 0) return false;
+
+    if (state.animIndex === idx && state.currentAnim === state.d2s.animations[idx]) {
+      return true;
+    }
 
     state.animIndex  = idx;
     state.currentAnim = state.d2s.animations[idx];

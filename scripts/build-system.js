@@ -167,6 +167,18 @@ class BuildSystem {
     return paths;
   }
 
+  formatBuildFailures(buildResults) {
+    const failures = (Array.isArray(buildResults) ? buildResults : [])
+      .filter(result => result && result.success !== true && !result.skipped)
+      .map(result => {
+        const inputPath = result.inputPath || 'unknown file';
+        const message = result.error || 'Unknown build error';
+        return `${inputPath}: ${message}`;
+      });
+
+    return failures.join('; ');
+  }
+
   getRecordByteLength(record) {
     const content = record?.content !== undefined ? record.content : record?.fileContent;
 
@@ -422,8 +434,10 @@ class BuildSystem {
       // Note: Build files are added to the project explorer as they are built
       // No need to refresh from localStorage here
       
+      const buildError = this.formatBuildFailures(buildResults);
       return {
         success: errorCount === 0,
+        error: buildError || undefined,
         results: buildResults,
         summary: {
           total: resourceFilePaths.length,

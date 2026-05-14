@@ -547,6 +547,14 @@
   gap: 12px;
 }
 
+.welcome-recent-projects-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .welcome-recent-projects-header h4 {
   margin: 0;
   font-size: 14px;
@@ -568,6 +576,26 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   gap: 14px;
+}
+
+.welcome-deleted-projects-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 203, 104, 0.28);
+  border-radius: 8px;
+  background: rgba(74, 42, 14, 0.54);
+  color: #ffe4ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.welcome-recent-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 220px;
 }
 
 .welcome-recent-project-button {
@@ -594,6 +622,74 @@
 }
 
 .welcome-recent-project-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-delete-button {
+  border: 1px solid rgba(255, 110, 92, 0.34);
+  border-radius: 10px;
+  background: rgba(68, 18, 18, 0.72);
+  color: #ffd8d2;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-delete-button:hover {
+  border-color: rgba(255, 150, 132, 0.78);
+  background: rgba(118, 30, 24, 0.82);
+}
+
+.welcome-project-delete-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-card-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.welcome-project-restore-button {
+  border: 1px solid rgba(126, 222, 160, 0.34);
+  border-radius: 10px;
+  background: rgba(24, 68, 40, 0.72);
+  color: #d8ffe5;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-restore-button:hover {
+  border-color: rgba(154, 242, 183, 0.78);
+  background: rgba(34, 108, 58, 0.82);
+}
+
+.welcome-project-restore-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-permanent-delete-button {
+  border: 1px solid rgba(255, 92, 92, 0.44);
+  border-radius: 10px;
+  background: rgba(86, 16, 16, 0.82);
+  color: #ffe0dc;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.welcome-project-permanent-delete-button:hover {
+  border-color: rgba(255, 132, 116, 0.88);
+  background: rgba(135, 24, 20, 0.9);
+}
+
+.welcome-project-permanent-delete-button:disabled {
   opacity: 0.65;
   cursor: wait;
 }

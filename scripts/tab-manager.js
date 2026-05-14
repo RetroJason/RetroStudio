@@ -164,9 +164,28 @@ class TabManager {
         return;
       }
 
+      if (action === 'toggle-deleted-projects') {
+        e.preventDefault();
+        this.showDeletedWelcomeProjects = !this.showDeletedWelcomeProjects;
+        await this.refreshWelcomePreviewProjects();
+        return;
+      }
+
       if (action === 'open-project') {
         e.preventDefault();
         await this._handleWelcomeProjectOpen(actionTarget);
+        return;
+      }
+
+      if (action === 'delete-project') {
+        e.preventDefault();
+        await this._handleWelcomeProjectDelete(actionTarget);
+        return;
+      }
+
+      if (action === 'restore-project') {
+        e.preventDefault();
+        await this._handleWelcomeProjectRestore(actionTarget);
       }
     });
     
@@ -1384,7 +1403,10 @@ class TabManager {
           <div class="welcome-recent-projects">
             <div class="welcome-recent-projects-header">
               <h4>Recent Projects</h4>
-              <button type="button" data-welcome-action="refresh-projects">Refresh</button>
+              <div class="welcome-recent-projects-actions">
+                <button type="button" data-welcome-action="toggle-deleted-projects">Show deleted</button>
+                <button type="button" data-welcome-action="refresh-projects">Refresh</button>
+              </div>
             </div>
             <div class="welcome-recent-projects-list" data-welcome-recent-projects>
               <p>Loading recent projects...</p>
@@ -1425,7 +1447,7 @@ class TabManager {
       : [];
   }
 
-  _getWelcomeProjectPreviewUrl(summary) {
+  _getWelcomeProjectPreviewUrl(summary, options = {}) {
     const project = this._asRecord(summary?.project) || {};
     const revision = this._asRecord(summary?.currentRevision) || {};
     const projectUuid = typeof project.uuid === 'string' ? project.uuid.trim() : '';
@@ -1440,7 +1462,7 @@ class TabManager {
     const screenshotPaths = this._asCsvList(display.screenshots);
 
     if (screenshotPaths.length > 0) {
-      return '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=screenshot&index=0';
+      return '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=screenshot&index=0' + (options.deleted === true ? '&deleted=true' : '');
     }
 
     const iconPath = typeof packageMetadata.iconPath === 'string'
@@ -1448,7 +1470,7 @@ class TabManager {
       : (typeof display.icon_path === 'string' ? display.icon_path.trim() : '');
 
     return iconPath
-      ? '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=icon'
+      ? '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=icon' + (options.deleted === true ? '&deleted=true' : '')
       : null;
   }
 
@@ -1497,6 +1519,148 @@ class TabManager {
     }
   }
 
+  async _handleWelcomeProjectDelete(actionTarget) {
+    const projectUuid = actionTarget.dataset.projectUuid;
+    const projectName = actionTarget.dataset.projectNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
+      : actionTarget.dataset.projectName;
+    const displayName = projectName || 'project';
+    console.info('[TabManager] Welcome delete requested:', {
+      projectUuid: projectUuid || null,
+      projectName: projectName || null,
+      dataset: { ...actionTarget.dataset },
+    });
+    if (!projectUuid && !projectName) {
+      throw new Error('Welcome delete action is missing a project identifier.');
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi) {
+      throw new Error('RetroWatch hosted project delete service is unavailable.');
+    }
+
+    const confirmed = window.confirm('Delete project "' + displayName + '"? This moves the saved project to Deleted Projects and removes any loaded local copy from RetroStudio.');
+    if (!confirmed) {
+      return;
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      window.gameEmulator?.updateStatus?.('Deleting ' + displayName + '...', 'info');
+      if (projectUuid) {
+        if (typeof hostedStudioApi.deleteProject !== 'function') {
+          throw new Error('RetroWatch saved project delete service is unavailable.');
+        }
+
+        console.info('[TabManager] Calling saved project delete service:', {
+          projectUuid,
+          projectName: projectName || null,
+        });
+        await hostedStudioApi.deleteProject(projectUuid, projectName);
+      } else {
+        if (typeof hostedStudioApi.deleteLocalProject !== 'function') {
+          throw new Error('RetroStudio local project delete service is unavailable.');
+        }
+
+        console.info('[TabManager] Calling local project delete service:', {
+          projectName: projectName || null,
+        });
+        await hostedStudioApi.deleteLocalProject(projectName);
+      }
+
+      window.gameEmulator?.updateStatus?.('Deleted ' + displayName, 'success');
+      console.info('[TabManager] Refreshing welcome projects after delete:', {
+        projectUuid: projectUuid || null,
+        projectName: projectName || null,
+        showDeletedWelcomeProjects: this.showDeletedWelcomeProjects === true,
+      });
+      await this.refreshWelcomePreviewProjects();
+    } catch (error) {
+      console.error('[TabManager] Failed to delete recent project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to delete project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+      throw error;
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
+  async _handleWelcomeProjectRestore(actionTarget) {
+    const projectUuid = actionTarget.dataset.projectUuid;
+    const projectName = actionTarget.dataset.projectNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
+      : actionTarget.dataset.projectName;
+    const displayName = projectName || 'project';
+    if (!projectUuid) {
+      throw new Error('Welcome restore action is missing a project UUID.');
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.restoreProject !== 'function') {
+      throw new Error('RetroWatch project restore service is unavailable.');
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      window.gameEmulator?.updateStatus?.('Restoring ' + displayName + '...', 'info');
+      await hostedStudioApi.restoreProject(projectUuid);
+      window.gameEmulator?.updateStatus?.('Restored ' + displayName, 'success');
+      await this.refreshWelcomePreviewProjects();
+    } catch (error) {
+      console.error('[TabManager] Failed to restore deleted project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to restore project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+      throw error;
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
+  async _handleWelcomeProjectPermanentDelete(actionTarget) {
+    const projectUuid = actionTarget.dataset.projectUuid;
+    const projectName = actionTarget.dataset.projectNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
+      : actionTarget.dataset.projectName;
+    const displayName = projectName || 'project';
+    if (!projectUuid) {
+      throw new Error('Welcome permanent delete action is missing a project UUID.');
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.permanentlyDeleteProject !== 'function') {
+      throw new Error('RetroWatch project permanent delete service is unavailable.');
+    }
+
+    const confirmed = window.confirm('Permanently delete "' + displayName + '"? This cannot be undone.');
+    if (!confirmed) {
+      return;
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      window.gameEmulator?.updateStatus?.('Permanently deleting ' + displayName + '...', 'info');
+      await hostedStudioApi.permanentlyDeleteProject(projectUuid);
+      window.gameEmulator?.updateStatus?.('Permanently deleted ' + displayName, 'success');
+      await this.refreshWelcomePreviewProjects();
+    } catch (error) {
+      console.error('[TabManager] Failed to permanently delete project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to permanently delete project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+      throw error;
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
   async refreshWelcomePreviewProjects() {
     const previewPane = this.tabContentArea?.querySelector('[data-tab-id="preview"]');
     const projectsContainer = previewPane?.querySelector('[data-welcome-recent-projects]');
@@ -1510,14 +1674,31 @@ class TabManager {
       return;
     }
 
-    projectsContainer.innerHTML = '<p>Loading recent projects...</p>';
+    const showDeletedProjects = this.showDeletedWelcomeProjects === true;
+    if (showDeletedProjects && typeof hostedStudioApi.listDeletedProjects !== 'function') {
+      throw new Error('RetroWatch deleted project list service is unavailable.');
+    }
+    const header = previewPane?.querySelector('.welcome-recent-projects-header h4');
+    if (header) {
+      header.textContent = showDeletedProjects ? 'Deleted Projects' : 'Recent Projects';
+    }
+    const toggleDeletedButton = previewPane?.querySelector('[data-welcome-action="toggle-deleted-projects"]');
+    if (toggleDeletedButton) {
+      toggleDeletedButton.textContent = showDeletedProjects ? 'Show active' : 'Show deleted';
+    }
+
+    projectsContainer.innerHTML = showDeletedProjects ? '<p>Loading deleted projects...</p>' : '<p>Loading recent projects...</p>';
 
     try {
-      const projects = typeof hostedStudioApi.listRecentProjects === 'function'
+      const projects = showDeletedProjects
+        ? await hostedStudioApi.listDeletedProjects()
+        : typeof hostedStudioApi.listRecentProjects === 'function'
         ? await hostedStudioApi.listRecentProjects()
         : await hostedStudioApi.listProjects();
       if (!Array.isArray(projects) || projects.length === 0) {
-        projectsContainer.innerHTML = '<p>No saved projects yet.</p>';
+        projectsContainer.innerHTML = showDeletedProjects
+          ? '<p class="welcome-deleted-projects-warning">Deleted apps will be permanently deleted after 30 days.</p><p>No deleted projects.</p>'
+          : '<p>No saved projects yet.</p>';
         return;
       }
 
@@ -1537,7 +1718,7 @@ class TabManager {
           return rightTimestamp - leftTimestamp;
         });
 
-      projectsContainer.innerHTML = sortedProjects
+      const projectsMarkup = sortedProjects
         .slice(0, 8)
         .map((summary) => {
           const project = summary.project || {};
@@ -1556,40 +1737,98 @@ class TabManager {
           const savedLabel = savedAt
             ? new Date(savedAt).toLocaleString()
             : (summary.localOnly ? 'Loaded in this session' : 'Not saved yet');
+          const deletedAt = project.deletedAt || null;
+          const deletedLabel = deletedAt ? 'Deleted ' + new Date(deletedAt).toLocaleString() : '';
           const encodedProjectName = this._escapeHtml(encodeURIComponent(projectNameValue));
-          const previewUrl = this._getWelcomeProjectPreviewUrl(summary);
+          const previewUrl = this._getWelcomeProjectPreviewUrl(summary, { deleted: showDeletedProjects });
+          const rowAction = showDeletedProjects ? 'restore-project' : 'delete-project';
+          const rowActionClass = showDeletedProjects ? 'welcome-project-restore-button' : 'welcome-project-delete-button';
+          const rowActionLabel = showDeletedProjects ? 'Restore' : 'Delete';
 
           return `
-            <button
-              type="button"
-              class="welcome-recent-project-button"
-              data-welcome-action="open-project"
-              data-project-uuid="${projectUuid}"
-              data-project-name-encoded="${encodedProjectName}"
-            >
-              <span class="welcome-project-preview" aria-hidden="true">
-                <span class="welcome-project-preview-frame">
-                  ${previewUrl
-                    ? `<img src="${this._escapeHtml(previewUrl)}" alt="" class="welcome-project-preview-image" />`
-                    : `<img src="/retro-watch-co-logo.png" alt="" class="welcome-project-preview-logo" />`}
+            <div class="welcome-recent-project-card">
+              <button
+                type="button"
+                class="welcome-recent-project-button"
+                data-welcome-action="open-project"
+                data-project-uuid="${projectUuid}"
+                data-project-name-encoded="${encodedProjectName}"
+                ${showDeletedProjects ? 'disabled' : ''}
+              >
+                <span class="welcome-project-preview" aria-hidden="true">
+                  <span class="welcome-project-preview-frame">
+                    ${previewUrl
+                      ? `<img src="${this._escapeHtml(previewUrl)}" alt="" class="welcome-project-preview-image" />`
+                      : `<img src="/retro-watch-co-logo.png" alt="" class="welcome-project-preview-logo" />`}
+                  </span>
                 </span>
-              </span>
-              <span class="welcome-project-body">
-                <span class="welcome-project-type">${projectType}</span>
-                <span class="welcome-project-title">${projectName}</span>
-                <span class="welcome-project-meta">${this._escapeHtml(revisionLabel)}</span>
-                <span class="welcome-project-meta">${this._escapeHtml(savedLabel)}</span>
-              </span>
-            </button>
+                <span class="welcome-project-body">
+                  <span class="welcome-project-type">${projectType}</span>
+                  <span class="welcome-project-title">${projectName}</span>
+                  <span class="welcome-project-meta">${this._escapeHtml(revisionLabel)}</span>
+                  <span class="welcome-project-meta">${this._escapeHtml(showDeletedProjects ? deletedLabel : savedLabel)}</span>
+                </span>
+              </button>
+              <div class="welcome-project-card-actions">
+                <button
+                  type="button"
+                  class="${rowActionClass}"
+                  data-welcome-action="${rowAction}"
+                  data-project-uuid="${projectUuid}"
+                  data-project-name-encoded="${encodedProjectName}"
+                >
+                  ${rowActionLabel}
+                </button>
+                ${showDeletedProjects ? `
+                  <button
+                    type="button"
+                    class="welcome-project-permanent-delete-button"
+                    data-welcome-action="permanently-delete-project"
+                    data-project-uuid="${projectUuid}"
+                    data-project-name-encoded="${encodedProjectName}"
+                  >
+                    Permanently delete
+                  </button>
+                ` : ''}
+              </div>
+            </div>
           `;
         })
         .join('');
+
+      projectsContainer.innerHTML = showDeletedProjects
+        ? '<p class="welcome-deleted-projects-warning">Deleted apps will be permanently deleted after 30 days.</p>' + projectsMarkup
+        : projectsMarkup;
 
       for (const projectButton of projectsContainer.querySelectorAll('.welcome-recent-project-button')) {
         projectButton.addEventListener('click', async (event) => {
           event.preventDefault();
           event.stopPropagation();
           await this._handleWelcomeProjectOpen(projectButton);
+        });
+      }
+
+      for (const deleteButton of projectsContainer.querySelectorAll('.welcome-project-delete-button')) {
+        deleteButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this._handleWelcomeProjectDelete(deleteButton);
+        });
+      }
+
+      for (const restoreButton of projectsContainer.querySelectorAll('.welcome-project-restore-button')) {
+        restoreButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this._handleWelcomeProjectRestore(restoreButton);
+        });
+      }
+
+      for (const permanentDeleteButton of projectsContainer.querySelectorAll('.welcome-project-permanent-delete-button')) {
+        permanentDeleteButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this._handleWelcomeProjectPermanentDelete(permanentDeleteButton);
         });
       }
     } catch (error) {

@@ -619,12 +619,12 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     // Scan build directory for .d2 files (textures)
     const buildPrefix = this._buildPrefix();
     const allFiles = await this._listBuildFiles(buildPrefix);
-    const d2Files = allFiles.filter(p => p.toLowerCase().endsWith('.d2'));
+    const d2Files = allFiles
+      .filter(p => p.toLowerCase().endsWith('.d2'))
+      .sort((left, right) => left.localeCompare(right));
 
-    // Load each .d2 and create GPU texture
-    // textureIndex is the 1-based order in which textures appear during build.
-    // We load all .d2 files and match by the paletteIndex stored in their header.
-    // For now, upload all .d2 files found and assign them sequentially.
+    // Load each .d2 and create GPU texture.
+    // textureIndex is the zero-based sorted order of build .d2 paths.
     let idx = 0;
     for (const d2Path of d2Files) {
       try {
@@ -643,7 +643,13 @@ class LuaSpriteExtensions extends BaseLuaExtension {
         console.log(`[LuaSprite] Uploaded GPU texture idx=${idx}: ${texHandle.width}×${texHandle.height} fmt=0x${texHandle.format.toString(16)} from ${d2Path}`);
         idx++;
       } catch (e) {
-        console.error(`[LuaSprite] Failed to upload texture ${d2Path}:`, e);
+        throw new Error(`[LuaSprite] Failed to upload texture ${d2Path}: ${e.message}`);
+      }
+    }
+
+    for (const textureIndex of neededIndices) {
+      if (!this.gpuTextures.has(textureIndex)) {
+        throw new Error(`[LuaSprite] Missing GPU texture for sprite texture index ${textureIndex}`);
       }
     }
 
