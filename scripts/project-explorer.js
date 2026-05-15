@@ -3100,6 +3100,29 @@ class ProjectExplorer {
     return `${focusedProject}/${defaultPalette}`;
   }
 
+  async storageFileExists(filePath) {
+    if (!filePath || typeof filePath !== 'string') {
+      return false;
+    }
+
+    const storagePath = window.ProjectPaths?.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(filePath)
+      : filePath;
+    const fileManager = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+
+    if (fileManager && typeof fileManager.loadFile === 'function') {
+      const record = await fileManager.loadFile(storagePath);
+      return !!record;
+    }
+
+    if (window.fileIOService && typeof window.fileIOService.loadFile === 'function') {
+      const record = await window.fileIOService.loadFile(storagePath);
+      return !!record;
+    }
+
+    throw new Error('No file service available to validate storage paths');
+  }
+
   // Clear the default palette
   async clearDefaultPalette() {
     if (!window.ProjectConfigManager) {
@@ -3163,24 +3186,38 @@ class ProjectExplorer {
     const paletteFiles = paletteFileObjects
       .filter(file => this.isPaletteFileByName(file.name))
       .map(file => `${sourcesRoot}/Palettes/${file.name}`);
+    const paletteFilesInStorage = [];
+    for (const paletteFile of paletteFiles) {
+      if (await this.storageFileExists(`${projectName}/${paletteFile}`)) {
+        paletteFilesInStorage.push(paletteFile);
+      }
+    }
     console.log('[ProjectExplorer] Found palette files:', paletteFiles);
+    console.log('[ProjectExplorer] Found storage-backed palette files:', paletteFilesInStorage);
 
     // Step 4: Validate and set default palette
     let needsNewDefault = false;
+    let configDefaultExistsInStorage = false;
+    if (configDefaultPalette) {
+      configDefaultExistsInStorage = await this.storageFileExists(`${projectName}/${configDefaultPalette}`);
+    }
     
     if (!configDefaultPalette) {
       console.log('[ProjectExplorer] No default palette set in config');
       needsNewDefault = true;
-    } else if (!paletteFiles.includes(configDefaultPalette)) {
+    } else if (!paletteFilesInStorage.includes(configDefaultPalette)) {
       console.log('[ProjectExplorer] Config default palette does not exist in project:', configDefaultPalette);
+      needsNewDefault = true;
+    } else if (!configDefaultExistsInStorage) {
+      console.log('[ProjectExplorer] Config default palette is missing from storage:', configDefaultPalette);
       needsNewDefault = true;
     }
 
     if (needsNewDefault) {
-      if (paletteFiles.length > 0) {
+      if (paletteFilesInStorage.length > 0) {
         // Prefer the shared template default palette if present.
         const preferred = `${sourcesRoot}/Palettes/retrowatch_256.act`;
-        const newDefault = paletteFiles.includes(preferred) ? preferred : paletteFiles[0];
+        const newDefault = paletteFilesInStorage.includes(preferred) ? preferred : paletteFilesInStorage[0];
         console.log('[ProjectExplorer] Setting first palette as default:', newDefault);
         await window.ProjectConfigManager.setDefaultPalette(newDefault);
       } else {
