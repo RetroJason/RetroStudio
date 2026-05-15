@@ -268,16 +268,19 @@ class TextureBuilder extends BaseBuilder {
 
   resolveResourcePath(texturePath, resourcePath) {
     if (!resourcePath) return '';
-    if (resourcePath.includes('/Sources/')) return resourcePath;
-    if (resourcePath.startsWith('Sources/')) {
-      const marker = texturePath.lastIndexOf('/Sources/');
-      if (marker >= 0) {
-        return texturePath.substring(0, marker + 1) + resourcePath;
+    const normalizedResource = String(resourcePath).replace(/\\/g, '/');
+    if (normalizedResource.includes('/Sources/')
+      || normalizedResource.startsWith('Sources/')
+      || normalizedResource.includes('/Resources/')
+      || normalizedResource.startsWith('Resources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, texturePath);
       }
+      return normalizedResource;
     }
 
     const slash = texturePath.lastIndexOf('/');
-    return slash >= 0 ? `${texturePath.substring(0, slash + 1)}${resourcePath}` : resourcePath;
+    return slash >= 0 ? `${texturePath.substring(0, slash + 1)}${normalizedResource}` : normalizedResource;
   }
 
   isIndexedFormatEnum(fmtEnum) {

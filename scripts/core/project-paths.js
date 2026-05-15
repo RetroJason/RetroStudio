@@ -12,6 +12,10 @@
     return s.endsWith('/') ? s : s + '/';
   }
 
+  function getProjectExplorer() {
+    return window.serviceContainer?.get?.('projectExplorer') || window.projectExplorer || null;
+  }
+
   const ProjectPaths = {
     // UI labels (readable names shown in the tree)
     getSourcesRootUi() {
@@ -23,9 +27,17 @@
       return DEFAULTS.buildLabel;
     },
 
+    getFocusedProjectName() {
+      return getProjectExplorer()?.getFocusedProjectName?.() || null;
+    },
+
     // Storage mapping
-    getBuildStoragePrefix() {
-      return DEFAULTS.buildStoragePrefix; // always lower-case and slash-terminated
+    getBuildStoragePrefix(projectName = this.getFocusedProjectName()) {
+      if (!projectName) {
+        return DEFAULTS.buildStoragePrefix;
+      }
+
+      return `${projectName}/${DEFAULTS.buildStoragePrefix}`;
     },
 
     // Common subpaths under Sources
@@ -101,38 +113,100 @@
       return `${project}/${cleaned}`;
     },
 
+    isManagedProjectPath(path) {
+      if (!path || typeof path !== 'string') return false;
+
+      const normalized = String(path).replace(/\\/g, '/');
+      const { rest } = this.parseProjectPath(normalized);
+      const candidate = rest || normalized;
+      const firstSegment = candidate.split('/')[0] || '';
+      const buildStorage = DEFAULTS.buildStoragePrefix.replace(/\/$/, '');
+      const sourcesRoot = this.getSourcesRootUi();
+      const buildRoot = this.getBuildRootUi();
+      const sourceFolders = new Set([
+        'Lua',
+        'Music',
+        'SFX',
+        'Images',
+        'Palettes',
+        'Sprites',
+        'Binary',
+        'Package'
+      ]);
+
+      return firstSegment === sourcesRoot
+        || firstSegment === buildRoot
+        || firstSegment === 'Build'
+        || firstSegment === buildStorage
+        || sourceFolders.has(firstSegment);
+    },
+
+    scopeToProject(path, projectName = this.getFocusedProjectName()) {
+      if (!path || typeof path !== 'string') return path;
+
+      const normalized = String(path).replace(/\\/g, '/');
+      const parsed = this.parseProjectPath(normalized);
+      if (parsed.project) {
+        return normalized;
+      }
+
+      if (!projectName || !this.isManagedProjectPath(normalized)) {
+        return normalized;
+      }
+
+      return this.withProjectPrefix(projectName, normalized);
+    },
+
+    rebaseManagedPath(path, owningPath) {
+      if (!path || typeof path !== 'string') return path;
+
+      const normalizedPath = String(path).replace(/\\/g, '/');
+      const normalizedOwner = String(owningPath || '').replace(/\\/g, '/');
+      const resourceParsed = this.parseProjectPath(normalizedPath);
+      const ownerParsed = this.parseProjectPath(normalizedOwner);
+      const resourceRest = resourceParsed.rest || normalizedPath;
+
+      if (!ownerParsed.project || !this.isManagedProjectPath(resourceRest)) {
+        return normalizedPath;
+      }
+
+      return this.withProjectPrefix(ownerParsed.project, resourceRest);
+    },
+
     // Convert any UI-ish path to storage path
     // - Map UI build root to storage build/
     // - Normalize any legacy 'Build/' casing to 'build/'
   normalizeStoragePath(path) {
       if (!path || typeof path !== 'string') return path;
-      const p = String(path).replace(/\\/g, '/');
-      const { /*project,*/ rest } = this.parseProjectPath(p);
+      const p = this.scopeToProject(path);
+      const { project, rest } = this.parseProjectPath(p);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
 
       // Replace UI build root (supports spaces) with storage build prefix
       let out = (rest || '').replace(new RegExp('^' + escapeRegExp(buildUi), 'i'), buildStorage);
       // Also normalize legacy 'Build/' to 'build/'
       out = out.replace(/^Build\//, buildStorage);
-      return out;
+      return project ? this.withProjectPrefix(project, out) : out;
     },
 
     // Map storage build/ to UI build label for display
     mapStorageToUi(path) {
       if (!path || typeof path !== 'string') return path;
-      const { /*project,*/ rest } = this.parseProjectPath(path);
+      const scopedPath = this.scopeToProject(path);
+      const { project, rest } = this.parseProjectPath(scopedPath);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       const mapped = (rest || '').replace(new RegExp('^' + escapeRegExp(buildStorage)), buildUi);
-      return mapped;
+      return project ? this.withProjectPrefix(project, mapped) : mapped;
     },
 
     // Compute output artifact storage path from a source UI path
     toBuildOutputPath(sourceUiPath) {
-      const { /*project,*/ rest } = this.parseProjectPath(sourceUiPath);
+      const scopedPath = this.scopeToProject(sourceUiPath);
+      const { project, rest } = this.parseProjectPath(scopedPath);
       const sourcesUi = ensureTrailingSlash(this.getSourcesRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       let out;
       if (rest && rest.startsWith(sourcesUi)) {
         out = rest.replace(new RegExp('^' + escapeRegExp(sourcesUi)), buildStorage);
@@ -141,8 +215,7 @@
         const trimmed = (rest || '').replace(/^\/?/, '');
         out = buildStorage + trimmed;
       }
-      // Storage paths are not project-prefixed
-      return out;
+      return project ? this.withProjectPrefix(project, out) : out;
     },
 
     // Classification helpers
@@ -150,7 +223,7 @@
       if (!path) return false;
       const { rest } = this.parseProjectPath(path);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       return (rest || '').startsWith(buildStorage) || (rest || '').startsWith(buildUi) || (rest || '').startsWith('Build/');
     },
 

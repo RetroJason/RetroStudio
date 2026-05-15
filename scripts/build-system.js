@@ -5,6 +5,7 @@ class BuildSystem {
   constructor() {
     this.builders = new Map();
     this.isBuilding = false;
+    this.currentBuildPromise = null;
   this.builderById = new Map();
     
     // Register default builders
@@ -239,13 +240,19 @@ class BuildSystem {
   }
   
   async buildProject() {
-    if (this.isBuilding) {
-      console.log('[BuildSystem] Build already in progress');
-      return { success: false, error: 'Build already in progress' };
+    if (this.currentBuildPromise) {
+      console.log('[BuildSystem] Awaiting in-progress build...');
+      return await this.currentBuildPromise;
     }
-    
-    try {
-      this.isBuilding = true;
+
+    this.currentBuildPromise = (async () => {
+      if (this.isBuilding) {
+        console.log('[BuildSystem] Build already in progress without tracked promise');
+        return { success: false, error: 'Build already in progress' };
+      }
+
+      try {
+        this.isBuilding = true;
   const startTime = Date.now();
       console.log('[BuildSystem] Starting project build...');
       
@@ -435,30 +442,34 @@ class BuildSystem {
       // No need to refresh from localStorage here
       
       const buildError = this.formatBuildFailures(buildResults);
-      return {
-        success: errorCount === 0,
-        error: buildError || undefined,
-        results: buildResults,
-        summary: {
-          total: resourceFilePaths.length,
-          success: successCount,
-          errors: errorCount,
-          time: totalTime,
-          outputFiles: outputSummary.files,
-          outputBytes: outputSummary.totalBytes,
-          outputSize: outputSummary.totalSize
-        }
-      };
+        return {
+          success: errorCount === 0,
+          error: buildError || undefined,
+          results: buildResults,
+          summary: {
+            total: resourceFilePaths.length,
+            success: successCount,
+            errors: errorCount,
+            time: totalTime,
+            outputFiles: outputSummary.files,
+            outputBytes: outputSummary.totalBytes,
+            outputSize: outputSummary.totalSize
+          }
+        };
       
-    } catch (error) {
-      console.error('[BuildSystem] Build failed:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    } finally {
-      this.isBuilding = false;
-    }
+      } catch (error) {
+        console.error('[BuildSystem] Build failed:', error);
+        return {
+          success: false,
+          error: error.message
+        };
+      } finally {
+        this.isBuilding = false;
+        this.currentBuildPromise = null;
+      }
+    })();
+
+    return await this.currentBuildPromise;
   }
   
   async addBuiltFileToExplorer(outputPath, originalFilePath) {

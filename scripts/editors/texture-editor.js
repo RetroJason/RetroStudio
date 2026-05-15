@@ -102,8 +102,12 @@ class TextureData extends EventTarget {
       if (projectExplorer && typeof projectExplorer.getDefaultPalettePath === 'function') {
         const defaultPalettePath = await projectExplorer.getDefaultPalettePath();
         if (defaultPalettePath) {
-          this.palettePath = defaultPalettePath;
-          console.log('[TextureData] Auto-populated default palette path:', defaultPalettePath);
+          const parsedPalettePath = window.ProjectPaths?.parseProjectPath
+            ? window.ProjectPaths.parseProjectPath(defaultPalettePath)
+            : { rest: defaultPalettePath };
+          const storagePalettePath = parsedPalettePath.rest || defaultPalettePath;
+          this.palettePath = storagePalettePath;
+          console.log('[TextureData] Auto-populated default palette path:', storagePalettePath);
         }
       }
     } catch (error) {

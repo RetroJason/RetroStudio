@@ -315,9 +315,15 @@ class SpriteBuilder extends BaseBuilder {
     if (!resourcePath) return '';
     const normalizedResource = String(resourcePath).replace(/\\/g, '/');
     if (normalizedResource.includes('/Sources/') || normalizedResource.startsWith('Sources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, fromPath);
+      }
       return normalizedResource;
     }
     if (normalizedResource.includes('/Resources/') || normalizedResource.startsWith('Resources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, fromPath);
+      }
       return normalizedResource;
     }
 

@@ -394,6 +394,74 @@ class RwpService {
     return textureSourceBases.has(base);
   }
 
+  async appendProjectAssetToZip(projectName, assetPath, zip, manifestFiles) {
+    const normalizedAssetPath = String(assetPath || '').trim().replace(/^\/+/, '');
+    if (!normalizedAssetPath) {
+      return false;
+    }
+
+    if (manifestFiles.some((file) => file?.path === normalizedAssetPath)) {
+      return false;
+    }
+
+    const record = await this.loadProjectAssetRecord(projectName, normalizedAssetPath);
+    if (!record) {
+      throw new Error(`Package Settings: Referenced asset is missing from storage: ${normalizedAssetPath}.`);
+    }
+
+    let binary = !!record.binaryData;
+    let bytes;
+    if (record.content instanceof ArrayBuffer) {
+      binary = true;
+      bytes = new Uint8Array(record.content);
+    } else if (record.content instanceof Uint8Array) {
+      binary = true;
+      bytes = record.content;
+    } else if (typeof record.fileContent === 'string' && binary) {
+      bytes = new Uint8Array(this.base64ToArrayBuffer(record.fileContent));
+    } else if (typeof record.content === 'string') {
+      bytes = new TextEncoder().encode(record.content);
+      binary = false;
+    } else if (typeof record.fileContent === 'string') {
+      bytes = new TextEncoder().encode(record.fileContent);
+      binary = false;
+    } else {
+      const buf = await new Blob([record.content ?? '']).arrayBuffer();
+      bytes = new Uint8Array(buf);
+      binary = true;
+    }
+
+    zip.file(normalizedAssetPath, bytes, { binary: true });
+    manifestFiles.push({ path: normalizedAssetPath, builderId: record.builderId || null, binary: !!binary });
+    return true;
+  }
+
+  async appendReferencedPackageAssets(projectName, settings, zip, manifestFiles) {
+    const candidatePaths = [];
+    const pushCandidate = (value) => {
+      const trimmed = String(value || '').trim();
+      if (!trimmed || /^https?:\/\//i.test(trimmed) || candidatePaths.includes(trimmed)) {
+        return;
+      }
+      candidatePaths.push(trimmed);
+    };
+
+    pushCandidate(settings?.icons?.icon32);
+    pushCandidate(settings?.icons?.icon128);
+
+    for (const shot of Array.isArray(settings?.screenshots) ? settings.screenshots : []) {
+      pushCandidate(shot);
+    }
+
+    for (const video of Array.isArray(settings?.videos) ? settings.videos : []) {
+      pushCandidate(video);
+    }
+
+    for (const assetPath of candidatePaths) {
+      await this.appendProjectAssetToZip(projectName, assetPath, zip, manifestFiles);
+    }
+  }
+
   // Build a ZIP (.rwp) using JSZip with DEFLATE compression for all files
   async exportProject(projectName, options = {}) {
     if (!projectName) throw new Error('No project selected');
@@ -467,6 +535,8 @@ class RwpService {
         throw e;
       }
     }
+
+    await this.appendReferencedPackageAssets(projectName, packageSettings, zip, manifestFiles);
 
     // Also bundle the deployable runtime package (.rwa/.rwg) into the .rwp.
     const rwaService = window.serviceContainer?.get?.('rwaService') || window.rwaService;

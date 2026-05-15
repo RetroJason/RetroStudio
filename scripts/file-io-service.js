@@ -93,11 +93,43 @@ class FileIOService {
       this.db = null;
     }
   }
+
+  getProjectPaths() {
+    return window.ProjectPaths || null;
+  }
+
+  normalizeManagedPath(path) {
+    if (typeof path !== 'string' || path.length === 0) {
+      return path;
+    }
+
+    const projectPaths = this.getProjectPaths();
+    if (projectPaths && typeof projectPaths.normalizeStoragePath === 'function') {
+      return projectPaths.normalizeStoragePath(path);
+    }
+
+    return String(path).replace(/\\/g, '/');
+  }
+
+  resolveListScope(directoryPath = '') {
+    const projectPaths = this.getProjectPaths();
+    if (!projectPaths) {
+      return directoryPath;
+    }
+
+    if (typeof directoryPath === 'string' && directoryPath.length > 0) {
+      return this.normalizeManagedPath(directoryPath);
+    }
+
+    const projectName = projectPaths.getFocusedProjectName?.();
+    return projectName || directoryPath;
+  }
   
   // Save file content to persistent storage
   async saveFile(path, content, metadata = {}) {
+    const normalizedPath = this.normalizeManagedPath(path);
     console.log(`[FileIOService] saveFile called:`);
-    console.log(`[FileIOService] - Path: ${path}`);
+    console.log(`[FileIOService] - Path: ${normalizedPath}`);
     console.log(`[FileIOService] - Content type: ${typeof content}`);
     console.log(`[FileIOService] - Content length: ${content.length}`);
     
@@ -161,9 +193,9 @@ class FileIOService {
     }
     
     const fileData = {
-      path: path,
-      filename: path.split('/').pop(),
-      directory: path.substring(0, path.lastIndexOf('/')),
+      path: normalizedPath,
+      filename: normalizedPath.split('/').pop(),
+      directory: normalizedPath.includes('/') ? normalizedPath.substring(0, normalizedPath.lastIndexOf('/')) : '',
       fileContent: processedContent,  // Use fileContent instead of content
       lastModified: Date.now(),
       size: content instanceof ArrayBuffer ? content.byteLength : 
@@ -200,15 +232,16 @@ class FileIOService {
   
   // Load file content from persistent storage
   async loadFile(path) {
+    const normalizedPath = this.normalizeManagedPath(path);
     try {
       // Ensure the service is ready
       await this.ensureReady();
       
       switch (this.storageType) {
         case 'indexeddb':
-          return await this.loadFromIndexedDB(path);
+          return await this.loadFromIndexedDB(normalizedPath);
         case 'nodejs':
-          return await this.loadFromNodeFS(path);
+          return await this.loadFromNodeFS(normalizedPath);
         default:
           throw new Error('Unsupported storage type');
       }
@@ -360,9 +393,12 @@ class FileIOService {
   // List files in a directory
   async listFiles(directoryPath = '') {
     try {
+      await this.ensureReady();
+      const scopedDirectoryPath = this.resolveListScope(directoryPath);
+
       switch (this.storageType) {
         case 'indexeddb':
-          return await this.listFromIndexedDB(directoryPath);
+          return await this.listFromIndexedDB(scopedDirectoryPath);
         default:
           return [];
       }
@@ -376,6 +412,7 @@ class FileIOService {
     // Support exact directory listing and prefix search (case-insensitive)
     const hasDir = typeof directoryPath === 'string' && directoryPath.length > 0;
     const dirLower = hasDir ? directoryPath.toLowerCase() : '';
+    const dirBoundary = hasDir ? `${dirLower}/` : '';
     
     return new Promise((resolve, reject) => {
       try {
@@ -393,7 +430,7 @@ class FileIOService {
             } else {
               const path = (value.path || '').toLowerCase();
               const dir = (value.directory || '').toLowerCase();
-              if (dir === dirLower || path.startsWith(dirLower + '/') || path.startsWith(dirLower)) {
+              if (path === dirLower || dir === dirLower || path.startsWith(dirBoundary)) {
                 results.push(value);
               }
             }
@@ -413,10 +450,12 @@ class FileIOService {
   
   // Delete a file
   async deleteFile(path) {
+    const normalizedPath = this.normalizeManagedPath(path);
     try {
+      await this.ensureReady();
       switch (this.storageType) {
         case 'indexeddb':
-          return await this.deleteFromIndexedDB(path);
+          return await this.deleteFromIndexedDB(normalizedPath);
         default:
           return false;
       }

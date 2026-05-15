@@ -3757,7 +3757,10 @@ class ProjectExplorer {
         if (paletteFile && paletteFile.fileContent) {
           const paletteObj = await window.Palette.fromFile(paletteFile.fileContent, defaultPalettePath);
           paletteColors = paletteObj?.getColors ? paletteObj.getColors() : (paletteObj?.colors || []);
-          defaults.palettePath = defaultPalettePath;
+          const parsedPalettePath = window.ProjectPaths?.parseProjectPath
+            ? window.ProjectPaths.parseProjectPath(defaultPalettePath)
+            : { rest: defaultPalettePath };
+          defaults.palettePath = parsedPalettePath.rest || defaultPalettePath;
         }
       }
     } catch (error) {

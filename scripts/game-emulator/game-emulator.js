@@ -20,6 +20,7 @@ class GameEmulator {
     this.buildSystem = null;
     this.runtimePackage = null;
     this.runtimeFileManager = null;
+    this.embeddedRuntimePlayer = null;
     this.hostServices = new Map();
     this.loadedAudioResources = new Map(); // Maps file paths to resource IDs
     this._inflightLoads = new Map(); // filename -> Promise
@@ -257,6 +258,88 @@ class GameEmulator {
     return null;
   }
 
+  getPlaybackHost() {
+    return this.embeddedRuntimePlayer?.gameEmulator || this;
+  }
+
+  syncPlaybackStateFromHost() {
+    const playbackHost = this.embeddedRuntimePlayer?.gameEmulator;
+    if (!playbackHost) {
+      return;
+    }
+
+    this.isRunning = !!playbackHost.isRunning;
+    this.isPaused = !!playbackHost.isPaused;
+    this.currentVolume = playbackHost.currentVolume;
+    this.previousVolume = playbackHost.previousVolume;
+    this.isMuted = playbackHost.isMuted;
+  }
+
+  getEmbeddedRuntimeMountContainer() {
+    const mountContainer = this.contentContainer?.querySelector('.game-canvas-container');
+    if (!mountContainer) {
+      throw new Error('Simulator canvas container is not available for embedded runtime playback.');
+    }
+
+    return mountContainer;
+  }
+
+  async destroyEmbeddedRuntimePlayer() {
+    if (!this.embeddedRuntimePlayer) {
+      return;
+    }
+
+    const player = this.embeddedRuntimePlayer;
+    this.embeddedRuntimePlayer = null;
+    player.destroy();
+  }
+
+  logRuntimePackageContents(runtimePackage) {
+    const files = Array.isArray(runtimePackage?.files) ? runtimePackage.files : [];
+    const sortedPaths = files
+      .map(file => String(file?.path || '').replace(/\\/g, '/'))
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right));
+
+    const summary = {
+      lua: 0,
+      sprites: 0,
+      spriteFrames: 0,
+      images: 0,
+      palettes: 0,
+      sfx: 0,
+      music: 0,
+      other: 0,
+    };
+
+    for (const path of sortedPaths) {
+      const lowerPath = path.toLowerCase();
+      if (lowerPath.endsWith('.lua')) {
+        summary.lua++;
+      } else if (lowerPath.endsWith('.d2s')) {
+        summary.sprites++;
+      } else if (lowerPath.endsWith('.d2f')) {
+        summary.spriteFrames++;
+      } else if (lowerPath.endsWith('.d2') || lowerPath.match(/\.(png|gif|jpg|jpeg|bmp|webp)$/)) {
+        summary.images++;
+      } else if (lowerPath.match(/\.(pal|act|aco|pmap)$/)) {
+        summary.palettes++;
+      } else if (lowerPath.match(/\.(wav|sfx)$/)) {
+        summary.sfx++;
+      } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm)$/)) {
+        summary.music++;
+      } else {
+        summary.other++;
+      }
+    }
+
+    console.log(`[RuntimePackage] Loaded ${sortedPaths.length} file(s)`);
+    console.log('[RuntimePackage] Summary:', summary);
+    for (const path of sortedPaths) {
+      console.log(`[RuntimePackage] ${path}`);
+    }
+  }
+
   setRuntimePackage(runtimePackage) {
     if (!runtimePackage || !Array.isArray(runtimePackage.files) || runtimePackage.files.length === 0) {
       throw new Error('Runtime package must provide a non-empty files array.');
@@ -267,7 +350,79 @@ class GameEmulator {
     }
 
     this.runtimePackage = runtimePackage;
+    this.logRuntimePackageContents(runtimePackage);
     this.runtimeFileManager = new window.RuntimeArchiveFileManager(runtimePackage.files);
+  }
+
+  createRuntimePathResolver() {
+    const baseResolver = this.pathResolver;
+    const buildRootUi = baseResolver?.getBuildRootUi?.() || 'Build Output';
+    const runtimeRoots = [
+      'build/',
+      'Lua/',
+      'Images/',
+      'Sprites/',
+      'Palettes/',
+      'SFX/',
+      'Music/',
+      'Binary/',
+      'Fonts/',
+      'app.ini',
+      'config.json',
+      'palette_map.pmap',
+    ];
+
+    const normalizeRuntimePath = (path) => {
+      if (typeof path !== 'string' || path.length === 0) {
+        return path;
+      }
+
+      let normalized = String(path)
+        .replace(/\\/g, '/')
+        .replace(/^\.\//, '')
+        .replace(/^\/+/, '');
+
+      const buildMarker = normalized.toLowerCase().indexOf('/build/');
+      if (buildMarker >= 0) {
+        return `build/${normalized.substring(buildMarker + '/build/'.length)}`;
+      }
+
+      const buildUiPrefix = `${buildRootUi}/`;
+      if (normalized.startsWith(buildUiPrefix)) {
+        return `build/${normalized.substring(buildUiPrefix.length)}`;
+      }
+
+      for (const root of runtimeRoots) {
+        const marker = normalized.indexOf(root);
+        if (marker > 0) {
+          return normalized.substring(marker);
+        }
+        if (marker === 0) {
+          return normalized;
+        }
+      }
+
+      return normalized;
+    };
+
+    return {
+      getSourcesRootUi: () => baseResolver?.getSourcesRootUi?.() || 'Sources',
+      getBuildRootUi: () => buildRootUi,
+      getBuildStoragePrefix: () => 'build/',
+      normalizeStoragePath: normalizeRuntimePath,
+      isBuildArtifact: (path) => {
+        const normalized = normalizeRuntimePath(path);
+        return typeof normalized === 'string' && normalized.startsWith('build/');
+      },
+      resolveCompanionAssetPath: (buildPath, ext) => {
+        const normalized = normalizeRuntimePath(buildPath);
+        if (typeof normalized !== 'string' || typeof ext !== 'string' || ext.length === 0) {
+          return null;
+        }
+
+        return normalized.replace(/^build\//i, '').replace(/\.[^.]+$/i, ext);
+      },
+    };
   }
 
   installRuntimeFileServices() {
@@ -277,11 +432,13 @@ class GameEmulator {
 
     this.registerHostService('fileManager', this.runtimeFileManager);
     this.registerHostService('fileIOService', this.runtimeFileManager);
+    this.registerHostService('pathResolver', this.createRuntimePathResolver());
   }
 
   restoreRuntimeFileServices() {
     this.hostServices.delete('fileManager');
     this.hostServices.delete('fileIOService');
+    this.registerHostService('pathResolver', this.pathResolver);
   }
 
   destroy() {
@@ -540,6 +697,7 @@ class GameEmulator {
     
     // Update play button text based on running state
     this.updatePlayButton();
+    this.updatePlayPauseButton();
   }
 
   updatePlayButton() {
@@ -547,8 +705,10 @@ class GameEmulator {
     if (playBtn) {
       const iconElement = playBtn.querySelector('.ribbon-icon');
       const textElement = playBtn.querySelector('.ribbon-text');
+      const playbackHost = this.getPlaybackHost();
+      const isRunning = !!playbackHost.isRunning;
       
-      if (this.isRunning) {
+      if (isRunning) {
         if (iconElement) iconElement.textContent = '⏹️';
         if (textElement) textElement.textContent = 'Stop';
         playBtn.title = 'Stop Project';
@@ -614,12 +774,65 @@ class GameEmulator {
       muteBtn.title = this.isMuted ? 'Unmute Audio' : 'Mute Audio';
     }
   }
-  
-  async playProject() {
-    if (this.runtimeFileManager) {
-      return this.playRuntimePackage();
+
+  async extractRuntimePackageFromBlob(blob) {
+    if (!(blob instanceof Blob)) {
+      throw new Error('Runtime package export did not produce a Blob.');
     }
 
+    if (typeof JSZip === 'undefined') {
+      throw new Error('JSZip must be loaded before running runtime archives.');
+    }
+
+    const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+    const files = [];
+
+    for (const entry of Object.values(zip.files)) {
+      if (entry.dir) {
+        continue;
+      }
+
+      files.push({
+        path: entry.name,
+        bytes: await entry.async('uint8array'),
+      });
+    }
+
+    if (files.length === 0) {
+      throw new Error('Runtime archive did not contain any files.');
+    }
+
+    return { files };
+  }
+
+  async buildRuntimeArchiveForPlayback() {
+    const projectName = this.projectExplorer?.getFocusedProjectName?.();
+    if (!projectName) {
+      throw new Error('No project selected.');
+    }
+
+    const rwaService = this.getService('rwaService') || window.rwaService;
+    if (!rwaService || typeof rwaService.buildRuntimePackage !== 'function') {
+      throw new Error('RwaService is not available.');
+    }
+
+    const exportedPackage = await rwaService.buildRuntimePackage(projectName, {
+      buildBeforeExport: true,
+    });
+
+    if (!(exportedPackage?.blob instanceof Blob)) {
+      throw new Error('Runtime package export did not produce a Blob.');
+    }
+
+    return exportedPackage.blob;
+  }
+
+  async buildRuntimePackageForPlayback() {
+    const archiveBlob = await this.buildRuntimeArchiveForPlayback();
+    return this.extractRuntimePackageFromBlob(archiveBlob);
+  }
+  
+  async playProject() {
     if (this.isStarting) {
       throw new Error('Play already in progress');
     }
@@ -639,31 +852,34 @@ class GameEmulator {
     };
     
     try {
-      // First, build the project to get all scripts
-      console.log('[GameEmulator] Building project...');
-      await this.buildProject();
-      logPhase('buildProject');
-      
-      // Concatenate and load the scripts
-      console.log('[GameEmulator] Concatenating Lua scripts...');
-      const concatenatedScript = await this.concatenateLuaScripts();
-      logPhase('concatenateLuaScripts');
-      
-      if (!concatenatedScript) {
-        this.updateStatus('No Lua scripts found in project', 'warning');
-        await this.showErrorPopup(
-          'No Lua Scripts Found',
-          'Your project must contain at least one Lua script to run.',
-          'Please create a Lua script file in your project and add a Setup() function to get started.'
-        );
-        return;
+      console.log('[GameEmulator] Building runtime archive for embedded playback...');
+      const runtimeArchiveBlob = await this.buildRuntimeArchiveForPlayback();
+      logPhase('buildRuntimeArchiveForPlayback');
+
+      await this.destroyEmbeddedRuntimePlayer();
+
+      if (typeof window.EmbeddedRuntimePlayer !== 'function') {
+        throw new Error('EmbeddedRuntimePlayer is not available.');
       }
-      
-      console.log(`[GameEmulator] Concatenated ${concatenatedScript.fileCount} Lua files`);
-      
-      // Load and execute the concatenated script
-      await this.loadAndExecuteScript(concatenatedScript);
-      logPhase('loadAndExecuteScript');
+
+      this.embeddedRuntimePlayer = new window.EmbeddedRuntimePlayer(this.getEmbeddedRuntimeMountContainer(), {
+        hostProfile: 'embedded',
+        showPlaybackControls: false,
+        showConsole: false,
+        showReload: false,
+        showVolumeControls: false,
+        showKeyBindings: false,
+        overlayImagePath: this.options.overlayImagePath,
+        autoFocusCanvas: this.options.autoFocusCanvas,
+        initialVolume: this.currentVolume,
+        startMuted: this.isMuted,
+      });
+
+      await this.embeddedRuntimePlayer.loadRwaFromBlob(runtimeArchiveBlob);
+      this.syncPlaybackStateFromHost();
+      this.updatePlayPauseButton();
+      this.updatePlayButton();
+      logPhase('embeddedRuntimePlayer.loadRwaFromBlob');
 
       console.log(`[Timing][Play] COMPLETE: ${(performance.now() - playStart).toFixed(1)}ms`);
       
@@ -1279,7 +1495,7 @@ class GameEmulator {
       }
       
       // Convert UI or project-relative build paths to the canonical storage path.
-      const storagePath = window.ProjectPaths?.normalizeStoragePath?.(resource.filePath) || resource.filePath;
+      const storagePath = this.normalizeStoragePath(resource.filePath) || resource.filePath;
       console.log(`[GameEmulator] Loading from storage path: ${storagePath}`);
       
       const fileData = await fileManager.loadFile(storagePath);
@@ -2198,6 +2414,16 @@ class GameEmulator {
    */
   stopProject() {
     console.log('[GameEmulator] Stopping project...');
+
+    if (this.embeddedRuntimePlayer) {
+      this.destroyEmbeddedRuntimePlayer();
+      this.renderGameEngineContent();
+      this.isRunning = false;
+      this.isPaused = false;
+      this.updateStatus('Project stopped', 'info');
+      return;
+    }
+
     this.stopGameLoop();
     
     // Reset all extensions (clear old state)
@@ -2219,6 +2445,10 @@ class GameEmulator {
     if (this.hasDeferredResourceInvalidation) {
       this.applyResourceCacheInvalidation();
     }
+
+    this.restoreRuntimeFileServices();
+    this.runtimePackage = null;
+    this.runtimeFileManager = null;
     
     this.updateStatus('Project stopped', 'info');
   }
@@ -2227,6 +2457,8 @@ class GameEmulator {
    * Toggle play/pause state - main control button
    */
   async togglePlayPause() {
+    this.syncPlaybackStateFromHost();
+
     if (this.isStarting) {
       console.warn('[GameEmulator] Ignoring play/pause toggle while a run is already starting');
       return;
@@ -2251,6 +2483,14 @@ class GameEmulator {
    * Pause the game (separate from toggle for clarity)
    */
   pauseGame() {
+    if (this.embeddedRuntimePlayer) {
+      const playbackHost = this.embeddedRuntimePlayer.gameEmulator;
+      playbackHost.pauseGame();
+      this.syncPlaybackStateFromHost();
+      this.updateStatus('Game paused', 'info');
+      return;
+    }
+
     if (!this.isRunning) {
       console.log('[GameEmulator] Cannot pause - game is not running');
       return;
@@ -2271,6 +2511,14 @@ class GameEmulator {
    * Resume the game (separate from toggle for clarity)
    */
   resumeGame() {
+    if (this.embeddedRuntimePlayer) {
+      const playbackHost = this.embeddedRuntimePlayer.gameEmulator;
+      playbackHost.resumeGame();
+      this.syncPlaybackStateFromHost();
+      this.updateStatus('Game resumed', 'info');
+      return;
+    }
+
     if (!this.isRunning) {
       console.log('[GameEmulator] Cannot resume - game is not running');
       return;
@@ -2384,14 +2632,17 @@ class GameEmulator {
     if (playPauseBtn) {
       const icon = playPauseBtn.querySelector('.btn-icon');
       const text = playPauseBtn.querySelector('.btn-text');
+      const playbackHost = this.getPlaybackHost();
+      const isRunning = !!playbackHost.isRunning;
+      const isPaused = !!playbackHost.isPaused;
       
-      if (!this.isRunning) {
+      if (!isRunning) {
         // Not running - show play
         if (icon) icon.textContent = '▶️';
         if (text) text.textContent = 'Play';
         playPauseBtn.classList.remove('paused', 'running');
         playPauseBtn.title = 'Play Game';
-      } else if (this.isPaused) {
+      } else if (isPaused) {
         // Running but paused - show play
         if (icon) icon.textContent = '▶️';
         if (text) text.textContent = 'Resume';
