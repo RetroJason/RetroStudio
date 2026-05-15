@@ -118,6 +118,135 @@ class TabManager {
       this.registerDefaultEditors();
     }
   }
+
+  _getTabDisplayTitle(tabInfo) {
+    const baseTitle = tabInfo.fileName || 'Untitled';
+    return `${baseTitle}${tabInfo.isReadOnly ? ' 🔒' : ''}`;
+  }
+
+  _isLuaTab(tabInfo) {
+    if (!tabInfo || !tabInfo.viewer || typeof tabInfo.viewer.getContent !== 'function') {
+      return false;
+    }
+
+    if (tabInfo.componentInfo?.editorClass?.name === 'LuaEditor') {
+      return true;
+    }
+
+    if (tabInfo.viewer?.constructor?.name === 'LuaEditor') {
+      return true;
+    }
+
+    const fileName = typeof tabInfo.fileName === 'string' ? tabInfo.fileName.toLowerCase() : '';
+    const fullPath = typeof tabInfo.fullPath === 'string' ? tabInfo.fullPath.toLowerCase() : '';
+
+    return fileName.endsWith('.lua') || fullPath.endsWith('.lua');
+  }
+
+  _createTabActionButton() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tab-share-nopaste';
+    button.dataset.action = 'share-nopaste';
+    button.title = 'Share this Lua tab to nopaste';
+    button.setAttribute('aria-label', 'Share this Lua tab to nopaste');
+    button.innerHTML = `
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M3.5 2.5h5.4L12.5 6v7a.5.5 0 0 1-.5.5h-8A1.5 1.5 0 0 1 2.5 12V3.5A1 1 0 0 1 3.5 2.5Zm5 .9v2.6h2.6" />
+        <path d="M6 8.5h4M6 10.5h4M6 6.5h1.5" />
+      </svg>
+    `;
+    return button;
+  }
+
+  _syncTabChrome(tabInfo) {
+    if (!tabInfo?.element) {
+      return;
+    }
+
+    const tabElement = tabInfo.element;
+    const titleElement = tabElement.querySelector('.tab-title') || document.createElement('span');
+    titleElement.className = 'tab-title';
+    titleElement.textContent = this._getTabDisplayTitle(tabInfo);
+
+    const closeElement = tabElement.querySelector('.tab-close') || document.createElement('span');
+    closeElement.className = 'tab-close';
+    closeElement.dataset.action = 'close';
+    closeElement.textContent = '×';
+
+    const children = [titleElement];
+
+    if (this._isLuaTab(tabInfo)) {
+      children.push(this._createTabActionButton());
+    }
+
+    children.push(closeElement);
+    tabElement.replaceChildren(...children);
+  }
+
+  _notifyTabAction(message, type = 'info') {
+    if (window.application && typeof window.application.showToast === 'function') {
+      window.application.showToast(message, type);
+      return;
+    }
+
+    if (window.gameEmulator && typeof window.gameEmulator.updateStatus === 'function') {
+      window.gameEmulator.updateStatus(message, type);
+      return;
+    }
+
+    alert(message);
+  }
+
+  async shareTabToNopaste(tabId) {
+    const tabInfo = this.dedicatedTabs.get(tabId);
+
+    if (!tabInfo) {
+      throw new Error('Tab was not found.');
+    }
+
+    if (!this._isLuaTab(tabInfo)) {
+      throw new Error('Nopaste sharing is only available for Lua tabs.');
+    }
+
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+      throw new Error('Clipboard access is not available.');
+    }
+
+    const code = tabInfo.viewer.getContent();
+
+    if (typeof code !== 'string' || !code.trim()) {
+      throw new Error('Lua tab is empty.');
+    }
+
+    const title = typeof tabInfo.fileName === 'string'
+      ? tabInfo.fileName.replace(/\.lua$/i, '')
+      : 'Lua snippet';
+
+    const response = await fetch('/api/nopaste', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        language: 'lua',
+        title,
+        code
+      })
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload?.error || 'Unable to create nopaste link.');
+    }
+
+    const shareUrl = typeof payload.url === 'string' && payload.url
+      ? payload.url
+      : new URL(payload.path || '/nopaste', window.location.origin).toString();
+    await navigator.clipboard.writeText(shareUrl);
+    window.open(shareUrl, '_blank', 'noopener');
+    this._notifyTabAction('Nopaste link copied to clipboard.', 'success');
+  }
   
   setupEventListeners() {
     // Subscribe to content refresh events to refresh build artifact tabs
@@ -129,11 +258,26 @@ class TabManager {
     this.tabBar.addEventListener('click', async (e) => {
       const tab = e.target.closest('.tab');
       if (!tab) return;
+      const actionTarget = e.target.closest('[data-action]');
       
-      const action = e.target.dataset.action;
+      const action = actionTarget?.dataset.action;
       const tabId = tab.dataset.tabId;
       
-      if (action === 'close' && tabId !== 'preview') {
+      if (action === 'share-nopaste' && tabId !== 'preview') {
+        e.stopPropagation();
+
+        if (!this.dedicatedTabs.has(tabId)) {
+          console.warn(`[TabManager] Ignoring nopaste click for non-existent tab: ${tabId}`);
+          return;
+        }
+
+        try {
+          await this.shareTabToNopaste(tabId);
+        } catch (error) {
+          console.error(`[TabManager] Error sharing tab ${tabId} to nopaste:`, error);
+          alert(`Nopaste share failed: ${error?.message || error}`);
+        }
+      } else if (action === 'close' && tabId !== 'preview') {
         e.stopPropagation();
         
         // Check if tab still exists before attempting to close
@@ -665,11 +809,7 @@ class TabManager {
               t.fullPath = fullPath;
               t.fileName = fileName;
               // Update tab title
-              const titleEl = t.element?.querySelector('.tab-title');
-              if (titleEl) {
-                const ro = t.isReadOnly ? ' 🔒' : '';
-                titleEl.textContent = fileName + ro;
-              }
+              this._syncTabChrome(t);
       // Dispose of the newly-created, unused viewer
       try { if (viewerInfo.viewer?.cleanup) viewerInfo.viewer.cleanup(); } catch (_) {}
       try { if (viewerInfo.viewer?.destroy) viewerInfo.viewer.destroy(); } catch (_) {}
@@ -699,12 +839,6 @@ class TabManager {
     }
     tabElement.dataset.tabId = tabId;
     
-    const readOnlyIndicator = options.isReadOnly ? ' 🔒' : '';
-    tabElement.innerHTML = `
-      <span class="tab-title">${fileName}${readOnlyIndicator}</span>
-      <span class="tab-close" data-action="close">×</span>
-    `;
-    
     // Create content pane
   const tabPane = document.createElement('div');
     tabPane.className = 'tab-pane';
@@ -724,8 +858,11 @@ class TabManager {
       element: tabElement,
       pane: tabPane,
   isReadOnly: options.isReadOnly || false,
-      viewerType: viewerInfo.type
+      viewerType: viewerInfo.type,
+      componentInfo: preferredComponent || null
     };
+
+    this._syncTabChrome(tabInfo);
     
     this.dedicatedTabs.set(tabId, tabInfo);
     
@@ -775,8 +912,7 @@ class TabManager {
     // Update tab appearance - remove any special preview styling and add close button if needed
     const tabTitle = previewTab.querySelector('.tab-title');
     if (tabTitle) {
-      const readOnlyIndicator = this.previewReadOnly ? ' 🔒' : '';
-      tabTitle.textContent = this.previewFileName + readOnlyIndicator;
+      tabTitle.textContent = this.previewFileName + (this.previewReadOnly ? ' 🔒' : '');
     }
     
     // Ensure close button exists for dedicated tab
@@ -801,6 +937,8 @@ class TabManager {
       isReadOnly: this.previewReadOnly,
       viewerType: 'editor' // Assume it's an editor since it got dirty
     };
+
+    this._syncTabChrome(tabInfo);
     
     this.dedicatedTabs.set(newTabId, tabInfo);
     
@@ -2744,10 +2882,6 @@ class TabManager {
     const tabElement = document.createElement('div');
     tabElement.className = 'tab';
     tabElement.dataset.tabId = tabId;
-    tabElement.innerHTML = `
-      <span class="tab-title">Untitled</span>
-      <span class="tab-close" data-action="close">×</span>
-    `;
     
     // Create content pane
     const tabPane = document.createElement('div');
@@ -2763,7 +2897,7 @@ class TabManager {
     this.tabContentArea.appendChild(tabPane);
     
     // Store tab info
-    this.dedicatedTabs.set(tabId, {
+    const tabInfo = {
       viewer: editor,
       fileName: 'Untitled',
       fullPath: null,
@@ -2771,7 +2905,10 @@ class TabManager {
       componentInfo: editorInfo,
       element: tabElement,
       pane: tabPane
-    });
+    };
+
+    this._syncTabChrome(tabInfo);
+    this.dedicatedTabs.set(tabId, tabInfo);
     
     // Mark new file as dirty immediately since it has unsaved content
     this.markTabDirty(tabId);

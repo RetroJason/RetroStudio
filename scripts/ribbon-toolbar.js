@@ -75,7 +75,10 @@ class RibbonToolbar {
     let label = 'No pending changes';
     let title = 'Hosted save status for ' + projectName;
 
-    if (indicatorState === 'saving') {
+    if (state?.sharedSession) {
+      label = 'Shared session';
+      title = projectName + ' is a shared session. Changes stay local and cannot be saved back.';
+    } else if (indicatorState === 'saving') {
       label = 'Saving...';
       title = 'Saving ' + projectName + ' to Retrowww';
     } else if (indicatorState === 'pending') {
@@ -1008,7 +1011,7 @@ class RibbonToolbar {
       options.shareSource === true ? 'Share with source' : 'Share',
       result.previewShareUrl,
       options.shareSource === true
-        ? 'This temporary link opens the application details page and shows the Edit button to signed-in users only.'
+        ? 'This temporary link opens the application details page and lets any signed-in user start an editable shared session. Changes stay local and are not saved back to the project.'
         : 'This temporary link opens the application details page without an Edit button.'
     );
   }

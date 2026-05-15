@@ -595,9 +595,8 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   // ── File I/O Helpers (same pattern as Image) ─────────────────────
 
   _buildPrefix() {
-    return (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
-      ? window.ProjectPaths.getBuildStoragePrefix()
-      : 'build/';
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.getBuildStoragePrefix?.() || 'build/';
   }
 
   async _listBuildFiles(prefix) {
@@ -612,10 +611,9 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     const projectExplorer = this._getService('projectExplorer');
     if (!projectExplorer) return [];
 
+    const pathResolver = this._getService('pathResolver');
     const paths = [];
-    const buildRoot = (window.ProjectPaths && typeof window.ProjectPaths.getBuildRootUi === 'function')
-      ? window.ProjectPaths.getBuildRootUi()
-      : 'Game Objects';
+    const buildRoot = pathResolver?.getBuildRootUi?.() || 'Game Objects';
 
     this._collectPaths(projectExplorer.projectData?.structure, '', buildRoot, prefix, paths);
     return paths;
@@ -638,9 +636,8 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;

@@ -1040,8 +1040,7 @@ class GameEmulator {
     }
 
     const normalizedPath = String(file.path).replace(/\\/g, '/');
-    const parsedPath = window.ProjectPaths?.parseProjectPath?.(normalizedPath);
-    const relativePath = String(parsedPath?.rest || normalizedPath);
+    const relativePath = String(this.normalizeStoragePath(normalizedPath) || normalizedPath);
     const pathSegments = relativePath.split('/').filter(Boolean);
 
     let folderMatch = null;
@@ -1055,7 +1054,7 @@ class GameEmulator {
       palettes: 'PALETTES',
     };
     const buildRootUi = String(this.getBuildRootUi() || '').trim().toLowerCase();
-    const buildStorageRoot = String(window.ProjectPaths?.getBuildStoragePrefix?.() || 'build/')
+    const buildStorageRoot = String(this.getBuildStoragePrefix() || 'build/')
       .replace(/\/$/, '')
       .trim()
       .toLowerCase();

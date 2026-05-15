@@ -213,6 +213,8 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     clone._handle = handle;
     clone.x = 0;
     clone.y = 0;
+    clone._motionBaseX = 0;
+    clone._motionBaseY = 0;
     clone.elapsed = 0;
     clone.finished = false;
     this.sprites.set(handle, clone);
@@ -502,15 +504,17 @@ class LuaSpriteExtensions extends BaseLuaExtension {
       }
 
       // ── Blit ────────────────────────────────────────────────────
-      const posX = (s._posX || 0) + (frame.offsetX || 0);
-      const posY = (s._posY || 0) + (frame.offsetY || 0);
+      const posX = (s._posX || 0) + (s.x || 0) + (frame.offsetX || 0);
+      const posY = (s._posY || 0) + (s.y || 0) + (frame.offsetY || 0);
       const rotation = s._rotation || 0;
       const scaleX = s._scaleX ?? 1;
       const scaleY = s._scaleY ?? 1;
       const flipX = !!(s._attributes & 0x08);
       const flipY = !!(s._attributes & 0x04);
 
-      const { centerX, centerY } = this._resolveFrameCenter(frame);
+      const frameCenter = this._resolveFrameCenter(frame);
+      const centerX = Number.isFinite(s._centerX) ? s._centerX : frameCenter.centerX;
+      const centerY = Number.isFinite(s._centerY) ? s._centerY : frameCenter.centerY;
 
       gpu.blit(texHandle, {
         x:      posX,

@@ -466,6 +466,37 @@
   transition: opacity 0.2s;
 }
 
+.tab-share-nopaste {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  opacity: 0.68;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.tab-share-nopaste svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tab-share-nopaste:hover {
+  opacity: 1;
+  color: #ffcb68;
+}
+
 .tab-close:hover {
   opacity: 1;
   color: #f44336;
