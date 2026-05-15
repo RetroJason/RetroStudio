@@ -3219,8 +3219,11 @@ class ProjectExplorer {
       // Fallback: generate basic built-in palette.
       const defaultPaletteData = this.generateDefaultPaletteData();
       const defaultPath = `${sourcesRoot}/Palettes/default.act`;
+      const storagePath = window.ProjectPaths?.normalizeStoragePath
+        ? window.ProjectPaths.normalizeStoragePath(defaultPath)
+        : defaultPath;
 
-      await window.fileIOService.saveFile(defaultPath, defaultPaletteData, { binaryData: true, builderId: 'pal' });
+      await window.fileIOService.saveFile(storagePath, defaultPaletteData, { binaryData: true, builderId: 'pal' });
       this.addFileToProjectStructure(this.focusedProjectName, defaultPath, { type: 'file' });
       await window.ProjectConfigManager.setDefaultPalette(defaultPath);
       this.renderTree();
