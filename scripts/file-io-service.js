@@ -297,11 +297,13 @@ class FileIOService {
         request.onsuccess = () => {
           const result = request.result;
           if (result) {
-            console.log(`[FileIOService] Raw data loaded from IndexedDB for ${path}:`);
-            console.log(`[FileIOService] - result.binaryData: ${result.binaryData}`);
-            console.log(`[FileIOService] - result.fileContent type: ${typeof result.fileContent}`);
-            console.log(`[FileIOService] - result.fileContent length: ${result.fileContent.length}`);
-            console.log(`[FileIOService] - result.fileContent preview: ${result.fileContent.substring(0, 100)}...`);
+            const fileContentType = typeof result.fileContent;
+            const fileContentLength = typeof result.fileContent === 'string'
+              ? result.fileContent.length
+              : (result.fileContent instanceof ArrayBuffer
+                ? result.fileContent.byteLength
+                : (ArrayBuffer.isView(result.fileContent) ? result.fileContent.byteLength : null));
+            console.log(`[FileIOService] IndexedDB hit for ${path} (binary=${!!result.binaryData}, type=${fileContentType}${fileContentLength !== null ? `, size=${fileContentLength}` : ''})`);
             
             // Decode base64 to ArrayBuffer if binary
             if (result.binaryData && result.fileContent) {

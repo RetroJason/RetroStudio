@@ -24,23 +24,29 @@ class ProjectConfigManager {
   }
 
   _getStoragePath(path) {
-    return window.ProjectPaths?.normalizeStoragePath
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const focusedProject = this._getFocusedProjectName();
+    if (!focusedProject || !window.ProjectPaths?.parseProjectPath) {
+      return path;
+    }
+
+    const parsed = window.ProjectPaths.parseProjectPath(path);
+    if (parsed?.project) {
+      return path;
+    }
+
+    return `${focusedProject}/${parsed?.rest || path}`;
   }
 
   _getProjectExplorer() {
-    return window.serviceContainer?.get?.('projectExplorer')
-      || window.gameEmulator?.projectExplorer
+    return window.gameEmulator?.projectExplorer
+      || window.gameEditor?.projectExplorer
       || window.projectExplorer
       || null;
   }
 
   _getFocusedProjectName() {
     const projectExplorer = this._getProjectExplorer();
-    return projectExplorer?.getFocusedProjectName?.()
-      || window.ProjectPaths?.getFocusedProjectName?.()
-      || null;
+    return projectExplorer?.getFocusedProjectName?.() || null;
   }
 
   /**

@@ -3110,6 +3110,10 @@ class ProjectExplorer {
       : filePath;
     const fileManager = window.serviceContainer?.get?.('fileManager') || window.fileManager;
 
+    if (fileManager && typeof fileManager.fileExists === 'function') {
+      return await fileManager.fileExists(storagePath);
+    }
+
     if (fileManager && typeof fileManager.loadFile === 'function') {
       const record = await fileManager.loadFile(storagePath);
       return !!record;
