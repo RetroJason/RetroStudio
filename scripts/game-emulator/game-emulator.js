@@ -49,6 +49,7 @@ class GameEmulator {
     this.hasDeferredResourceInvalidation = false;
     this.frameCount = 0;
     this.lastFrameTime = 0;
+    this._nextRenderOrder = 1;
     this.compileOverlayHidden = true;
     this.extensionLoader = null; // Lua extension loader
     this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
@@ -162,6 +163,10 @@ class GameEmulator {
 
   getBuildRootUi() {
     return this.pathResolver.getBuildRootUi();
+  }
+
+  allocateRenderOrder() {
+    return this._nextRenderOrder++;
   }
 
   getBuildStoragePrefix() {
@@ -2311,18 +2316,36 @@ class GameEmulator {
             this.clearColor.b,
             this.clearColor.a
           );
+          const renderQueue = [];
           const spriteExt = this.extensionLoader?.getExtension('Sprite');
           if (spriteExt) {
-            spriteExt.renderFrame(this._gpu, deltaTime);
+            spriteExt.queueRenderOperations(renderQueue, deltaTime);
           }
           const imageExt = this.extensionLoader?.getExtension('Image');
           if (imageExt) {
-            imageExt.renderFrame(this._gpu, deltaTime);
+            imageExt.queueRenderOperations(renderQueue, deltaTime);
           }
           const textboxExt = this.extensionLoader?.getExtension('TextBox');
           if (textboxExt) {
-            textboxExt.renderFrame(this._gpu, deltaTime);
+            textboxExt.queueRenderOperations(renderQueue, deltaTime);
           }
+
+          renderQueue.sort((left, right) => {
+            const leftZ = Number.isFinite(left?.z) ? left.z : 0;
+            const rightZ = Number.isFinite(right?.z) ? right.z : 0;
+            if (leftZ !== rightZ) {
+              return rightZ - leftZ;
+            }
+
+            const leftOrder = Number.isFinite(left?.creationOrder) ? left.creationOrder : 0;
+            const rightOrder = Number.isFinite(right?.creationOrder) ? right.creationOrder : 0;
+            return leftOrder - rightOrder;
+          });
+
+          for (const operation of renderQueue) {
+            operation.draw(this._gpu);
+          }
+
           const didDrawFrame = this._gpu.present();
           this.updateCompileOverlay(didDrawFrame);
         }

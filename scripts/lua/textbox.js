@@ -76,6 +76,17 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     return tb;
   }
 
+  _getDefaultZ() {
+    return 0;
+  }
+
+  _stampRenderOrdering(state, z = this._getDefaultZ()) {
+    const resolvedZ = Number.isFinite(z) ? z : this._getDefaultZ();
+    state._z = resolvedZ;
+    state._layer = resolvedZ;
+    state._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? 0;
+  }
+
   // ── BMFont Binary Parser ─────────────────────────────────────────
 
   _parseBMFont(bytes) {
@@ -174,7 +185,7 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     const y          = parseFloat(L.raw_tostring(4)) || 0;
     const zValue     = Number.parseFloat(L.raw_tostring(5));
     const colorValue = Number.parseInt(L.raw_tostring(6), 10);
-    const z          = Number.isNaN(zValue) ? 0 : zValue;
+    const z          = Number.isNaN(zValue) ? this._getDefaultZ() : zValue;
     const color      = Number.isNaN(colorValue) ? 0x00FFFFFF : colorValue;
     const text     = L.raw_tostring(7) || '';
 
@@ -204,6 +215,8 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
       _width: 448,
       _height: 368,
     };
+
+    this._stampRenderOrdering(state, z);
 
     this.textboxes.set(handle, state);
     console.log(`[LuaTextBox] Created textbox handle ${handle} with font "${fontName}": "${text}"`);
@@ -326,6 +339,27 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     return tb._color ?? 0x00FFFFFF;
   }
 
+  SetZ() {
+    const tb = this._getTextBoxByHandleArg(2);
+    const z = Number.parseFloat(this.luaState.raw_tostring(3));
+    if (!Number.isFinite(z)) {
+      throw new Error('TextBox.SetZ: bad argument #2 (number expected)');
+    }
+    tb._z = z;
+    tb._layer = z;
+  }
+
+  GetZ() {
+    const tb = this._getTextBoxByHandleArg(2);
+    if (Number.isFinite(tb?._z)) {
+      return tb._z;
+    }
+    if (Number.isFinite(tb?._layer)) {
+      return tb._layer;
+    }
+    return this._getDefaultZ();
+  }
+
   SetPaletteSlot() {
     const tb = this._getTextBoxByHandleArg(2);
     tb._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
@@ -373,6 +407,15 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
   // ── Per-Frame Rendering ──────────────────────────────────────────
 
   renderFrame(gpu, deltaMs) {
+    const renderQueue = [];
+    this.queueRenderOperations(renderQueue, deltaMs);
+    renderQueue.sort((left, right) => (right.z - left.z) || (left.creationOrder - right.creationOrder));
+    for (const operation of renderQueue) {
+      operation.draw(gpu);
+    }
+  }
+
+  queueRenderOperations(renderQueue, deltaMs) {
     for (const [, tb] of this.textboxes) {
       if (tb._visible === false) continue;
 
@@ -391,10 +434,6 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
         : (fontAsset.paletteSlot || 1);
       const paletteOffset = fontAsset.paletteOffset || 0;
 
-      if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
-        this._activatePalette(paletteIndex, paletteOffset);
-      }
-
       const scaleX = tb._scaleX ?? 1;
       const scaleY = tb._scaleY ?? 1;
 
@@ -402,42 +441,50 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
       const yBase = tb._posY || 0;
       const text = tb._text || '';
 
-      for (let i = 0; i < text.length; i++) {
-        const charCode = text.charCodeAt(i);
-        const chInfo = font.characters.get(charCode);
-        if (!chInfo) continue;
+      renderQueue.push({
+        z: Number.isFinite(tb._z) ? tb._z : this._getDefaultZ(),
+        creationOrder: tb._creationOrder ?? 0,
+        draw: (targetGpu) => {
+          if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
+            this._activatePalette(paletteIndex, paletteOffset);
+          }
 
-        const glyphX = xCursor + chInfo.xoffset * scaleX;
-        const glyphY = yBase + chInfo.yoffset * scaleY;
+          let drawCursor = xCursor;
+          for (let i = 0; i < text.length; i++) {
+            const charCode = text.charCodeAt(i);
+            const chInfo = font.characters.get(charCode);
+            if (!chInfo) continue;
 
-        if (chInfo.width > 0 && chInfo.height > 0) {
-          gpu.blit(texHandle, {
-            x: glyphX,
-            y: glyphY,
-            srcX: chInfo.x,
-            srcY: chInfo.y,
-            srcW: chInfo.width,
-            srcH: chInfo.height,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            rotation: tb._rotation || 0,
-            pivotX: 0,
-            pivotY: 0,
-            filter: 'nearest',
-            tint: tb._color ?? 0x00FFFFFF,
-          });
-        }
+            const glyphX = drawCursor + chInfo.xoffset * scaleX;
+            const glyphY = yBase + chInfo.yoffset * scaleY;
 
-        // Advance cursor
-        xCursor += chInfo.xadvance * scaleX;
+            if (chInfo.width > 0 && chInfo.height > 0) {
+              targetGpu.blit(texHandle, {
+                x: glyphX,
+                y: glyphY,
+                srcX: chInfo.x,
+                srcY: chInfo.y,
+                srcW: chInfo.width,
+                srcH: chInfo.height,
+                scaleX: scaleX,
+                scaleY: scaleY,
+                rotation: tb._rotation || 0,
+                pivotX: 0,
+                pivotY: 0,
+                filter: 'nearest',
+                tint: tb._color ?? 0x00FFFFFF,
+              });
+            }
 
-        // Apply kerning for next character
-        if (i + 1 < text.length) {
-          const nextChar = text.charCodeAt(i + 1);
-          const kerning = font.kerning.get(`${charCode},${nextChar}`) || 0;
-          xCursor += kerning * scaleX;
-        }
-      }
+            drawCursor += chInfo.xadvance * scaleX;
+            if (i + 1 < text.length) {
+              const nextChar = text.charCodeAt(i + 1);
+              const kerning = font.kerning.get(`${charCode},${nextChar}`) || 0;
+              drawCursor += kerning * scaleX;
+            }
+          }
+        },
+      });
     }
   }
 

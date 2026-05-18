@@ -295,11 +295,18 @@ class ProjectExplorer {
       if (!tabManager) return false;
 
       const componentInfo = this._getComponentForFile(packagePath, true);
-      if (preferDedicatedTab) {
-        await tabManager.openInTab(packagePath, componentInfo || null);
-      } else {
-        await tabManager.openInPreview(packagePath, componentInfo || null);
+      if (!componentInfo) {
+        throw new Error(`Package settings component unavailable for ${packagePath}.`);
       }
+
+      const openedTabId = preferDedicatedTab
+        ? await tabManager.openInTab(packagePath, componentInfo)
+        : await tabManager.openInPreview(packagePath, componentInfo);
+
+      if (typeof openedTabId !== 'string' || openedTabId.length === 0) {
+        return false;
+      }
+
       return true;
     };
 

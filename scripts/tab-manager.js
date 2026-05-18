@@ -858,8 +858,8 @@ class TabManager {
       element: tabElement,
       pane: tabPane,
   isReadOnly: options.isReadOnly || false,
-      viewerType: viewerInfo.type,
-      componentInfo: preferredComponent || null
+      viewerType: viewerInfo.componentInfo?.type || (componentInfo?.type || null),
+      componentInfo: viewerInfo.componentInfo || componentInfo || null
     };
 
     this._syncTabChrome(tabInfo);

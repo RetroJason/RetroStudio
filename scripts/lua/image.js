@@ -75,6 +75,15 @@ class LuaImageExtensions extends BaseLuaExtension {
     return image;
   }
 
+  _getDefaultZ() {
+    return 200;
+  }
+
+  _stampRenderOrdering(state, z = this._getDefaultZ()) {
+    state._z = Number.isFinite(z) ? z : this._getDefaultZ();
+    state._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? 0;
+  }
+
   Create() {
     const L = this.luaState;
     const name = L.raw_tostring(2);
@@ -110,6 +119,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
     const handle = this._nextHandle++;
     state._handle = handle;
+    this._stampRenderOrdering(state);
     this.images.set(handle, state);
 
     console.log(`[LuaImage] Created image "${name}" as handle ${handle} (${asset.frames.length} frame(s))`);
@@ -166,6 +176,7 @@ class LuaImageExtensions extends BaseLuaExtension {
     const clone = { ...src };
     const handle = this._nextHandle++;
     clone._handle = handle;
+    this._stampRenderOrdering(clone, clone._z);
     this.images.set(handle, clone);
     return handle;
   }
@@ -268,6 +279,20 @@ class LuaImageExtensions extends BaseLuaExtension {
     return (s && s._color) ?? 0x00FFFFFF;
   }
 
+  SetZ() {
+    const s = this._getImageByHandleArg(2);
+    const z = Number.parseFloat(this.luaState.raw_tostring(3));
+    if (!Number.isFinite(z)) {
+      throw new Error('Image.SetZ: bad argument #2 (number expected)');
+    }
+    s._z = z;
+  }
+
+  GetZ() {
+    const s = this._getImageByHandleArg(2);
+    return Number.isFinite(s?._z) ? s._z : this._getDefaultZ();
+  }
+
   SetPaletteSlot() {
     const s = this._getImageByHandleArg(2);
     s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
@@ -343,6 +368,15 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   renderFrame(gpu, deltaMs) {
+    const renderQueue = [];
+    this.queueRenderOperations(renderQueue, deltaMs);
+    renderQueue.sort((left, right) => (right.z - left.z) || (left.creationOrder - right.creationOrder));
+    for (const operation of renderQueue) {
+      operation.draw(gpu);
+    }
+  }
+
+  queueRenderOperations(renderQueue, deltaMs) {
     for (const [, s] of this.images) {
       if (s._visible === false) continue;
 
@@ -360,10 +394,6 @@ class LuaImageExtensions extends BaseLuaExtension {
         : (texHandle.paletteIndex || asset.paletteSlot || 1);
       const paletteOffset = asset.paletteOffset || 0;
 
-      if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
-        this._activatePalette(paletteIndex, paletteOffset);
-      }
-
       const posX = s._posX || 0;
       const posY = s._posY || 0;
       const rotation = s._rotation || 0;
@@ -376,19 +406,29 @@ class LuaImageExtensions extends BaseLuaExtension {
       const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
       const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
 
-      gpu.blit(texHandle, {
-        x: posX,
-        y: posY,
-        srcX: frame.x,
-        srcY: frame.y,
-        srcW: frame.w,
-        srcH: frame.h,
-        scaleX: scaleX * (flipX ? -1 : 1),
-        scaleY: scaleY * (flipY ? -1 : 1),
-        rotation,
-        pivotX: centerX / (frame.w || 1),
-        pivotY: centerY / (frame.h || 1),
-        filter: 'nearest',
+      renderQueue.push({
+        z: Number.isFinite(s._z) ? s._z : this._getDefaultZ(),
+        creationOrder: s._creationOrder ?? 0,
+        draw: (targetGpu) => {
+          if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
+            this._activatePalette(paletteIndex, paletteOffset);
+          }
+
+          targetGpu.blit(texHandle, {
+            x: posX,
+            y: posY,
+            srcX: frame.x,
+            srcY: frame.y,
+            srcW: frame.w,
+            srcH: frame.h,
+            scaleX: scaleX * (flipX ? -1 : 1),
+            scaleY: scaleY * (flipY ? -1 : 1),
+            rotation,
+            pivotX: centerX / (frame.w || 1),
+            pivotY: centerY / (frame.h || 1),
+            filter: 'nearest',
+          });
+        },
       });
     }
   }

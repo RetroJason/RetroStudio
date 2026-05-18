@@ -106,6 +106,15 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     return sprite;
   }
 
+  _getDefaultZ() {
+    return 100;
+  }
+
+  _stampRenderOrdering(state, z = this._getDefaultZ()) {
+    state._z = Number.isFinite(z) ? z : this._getDefaultZ();
+    state._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? 0;
+  }
+
   /**
    * Sprite.Create("hero")
     * Loads a sprite by asset name (matches d2s_header_t.name).
@@ -139,6 +148,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     const handle = this._nextHandle++;
     state._handle = handle;
     state._assetName = name;
+    this._stampRenderOrdering(state);
 
     this.sprites.set(handle, state);
     console.log(`[LuaSprite] Created sprite "${name}" as handle ${handle} (${asset.d2s.animations.length} anims, ${asset.d2f.frames.length} frames)`);
@@ -217,6 +227,7 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     clone._motionBaseY = 0;
     clone.elapsed = 0;
     clone.finished = false;
+    this._stampRenderOrdering(clone, clone._z);
     this.sprites.set(handle, clone);
     return handle;
   }
@@ -342,6 +353,20 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   GetColor() {
     const s = this._getSpriteByHandleArg(2);
     return (s && s._color) ?? 0x00FFFFFF;
+  }
+
+  SetZ() {
+    const s = this._getSpriteByHandleArg(2);
+    const z = Number.parseFloat(this.luaState.raw_tostring(3));
+    if (!Number.isFinite(z)) {
+      throw new Error('Sprite.SetZ: bad argument #2 (number expected)');
+    }
+    s._z = z;
+  }
+
+  GetZ() {
+    const s = this._getSpriteByHandleArg(2);
+    return Number.isFinite(s?._z) ? s._z : this._getDefaultZ();
   }
 
   /** Sprite.SetPaletteSlot(handle, 2) */
@@ -471,6 +496,15 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * @param {number}   deltaMs  Milliseconds since last frame
    */
   renderFrame(gpu, deltaMs) {
+    const renderQueue = [];
+    this.queueRenderOperations(renderQueue, deltaMs);
+    renderQueue.sort((left, right) => (right.z - left.z) || (left.creationOrder - right.creationOrder));
+    for (const operation of renderQueue) {
+      operation.draw(gpu);
+    }
+  }
+
+  queueRenderOperations(renderQueue, deltaMs) {
     // ── Tick all auto-animating sprites ─────────────────────────────
     for (const handle of this.animating) {
       const s = this.sprites.get(handle);
@@ -497,12 +531,6 @@ class LuaSpriteExtensions extends BaseLuaExtension {
       const effectiveSlot   = (s._paletteSlot != null) ? s._paletteSlot : palSlot;
       const effectiveOffset = palOff;
 
-      // Re-upload palette only when it changes
-      const paletteIndex = texHandle.paletteIndex || effectiveSlot || 1;
-      if (paletteIndex !== this._activePaletteIndex || effectiveOffset !== this._activePaletteOffset) {
-        this._activatePalette(paletteIndex, effectiveOffset);
-      }
-
       // ── Blit ────────────────────────────────────────────────────
       const posX = (s._posX || 0) + (s.x || 0) + (frame.offsetX || 0);
       const posY = (s._posY || 0) + (s.y || 0) + (frame.offsetY || 0);
@@ -516,19 +544,30 @@ class LuaSpriteExtensions extends BaseLuaExtension {
       const centerX = Number.isFinite(s._centerX) ? s._centerX : frameCenter.centerX;
       const centerY = Number.isFinite(s._centerY) ? s._centerY : frameCenter.centerY;
 
-      gpu.blit(texHandle, {
-        x:      posX,
-        y:      posY,
-        srcX:   frame.x,
-        srcY:   frame.y,
-        srcW:   frame.w,
-        srcH:   frame.h,
-        scaleX: scaleX * (flipX ? -1 : 1),
-        scaleY: scaleY * (flipY ? -1 : 1),
-        rotation,
-        pivotX: centerX / (frame.w || 1),
-        pivotY: centerY / (frame.h || 1),
-        filter: 'nearest',
+      renderQueue.push({
+        z: Number.isFinite(s._z) ? s._z : this._getDefaultZ(),
+        creationOrder: s._creationOrder ?? 0,
+        draw: (targetGpu) => {
+          const paletteIndex = texHandle.paletteIndex || effectiveSlot || 1;
+          if (paletteIndex !== this._activePaletteIndex || effectiveOffset !== this._activePaletteOffset) {
+            this._activatePalette(paletteIndex, effectiveOffset);
+          }
+
+          targetGpu.blit(texHandle, {
+            x:      posX,
+            y:      posY,
+            srcX:   frame.x,
+            srcY:   frame.y,
+            srcW:   frame.w,
+            srcH:   frame.h,
+            scaleX: scaleX * (flipX ? -1 : 1),
+            scaleY: scaleY * (flipY ? -1 : 1),
+            rotation,
+            pivotX: centerX / (frame.w || 1),
+            pivotY: centerY / (frame.h || 1),
+            filter: 'nearest',
+          });
+        },
       });
     }
   }

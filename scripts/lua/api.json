@@ -189,6 +189,24 @@
           "example": "local color = Sprite.GetColor(hero)"
         },
         {
+          "name": "SetZ",
+          "description": "Set sprite depth ordering. Higher z is further away and renders behind lower z.",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "z", "type": "float", "description": "Depth value"}
+          ],
+          "example": "Sprite.SetZ(hero, 50)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get sprite depth ordering value",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "Depth value"},
+          "example": "local z = Sprite.GetZ(hero)"
+        },
+        {
           "name": "SetPaletteSlot",
           "description": "Set which palette slot this sprite uses",
           "parameters": [
@@ -460,6 +478,24 @@
           ],
           "returns": {"type": "int32", "description": "Color value"},
           "example": "local color = Image.GetColor(logo)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set image depth ordering. Higher z is further away and renders behind lower z.",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "z", "type": "float", "description": "Depth value"}
+          ],
+          "example": "Image.SetZ(logo, 50)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get image depth ordering value",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "Depth value"},
+          "example": "local z = Image.GetZ(logo)"
         },
         {
           "name": "SetPaletteSlot",
@@ -736,6 +772,24 @@
           ],
           "returns": {"type": "int32", "description": "Color value"},
           "example": "local color = TextBox.GetColor(title)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set textbox depth ordering. Higher z is further away and renders behind lower z.",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "z", "type": "float", "description": "Depth value"}
+          ],
+          "example": "TextBox.SetZ(title, 50)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get textbox depth ordering value",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Depth value"},
+          "example": "local z = TextBox.GetZ(title)"
         },
         {
           "name": "SetPaletteSlot",
