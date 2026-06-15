@@ -224,9 +224,13 @@ class RwpService {
   }
 
   buildPackageIni(projectName, settings, runtimePkg, retroStudioVersion, options = {}) {
-    const validationError = this.getPackageFieldValidationError(settings);
-    if (validationError) {
-      throw new Error(validationError.message);
+    // Only enforce full publish-level validation when explicitly requested (e.g. publishProject).
+    // Autosave and workspace backup must not fail on incomplete package settings.
+    if (options.validatePackage === true) {
+      const validationError = this.getPackageFieldValidationError(settings);
+      if (validationError) {
+        throw new Error(validationError.message);
+      }
     }
 
     const uniqueId = String(settings.uniqueId || '').trim();
@@ -320,6 +324,7 @@ class RwpService {
       returnBlob: true,
       skipDownload: true,
       shareSource: options.shareSource === true,
+      validatePackage: true,
     });
     const workspacePackage = await this.buildWorkspacePackage(projectName, { projectPackage });
     const formData = new FormData();
@@ -379,7 +384,10 @@ class RwpService {
     // Start at project/Sources
     for (const [name, child] of Object.entries(srcNode.children || {})) {
       const p = `${projectName}/${sourcesRoot}/${name}`;
-      if (child.type === 'file') files.push(p);
+      if (child.type === 'file') {
+        if (name === 'config.json') continue;
+        files.push(p);
+      }
       else walk(child, p);
     }
     return files;

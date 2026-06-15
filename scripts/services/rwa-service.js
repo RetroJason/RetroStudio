@@ -42,10 +42,8 @@ class RwaService {
 
   getAppManifestType(settings) {
     const category = String(settings?.category || '').trim();
-    if (!category) {
-      throw new Error('Package Settings: Category is required for app.ini.');
-    }
-    return category;
+    // Default to 'game' for local playback — category is only required for store publishing.
+    return category || 'game';
   }
 
   categoryOmitsRuntimeIcons(category) {

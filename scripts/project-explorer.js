@@ -3178,15 +3178,10 @@ class ProjectExplorer {
       console.warn('[ProjectExplorer] Template defaults backstop failed during config init:', e);
     }
 
-    // Step 1: Initialize the config manager for this project (will create config if doesn't exist)
+    // Step 1: Initialize the config manager for this project (will create config if doesn't exist).
+    // config.json is private metadata written directly to storage by ProjectConfigManager;
+    // it must NOT be added to the project tree because the build system would try to compile it.
     await window.ProjectConfigManager.initializeForProject(projectName);
-
-    // Add config file to project structure if it doesn't exist there
-    const configPath = `${sourcesRoot}/config.json`;
-    if (!this.doesFileExist(`${projectName}/${configPath}`)) {
-      this.addFileToProjectStructure(projectName, configPath, { type: 'file' });
-      console.log('[ProjectExplorer] Added config file to project structure:', configPath);
-    }
 
     // Step 2: Get the current default palette from config
     const configDefaultPalette = await window.ProjectConfigManager.getDefaultPalette();
@@ -3416,26 +3411,9 @@ class ProjectExplorer {
     } catch (error) {
       console.error('[ProjectExplorer] Error during auto-promotion:', error);
     }
-    
-    // Only ensure config file if it doesn't exist (to prevent race conditions)
-    const focusedProject = this.getFocusedProjectName();
-    if (focusedProject) {
-      const configPath = `${focusedProject}/Sources/config.json`;
-      const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(configPath) : 'Sources/config.json';
-      
-      // Check if config already exists in storage before trying to create it
-      if (window.fileIOService) {
-        try {
-          const existingConfig = await window.fileIOService.loadFile(storagePath);
-          if (!existingConfig) {
-            this.ensureConfigFile(focusedProject);
-          }
-        } catch (e) {
-          // File doesn't exist, create it
-          this.ensureConfigFile(focusedProject);
-        }
-      }
-    }
+    // config.json is managed exclusively by ProjectConfigManager and must not be
+    // added to the project tree here. initializeProjectConfig() already called
+    // ProjectConfigManager.initializeForProject() which writes the file to storage.
   }
 
   // Get all palette files in the current project

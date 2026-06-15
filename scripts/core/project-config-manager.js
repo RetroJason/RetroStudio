@@ -127,9 +127,10 @@ class ProjectConfigManager {
     // Don't auto-assign default palette during config creation
     // Let the ProjectExplorer handle it after files are loaded
     
-    // Save the config file
+    // Save the config file to storage only — do NOT add to project tree.
+    // config.json is private metadata; adding it to the tree causes the build system
+    // to attempt compiling it, which fails because it is not a source asset.
     await this._saveConfigFile();
-    await this._addToProjectStructure();
     
     console.log('[ProjectConfigManager] Created default config:', this.config);
   }

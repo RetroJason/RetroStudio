@@ -306,6 +306,13 @@ class BuildSystem {
       // Process each file path by loading from storage
       for (const filePath of resourceFilePaths) {
         try {
+          if (this.isProjectConfigPath(filePath)) {
+            console.log(`[BuildSystem] Skipping ${filePath} (project config file)`);
+            buildResults.push({ success: true, inputPath: filePath, skipped: true });
+            successCount++;
+            continue;
+          }
+
           // Skip source images and .d2 files that have a companion .texture file
           // (the TextureBuilder will produce the .d2 output from the .texture file)
           const ext = this.getFileExtension(filePath);
@@ -594,7 +601,7 @@ class BuildSystem {
       console.error('[BuildSystem] Available services:', Object.keys(window.serviceContainer?.services || {}));
     }
     
-    const filteredFilePaths = filePaths.filter((p) => !this.isPackageManagedResourcePath(p));
+    const filteredFilePaths = filePaths.filter((p) => !this.isPackageManagedResourcePath(p) && !this.isProjectConfigPath(p));
     const skipped = filePaths.length - filteredFilePaths.length;
     if (skipped > 0) {
       console.log(`[BuildSystem] Skipping ${skipped} package-managed file(s) from build`);
@@ -614,6 +621,18 @@ class BuildSystem {
       ? window.ProjectPaths.getSourcesRootUi()
       : 'Sources';
     return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
+  }
+
+  isProjectConfigPath(filePath) {
+    if (!filePath || typeof filePath !== 'string') return false;
+    const pp = (window.ProjectPaths && typeof window.ProjectPaths.parseProjectPath === 'function')
+      ? window.ProjectPaths.parseProjectPath(filePath)
+      : { rest: filePath };
+    const rest = String(pp.rest || filePath).replace(/\\/g, '/');
+    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    return rest === `${sourcesRoot}/config.json`;
   }
 
   isSourceFontsFolderPath(filePath) {
