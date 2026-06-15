@@ -613,7 +613,11 @@ class BuildSystem {
     const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
       ? window.ProjectPaths.getSourcesRootUi()
       : 'Sources';
-    return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
+    
+    // Exclude Package folder (managed separately) and config.json (project metadata)
+    return rest === `${sourcesRoot}/Package` 
+      || rest.startsWith(`${sourcesRoot}/Package/`)
+      || rest === `${sourcesRoot}/config.json`;
   }
 
   isSourceFontsFolderPath(filePath) {

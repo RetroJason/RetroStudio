@@ -348,6 +348,14 @@ class ProjectConfigManager {
   }
 
   /**
+   * Get the current config as JSON string
+   */
+  async getConfigContent() {
+    await this.ensureLoaded();
+    return JSON.stringify(this.config, null, 2);
+  }
+
+  /**
    * Reset config manager for new project
    */
   reset() {

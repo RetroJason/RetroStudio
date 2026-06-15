@@ -3174,6 +3174,21 @@ class ProjectExplorer {
     // Step 1: Initialize the config manager for this project (will create config if doesn't exist)
     await window.ProjectConfigManager.initializeForProject(projectName);
 
+    // Step 1b: Ensure config file is saved to storage (fixes issue where config.json is added to structure but not storage)
+    try {
+      const fileManager = window.serviceContainer?.get('fileManager');
+      if (fileManager) {
+        const configStoragePath = `${projectName}/${sourcesRoot}/config.json`;
+        const configContent = await window.ProjectConfigManager.getConfigContent();
+        if (configContent) {
+          await fileManager.saveFile(configStoragePath, configContent, { binaryData: false });
+          console.log('[ProjectExplorer] Ensured config file is saved to storage:', configStoragePath);
+        }
+      }
+    } catch (e) {
+      console.warn('[ProjectExplorer] Failed to ensure config file in storage (non-fatal):', e);
+    }
+
     // Add config file to project structure if it doesn't exist there
     const configPath = `${sourcesRoot}/config.json`;
     if (!this.doesFileExist(`${projectName}/${configPath}`)) {
