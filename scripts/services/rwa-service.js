@@ -79,10 +79,50 @@ class RwaService {
     return 'rwa';
   }
 
+  collectBuildOutputPaths(buildResult, buildPrefix) {
+    const paths = [];
+    const addPath = (path) => {
+      if (typeof path !== 'string' || !path.startsWith(buildPrefix)) {
+        return;
+      }
+      if (!paths.includes(path)) {
+        paths.push(path);
+      }
+    };
+
+    if (Array.isArray(buildResult?.summary?.outputFiles)) {
+      for (const output of buildResult.summary.outputFiles) {
+        addPath(output?.path);
+      }
+    }
+
+    if (Array.isArray(buildResult?.results)) {
+      for (const result of buildResult.results) {
+        if (!result || result.success !== true || result.skipped) {
+          continue;
+        }
+
+        addPath(result.outputPath);
+
+        if (Array.isArray(result.outputs)) {
+          for (const outputPath of result.outputs) {
+            addPath(outputPath);
+          }
+        }
+
+        if (Array.isArray(result.additionalOutputPaths)) {
+          for (const outputPath of result.additionalOutputPaths) {
+            addPath(outputPath);
+          }
+        }
+      }
+    }
+
+    return paths;
+  }
+
   makeAppIni(projectName, settings) {
     const s = settings || this.getDefaultPackageSettings(projectName);
-    const shots = Array.isArray(s.screenshots) ? s.screenshots : [];
-    const vids = Array.isArray(s.videos) ? s.videos : [];
     const icons = s.icons || {};
     const manifestType = this.getAppManifestType(s);
     const includeRuntimeIcons = !this.categoryOmitsRuntimeIcons(manifestType);
@@ -99,10 +139,6 @@ class RwaService {
       '[display]',
       'fps = 30',
       'orientation = auto',
-      '',
-      '[media]',
-      `screenshots = ${shots.join(',')}`,
-      `videos = ${vids.join(',')}`,
       ''
     ];
 
@@ -138,12 +174,17 @@ class RwaService {
     const outputName = `${projectName}.${packageKind}`;
 
     const buildPrefix = this.getBuildStoragePrefix();
-    const buildPrefixNoSlash = buildPrefix.replace(/\/$/, '');
-    const records = await this.fileManager.listFiles(buildPrefixNoSlash);
+    let buildPaths = this.collectBuildOutputPaths(buildResult, buildPrefix);
 
-    const buildPaths = (records || [])
-      .map((rec) => rec?.path || rec)
-      .filter((p) => typeof p === 'string' && p.startsWith(buildPrefix));
+    // Backward compatibility: if build metadata is unavailable, fall back to
+    // scanning the build folder.
+    if (!buildPaths.length) {
+      const buildPrefixNoSlash = buildPrefix.replace(/\/$/, '');
+      const records = await this.fileManager.listFiles(buildPrefixNoSlash);
+      buildPaths = (records || [])
+        .map((rec) => rec?.path || rec)
+        .filter((p) => typeof p === 'string' && p.startsWith(buildPrefix));
+    }
 
     if (!buildPaths.length) {
       throw new Error('No build outputs found under build/');
