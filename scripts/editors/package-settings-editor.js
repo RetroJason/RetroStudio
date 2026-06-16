@@ -981,7 +981,7 @@ class PackageSettingsEditor extends EditorBase {
     }
   }
 
-  syncSettingsFromUi() {
+  syncSettingsFromUi(markDirty = true) {
     this.settings.title = this._ui.title.value || '';
     this.settings.author = this._ui.author.value || '';
     this.settings.version = this._ui.version.value || '0.0.1';
@@ -996,7 +996,9 @@ class PackageSettingsEditor extends EditorBase {
     this.settings.minFirmwareVersion = this._ui.minFirmwareVersion.value || '';
     this.settings.sourceRevision = this._ui.sourceRevision.value || '';
     this.settings.buildId = this._ui.buildId.value || '';
-    this.markDirty();
+    if (markDirty) {
+      this.markDirty();
+    }
   }
 
   async openAuthorSearchDialog() {
@@ -1334,7 +1336,8 @@ class PackageSettingsEditor extends EditorBase {
   }
 
   getContent() {
-    this.syncSettingsFromUi();
+    // Save path should snapshot current UI state without re-marking dirty.
+    this.syncSettingsFromUi(false);
     return JSON.stringify(this.settings, null, 2);
   }
 

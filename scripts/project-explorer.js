@@ -287,18 +287,88 @@ class ProjectExplorer {
   async openPackageSettingsForProject(projectName, preferDedicatedTab = true) {
     if (!projectName) return;
 
+    // Ensure the managed package file exists before trying to open it.
+    await this.ensurePackageScaffold(projectName);
+
     const sourcesRoot = this.getPreferredSourcesRootForProject(projectName);
     const packagePath = `${projectName}/${sourcesRoot}/Package/app.package`;
 
+    const getTabManager = () => (
+      window.tabManager ||
+      window.serviceContainer?.get?.('tabManager') ||
+      window.gameEmulator?.tabManager ||
+      window.gameEditor?.tabManager
+    );
+
+    const ensurePackageSettingsEditorLoaded = async () => {
+      if (window.PackageSettingsEditor) return true;
+
+      const existingScript = Array.from(document.querySelectorAll('script[src]')).find((script) =>
+        String(script.src || '').includes('scripts/editors/package-settings-editor.js')
+      );
+
+      if (existingScript) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return !!window.PackageSettingsEditor;
+      }
+
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `scripts/editors/package-settings-editor.js?v=${Date.now()}`;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error('Failed to load package-settings-editor.js'));
+        document.head.appendChild(script);
+      });
+
+      return !!window.PackageSettingsEditor;
+    };
+
+    const closeInvalidPackageTabs = async (tabManager) => {
+      if (!tabManager || typeof tabManager.getAllTabs !== 'function') return;
+
+      const tabs = tabManager.getAllTabs();
+      for (const tab of tabs) {
+        if (!tab || tab.fullPath !== packagePath) continue;
+
+        const isValidPackageEditor = !!(
+          window.PackageSettingsEditor &&
+          tab.viewer &&
+          tab.viewer.constructor === window.PackageSettingsEditor
+        );
+
+        if (!isValidPackageEditor) {
+          if (tab.tabId === 'preview' && typeof tabManager.closeTab === 'function') {
+            await tabManager.closeTab('preview');
+          } else if (tab.tabId && typeof tabManager.closeTab === 'function') {
+            await tabManager.closeTab(tab.tabId);
+          }
+        }
+      }
+    };
+
     const openNow = async () => {
-      const tabManager = window.tabManager || window.gameEmulator?.tabManager;
-      if (!tabManager) return false;
+      const tabManager = getTabManager();
+      if (!tabManager) {
+        console.warn('[ProjectExplorer] TabManager unavailable; cannot open package settings yet.');
+        return false;
+      }
+
+      const loaded = await ensurePackageSettingsEditorLoaded();
+      if (!loaded) {
+        throw new Error('[ProjectExplorer] PackageSettingsEditor failed to load.');
+      }
+
+      await closeInvalidPackageTabs(tabManager);
 
       const componentInfo = this._getComponentForFile(packagePath, true);
+      if (!componentInfo || componentInfo.class !== window.PackageSettingsEditor) {
+        throw new Error('[ProjectExplorer] Package settings component unavailable for app.package.');
+      }
+
       if (preferDedicatedTab) {
-        await tabManager.openInTab(packagePath, componentInfo || null);
+        await tabManager.openInTab(packagePath, componentInfo);
       } else {
-        await tabManager.openInPreview(packagePath, componentInfo || null);
+        await tabManager.openInPreview(packagePath, componentInfo);
       }
       return true;
     };
@@ -2567,7 +2637,12 @@ class ProjectExplorer {
   // Helper method to get appropriate component for a file
   _getComponentForFile(filePath, preferEditor = false) {
     const fileName = (filePath || '').split('/').pop() || (filePath || '').split('\\').pop() || '';
-    if (fileName.toLowerCase() === 'app.package' && window.PackageSettingsEditor) {
+    if (fileName.toLowerCase() === 'app.package') {
+      if (!window.PackageSettingsEditor) {
+        console.error('[ProjectExplorer] PackageSettingsEditor is not loaded; refusing fallback component for app.package.');
+        return null;
+      }
+
       return {
         type: 'editor',
         name: 'package-settings-editor',

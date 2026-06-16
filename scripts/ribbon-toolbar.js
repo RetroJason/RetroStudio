@@ -85,9 +85,10 @@ class RibbonToolbar {
       label = 'Unsaved changes';
       title = projectName + ' has local changes that still need to be saved to Retrowww';
     } else if (indicatorState === 'failed') {
-      label = 'Save failed';
+      const source = String(state?.saveSource || state?.lastSaveSource || '').trim();
+      label = source === 'autosave' ? 'Autosave failed' : 'Save failed';
       title = state?.lastError
-        ? 'Failed to save ' + projectName + ': ' + state.lastError
+        ? 'Failed to save ' + projectName + '\n\n' + state.lastError + '\n\nFix the issue and edit/save again to retry.'
         : 'Failed to save ' + projectName;
     } else if (indicatorState === 'saved') {
       label = state?.lastSavedLabel ? 'Saved ' + state.lastSavedLabel : 'Saved';
