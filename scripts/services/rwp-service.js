@@ -20,6 +20,34 @@ class RwpService {
     return `${this.getSourcesRootUi()}/Package/icons/icon32.png`;
   }
 
+  toCanonicalManagedStoragePath(projectName, rawPath) {
+    const normalizedPath = String(rawPath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!normalizedPath) {
+      throw new Error('Path is required.');
+    }
+
+    if (!window.ProjectPaths) {
+      return normalizedPath;
+    }
+
+    const scopedPath = window.ProjectPaths.scopeToProject
+      ? window.ProjectPaths.scopeToProject(normalizedPath, projectName)
+      : normalizedPath;
+    const normalizedStoragePath = window.ProjectPaths.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(scopedPath)
+      : scopedPath;
+
+    if (window.ProjectPaths.parseProjectPath && window.ProjectPaths.isManagedProjectPath) {
+      const parsed = window.ProjectPaths.parseProjectPath(normalizedStoragePath);
+      const rest = parsed?.rest || normalizedStoragePath;
+      if (parsed?.project && parsed.project !== projectName && window.ProjectPaths.isManagedProjectPath(rest)) {
+        throw new Error(`Managed path belongs to another project: ${rawPath}`);
+      }
+    }
+
+    return normalizedStoragePath;
+  }
+
   getPackageFieldValidationError(settings) {
     const uniqueId = String(settings.uniqueId || '').trim();
     const applicationType = String(settings.category || '').trim();
@@ -243,7 +271,21 @@ class RwpService {
     const buildId = String(settings.buildId || '').trim();
     const authorLabel = String(settings.author || '').trim();
 
-    const screenshots = Array.isArray(settings.screenshots) ? settings.screenshots.filter(Boolean) : [];
+    const toManifestArchivePath = (assetPath) => {
+      const trimmed = String(assetPath || '').trim();
+      if (!trimmed || /^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+      }
+
+      return this.toCanonicalManagedStoragePath(projectName, trimmed);
+    };
+
+    const manifestIconPath = toManifestArchivePath(iconPath);
+    const screenshots = Array.isArray(settings.screenshots)
+      ? settings.screenshots
+        .filter(Boolean)
+        .map((value) => toManifestArchivePath(value))
+      : [];
     const videos = Array.isArray(settings.videos) ? settings.videos.filter(Boolean) : [];
     const externalVideoUrls = videos.filter((value) => /^https?:\/\//i.test(String(value || '').trim()));
 
@@ -271,7 +313,7 @@ class RwpService {
       '[display]',
       `short_description=${shortDescription}`,
       `long_description=${longDescription}`,
-      `icon_path=${iconPath}`,
+      `icon_path=${manifestIconPath}`,
     );
 
     if (authorLabel) lines.push(`author_label=${authorLabel}`);
@@ -400,7 +442,9 @@ class RwpService {
       return false;
     }
 
-    if (manifestFiles.some((file) => file?.path === normalizedAssetPath)) {
+    const canonicalAssetPath = this.toCanonicalManagedStoragePath(projectName, normalizedAssetPath);
+
+    if (manifestFiles.some((file) => file?.path === canonicalAssetPath)) {
       return false;
     }
 
@@ -431,8 +475,8 @@ class RwpService {
       binary = true;
     }
 
-    zip.file(normalizedAssetPath, bytes, { binary: true });
-    manifestFiles.push({ path: normalizedAssetPath, builderId: record.builderId || null, binary: !!binary });
+    zip.file(canonicalAssetPath, bytes, { binary: true });
+    manifestFiles.push({ path: canonicalAssetPath, builderId: record.builderId || null, binary: !!binary });
     return true;
   }
 
@@ -608,50 +652,89 @@ class RwpService {
     explorer.setFocusedProjectName(projectName);
 
     // Persist files
+    const importEntries = [];
+    const seenTargetEntries = new Map();
+
     for (const f of archive.files || []) {
-      try {
-        // Resolve UI paths into this project
-        const relUi = this.stripProjectPrefix(f.path || f.uiPath);
-        const uiPath = `${projectName}/${relUi}`;
+      const key = String(f?.path || f?.uiPath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!key) {
+        throw new Error('RWP manifest contains a file entry without a path.');
+      }
 
-        // Get file bytes from ZIP using the stored path
-        const key = f.path || f.uiPath;
-        const fileEntry = zip.file(key);
-        if (!fileEntry) { console.warn('[RwpService] Entry not found in zip:', key); continue; }
+      const relUi = this.stripProjectPrefix(key);
+      const uiPath = `${projectName}/${relUi}`;
+      const targetStoragePath = this.toCanonicalManagedStoragePath(projectName, uiPath);
 
-        const rawBytes = new Uint8Array(await fileEntry.async('uint8array'));
-        let content;
-        if (f.binary) {
-          content = rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength);
-        } else {
-          content = new TextDecoder().decode(rawBytes);
+      const nextEntry = {
+        key,
+        fileName: uiPath.split('/').pop(),
+        folderPath: uiPath.split('/').slice(0, -1).join('/'),
+        binary: !!f.binary,
+        builderId: f.builderId,
+        targetStoragePath,
+      };
+
+      const existingEntry = seenTargetEntries.get(targetStoragePath);
+      if (existingEntry) {
+        const existingKeyHasProjectPrefix = existingEntry.key.startsWith(`${projectName}/`);
+        const nextKeyHasProjectPrefix = nextEntry.key.startsWith(`${projectName}/`);
+
+        if (existingKeyHasProjectPrefix && !nextKeyHasProjectPrefix) {
+          console.warn('[RwpService] Skipping duplicate manifest entry:', nextEntry.key, '->', targetStoragePath);
+          continue;
         }
 
-        // Create a File-like object to pass to addFileToProject
-        // This will trigger the normal file addition flow including palette conversion
-        const fileName = uiPath.split('/').pop();
-        const folderPath = uiPath.split('/').slice(0, -1).join('/');
-        
-        // Create a synthetic File object with the content
-        const fileBlob = new Blob([content], { 
-          type: f.binary ? 'application/octet-stream' : 'text/plain' 
-        });
-        const syntheticFile = new File([fileBlob], fileName, { 
-          lastModified: Date.now() 
-        });
-        
-        // Add builderId as a property for compatibility
-        syntheticFile.builderId = f.builderId;
-        // Don't set syntheticFile.path - let addFileToProject compute the correct path
-        // This allows palette conversion to work with the new filename
-        syntheticFile.isNewFile = true;
+        if (!existingKeyHasProjectPrefix && nextKeyHasProjectPrefix) {
+          const existingIndex = importEntries.findIndex((entry) => entry.targetStoragePath === targetStoragePath);
+          if (existingIndex >= 0) {
+            importEntries.splice(existingIndex, 1, nextEntry);
+          } else {
+            importEntries.push(nextEntry);
+          }
+          seenTargetEntries.set(targetStoragePath, nextEntry);
+          console.warn('[RwpService] Replacing duplicate manifest entry with project-scoped path:', nextEntry.key, '->', targetStoragePath);
+          continue;
+        }
 
-        // Use the normal addFileToProject flow which handles conversion automatically
-        await explorer.addFileToProject(syntheticFile, folderPath, true, true);
-        
-      } catch (e) {
-        console.warn('[RwpService] Failed to import file entry:', f?.uiPath || f?.path, e);
+        if (existingEntry.key === nextEntry.key) {
+          console.warn('[RwpService] Skipping duplicate manifest entry:', targetStoragePath);
+          continue;
+        }
+
+        throw new Error(`RWP manifest contains conflicting duplicate file entries for ${targetStoragePath}.`);
+
+        continue;
       }
+
+      seenTargetEntries.set(targetStoragePath, nextEntry);
+      importEntries.push(nextEntry);
+    }
+
+    for (const entry of importEntries) {
+      const fileEntry = zip.file(entry.key);
+      if (!fileEntry) {
+        throw new Error(`RWP archive is missing the file entry referenced by manifest: ${entry.key}`);
+      }
+
+      const rawBytes = new Uint8Array(await fileEntry.async('uint8array'));
+      let content;
+      if (entry.binary) {
+        content = rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength);
+      } else {
+        content = new TextDecoder().decode(rawBytes);
+      }
+
+      const fileBlob = new Blob([content], {
+        type: entry.binary ? 'application/octet-stream' : 'text/plain'
+      });
+      const syntheticFile = new File([fileBlob], entry.fileName, {
+        lastModified: Date.now()
+      });
+
+      syntheticFile.builderId = entry.builderId;
+      syntheticFile.isNewFile = true;
+
+      await explorer.addFileToProject(syntheticFile, entry.folderPath, true, true);
     }
 
     // Render the tree first with all files loaded
