@@ -1,0 +1,4841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TMX Map Viewer & Editor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      display: flex;
+      height: 100vh;
+    }
+    
+    .container {
+      display: flex;
+      width: 100%;
+      height: 100%;
+    }
+    
+    .sidebar {
+      width: 280px;
+      background: #252526;
+      border-right: 1px solid #3e3e42;
+      overflow-y: auto;
+      padding: 15px;
+    }
+    
+    .sidebar h3 {
+      margin-top: 15px;
+      margin-bottom: 10px;
+      color: #4ec9b0;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+    
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .toolbar {
+      background: #2d2d30;
+      border-bottom: 1px solid #3e3e42;
+      padding: 10px 15px;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    
+    .toolbar > div {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .layer-tabs {
+      background: #232327;
+      border-bottom: 1px solid #3e3e42;
+      padding: 6px 10px;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .layer-tab {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      overflow: hidden;
+      background: #2a2a2f;
+      flex: 0 0 auto;
+    }
+
+    .layer-tab-btn {
+      border: 0;
+      background: transparent;
+      color: #d4d4d4;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .layer-tab-btn:hover { background: #32323a; }
+    .layer-tab-btn.active { background: #094771; color: #ffffff; }
+    .layer-tab[draggable="true"] .layer-tab-btn { cursor: grab; }
+    .layer-tab[draggable="true"] .layer-tab-btn:active { cursor: grabbing; }
+
+    .layer-tab-eye {
+      border: 0;
+      border-left: 1px solid #3e3e42;
+      border-radius: 0;
+      background: #25252a;
+      color: #d4d4d4;
+      padding: 6px 8px;
+      font-size: 12px;
+      min-width: 34px;
+    }
+
+    .layer-tab-eye:hover { background: #33333a; }
+
+    .layer-tab-select-wrap {
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+      margin-left: 8px;
+    }
+
+    .layer-tab-select {
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      padding: 6px 8px;
+      font-size: 12px;
+      min-width: 220px;
+    }
+
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+    
+    .canvas-area {
+      flex: 1;
+      background: #1e1e1e;
+      position: relative;
+      overflow: auto;
+    }
+
+    .properties-panel {
+      width: 260px;
+      background: #252526;
+      border-left: 1px solid #3e3e42;
+      padding: 12px;
+      overflow-y: auto;
+    }
+
+    .properties-panel h3 {
+      margin-bottom: 10px;
+      color: #4ec9b0;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    .prop-row {
+      margin: 8px 0;
+      padding: 8px;
+      background: #2d2d30;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .prop-key { color: #9a9a9a; }
+    .prop-val { color: #d4d4d4; margin-top: 3px; word-break: break-word; }
+    
+    canvas {
+      image-rendering: pixelated;
+      border: 1px solid #3e3e42;
+      display: block;
+      margin: 10px;
+    }
+    
+    .status-bar {
+      background: #1e1e1e;
+      border-top: 1px solid #3e3e42;
+      padding: 8px 15px;
+      font-size: 12px;
+      display: flex;
+      gap: 20px;
+    }
+    
+    .status-item {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .status-label { color: #858585; }
+    .status-value { color: #4ec9b0; }
+    .status-error { color: #f48771; }
+    
+    button {
+      background: #007acc;
+      border: none;
+      color: white;
+      padding: 6px 12px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    button:hover { background: #005a9e; }
+    button.active { background: #094771; border: 1px solid #007acc; }
+    
+    .tile-btn {
+      width: 36px;
+      height: 36px;
+      border: 1px solid #3e3e42;
+      border-radius: 2px;
+      cursor: pointer;
+      background: #151515;
+      padding: 0;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .tile-btn.selected { border: 2px solid #4ec9b0; }
+    .tile-btn:hover { border-color: #007acc; }
+
+    .tile-btn canvas {
+      width: 100%;
+      height: 100%;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    
+    #tilePalette {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .palette-erase-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tileset-sheet {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    .tileset-sheet-title {
+      display: none;
+    }
+
+    .tileset-sheet-viewport {
+      overflow: auto;
+      border: 1px solid #2a2a2a;
+      background: #111214;
+      max-height: 420px;
+    }
+
+    .tileset-sheet-canvas {
+      display: block;
+      margin: 0 !important;
+      border: 0 !important;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      cursor: crosshair;
+    }
+
+    .tile-anim-zoombar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+      margin-bottom: 6px;
+    }
+    
+    .layer-row {
+      display: flex;
+      gap: 6px;
+      margin: 5px 0;
+    }
+
+    .layer-select-btn {
+      flex: 1;
+      text-align: left;
+    }
+
+    .layer-vis-btn {
+      width: 66px;
+      padding: 6px 8px;
+      background: #3c3c3c;
+    }
+
+    .layer-vis-btn.hidden {
+      background: #5a2d2d;
+    }
+    
+    #tilesetsList > div {
+      padding: 8px;
+      background: #2d2d30;
+      margin: 5px 0;
+      border-radius: 3px;
+      font-size: 11px;
+      border-left: 3px solid #f48771;
+    }
+    
+    #tilesetsList .loaded {
+      border-left-color: #84d984;
+    }
+    
+    input[type="file"] { display: none; }
+    
+    select {
+      background: #3c3c3c;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      padding: 4px 8px;
+      border-radius: 2px;
+      font-size: 12px;
+    }
+
+    #objectPlacementPanel {
+      margin-top: 8px;
+      padding: 10px;
+      background: #2d2d30;
+      border-radius: 4px;
+      font-size: 11px;
+      display: grid;
+      gap: 6px;
+    }
+
+    #objectPlacementPanel label {
+      color: #9a9a9a;
+      font-size: 11px;
+    }
+
+    #objectPlacementPanel input,
+    #objectPlacementPanel select {
+      width: 100%;
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 3px;
+      padding: 5px 6px;
+      font-size: 12px;
+    }
+
+    .panel-hidden {
+      display: none !important;
+    }
+
+    .inline-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .inline-row button {
+      padding: 5px 8px;
+      white-space: nowrap;
+    }
+
+    #tilesetEditingPanel {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+      background: #1e1e1e;
+      display: grid;
+      gap: 8px;
+    }
+
+    #activeTilesetSelect {
+      width: 100%;
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 3px;
+      padding: 6px;
+      font-size: 12px;
+    }
+
+    #tileAnimationPanel {
+      margin-top: 6px;
+      background: #252526;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tile-anim-layout {
+      display: flex;
+      gap: 10px;
+      min-height: 0;
+    }
+
+    .tile-anim-list-col {
+      flex: 0 0 230px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 0;
+    }
+
+    .tile-anim-list {
+      max-height: 320px;
+      overflow-y: auto;
+      background: #2d2d30;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 6px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .tile-anim-item {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #1f1f22;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      padding: 6px;
+      cursor: pointer;
+    }
+
+    .tile-anim-item:hover {
+      border-color: #4a9eff;
+    }
+
+    .tile-anim-item.selected {
+      border-color: #4ec9b0;
+      box-shadow: 0 0 0 1px #4ec9b0 inset;
+    }
+
+    .tile-anim-item-meta {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .tile-anim-item-name {
+      font-size: 12px;
+      color: #d4d4d4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tile-anim-item-detail {
+      font-size: 10px;
+      color: #8b8b8b;
+    }
+
+    .tile-anim-detail-col {
+      flex: 1 1 0;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .tile-anim-strip {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      background: #2d2d30;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 8px;
+      min-height: 86px;
+      align-items: center;
+    }
+
+    .tile-anim-strip-cell {
+      flex: 0 0 auto;
+      width: 72px;
+      height: 72px;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      background: #151515;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .tile-anim-strip-cell.selected {
+      border-color: #4ec9b0;
+      box-shadow: 0 0 0 1px #4ec9b0 inset;
+    }
+
+    .tile-anim-strip-cell canvas,
+    .tile-anim-item canvas {
+      width: 56px;
+      height: 56px;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 1px solid #2a2a2a;
+      background: #101010;
+    }
+
+    .tile-anim-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: #aaa;
+    }
+
+    .tile-anim-controls input {
+      width: 90px;
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 3px;
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+
+    #tileAnimationPanel h4 {
+      margin: 0;
+      color: #9cdcfe;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .sprite-anim-body {
+      display: flex;
+      gap: 12px;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .sprite-anim-preview-col {
+      flex: 1 1 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .sprite-anim-props-col {
+      flex: 0 0 300px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 240px;
+    }
+
+    .sprite-anim-props {
+      background: #2d2d30;
+      border: 1px solid #3c3c3c;
+      border-radius: 4px;
+      padding: 8px 10px;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    .sprite-anim-canvas-wrap {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      width: fit-content;
+      max-width: 100%;
+      border: 1px solid #555;
+      border-radius: 2px;
+      background: #1a1a1a;
+      padding: 4px;
+      overflow: auto;
+    }
+
+    .sprite-anim-canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+      width: auto;
+      height: auto;
+      background: #101010;
+    }
+
+    .sprite-anim-frame-label {
+      font-size: 11px;
+      color: #888;
+      margin-left: auto;
+    }
+
+    .anim-frame-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .anim-frame-row input {
+      width: 100%;
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 3px;
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+
+    .anim-frame-row button {
+      padding: 4px 8px;
+      background: #5a2d2d;
+    }
+
+    .anim-frame-row button:hover {
+      background: #723838;
+    }
+
+    .anim-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .anim-actions button {
+      background: #0e639c;
+    }
+
+    .anim-actions button:hover {
+      background: #1177bb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="sidebar">
+      <h3>📂 File</h3>
+      <button onclick="document.getElementById('fileInput').click()">Open TMX...</button>
+      <button onclick="exportMap()">Export TMX</button>
+      <input type="file" id="fileInput" accept=".tmx" onchange="loadTMXFile(event)">
+      
+      <div style="margin-top: 15px; padding: 10px; background: #2d2d30; border-radius: 3px; font-size: 11px;">
+        <div style="color: #858585;">Current File</div>
+        <div id="currentFile" style="color: #4ec9b0; word-break: break-all;">—</div>
+      </div>
+      
+      <div id="tileEditingPanel">
+        <h3>🎨 Tools</h3>
+        <button id="toolPaint" class="active" onclick="selectTool('paint')">Paint</button>
+        <button id="toolFill" onclick="selectTool('fill')">Fill</button>
+        <button id="toolErase" onclick="selectTool('erase')">Erase</button>
+        <button id="toolUndo" onclick="undoEdit()">Undo</button>
+        <div style="margin-top: 10px; font-size: 11px; color: #b9b9b9;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input id="showGridToggle" type="checkbox" checked onchange="toggleGrid(this.checked)">
+            <span>Show Grid</span>
+          </label>
+          <div style="margin-top: 6px; color: #858585; line-height: 1.35;">
+            Shift+Left drag: pan<br>
+            Right drag: select brush
+          </div>
+        </div>
+      </div>
+
+      <h3>📐 Layers</h3>
+      <div style="font-size: 11px; color: #858585; margin-bottom: 10px;">Layer tabs moved to top bar</div>
+
+      <div id="objectEditingPanel" class="panel-hidden">
+        <h3>📦 Object Placement</h3>
+        <div id="objectPlacementPanel">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input id="objectSnapToGrid" type="checkbox">
+            <span>Snap To Grid</span>
+          </label>
+
+          <label for="objectCollectionSelect">Collection</label>
+          <div class="inline-row">
+            <select id="objectCollectionSelect"></select>
+            <button id="addObjectCollectionBtn" type="button">Add</button>
+          </div>
+          <input id="newObjectCollectionInput" type="text" placeholder="new collection name">
+
+          <label for="objectTypeInput">Type</label>
+          <input id="objectTypeInput" type="text" placeholder="trigger, npc, pickup...">
+
+          <label for="objectNameInput">Name (optional)</label>
+          <input id="objectNameInput" type="text" placeholder="auto-name if blank">
+
+          <div id="objectPlacementHint" style="color:#858585; margin-top: 4px; line-height:1.35;">
+            Click to place a point. Drag more than one tile to place an area.
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="main">
+      <div class="toolbar">
+        <div>
+          <label>Map:</label>
+          <select id="mapSelector" onchange="loadExampleMap(this.value)">
+            <option value="">Choose example...</option>
+            <optgroup label="Demo Maps">
+              <option value="sample-map.tmx">Sample (12×10)</option>
+              <option value="examples-outdoor.tmx">Outdoor (20×15)</option>
+              <option value="examples-dungeon.tmx">Dungeon (16×12)</option>
+              <option value="example-forest.tmx">Forest (32×24)</option>
+              <option value="example-cave.tmx">Cave (28×20)</option>
+              <option value="example-village.tmx">Village (40×30)</option>
+            </optgroup>
+            <optgroup label="Real Tiled Files">
+              <option value="tiled-orthogonal-outside.tmx">Tiled: Orthogonal Outside (45×31)</option>
+              <option value="tiled-desert.tmx">Tiled: Desert (40×40)</option>
+              <option value="tiled-sewers.tmx">Tiled: Sewers (50×50)</option>
+              <option value="tiled-perspective-walls.tmx">Tiled: Perspective Walls (32×32, 3 layers)</option>
+              <option value="tiled-isometric_grass_and_water.tmx">Tiled: Isometric Grass & Water (64×32)</option>
+              <option value="tiled-hexagonal-mini.tmx">Tiled: Hexagonal Mini (14×12)</option>
+              <option value="tiled-test_hexagonal_tile_60x60x30.tmx">Tiled: Hexagonal 60×60 (30×30)</option>
+              <option value="test-isometric-multilayer.tmx">Test: Isometric Multi-Layer (16×16, 3 layers)</option>
+            </optgroup>
+          </select>
+        </div>
+        <button onclick="fitView()">Fit View</button>
+        <div style="margin-left: auto;">
+          <span id="zoomLevel">100%</span>
+        </div>
+      </div>
+
+      <div class="layer-tabs" id="layerTabs"></div>
+
+      <div id="tilesetEditingPanel" class="panel-hidden">
+        <div id="tilePalette"></div>
+
+        <h3>🎞 Tile Animator</h3>
+        <div id="tileAnimationPanel">
+          <h4 id="tileAnimationTarget">Select tiles, then create animation</h4>
+          <div class="tile-anim-layout">
+            <div class="tile-anim-list-col">
+              <div id="tileAnimList" class="tile-anim-list"></div>
+              <div class="anim-actions">
+                <button type="button" onclick="createTileAnimationFromSelection()">New From Selection</button>
+                <button type="button" onclick="deleteTileAnimation()">Delete Animation</button>
+              </div>
+            </div>
+            <div class="tile-anim-detail-col">
+              <div id="tileAnimStrip" class="tile-anim-strip"></div>
+              <div class="tile-anim-controls">
+                <label for="tileAnimDurationInput">Frame Duration (ms)</label>
+                <input id="tileAnimDurationInput" type="number" min="1" value="100" onchange="updateActiveAnimationFrameDuration(this.value)">
+                <span id="tileAnimFrameLabel" class="sprite-anim-frame-label">Frame -</span>
+              </div>
+              <div class="tile-anim-zoombar">
+                <div style="margin-left: auto;">
+                  <span id="tileAnimZoomLevel">100%</span>
+                </div>
+              </div>
+              <div id="tileAnimPreviewHost" class="sprite-anim-canvas-wrap" onwheel="handleTileAnimPreviewZoom(event)">
+                <canvas id="tileAnimPreviewCanvas" class="sprite-anim-canvas" width="160" height="160"></canvas>
+              </div>
+              <div class="anim-actions">
+                <button type="button" onclick="addTileAnimationFrame()">Add Selected As Frame</button>
+                <button type="button" onclick="saveTileAnimation()">Save All Animations</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="workspace">
+        <div class="canvas-area" id="canvasArea" onwheel="handleZoom(event)">
+          <canvas id="mapCanvas"></canvas>
+        </div>
+        <div class="properties-panel" id="propertiesPanel">
+          <h3>🧰 Properties</h3>
+          <div class="prop-row"><div class="prop-key">Layer</div><div class="prop-val" id="propLayer">—</div></div>
+          <div class="prop-row"><div class="prop-key">Layer Visible</div><div class="prop-val" id="propLayerVisible">—</div></div>
+          <div class="prop-row"><div class="prop-key">Selected</div><div class="prop-val" id="propSelected">—</div></div>
+          <div class="prop-row"><div class="prop-key">Cursor Tile</div><div class="prop-val" id="propCursor">—</div></div>
+          <div class="prop-row"><div class="prop-key">Map Orientation</div><div class="prop-val" id="propOrientation">—</div></div>
+          <div class="prop-row"><div class="prop-key">Zoom</div><div class="prop-val" id="propZoom">—</div></div>
+        </div>
+      </div>
+      
+      <div class="status-bar">
+        <div class="status-item">
+          <span class="status-label">Map Size</span>
+          <span class="status-value" id="mapSize">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Cursor</span>
+          <span class="status-value" id="cursorPos">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Selected Tile</span>
+          <span class="status-value" id="selectedTileDisplay">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Current Layer</span>
+          <span class="status-value" id="currentLayerDisplay">—</span>
+        </div>
+        <div class="status-item" style="margin-left: auto;">
+          <span id="statusMessage">Ready. Load a TMX file to begin.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+  <script src="tilemap-importer.js"></script>
+  <script>
+    // State
+    let mapData = null;
+    let currentLayer = 0;
+    let selectedTile = 1;
+    let currentTool = 'paint';
+    let zoom = 1;
+    let undoStack = [];
+    let mapBaseUrl = new URL(window.location.href);
+    let isPointerDown = false;
+    let offsetX = 0, offsetY = 0; // canvas-space offset for isometric/hex
+    let hoverTile = null;         // {x,y} tile under mouse for snap preview
+    let showGrid = true;
+    let isPanning = false;
+    let panLast = null;
+    let isSelectingBrush = false;
+    let brushSelectStart = null;
+    let brushSelectEnd = null;
+    let brushPattern = null;      // {width,height,data[]}
+    let tilesetSelectionFirstGid = null;
+    let tilesetSelectionLocalIds = [];
+    let tileAnimationDraft = [];
+    let tileAnimationCatalog = [];
+    let tileAnimationCatalogTilesetGid = null;
+    let activeTileAnimationId = null;
+    let activeTileAnimationFrameIndex = 0;
+    let tileAnimPreviewZoom = 1;
+    let activeUndoAction = null;  // {layerIndex,before,changed}
+    let soloLayerIndex = null;
+    let soloLayerTimeout = null;
+    let animationLoopHandle = null;
+    let lastCursorTile = null;
+    let activeTabType = 'tile'; // 'tile' | 'tileset' | 'objects'
+    let lastLayerButtonKey = null;
+    let lastLayerButtonAt = 0;
+    let draggingLayerIndex = null;
+    let isPlacingObject = false;
+    let isPlacingObjectArea = false;
+    let objectPlaceStartTile = null;
+    let objectPlaceEndTile = null;
+    let objectPlaceStartPos = null;
+    let objectPlaceEndPos = null;
+    const MAX_UNDO_STEPS = 80;
+    const LAYER_DOUBLE_PRESS_MS = 1000;
+    const ZOOM_MIN = 0.25;
+    const ZOOM_MAX = 6;
+    const WHEEL_ZOOM_SENSITIVITY = 0.0015;
+    const MAX_WHEEL_DELTA = 600;
+    const BASE_CANVAS_MARGIN = 10;
+    let extraCanvasLeft = 0;
+    let extraCanvasTop = 0;
+    
+    const canvas = document.getElementById('mapCanvas');
+    const canvasArea = document.getElementById('canvasArea');
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.id = 'overlayCanvas';
+    overlayCanvas.style.position = 'absolute';
+    overlayCanvas.style.left = '0';
+    overlayCanvas.style.top = '0';
+    overlayCanvas.style.pointerEvents = 'none';
+    overlayCanvas.style.zIndex = '2';
+    canvas.style.position = 'relative';
+    canvas.style.zIndex = '1';
+    canvas.parentElement.appendChild(overlayCanvas);
+
+    const ctx = overlayCanvas.getContext('2d');
+    let gl = null;
+    let glState = null;
+    let sceneSnapshotCanvas = document.createElement('canvas');
+    let sceneSnapshotCtx = sceneSnapshotCanvas.getContext('2d');
+    let sceneTexture = null;
+    let activeAnimatedTiles = [];
+    let activeTilesetFirstGid = null;
+    let tileAnimPreviewHandle = null;
+    
+    const tileColors = {
+      0: '#000000', 1: '#8b6f47', 2: '#5a5a5a', 3: '#8b7355',
+      4: '#90ee90', 5: '#228b22', 6: '#1a6b1a', 7: '#00aaff',
+      8: '#0088cc', 9: '#ffbb00', 10: '#dddddd'
+    };
+    
+    // Tileset loading
+    window.loadedTilesets = {};
+
+    const tiledExampleBaseUrl = 'https://raw.githubusercontent.com/mapeditor/tiled/master/';
+    const tiledExampleMaps = [
+      { label: 'Desert (examples/desert.tmx)', value: `${tiledExampleBaseUrl}examples/desert.tmx` },
+      { label: 'Forest (examples/forest/forest.tmx)', value: `${tiledExampleBaseUrl}examples/forest/forest.tmx` },
+      { label: 'Orthogonal Outside (examples/orthogonal-outside.tmx)', value: `${tiledExampleBaseUrl}examples/orthogonal-outside.tmx` },
+      { label: 'Sewers (examples/sewers.tmx)', value: `${tiledExampleBaseUrl}examples/sewers.tmx` },
+      { label: 'Perspective Walls (examples/perspective_walls.tmx)', value: `${tiledExampleBaseUrl}examples/perspective_walls.tmx` },
+      { label: 'Isometric Grass & Water (examples/isometric_grass_and_water.tmx)', value: `${tiledExampleBaseUrl}examples/isometric_grass_and_water.tmx` },
+      { label: 'Isometric Staggered Grass & Water (examples/isometric_staggered_grass_and_water.tmx)', value: `${tiledExampleBaseUrl}examples/isometric_staggered_grass_and_water.tmx` },
+      { label: 'Hexagonal Mini (examples/hexagonal-mini.tmx)', value: `${tiledExampleBaseUrl}examples/hexagonal-mini.tmx` },
+      { label: 'Hexagonal 60x60x30 (examples/test_hexagonal_tile_60x60x30.tmx)', value: `${tiledExampleBaseUrl}examples/test_hexagonal_tile_60x60x30.tmx` },
+      { label: 'RPG Island (examples/rpg/island.tmx)', value: `${tiledExampleBaseUrl}examples/rpg/island.tmx` },
+      { label: 'Sticker Knight Sandbox (examples/sticker-knight/map/sandbox.tmx)', value: `${tiledExampleBaseUrl}examples/sticker-knight/map/sandbox.tmx` },
+      { label: 'Sticker Knight Sandbox 2 (examples/sticker-knight/map/sandbox2.tmx)', value: `${tiledExampleBaseUrl}examples/sticker-knight/map/sandbox2.tmx` }
+    ];
+
+    function populateExampleSelector() {
+      const selector = document.getElementById('mapSelector');
+      if (!selector || selector.dataset.githubExamplesAdded === '1') return;
+
+      const group = document.createElement('optgroup');
+      group.label = 'Tiled Examples (GitHub)';
+
+      tiledExampleMaps.forEach((example) => {
+        const option = document.createElement('option');
+        option.value = example.value;
+        option.textContent = example.label;
+        group.appendChild(option);
+      });
+
+      selector.appendChild(group);
+      selector.dataset.githubExamplesAdded = '1';
+    }
+
+    const TMX_FLIP_H = 0x80000000;
+    const TMX_FLIP_V = 0x40000000;
+    const TMX_FLIP_D = 0x20000000;
+
+    function decodeGid(rawGid) {
+      const gid = (Number(rawGid) >>> 0);
+      return {
+        gid: gid & ~(TMX_FLIP_H | TMX_FLIP_V | TMX_FLIP_D),
+        flipH: (gid & TMX_FLIP_H) !== 0,
+        flipV: (gid & TMX_FLIP_V) !== 0,
+        flipD: (gid & TMX_FLIP_D) !== 0
+      };
+    }
+
+    function encodeGid(baseGid, flags) {
+      let gid = (Number(baseGid) >>> 0);
+      gid &= ~(TMX_FLIP_H | TMX_FLIP_V | TMX_FLIP_D);
+      if (flags?.flipH) gid |= TMX_FLIP_H;
+      if (flags?.flipV) gid |= TMX_FLIP_V;
+      if (flags?.flipD) gid |= TMX_FLIP_D;
+      return gid >>> 0;
+    }
+
+    function applyTileFlagsToUnitPoint(x, y, flags) {
+      let u = x;
+      let v = y;
+      if (flags?.flipD) {
+        const t = u;
+        u = v;
+        v = t;
+      }
+      if (flags?.flipH) u = 1 - u;
+      if (flags?.flipV) v = 1 - v;
+      return { u, v };
+    }
+
+    function findFlagsForTransform(transformFn) {
+      const candidates = [
+        { flipH: false, flipV: false, flipD: false },
+        { flipH: true,  flipV: false, flipD: false },
+        { flipH: false, flipV: true,  flipD: false },
+        { flipH: true,  flipV: true,  flipD: false },
+        { flipH: false, flipV: false, flipD: true  },
+        { flipH: true,  flipV: false, flipD: true  },
+        { flipH: false, flipV: true,  flipD: true  },
+        { flipH: true,  flipV: true,  flipD: true  }
+      ];
+      const pts = [[0, 0], [1, 0], [0, 1], [1, 1]];
+      const eps = 0.0001;
+
+      for (const flags of candidates) {
+        let ok = true;
+        for (const pt of pts) {
+          const expected = transformFn(pt[0], pt[1]);
+          const got = applyTileFlagsToUnitPoint(pt[0], pt[1], flags);
+          if (Math.abs(expected.u - got.u) > eps || Math.abs(expected.v - got.v) > eps) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return flags;
+      }
+
+      return { flipH: false, flipV: false, flipD: false };
+    }
+
+    function transformGidByOperation(rawGid, op) {
+      const decoded = decodeGid(rawGid);
+      if (decoded.gid <= 0) return rawGid;
+
+      const baseFlags = {
+        flipH: decoded.flipH,
+        flipV: decoded.flipV,
+        flipD: decoded.flipD
+      };
+
+      const opFn = (x, y) => {
+        if (op === 'rotate90') return { u: 1 - y, v: x };
+        if (op === 'flipX') return { u: 1 - x, v: y };
+        if (op === 'flipY') return { u: x, v: 1 - y };
+        return { u: x, v: y };
+      };
+
+      const composed = (x, y) => {
+        const t = applyTileFlagsToUnitPoint(x, y, baseFlags);
+        return opFn(t.u, t.v);
+      };
+
+      const outFlags = findFlagsForTransform(composed);
+      return encodeGid(decoded.gid, outFlags);
+    }
+
+    function transformBrushPattern(pattern, op) {
+      if (!pattern || pattern.width <= 0 || pattern.height <= 0 || !Array.isArray(pattern.data)) {
+        return pattern;
+      }
+
+      const oldW = pattern.width;
+      const oldH = pattern.height;
+      const rotate = op === 'rotate90';
+      const nextW = rotate ? oldH : oldW;
+      const nextH = rotate ? oldW : oldH;
+      const nextData = new Array(nextW * nextH).fill(0);
+
+      for (let y = 0; y < oldH; y++) {
+        for (let x = 0; x < oldW; x++) {
+          const src = pattern.data[y * oldW + x] || 0;
+          const transformed = src > 0 ? transformGidByOperation(src, op) : 0;
+
+          let nx = x;
+          let ny = y;
+          if (rotate) {
+            nx = oldH - 1 - y;
+            ny = x;
+          } else if (op === 'flipX') {
+            nx = oldW - 1 - x;
+          } else if (op === 'flipY') {
+            ny = oldH - 1 - y;
+          }
+
+          nextData[ny * nextW + nx] = transformed;
+        }
+      }
+
+      return {
+        width: nextW,
+        height: nextH,
+        data: nextData
+      };
+    }
+
+    function transformActiveBrush(op) {
+      if (brushPattern && brushPattern.width > 0 && brushPattern.height > 0) {
+        brushPattern = transformBrushPattern(brushPattern, op);
+        updateStatus(op === 'rotate90' ? 'Rotated brush 90 degrees.' : `Mirrored brush ${op === 'flipX' ? 'horizontally' : 'vertically'}.`);
+        updateUI();
+        renderMap();
+        return;
+      }
+
+      if (selectedTile > 0) {
+        selectedTile = transformGidByOperation(selectedTile, op);
+        updateStatus(op === 'rotate90' ? 'Rotated selected tile 90 degrees.' : `Mirrored selected tile ${op === 'flipX' ? 'horizontally' : 'vertically'}.`);
+        updateUI();
+        renderMap();
+      }
+    }
+
+    function applyCanvasMargins() {
+      canvas.style.marginLeft = `${BASE_CANVAS_MARGIN + extraCanvasLeft}px`;
+      canvas.style.marginTop = `${BASE_CANVAS_MARGIN + extraCanvasTop}px`;
+      overlayCanvas.style.marginLeft = `${BASE_CANVAS_MARGIN + extraCanvasLeft}px`;
+      overlayCanvas.style.marginTop = `${BASE_CANVAS_MARGIN + extraCanvasTop}px`;
+    }
+
+    function normalizeLayerData() {
+      if (!mapData || !Array.isArray(mapData.layers)) return;
+      mapData.layers.forEach((layer) => {
+        if (!layer) return;
+        if (!(layer.data instanceof Uint32Array)) {
+          layer.data = Uint32Array.from(layer.data || []);
+        }
+      });
+    }
+
+    function clearTilesetSelectionState() {
+      tilesetSelectionFirstGid = null;
+      tilesetSelectionLocalIds = [];
+    }
+
+    function getTilesetSelectionSet(firstGid) {
+      if (tilesetSelectionFirstGid !== firstGid) return new Set();
+      return new Set(tilesetSelectionLocalIds);
+    }
+
+    function setTilesetSelectionSet(firstGid, localIdsSet) {
+      tilesetSelectionFirstGid = firstGid;
+      tilesetSelectionLocalIds = Array.from(localIdsSet)
+        .filter((id) => Number.isInteger(id) && id >= 0)
+        .sort((a, b) => a - b);
+    }
+
+    function buildBrushPatternFromLocalIds(tileset, localIdsSet) {
+      if (!tileset || !localIdsSet || localIdsSet.size === 0) return null;
+      const metrics = getTilesetMetrics(tileset, window.loadedTilesets[tileset.firstGid]?.image);
+      const cols = Math.max(1, metrics.columns || 1);
+      let minCol = Number.POSITIVE_INFINITY;
+      let minRow = Number.POSITIVE_INFINITY;
+      let maxCol = Number.NEGATIVE_INFINITY;
+      let maxRow = Number.NEGATIVE_INFINITY;
+
+      localIdsSet.forEach((localId) => {
+        const col = localId % cols;
+        const row = Math.floor(localId / cols);
+        if (col < minCol) minCol = col;
+        if (row < minRow) minRow = row;
+        if (col > maxCol) maxCol = col;
+        if (row > maxRow) maxRow = row;
+      });
+
+      if (!Number.isFinite(minCol) || !Number.isFinite(minRow) || !Number.isFinite(maxCol) || !Number.isFinite(maxRow)) {
+        return null;
+      }
+
+      const width = (maxCol - minCol) + 1;
+      const height = (maxRow - minRow) + 1;
+      const data = new Array(width * height).fill(0);
+
+      localIdsSet.forEach((localId) => {
+        const col = localId % cols;
+        const row = Math.floor(localId / cols);
+        const dx = col - minCol;
+        const dy = row - minRow;
+        data[dy * width + dx] = tileset.firstGid + localId;
+      });
+
+      return { width, height, data };
+    }
+
+    function getActiveTileAnimation() {
+      if (!activeTileAnimationId) return null;
+      return tileAnimationCatalog.find((a) => a.id === activeTileAnimationId) || null;
+    }
+
+    function getSelectionBlockForTileset(tileset) {
+      if (!tileset) return null;
+      const metrics = getTilesetMetrics(tileset, window.loadedTilesets[tileset.firstGid]?.image);
+      const maxLocal = Math.max(0, (metrics.tileCount || 1) - 1);
+
+      if (brushPattern && brushPattern.width > 0 && brushPattern.height > 0) {
+        const width = brushPattern.width;
+        const height = brushPattern.height;
+        const data = new Array(width * height).fill(0);
+        const targetCells = new Array(width * height).fill(-1);
+        let hasAny = false;
+
+        for (let i = 0; i < brushPattern.data.length; i++) {
+          const gid = brushPattern.data[i] || 0;
+          if (gid <= 0) continue;
+          const resolved = resolveTilesetForGid(gid);
+          if (!resolved || !resolved.tileset || resolved.tileset.firstGid !== tileset.firstGid) continue;
+          const localId = Math.max(0, Math.min(maxLocal, resolved.localTileId));
+          data[i] = tileset.firstGid + localId;
+          targetCells[i] = localId;
+          hasAny = true;
+        }
+
+        if (hasAny) {
+          return { width, height, data, targetCells };
+        }
+      }
+
+      const selectedResolved = resolveTilesetForGid(selectedTile);
+      if (selectedResolved && selectedResolved.tileset && selectedResolved.tileset.firstGid === tileset.firstGid) {
+        const localId = Math.max(0, Math.min(maxLocal, selectedResolved.localTileId));
+        return {
+          width: 1,
+          height: 1,
+          data: [tileset.firstGid + localId],
+          targetCells: [localId]
+        };
+      }
+
+      return {
+        width: 1,
+        height: 1,
+        data: [tileset.firstGid],
+        targetCells: [0]
+      };
+    }
+
+    function makeAnimationThumb(tileset, frame) {
+      const thumb = document.createElement('canvas');
+      thumb.width = 36;
+      thumb.height = 36;
+      const tctx = thumb.getContext('2d');
+      tctx.imageSmoothingEnabled = false;
+      tctx.fillStyle = '#111';
+      tctx.fillRect(0, 0, 36, 36);
+
+      const blockW = Math.max(1, frame && frame.width ? frame.width : 1);
+      const blockH = Math.max(1, frame && frame.height ? frame.height : 1);
+      const px = Math.max(2, Math.floor(32 / Math.max(blockW, blockH)));
+      const drawW = blockW * px;
+      const drawH = blockH * px;
+      const baseX = Math.floor((thumb.width - drawW) / 2);
+      const baseY = Math.floor((thumb.height - drawH) / 2);
+
+      if (frame && Array.isArray(frame.data)) {
+        for (let y = 0; y < blockH; y++) {
+          for (let x = 0; x < blockW; x++) {
+            const gid = frame.data[y * blockW + x] || 0;
+            if (gid <= 0) continue;
+            const resolved = resolveTilesetForGid(gid);
+            const loaded = resolved ? window.loadedTilesets[resolved.tileset.firstGid] : null;
+            if (!resolved || !loaded || !loaded.image) continue;
+            const metrics = getTilesetMetrics(resolved.tileset, loaded.image);
+            const col = resolved.localTileId % metrics.columns;
+            const row = Math.floor(resolved.localTileId / metrics.columns);
+            const sx = metrics.margin + (col * (resolved.tileset.tileWidth + metrics.spacing));
+            const sy = metrics.margin + (row * (resolved.tileset.tileHeight + metrics.spacing));
+            tctx.drawImage(
+              loaded.image,
+              sx,
+              sy,
+              resolved.tileset.tileWidth,
+              resolved.tileset.tileHeight,
+              baseX + (x * px),
+              baseY + (y * px),
+              px,
+              px
+            );
+          }
+        }
+      }
+      return thumb;
+    }
+
+    function normalizeEditorAnimationMeta(meta) {
+      if (!meta) return null;
+      const groupId = String(meta.groupId || '').trim();
+      const width = parseInt(meta.width, 10);
+      const height = parseInt(meta.height, 10);
+      const cellIndex = parseInt(meta.cellIndex, 10);
+      if (!groupId || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return null;
+      if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= width * height) return null;
+      const name = String(meta.name || '').trim();
+      return {
+        groupId,
+        width,
+        height,
+        cellIndex,
+        name: name || null
+      };
+    }
+
+    function rebuildTileAnimationCatalogForActiveTileset() {
+      const tileset = getActiveTileset();
+      tileAnimationCatalog = [];
+      activeTileAnimationId = null;
+      activeTileAnimationFrameIndex = 0;
+      tileAnimPreviewZoom = 1;
+      tileAnimationCatalogTilesetGid = tileset ? tileset.firstGid : null;
+      updateTileAnimZoomLevelText();
+      if (!tileset || !tileset.tiles) return;
+
+      const localIds = Object.keys(tileset.tiles)
+        .map((k) => parseInt(k, 10))
+        .filter((id) => Number.isInteger(id) && id >= 0)
+        .sort((a, b) => a - b);
+
+      const metaGroups = new Map();
+      const consumedTiles = new Set();
+
+      localIds.forEach((localId) => {
+        const tileInfo = tileset.tiles[localId];
+        if (!tileInfo || !Array.isArray(tileInfo.animation) || tileInfo.animation.length === 0) return;
+        const meta = normalizeEditorAnimationMeta(tileInfo.editorAnimationMeta);
+        if (!meta) return;
+
+        let group = metaGroups.get(meta.groupId);
+        if (!group) {
+          group = {
+            groupId: meta.groupId,
+            name: meta.name || `Anim ${meta.groupId}`,
+            width: meta.width,
+            height: meta.height,
+            cells: new Map()
+          };
+          metaGroups.set(meta.groupId, group);
+        }
+
+        if (group.width !== meta.width || group.height !== meta.height) return;
+        group.cells.set(meta.cellIndex, localId);
+        consumedTiles.add(localId);
+      });
+
+      metaGroups.forEach((group) => {
+        const cellCount = Math.max(1, group.width * group.height);
+        const targetCells = new Array(cellCount).fill(-1);
+        group.cells.forEach((localId, cellIdx) => {
+          if (cellIdx >= 0 && cellIdx < cellCount) targetCells[cellIdx] = localId;
+        });
+
+        const anchorLocalId = targetCells.find((id) => Number.isInteger(id) && id >= 0);
+        const anchorTile = Number.isInteger(anchorLocalId) ? tileset.tiles[anchorLocalId] : null;
+        if (!anchorTile || !Array.isArray(anchorTile.animation) || anchorTile.animation.length === 0) return;
+
+        const frameCount = anchorTile.animation.length;
+        const frames = [];
+        for (let frameIdx = 0; frameIdx < frameCount; frameIdx++) {
+          const data = new Array(cellCount).fill(0);
+          let frameDuration = Math.max(1, parseInt(anchorTile.animation[frameIdx]?.duration, 10) || 100);
+          let hasAny = false;
+
+          for (let cellIdx = 0; cellIdx < cellCount; cellIdx++) {
+            const sourceLocalId = targetCells[cellIdx];
+            if (!Number.isInteger(sourceLocalId) || sourceLocalId < 0) continue;
+            const sourceTile = tileset.tiles[sourceLocalId];
+            if (!sourceTile || !Array.isArray(sourceTile.animation) || !sourceTile.animation[frameIdx]) continue;
+            const frame = sourceTile.animation[frameIdx];
+            const frameLocalId = Math.max(0, parseInt(frame.tileId, 10) || 0);
+            data[cellIdx] = tileset.firstGid + frameLocalId;
+            frameDuration = Math.max(1, parseInt(frame.duration, 10) || frameDuration);
+            hasAny = true;
+          }
+
+          if (hasAny) {
+            frames.push({
+              width: group.width,
+              height: group.height,
+              data,
+              duration: frameDuration
+            });
+          }
+        }
+
+        if (frames.length === 0) return;
+
+        tileAnimationCatalog.push({
+          id: `group-${group.groupId}`,
+          name: group.name || `Anim ${group.groupId}`,
+          targetCells,
+          width: group.width,
+          height: group.height,
+          frames,
+          existing: true,
+          metaGroupId: group.groupId
+        });
+      });
+
+      const loaded = window.loadedTilesets && window.loadedTilesets[tileset.firstGid];
+      const metrics = getTilesetMetrics(tileset, loaded?.image);
+      const cols = Math.max(1, metrics.columns || 1);
+
+      const getAnimSignature = (localId, frames) => {
+        if (!Array.isArray(frames) || frames.length <= 1) return null;
+        const srcLocalId = Math.max(0, parseInt(localId, 10) || 0);
+        return frames.map((f) => {
+          const tileId = Math.max(0, parseInt(f.tileId, 10) || 0);
+          const duration = Math.max(1, parseInt(f.duration, 10) || 1);
+          return `${tileId - srcLocalId}:${duration}`;
+        }).join('|');
+      };
+
+      const signatureBuckets = new Map();
+      localIds.forEach((localId) => {
+        if (consumedTiles.has(localId)) return;
+        const tileInfo = tileset.tiles[localId];
+        if (!tileInfo || !Array.isArray(tileInfo.animation) || tileInfo.animation.length === 0) return;
+        const sig = getAnimSignature(localId, tileInfo.animation);
+        if (!sig) return;
+        if (!signatureBuckets.has(sig)) signatureBuckets.set(sig, []);
+        signatureBuckets.get(sig).push(localId);
+      });
+
+      const seenAuto = new Set();
+      let autoGroupIndex = 0;
+      signatureBuckets.forEach((bucketLocalIds) => {
+        const bucketSet = new Set(bucketLocalIds);
+        bucketLocalIds.forEach((startLocalId) => {
+          if (seenAuto.has(startLocalId)) return;
+
+          const stack = [startLocalId];
+          const component = [];
+          seenAuto.add(startLocalId);
+
+          while (stack.length > 0) {
+            const id = stack.pop();
+            component.push(id);
+            const col = id % cols;
+            const row = Math.floor(id / cols);
+            const neighbors = [];
+            if (col > 0) neighbors.push(id - 1);
+            if (col < cols - 1) neighbors.push(id + 1);
+            if (row > 0) neighbors.push(id - cols);
+            neighbors.push(id + cols);
+
+            neighbors.forEach((n) => {
+              if (!bucketSet.has(n) || seenAuto.has(n)) return;
+              seenAuto.add(n);
+              stack.push(n);
+            });
+          }
+
+          if (component.length <= 1) return;
+
+          let minCol = Number.POSITIVE_INFINITY;
+          let minRow = Number.POSITIVE_INFINITY;
+          let maxCol = Number.NEGATIVE_INFINITY;
+          let maxRow = Number.NEGATIVE_INFINITY;
+          component.forEach((localId) => {
+            const col = localId % cols;
+            const row = Math.floor(localId / cols);
+            if (col < minCol) minCol = col;
+            if (row < minRow) minRow = row;
+            if (col > maxCol) maxCol = col;
+            if (row > maxRow) maxRow = row;
+          });
+
+          const width = (maxCol - minCol) + 1;
+          const height = (maxRow - minRow) + 1;
+          const cellCount = Math.max(1, width * height);
+          const targetCells = new Array(cellCount).fill(-1);
+          component.forEach((localId) => {
+            const col = localId % cols;
+            const row = Math.floor(localId / cols);
+            const dx = col - minCol;
+            const dy = row - minRow;
+            targetCells[dy * width + dx] = localId;
+          });
+
+          const anchorTile = tileset.tiles[startLocalId];
+          const frameCount = Array.isArray(anchorTile?.animation) ? anchorTile.animation.length : 0;
+          if (frameCount <= 0) return;
+
+          const frames = [];
+          for (let frameIdx = 0; frameIdx < frameCount; frameIdx++) {
+            const data = new Array(cellCount).fill(0);
+            let frameDuration = Math.max(1, parseInt(anchorTile.animation[frameIdx]?.duration, 10) || 100);
+            let hasAny = false;
+
+            for (let cellIdx = 0; cellIdx < cellCount; cellIdx++) {
+              const sourceLocalId = targetCells[cellIdx];
+              if (!Number.isInteger(sourceLocalId) || sourceLocalId < 0) continue;
+              const sourceTile = tileset.tiles[sourceLocalId];
+              if (!sourceTile || !Array.isArray(sourceTile.animation) || !sourceTile.animation[frameIdx]) continue;
+              const frame = sourceTile.animation[frameIdx];
+              const frameLocalId = Math.max(0, parseInt(frame.tileId, 10) || 0);
+              data[cellIdx] = tileset.firstGid + frameLocalId;
+              frameDuration = Math.max(1, parseInt(frame.duration, 10) || frameDuration);
+              hasAny = true;
+            }
+
+            if (hasAny) {
+              frames.push({
+                width,
+                height,
+                data,
+                duration: frameDuration
+              });
+            }
+          }
+
+          if (frames.length === 0) return;
+
+          autoGroupIndex += 1;
+          component.forEach((id) => consumedTiles.add(id));
+          tileAnimationCatalog.push({
+            id: `auto-${autoGroupIndex}`,
+            name: `Anim ${autoGroupIndex}`,
+            targetCells,
+            width,
+            height,
+            frames,
+            existing: true,
+            metaGroupId: null
+          });
+        });
+      });
+
+      localIds.forEach((localId) => {
+        if (consumedTiles.has(localId)) return;
+        const tileInfo = tileset.tiles[localId];
+        if (!tileInfo || !Array.isArray(tileInfo.animation) || tileInfo.animation.length === 0) return;
+        const frames = tileInfo.animation.map((f) => ({
+          width: 1,
+          height: 1,
+          data: [tileset.firstGid + Math.max(0, parseInt(f.tileId, 10) || 0)],
+          duration: Math.max(1, parseInt(f.duration, 10) || 100)
+        }));
+
+        tileAnimationCatalog.push({
+          id: `tile-${localId}`,
+          name: `Tile ${localId}`,
+          targetCells: [localId],
+          width: 1,
+          height: 1,
+          frames,
+          existing: true,
+          metaGroupId: null
+        });
+      });
+
+      if (tileAnimationCatalog.length > 0) {
+        activeTileAnimationId = tileAnimationCatalog[0].id;
+      }
+    }
+
+    function ensureTileAnimationCatalog() {
+      const tileset = getActiveTileset();
+      if (!tileset) {
+        tileAnimationCatalog = [];
+        activeTileAnimationId = null;
+        tileAnimationCatalogTilesetGid = null;
+        return;
+      }
+      if (tileAnimationCatalogTilesetGid !== tileset.firstGid) {
+        rebuildTileAnimationCatalogForActiveTileset();
+      }
+    }
+
+    function stopTileAnimationPreview() {
+      if (tileAnimPreviewHandle !== null) {
+        cancelAnimationFrame(tileAnimPreviewHandle);
+        tileAnimPreviewHandle = null;
+      }
+    }
+
+    function updateTileAnimZoomLevelText() {
+      const zoomEl = document.getElementById('tileAnimZoomLevel');
+      if (zoomEl) zoomEl.textContent = Math.round(tileAnimPreviewZoom * 100) + '%';
+    }
+
+    function getTileAnimStripTileSize(blockW, blockH) {
+      return Math.max(8, Math.floor(56 / Math.max(1, blockW, blockH)));
+    }
+
+    function getTileAnimBaseTileSize(frame) {
+      const previewTileset = getActiveTileset();
+      let baseTileW = Math.max(1, previewTileset?.tileWidth || 16);
+      let baseTileH = Math.max(1, previewTileset?.tileHeight || 16);
+      const firstFrameGid = Array.isArray(frame?.data) ? (frame.data.find((v) => v > 0) || 0) : 0;
+      if (firstFrameGid > 0) {
+        const resolved = resolveTilesetForGid(firstFrameGid);
+        if (resolved && resolved.tileset) {
+          baseTileW = Math.max(1, resolved.tileset.tileWidth || baseTileW);
+          baseTileH = Math.max(1, resolved.tileset.tileHeight || baseTileH);
+        }
+      }
+      return { baseTileW, baseTileH };
+    }
+
+    function getWheelZoomFactor(event) {
+      let wheelDelta = Math.max(-MAX_WHEEL_DELTA, Math.min(MAX_WHEEL_DELTA, event.deltaY || 0));
+      if (event.deltaMode === 1) {
+        wheelDelta *= 16;
+      } else if (event.deltaMode === 2) {
+        wheelDelta *= window.innerHeight || 800;
+      }
+      return Math.exp(-wheelDelta * WHEEL_ZOOM_SENSITIVITY);
+    }
+
+    function handleTileAnimPreviewZoom(event) {
+      event.preventDefault();
+      const zoomFactor = getWheelZoomFactor(event);
+      tileAnimPreviewZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, tileAnimPreviewZoom * zoomFactor));
+      updateTileAnimZoomLevelText();
+      drawTileAnimationPreview();
+    }
+
+    function drawTileAnimationPreview(nowMs = performance.now()) {
+      const canvas = document.getElementById('tileAnimPreviewCanvas');
+      const label = document.getElementById('tileAnimFrameLabel');
+      const anim = getActiveTileAnimation();
+      if (!canvas || !label) return;
+
+      const pctx = canvas.getContext('2d');
+      pctx.imageSmoothingEnabled = false;
+      pctx.clearRect(0, 0, canvas.width, canvas.height);
+      pctx.fillStyle = '#101010';
+      pctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (!anim || !Array.isArray(anim.frames) || anim.frames.length === 0) {
+        label.textContent = 'Frame -';
+        return;
+      }
+
+      const totalDuration = anim.frames.reduce((sum, f) => sum + Math.max(1, parseInt(f.duration, 10) || 1), 0);
+      let frameIdx = 0;
+      let cursor = 0;
+      const elapsed = nowMs % Math.max(1, totalDuration);
+      for (let i = 0; i < anim.frames.length; i++) {
+        cursor += Math.max(1, parseInt(anim.frames[i].duration, 10) || 1);
+        if (elapsed < cursor) {
+          frameIdx = i;
+          break;
+        }
+      }
+
+      const frame = anim.frames[frameIdx];
+      const blockW = Math.max(1, frame.width || anim.width || 1);
+      const blockH = Math.max(1, frame.height || anim.height || 1);
+      const stripTileSize = getTileAnimStripTileSize(blockW, blockH);
+      const pixelScale = Math.max(0.25, Math.min(8, tileAnimPreviewZoom));
+      const tileDrawSize = Math.max(1, Math.round(stripTileSize * pixelScale));
+      const drawW = Math.max(1, Math.round(blockW * tileDrawSize));
+      const drawH = Math.max(1, Math.round(blockH * tileDrawSize));
+      if (canvas.width !== drawW) canvas.width = drawW;
+      if (canvas.height !== drawH) canvas.height = drawH;
+      pctx.imageSmoothingEnabled = false;
+      pctx.clearRect(0, 0, canvas.width, canvas.height);
+      pctx.fillStyle = '#101010';
+      pctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (let y = 0; y < blockH; y++) {
+        for (let x = 0; x < blockW; x++) {
+          const gid = frame.data[y * blockW + x] || 0;
+          if (gid <= 0) continue;
+          const resolved = resolveTilesetForGid(gid);
+          if (!resolved || !resolved.tileset) continue;
+          const loaded = window.loadedTilesets[resolved.tileset.firstGid];
+          if (!loaded || !loaded.image) continue;
+          const metrics = getTilesetMetrics(resolved.tileset, loaded.image);
+          const col = resolved.localTileId % metrics.columns;
+          const row = Math.floor(resolved.localTileId / metrics.columns);
+          const sx = metrics.margin + (col * (resolved.tileset.tileWidth + metrics.spacing));
+          const sy = metrics.margin + (row * (resolved.tileset.tileHeight + metrics.spacing));
+          pctx.drawImage(
+            loaded.image,
+            sx,
+            sy,
+            resolved.tileset.tileWidth,
+            resolved.tileset.tileHeight,
+            x * tileDrawSize,
+            y * tileDrawSize,
+            tileDrawSize,
+            tileDrawSize
+          );
+        }
+      }
+
+      label.textContent = `Frame ${frameIdx + 1}/${anim.frames.length}`;
+    }
+
+    function startTileAnimationPreview() {
+      stopTileAnimationPreview();
+      const tick = (nowMs) => {
+        drawTileAnimationPreview(nowMs);
+        if (activeTabType === 'tileset') {
+          tileAnimPreviewHandle = requestAnimationFrame(tick);
+        } else {
+          tileAnimPreviewHandle = null;
+        }
+      };
+      tileAnimPreviewHandle = requestAnimationFrame(tick);
+    }
+
+    function renderTileAnimationEditor() {
+      const targetEl = document.getElementById('tileAnimationTarget');
+      const listEl = document.getElementById('tileAnimList');
+      const stripEl = document.getElementById('tileAnimStrip');
+      const durationInput = document.getElementById('tileAnimDurationInput');
+      if (!targetEl || !listEl || !stripEl) return;
+
+      ensureTileAnimationCatalog();
+      const anim = getActiveTileAnimation();
+
+      listEl.innerHTML = '';
+      tileAnimationCatalog.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'tile-anim-item' + (entry.id === activeTileAnimationId ? ' selected' : '');
+        const thumb = makeAnimationThumb(getActiveTileset(), entry.frames[0]);
+        const meta = document.createElement('div');
+        meta.className = 'tile-anim-item-meta';
+        const name = document.createElement('div');
+        name.className = 'tile-anim-item-name';
+        name.textContent = entry.name;
+        const detail = document.createElement('div');
+        detail.className = 'tile-anim-item-detail';
+        detail.textContent = `${entry.frames.length} frames`;
+        meta.appendChild(name);
+        meta.appendChild(detail);
+        item.appendChild(thumb);
+        item.appendChild(meta);
+        item.addEventListener('click', () => {
+          activeTileAnimationId = entry.id;
+          activeTileAnimationFrameIndex = 0;
+          renderTileAnimationEditor();
+        });
+        listEl.appendChild(item);
+      });
+
+      if (!anim) {
+        targetEl.textContent = 'No animations. Select tiles and create one.';
+        stripEl.innerHTML = '';
+        if (durationInput) durationInput.value = '100';
+        drawTileAnimationPreview();
+        return;
+      }
+
+      targetEl.textContent = anim.name;
+      stripEl.innerHTML = '';
+      anim.frames.forEach((frame, idx) => {
+        const cell = document.createElement('div');
+        cell.className = 'tile-anim-strip-cell' + (idx === activeTileAnimationFrameIndex ? ' selected' : '');
+        const cellCanvas = document.createElement('canvas');
+        const blockW = Math.max(1, frame.width || anim.width || 1);
+        const blockH = Math.max(1, frame.height || anim.height || 1);
+        const px = getTileAnimStripTileSize(blockW, blockH);
+        cellCanvas.width = blockW * px;
+        cellCanvas.height = blockH * px;
+        const cctx = cellCanvas.getContext('2d');
+        cctx.imageSmoothingEnabled = false;
+        cctx.fillStyle = '#111';
+        cctx.fillRect(0, 0, cellCanvas.width, cellCanvas.height);
+
+        for (let y = 0; y < blockH; y++) {
+          for (let x = 0; x < blockW; x++) {
+            const gid = frame.data[y * blockW + x] || 0;
+            if (gid <= 0) continue;
+            const resolved = resolveTilesetForGid(gid);
+            if (!resolved || !resolved.tileset) continue;
+            const loaded = window.loadedTilesets[resolved.tileset.firstGid];
+            if (!loaded || !loaded.image) continue;
+            const metrics = getTilesetMetrics(resolved.tileset, loaded.image);
+            const col = resolved.localTileId % metrics.columns;
+            const row = Math.floor(resolved.localTileId / metrics.columns);
+            const sx = metrics.margin + (col * (resolved.tileset.tileWidth + metrics.spacing));
+            const sy = metrics.margin + (row * (resolved.tileset.tileHeight + metrics.spacing));
+            cctx.drawImage(loaded.image, sx, sy, resolved.tileset.tileWidth, resolved.tileset.tileHeight, x * px, y * px, px, px);
+          }
+        }
+
+        cell.appendChild(cellCanvas);
+        cell.title = `Frame ${idx + 1}`;
+        cell.addEventListener('click', () => {
+          activeTileAnimationFrameIndex = idx;
+          if (durationInput) durationInput.value = String(frame.duration || 100);
+          renderTileAnimationEditor();
+        });
+        stripEl.appendChild(cell);
+      });
+
+      const safeFrameIdx = Math.max(0, Math.min(anim.frames.length - 1, activeTileAnimationFrameIndex));
+      activeTileAnimationFrameIndex = safeFrameIdx;
+      const activeFrame = anim.frames[safeFrameIdx];
+      if (durationInput && activeFrame) {
+        durationInput.value = String(Math.max(1, parseInt(activeFrame.duration, 10) || 100));
+      }
+
+      drawTileAnimationPreview();
+      if (activeTabType === 'tileset') startTileAnimationPreview();
+    }
+
+    function createTileAnimationFromSelection() {
+      const tileset = getActiveTileset();
+      if (!tileset) {
+        updateStatus('No active tileset.', true);
+        return;
+      }
+      const block = getSelectionBlockForTileset(tileset);
+      if (!block) {
+        updateStatus('Select one or more tiles first.', true);
+        return;
+      }
+
+      const durationInput = document.getElementById('tileAnimDurationInput');
+      const duration = Math.max(1, parseInt(durationInput?.value || '100', 10) || 100);
+      const id = `draft-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      const clip = {
+        id,
+        name: `Anim ${tileAnimationCatalog.length + 1}`,
+        targetCells: block.targetCells.slice(),
+        width: block.width,
+        height: block.height,
+        frames: [{ width: block.width, height: block.height, data: block.data.slice(), duration }],
+        existing: false
+      };
+      tileAnimationCatalog.push(clip);
+      activeTileAnimationId = clip.id;
+      activeTileAnimationFrameIndex = 0;
+      renderTileAnimationEditor();
+      updateStatus('Created animation from current tileset selection.');
+    }
+
+    function addTileAnimationFrame() {
+      const anim = getActiveTileAnimation();
+      const tileset = getActiveTileset();
+      if (!anim || !tileset) {
+        updateStatus('Create/select an animation first.', true);
+        return;
+      }
+
+      const block = getSelectionBlockForTileset(tileset);
+      if (!block || block.width !== anim.width || block.height !== anim.height) {
+        updateStatus(`Selection must be ${anim.width}x${anim.height} to match this animation block.`, true);
+        return;
+      }
+
+      const durationInput = document.getElementById('tileAnimDurationInput');
+      const duration = Math.max(1, parseInt(durationInput?.value || '100', 10) || 100);
+      anim.frames.push({
+        width: anim.width,
+        height: anim.height,
+        data: block.data.slice(),
+        duration
+      });
+      activeTileAnimationFrameIndex = anim.frames.length - 1;
+      renderTileAnimationEditor();
+    }
+
+    function updateActiveAnimationFrameDuration(value) {
+      const anim = getActiveTileAnimation();
+      if (!anim || !anim.frames[activeTileAnimationFrameIndex]) return;
+      anim.frames[activeTileAnimationFrameIndex].duration = Math.max(1, parseInt(value || '1', 10) || 1);
+      drawTileAnimationPreview();
+    }
+
+    function saveTileAnimation() {
+      const anim = getActiveTileAnimation();
+      const tileset = getActiveTileset();
+      if (!anim || !tileset) {
+        updateStatus('Create/select an animation first.', true);
+        return;
+      }
+
+      if (!tileset.tiles) tileset.tiles = {};
+      const cellCount = Math.max(1, anim.width * anim.height);
+      const groupId = anim.metaGroupId || `grp-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+      const animName = String(anim.name || '').trim() || `Anim ${tileAnimationCatalog.length + 1}`;
+      anim.metaGroupId = groupId;
+      let updated = 0;
+
+      for (let idx = 0; idx < cellCount; idx++) {
+        const targetLocal = anim.targetCells[idx];
+        if (!Number.isInteger(targetLocal) || targetLocal < 0) continue;
+        const mappedFrames = anim.frames.map((frame) => {
+          const gid = frame.data[idx] || 0;
+          const resolved = gid > 0 ? resolveTilesetForGid(gid) : null;
+          const localFrameId = (resolved && resolved.tileset && resolved.tileset.firstGid === tileset.firstGid)
+            ? resolved.localTileId
+            : targetLocal;
+          return {
+            tileId: Math.max(0, localFrameId),
+            duration: Math.max(1, parseInt(frame.duration, 10) || 1)
+          };
+        });
+
+        if (!tileset.tiles[targetLocal]) tileset.tiles[targetLocal] = {};
+        tileset.tiles[targetLocal].animation = mappedFrames;
+        tileset.tiles[targetLocal].editorAnimationMeta = {
+          groupId,
+          width: anim.width,
+          height: anim.height,
+          cellIndex: idx,
+          name: animName
+        };
+        updated++;
+      }
+
+      ensureAnimationLoop();
+      renderMap();
+      rebuildTileAnimationCatalogForActiveTileset();
+      renderTileAnimationEditor();
+      updateStatus(`Saved animation to ${updated} tile(s).`);
+    }
+
+    function deleteTileAnimation() {
+      const anim = getActiveTileAnimation();
+      const tileset = getActiveTileset();
+      if (!anim || !tileset) {
+        updateStatus('Select an animation first.', true);
+        return;
+      }
+
+      let removed = 0;
+      if (tileset.tiles) {
+        anim.targetCells.forEach((localId) => {
+          if (!Number.isInteger(localId) || localId < 0) return;
+          const tileInfo = tileset.tiles[localId];
+          if (!tileInfo || !tileInfo.animation) return;
+          delete tileInfo.animation;
+          delete tileInfo.editorAnimationMeta;
+          if (Object.keys(tileInfo).length === 0) delete tileset.tiles[localId];
+          removed++;
+        });
+      }
+      if (tileset.tiles && Object.keys(tileset.tiles).length === 0) {
+        tileset.tiles = null;
+      }
+
+      ensureAnimationLoop();
+      renderMap();
+      rebuildTileAnimationCatalogForActiveTileset();
+      renderTileAnimationEditor();
+      updateStatus(removed > 0 ? `Deleted animation from ${removed} tile(s).` : 'Deleted draft animation.');
+    }
+
+    function initWebGLRenderer() {
+      if (glState) return true;
+      if (!gl) {
+        gl = canvas.getContext('webgl', {
+          alpha: false,
+          antialias: false,
+          preserveDrawingBuffer: true,
+          premultipliedAlpha: false
+        }) || canvas.getContext('experimental-webgl');
+      }
+      if (!gl) return false;
+
+      const compileShader = (type, source) => {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          const log = gl.getShaderInfoLog(shader) || 'unknown shader error';
+          gl.deleteShader(shader);
+          throw new Error(log);
+        }
+        return shader;
+      };
+
+      const vertexShader = compileShader(gl.VERTEX_SHADER, `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        uniform vec2 u_resolution;
+        varying vec2 v_texCoord;
+
+        void main() {
+          vec2 zeroToOne = a_position / u_resolution;
+          vec2 zeroToTwo = zeroToOne * 2.0;
+          vec2 clip = zeroToTwo - 1.0;
+          gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0);
+          v_texCoord = a_texCoord;
+        }
+      `);
+
+      const fragmentShader = compileShader(gl.FRAGMENT_SHADER, `
+        precision mediump float;
+        varying vec2 v_texCoord;
+        uniform sampler2D u_image;
+        uniform float u_alpha;
+
+        void main() {
+          vec4 color = texture2D(u_image, v_texCoord);
+          gl_FragColor = vec4(color.rgb, color.a * u_alpha);
+        }
+      `);
+
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const log = gl.getProgramInfoLog(program) || 'unknown link error';
+        gl.deleteProgram(program);
+        throw new Error(log);
+      }
+
+      gl.useProgram(program);
+      glState = {
+        program,
+        attribPosition: gl.getAttribLocation(program, 'a_position'),
+        attribTexCoord: gl.getAttribLocation(program, 'a_texCoord'),
+        uniformResolution: gl.getUniformLocation(program, 'u_resolution'),
+        uniformAlpha: gl.getUniformLocation(program, 'u_alpha'),
+        uniformImage: gl.getUniformLocation(program, 'u_image'),
+        buffer: gl.createBuffer(),
+        textures: new Map()
+      };
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, glState.buffer);
+      gl.enableVertexAttribArray(glState.attribPosition);
+      gl.enableVertexAttribArray(glState.attribTexCoord);
+      gl.vertexAttribPointer(glState.attribPosition, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(glState.attribTexCoord, 2, gl.FLOAT, false, 16, 8);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.clearColor(0.039, 0.039, 0.039, 1.0);
+      return true;
+    }
+
+    function ensureTilesetTexture(loaded) {
+      if (!loaded || !loaded.image || !glState) return null;
+      if (loaded.glTexture) return loaded.glTexture;
+
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, loaded.image);
+      loaded.glTexture = texture;
+      return texture;
+    }
+
+    function beginUndoAction() {
+      if (!mapData || activeUndoAction) return;
+      const layer = mapData.layers[currentLayer];
+      if (!layer) return;
+      activeUndoAction = {
+        layerIndex: currentLayer,
+        before: layer.data.slice(),
+        changed: false
+      };
+    }
+
+    function markUndoChanged() {
+      if (activeUndoAction) activeUndoAction.changed = true;
+    }
+
+    function commitUndoAction() {
+      if (!activeUndoAction) return;
+      if (activeUndoAction.changed) {
+        undoStack.push({
+          layerIndex: activeUndoAction.layerIndex,
+          before: activeUndoAction.before
+        });
+        if (undoStack.length > MAX_UNDO_STEPS) undoStack.shift();
+      }
+      activeUndoAction = null;
+      updateUndoButtonState();
+    }
+
+    function updateUndoButtonState() {
+      const undoBtn = document.getElementById('toolUndo');
+      if (!undoBtn) return;
+      const canUndo = undoStack.length > 0;
+      undoBtn.disabled = !canUndo;
+      undoBtn.style.opacity = canUndo ? '1' : '0.55';
+      undoBtn.title = canUndo ? `Undo (${undoStack.length})` : 'Nothing to undo';
+    }
+
+    function undoEdit() {
+      if (!mapData || undoStack.length === 0) return;
+      if (activeUndoAction) commitUndoAction();
+      const action = undoStack.pop();
+      if (!action) return;
+      const layer = mapData.layers[action.layerIndex];
+      if (!layer) {
+        updateUndoButtonState();
+        return;
+      }
+      layer.data = action.before.slice();
+      currentLayer = action.layerIndex;
+      activeTabType = 'tile';
+      renderMap();
+      updateUI();
+      updateStatus('↶ Undo');
+      updateUndoButtonState();
+    }
+
+    function startSoloLayerPreview(layerIndex) {
+      soloLayerIndex = layerIndex;
+      if (soloLayerTimeout) {
+        clearTimeout(soloLayerTimeout);
+        soloLayerTimeout = null;
+      }
+      renderMap();
+      soloLayerTimeout = setTimeout(() => {
+        soloLayerIndex = null;
+        soloLayerTimeout = null;
+        renderMap();
+      }, 1000);
+    }
+
+    function selectLayer(layerIndex, withSoloPreview = false) {
+      if (!mapData || !mapData.layers || layerIndex < 0 || layerIndex >= mapData.layers.length) return;
+      currentLayer = layerIndex;
+      activeTabType = 'tile';
+      if (withSoloPreview) startSoloLayerPreview(layerIndex);
+      else renderMap();
+      updateUI();
+    }
+
+    function consumeLayerButtonPress(buttonKey) {
+      const now = Date.now();
+      const isDouble = lastLayerButtonKey === buttonKey && (now - lastLayerButtonAt) <= LAYER_DOUBLE_PRESS_MS;
+      lastLayerButtonKey = buttonKey;
+      lastLayerButtonAt = now;
+      return isDouble;
+    }
+
+    function toggleLayerVisibility(layerIndex) {
+      if (!mapData || !mapData.layers || layerIndex < 0 || layerIndex >= mapData.layers.length) return;
+      const layer = mapData.layers[layerIndex];
+      if (!layer) return;
+      layer.visible = layer.visible === false;
+      renderMap();
+      updateUI();
+      updateStatus(`Layer ${layerIndex + 1} ${layer.visible === false ? 'hidden' : 'shown'}`);
+    }
+
+    function areObjectsVisible() {
+      const groups = mapData?.objectGroups || [];
+      if (groups.length === 0) return false;
+      return groups.some(group => group.visible !== false);
+    }
+
+    function toggleObjectsVisibility() {
+      const groups = mapData?.objectGroups || [];
+      if (groups.length === 0) {
+        updateStatus('No object groups in this map.');
+        return;
+      }
+      const makeVisible = !areObjectsVisible();
+      groups.forEach(group => {
+        group.visible = makeVisible;
+      });
+      renderMap();
+      updateUI();
+      updateStatus(`Objects ${makeVisible ? 'shown' : 'hidden'}`);
+    }
+
+    function selectObjectsTab() {
+      activeTabType = 'objects';
+      renderMap();
+      updateUI();
+      updateStatus('Objects tab active (hotkey: O).');
+    }
+
+    function getActiveTileset() {
+      if (!mapData || !Array.isArray(mapData.tilesets) || mapData.tilesets.length === 0) return null;
+      if (activeTilesetFirstGid !== null) {
+        const found = mapData.tilesets.find((ts) => ts.firstGid === activeTilesetFirstGid);
+        if (found) return found;
+      }
+      activeTilesetFirstGid = mapData.tilesets[0].firstGid;
+      return mapData.tilesets[0];
+    }
+
+    function setActiveTileset(firstGid, syncSelectedTile = true) {
+      const gid = Number(firstGid);
+      if (!mapData || !Array.isArray(mapData.tilesets) || mapData.tilesets.length === 0) {
+        activeTilesetFirstGid = null;
+        return;
+      }
+      const next = mapData.tilesets.find((ts) => ts.firstGid === gid) || mapData.tilesets[0];
+      activeTilesetFirstGid = next.firstGid;
+      if (syncSelectedTile) {
+        const selectedResolved = resolveTilesetForGid(selectedTile);
+        if (!selectedResolved || selectedResolved.tileset.firstGid !== next.firstGid) {
+          selectedTile = next.firstGid;
+          brushPattern = null;
+          clearTilesetSelectionState();
+          tileAnimationDraft = [];
+        }
+      }
+    }
+
+    function setActiveTilesetFromDropdown(value) {
+      setActiveTileset(value, true);
+      updateUI();
+    }
+
+    function selectTilesetTab() {
+      activeTabType = 'tileset';
+      if (!getActiveTileset()) {
+        updateStatus('No tilesets available in this map.');
+      }
+      updateUI();
+      renderMap();
+      updateStatus('Tilesets tab active.');
+    }
+
+    function handleTilesetButtonPress() {
+      if (activeTabType === 'tileset') return;
+      consumeLayerButtonPress('tileset');
+      selectTilesetTab();
+    }
+
+    function handleObjectsButtonPress() {
+      if (activeTabType === 'objects') {
+        if (consumeLayerButtonPress('objects')) {
+          toggleObjectsVisibility();
+        } else {
+          updateStatus('Objects tab active. Press O again quickly to hide/show objects.');
+        }
+        return;
+      }
+      consumeLayerButtonPress('objects');
+      selectObjectsTab();
+    }
+
+    function handleLayerButtonPress(layerIndex, withSoloPreview = false) {
+      if (!mapData || !mapData.layers) return;
+      if (layerIndex < 0 || layerIndex >= mapData.layers.length) return;
+
+      const target = mapData.layers[layerIndex];
+      if (!target) return;
+      const buttonKey = `layer:${layerIndex}`;
+
+      if (activeTabType === 'tile' && layerIndex === currentLayer) {
+        if (consumeLayerButtonPress(buttonKey)) {
+          toggleLayerVisibility(layerIndex);
+        } else {
+          updateStatus(`Layer ${layerIndex + 1} active. Press again quickly to hide/show.`);
+        }
+        return;
+      }
+
+      if (target.visible === false) target.visible = true;
+      consumeLayerButtonPress(buttonKey);
+      selectLayer(layerIndex, withSoloPreview);
+      updateStatus(`Layer ${layerIndex + 1}: ${target.name}`);
+    }
+
+    function handleLayerHotkey(layerIndex) {
+      handleLayerButtonPress(layerIndex, true);
+    }
+
+    function addLayer(layerName, tileWidth, tileHeight) {
+      if (!mapData || !mapData.layers || mapData.layers.length === 0) return;
+      const width = mapData.map.width;
+      const height = mapData.map.height;
+      const name = (layerName || `Layer ${mapData.layers.length + 1}`).trim() || `Layer ${mapData.layers.length + 1}`;
+      const tw = Number.isFinite(Number(tileWidth)) && Number(tileWidth) > 0 ? Number(tileWidth) : mapData.map.tileWidth;
+      const th = Number.isFinite(Number(tileHeight)) && Number(tileHeight) > 0 ? Number(tileHeight) : mapData.map.tileHeight;
+      mapData.layers.push({
+        id: mapData.layers.length + 1,
+        name,
+        width,
+        height,
+        visible: true,
+        opacity: 1,
+        tileWidth: tw,
+        tileHeight: th,
+        data: new Uint32Array(width * height)
+      });
+      currentLayer = mapData.layers.length - 1;
+      activeTabType = 'tile';
+      undoStack = [];
+      activeUndoAction = null;
+      renderMap();
+      updateUI();
+      updateStatus(`Added ${name} (${tw}x${th})`);
+    }
+
+    function hideAddLayerDialog() {
+      const dialog = document.getElementById('addLayerDialog');
+      if (dialog) dialog.remove();
+    }
+
+    function showAddLayerDialog() {
+      if (!mapData) return;
+      hideAddLayerDialog();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'addLayerDialog';
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.background = 'rgba(0,0,0,0.45)';
+      overlay.style.display = 'grid';
+      overlay.style.placeItems = 'center';
+      overlay.style.zIndex = '10000';
+
+      const panel = document.createElement('div');
+      panel.style.background = '#252526';
+      panel.style.border = '1px solid #3e3e42';
+      panel.style.borderRadius = '8px';
+      panel.style.padding = '12px';
+      panel.style.minWidth = '280px';
+      panel.style.display = 'grid';
+      panel.style.gap = '8px';
+
+      const title = document.createElement('div');
+      title.style.fontWeight = '600';
+      title.textContent = 'Add Layer';
+
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.value = `Layer ${mapData.layers.length + 1}`;
+      nameInput.style.width = '100%';
+      nameInput.style.background = '#1f1f22';
+      nameInput.style.color = '#d4d4d4';
+      nameInput.style.border = '1px solid #3e3e42';
+      nameInput.style.borderRadius = '3px';
+      nameInput.style.padding = '6px';
+
+      const sizeSelect = document.createElement('select');
+      sizeSelect.style.width = '100%';
+      sizeSelect.style.background = '#1f1f22';
+      sizeSelect.style.color = '#d4d4d4';
+      sizeSelect.style.border = '1px solid #3e3e42';
+      sizeSelect.style.borderRadius = '3px';
+      sizeSelect.style.padding = '6px';
+      [16, 32, 64].forEach((s) => {
+        const opt = document.createElement('option');
+        opt.value = String(s);
+        opt.textContent = `${s}x${s}`;
+        sizeSelect.appendChild(opt);
+      });
+      const defaultSize = (mapData.map.tileWidth === mapData.map.tileHeight && [16, 32, 64].includes(mapData.map.tileWidth))
+        ? mapData.map.tileWidth
+        : 16;
+      sizeSelect.value = String(defaultSize);
+
+      const hint = document.createElement('div');
+      hint.style.fontSize = '11px';
+      hint.style.color = '#9a9a9a';
+      hint.textContent = 'Tile size for this layer.';
+
+      const buttons = document.createElement('div');
+      buttons.style.display = 'flex';
+      buttons.style.gap = '8px';
+      buttons.style.justifyContent = 'flex-end';
+
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.style.background = '#3c3c3c';
+      cancelBtn.onclick = () => hideAddLayerDialog();
+
+      const createBtn = document.createElement('button');
+      createBtn.textContent = 'Create';
+      createBtn.onclick = () => {
+        const s = Number(sizeSelect.value);
+        addLayer(nameInput.value, s, s);
+        hideAddLayerDialog();
+      };
+
+      buttons.appendChild(cancelBtn);
+      buttons.appendChild(createBtn);
+      panel.appendChild(title);
+      panel.appendChild(nameInput);
+      panel.appendChild(sizeSelect);
+      panel.appendChild(hint);
+      panel.appendChild(buttons);
+      overlay.appendChild(panel);
+      document.body.appendChild(overlay);
+
+      overlay.addEventListener('mousedown', (ev) => {
+        if (ev.target === overlay) hideAddLayerDialog();
+      });
+
+      nameInput.focus();
+      nameInput.select();
+    }
+
+    function moveLayer(fromIndex, toIndex) {
+      if (!mapData || !mapData.layers) return;
+      if (fromIndex === toIndex) return;
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= mapData.layers.length || toIndex >= mapData.layers.length) return;
+      const moved = mapData.layers.splice(fromIndex, 1)[0];
+      mapData.layers.splice(toIndex, 0, moved);
+
+      if (currentLayer === fromIndex) {
+        currentLayer = toIndex;
+      } else if (fromIndex < currentLayer && toIndex >= currentLayer) {
+        currentLayer -= 1;
+      } else if (fromIndex > currentLayer && toIndex <= currentLayer) {
+        currentLayer += 1;
+      }
+
+      undoStack = [];
+      activeUndoAction = null;
+      renderMap();
+      updateUI();
+      updateStatus(`Moved layer to position ${toIndex + 1}`);
+    }
+
+    function renameLayer(layerIndex, nextName) {
+      if (!mapData || !mapData.layers || layerIndex < 0 || layerIndex >= mapData.layers.length) return;
+      const cleaned = (nextName || '').trim();
+      if (!cleaned) {
+        updateStatus('Layer name cannot be empty.');
+        return;
+      }
+      mapData.layers[layerIndex].name = cleaned;
+      renderMap();
+      updateUI();
+      updateStatus(`Renamed layer ${layerIndex + 1}`);
+    }
+
+    function deleteLayer(layerIndex) {
+      if (!mapData || !mapData.layers || layerIndex < 0 || layerIndex >= mapData.layers.length) return;
+      if (mapData.layers.length <= 1) {
+        updateStatus('Cannot delete the only layer.');
+        return;
+      }
+      mapData.layers.splice(layerIndex, 1);
+      if (currentLayer >= mapData.layers.length) currentLayer = mapData.layers.length - 1;
+      if (currentLayer > layerIndex) currentLayer -= 1;
+      if (currentLayer < 0) currentLayer = 0;
+      activeTabType = 'tile';
+      undoStack = [];
+      activeUndoAction = null;
+      renderMap();
+      updateUI();
+      updateStatus('Layer deleted');
+    }
+
+    function hideLayerContextMenu() {
+      const menu = document.getElementById('layerContextMenu');
+      if (menu) menu.remove();
+    }
+
+    function onLayerContextMenu(e, layerIndex) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideLayerContextMenu();
+
+      const layer = mapData?.layers?.[layerIndex];
+      if (!layer) return;
+
+      const menu = document.createElement('div');
+      menu.id = 'layerContextMenu';
+      menu.style.position = 'fixed';
+      menu.style.left = `${e.clientX}px`;
+      menu.style.top = `${e.clientY}px`;
+      menu.style.zIndex = '9999';
+      menu.style.background = '#2d2d30';
+      menu.style.border = '1px solid #3e3e42';
+      menu.style.borderRadius = '6px';
+      menu.style.padding = '8px';
+      menu.style.display = 'grid';
+      menu.style.gap = '6px';
+      menu.style.minWidth = '220px';
+
+      const title = document.createElement('div');
+      title.style.fontSize = '11px';
+      title.style.color = '#9a9a9a';
+      title.textContent = `Layer ${layerIndex + 1}`;
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = layer.name || '';
+      input.style.width = '100%';
+      input.style.background = '#1f1f22';
+      input.style.color = '#d4d4d4';
+      input.style.border = '1px solid #3e3e42';
+      input.style.borderRadius = '3px';
+      input.style.padding = '6px';
+
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.gap = '6px';
+
+      const renameBtn = document.createElement('button');
+      renameBtn.textContent = 'Rename';
+      renameBtn.onclick = () => {
+        renameLayer(layerIndex, input.value);
+        hideLayerContextMenu();
+      };
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.style.background = '#8a3a3a';
+      deleteBtn.onclick = () => {
+        deleteLayer(layerIndex);
+        hideLayerContextMenu();
+      };
+
+      actions.appendChild(renameBtn);
+      actions.appendChild(deleteBtn);
+      menu.appendChild(title);
+      menu.appendChild(input);
+      menu.appendChild(actions);
+      document.body.appendChild(menu);
+      input.focus();
+      input.select();
+
+      const closeMenu = (ev) => {
+        if (!menu.contains(ev.target)) {
+          hideLayerContextMenu();
+          window.removeEventListener('mousedown', closeMenu, true);
+        }
+      };
+      window.addEventListener('mousedown', closeMenu, true);
+    }
+
+    function isObjectSnapEnabled() {
+      const checkbox = document.getElementById('objectSnapToGrid');
+      return checkbox ? !!checkbox.checked : false;
+    }
+
+    function nextObjectId() {
+      let maxId = 0;
+      (mapData?.objectGroups || []).forEach((group) => {
+        (group.objects || []).forEach((obj) => {
+          const id = Number(obj.id || 0);
+          if (Number.isFinite(id) && id > maxId) maxId = id;
+        });
+      });
+      return maxId + 1;
+    }
+
+    function ensureObjectGroup(name) {
+      if (!mapData) return null;
+      if (!mapData.objectGroups) mapData.objectGroups = [];
+      const targetName = (name || 'Objects').trim() || 'Objects';
+      let found = mapData.objectGroups.find(g => (g.name || '').trim() === targetName);
+      if (!found) {
+        mapData.objectGroups.push({
+          id: mapData.objectGroups.length + 1,
+          name: targetName,
+          visible: true,
+          opacity: 1,
+          color: '#ff8800',
+          objects: []
+        });
+        found = mapData.objectGroups[mapData.objectGroups.length - 1];
+      }
+      if (!Array.isArray(found.objects)) {
+        found.objects = [];
+      }
+      return found;
+    }
+
+    function getSelectedObjectCollectionName() {
+      const select = document.getElementById('objectCollectionSelect');
+      const selected = (select?.value || '').trim();
+      if (selected) return selected;
+      const first = mapData?.objectGroups?.[0]?.name;
+      return first || 'Objects';
+    }
+
+    function getSelectedObjectGroup() {
+      return ensureObjectGroup(getSelectedObjectCollectionName());
+    }
+
+    function refreshObjectCollectionUI() {
+      const select = document.getElementById('objectCollectionSelect');
+      if (!select || !mapData) return;
+      const previous = select.value;
+      if (!Array.isArray(mapData.objectGroups)) mapData.objectGroups = [];
+      if (mapData.objectGroups.length === 0) {
+        ensureObjectGroup('Objects');
+      }
+      select.innerHTML = '';
+      mapData.objectGroups.forEach((group) => {
+        const option = document.createElement('option');
+        option.value = group.name;
+        option.textContent = group.name;
+        select.appendChild(option);
+      });
+      if (previous && Array.from(select.options).some(o => o.value === previous)) {
+        select.value = previous;
+      }
+    }
+
+    function addObjectCollection() {
+      if (!mapData) return;
+      const input = document.getElementById('newObjectCollectionInput');
+      const rawName = (input?.value || '').trim();
+      if (!rawName) {
+        updateStatus('Enter a collection name first.');
+        return;
+      }
+      const group = ensureObjectGroup(rawName);
+      refreshObjectCollectionUI();
+      const select = document.getElementById('objectCollectionSelect');
+      if (select) select.value = group.name;
+      if (input) input.value = '';
+      updateUI();
+      updateStatus(`Collection ready: ${group.name}`);
+    }
+
+    function screenToMapPosition(clientX, clientY) {
+      if (!mapData) return null;
+      const rect = canvas.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      const map = mapData.map;
+      if (map.orientation === 'isometric') {
+        const lx = (px - offsetX) / zoom;
+        const ly = (py - offsetY) / zoom;
+        const u = lx / (map.tileWidth / 2);
+        const v = ly / (map.tileHeight / 2);
+        const tx = (u + v) / 2;
+        const ty = (v - u) / 2;
+        return { x: tx * map.tileWidth, y: ty * map.tileHeight };
+      }
+      if (map.orientation === 'hexagonal') {
+        const t = clampToMap(screenToTile(clientX, clientY));
+        if (!t) return null;
+        return {
+          x: t.x * map.tileWidth + (map.tileWidth / 2),
+          y: t.y * map.tileHeight + (map.tileHeight / 2)
+        };
+      }
+      return {
+        x: (px - offsetX) / zoom,
+        y: (py - offsetY) / zoom
+      };
+    }
+
+    function clampMapPosition(pos) {
+      if (!mapData || !pos) return null;
+      const maxX = mapData.map.width * mapData.map.tileWidth;
+      const maxY = mapData.map.height * mapData.map.tileHeight;
+      return {
+        x: Math.max(0, Math.min(maxX, pos.x)),
+        y: Math.max(0, Math.min(maxY, pos.y))
+      };
+    }
+
+    function mapPositionToTile(pos) {
+      if (!mapData || !pos) return null;
+      return clampToMap({
+        x: Math.floor(pos.x / mapData.map.tileWidth),
+        y: Math.floor(pos.y / mapData.map.tileHeight)
+      });
+    }
+
+    function buildObjectMeta(id, fallbackPrefix) {
+      const typeInput = document.getElementById('objectTypeInput');
+      const nameInput = document.getElementById('objectNameInput');
+      const type = (typeInput?.value || '').trim();
+      const inputName = (nameInput?.value || '').trim();
+      const name = inputName || `${fallbackPrefix}_${id}`;
+      return { name, type };
+    }
+
+    function placePointObjectAt(mapPos) {
+      if (!mapData || !mapPos) return;
+      const group = getSelectedObjectGroup();
+      if (!group) return;
+      const id = nextObjectId();
+      const meta = buildObjectMeta(id, 'point');
+      const clampedPos = clampMapPosition(mapPos);
+      if (!clampedPos) return;
+      group.objects.push({
+        id,
+        name: meta.name,
+        type: meta.type,
+        x: clampedPos.x,
+        y: clampedPos.y,
+        width: 0,
+        height: 0,
+        point: true,
+        visible: true
+      });
+      renderMap();
+      updateUI();
+      updateStatus(`Placed point object ${meta.name} in ${group.name}.`);
+    }
+
+    function placeAreaObjectFromPositions(startPos, endPos) {
+      if (!mapData || !startPos || !endPos) return;
+      const group = getSelectedObjectGroup();
+      if (!group) return;
+      const a = clampMapPosition(startPos);
+      const b = clampMapPosition(endPos);
+      if (!a || !b) return;
+      const minX = Math.min(a.x, b.x);
+      const minY = Math.min(a.y, b.y);
+      const maxX = Math.max(a.x, b.x);
+      const maxY = Math.max(a.y, b.y);
+      const id = nextObjectId();
+      const meta = buildObjectMeta(id, 'area');
+      group.objects.push({
+        id,
+        name: meta.name,
+        type: meta.type,
+        x: minX,
+        y: minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+        visible: true
+      });
+      renderMap();
+      updateUI();
+      updateStatus(`Placed area object ${meta.name} in ${group.name}.`);
+    }
+
+    function clampToMap(tile) {
+      if (!mapData || !tile) return null;
+      return {
+        x: Math.max(0, Math.min(mapData.map.width - 1, tile.x)),
+        y: Math.max(0, Math.min(mapData.map.height - 1, tile.y))
+      };
+    }
+
+    function initEditor() {
+      canvas.addEventListener('mousedown', (e) => {
+        if (!mapData) return;
+
+        // Shift + left drag pans the viewport.
+        if (e.button === 0 && e.shiftKey) {
+          e.preventDefault();
+          isPanning = true;
+          panLast = { x: e.clientX, y: e.clientY };
+          canvasArea.style.cursor = 'grabbing';
+          return;
+        }
+
+        // Right drag selects a brush rectangle from the current layer.
+        if (e.button === 2) {
+          if (activeTabType !== 'tile') {
+            updateStatus('Select a tile layer (1-8) to sample a brush.');
+            return;
+          }
+          e.preventDefault();
+          const tile = clampToMap(screenToTile(e.clientX, e.clientY));
+          if (!tile) return;
+          isSelectingBrush = true;
+          brushSelectStart = tile;
+          brushSelectEnd = tile;
+          renderMap();
+          return;
+        }
+
+        if (e.button === 0) {
+          if (activeTabType === 'objects') {
+            e.preventDefault();
+            isPlacingObject = true;
+            const startMap = clampMapPosition(screenToMapPosition(e.clientX, e.clientY));
+            const startTile = clampToMap(screenToTile(e.clientX, e.clientY));
+            if (!startMap || !startTile) {
+              isPlacingObject = false;
+              return;
+            }
+            objectPlaceStartPos = startMap;
+            objectPlaceEndPos = startMap;
+            objectPlaceStartTile = startTile;
+            objectPlaceEndTile = startTile;
+            isPlacingObjectArea = false;
+            return;
+          }
+          isPointerDown = true;
+          beginUndoAction();
+          handleCanvasEdit(e, true);
+        }
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        if (isPanning && panLast) {
+          const dx = e.clientX - panLast.x;
+          const dy = e.clientY - panLast.y;
+          canvasArea.scrollLeft -= dx;
+          canvasArea.scrollTop -= dy;
+          panLast = { x: e.clientX, y: e.clientY };
+          return;
+        }
+
+        if (isSelectingBrush) {
+          const tile = clampToMap(screenToTile(e.clientX, e.clientY));
+          if (tile && (!brushSelectEnd || brushSelectEnd.x !== tile.x || brushSelectEnd.y !== tile.y)) {
+            brushSelectEnd = tile;
+            renderMap();
+          }
+          return;
+        }
+
+        if (isPlacingObject) {
+          const currentPos = clampMapPosition(screenToMapPosition(e.clientX, e.clientY));
+          const currentTile = clampToMap(screenToTile(e.clientX, e.clientY));
+          if (!currentPos || !currentTile) return;
+          objectPlaceEndPos = currentPos;
+          objectPlaceEndTile = currentTile;
+
+          const tw = mapData.map.tileWidth;
+          const th = mapData.map.tileHeight;
+          const dragMapDx = Math.abs(objectPlaceEndPos.x - objectPlaceStartPos.x);
+          const dragMapDy = Math.abs(objectPlaceEndPos.y - objectPlaceStartPos.y);
+          const dragTileDx = Math.abs(objectPlaceEndTile.x - objectPlaceStartTile.x);
+          const dragTileDy = Math.abs(objectPlaceEndTile.y - objectPlaceStartTile.y);
+          const thresholdPassed = isObjectSnapEnabled()
+            ? (dragTileDx >= 1 || dragTileDy >= 1)
+            : (dragMapDx >= tw || dragMapDy >= th);
+
+          if (thresholdPassed !== isPlacingObjectArea) {
+            isPlacingObjectArea = thresholdPassed;
+            renderMap();
+          } else if (isPlacingObjectArea) {
+            renderMap();
+          }
+          return;
+        }
+
+        updateCursor(e);
+        if (isPointerDown && currentTool === 'paint') {
+          handleCanvasEdit(e, false);
+        }
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        if (isPlacingObject) {
+          const endPos = clampMapPosition(screenToMapPosition(e.clientX, e.clientY)) || objectPlaceEndPos || objectPlaceStartPos;
+          const endTile = clampToMap(screenToTile(e.clientX, e.clientY)) || objectPlaceEndTile || objectPlaceStartTile;
+
+          if (isPlacingObjectArea) {
+            if (isObjectSnapEnabled()) {
+              const startTile = objectPlaceStartTile || endTile;
+              const finalTile = endTile || startTile;
+              const tw = mapData.map.tileWidth;
+              const th = mapData.map.tileHeight;
+              const minTileX = Math.min(startTile.x, finalTile.x);
+              const minTileY = Math.min(startTile.y, finalTile.y);
+              const maxTileX = Math.max(startTile.x, finalTile.x) + 1;
+              const maxTileY = Math.max(startTile.y, finalTile.y) + 1;
+              placeAreaObjectFromPositions(
+                { x: minTileX * tw, y: minTileY * th },
+                { x: maxTileX * tw, y: maxTileY * th }
+              );
+            } else {
+              placeAreaObjectFromPositions(objectPlaceStartPos, endPos);
+            }
+          } else {
+            if (isObjectSnapEnabled()) {
+              const tile = endTile || objectPlaceStartTile;
+              const tw = mapData.map.tileWidth;
+              const th = mapData.map.tileHeight;
+              placePointObjectAt({
+                x: tile.x * tw + (tw / 2),
+                y: tile.y * th + (th / 2)
+              });
+            } else {
+              placePointObjectAt(endPos || objectPlaceStartPos);
+            }
+          }
+
+          isPlacingObject = false;
+          isPlacingObjectArea = false;
+          objectPlaceStartTile = null;
+          objectPlaceEndTile = null;
+          objectPlaceStartPos = null;
+          objectPlaceEndPos = null;
+        }
+
+        if (isPanning) {
+          isPanning = false;
+          panLast = null;
+          canvasArea.style.cursor = '';
+        }
+
+        if (isSelectingBrush) {
+          isSelectingBrush = false;
+          const start = brushSelectStart;
+          const end = brushSelectEnd || start;
+          if (start && end) {
+            const layer = mapData.layers[currentLayer];
+            if (layer) {
+              const minX = Math.min(start.x, end.x);
+              const minY = Math.min(start.y, end.y);
+              const maxX = Math.max(start.x, end.x);
+              const maxY = Math.max(start.y, end.y);
+              const width = (maxX - minX) + 1;
+              const height = (maxY - minY) + 1;
+              const data = [];
+              for (let y = minY; y <= maxY; y++) {
+                for (let x = minX; x <= maxX; x++) {
+                  data.push(layer.data[y * layer.width + x] || 0);
+                }
+              }
+              brushPattern = { width, height, data };
+              clearTilesetSelectionState();
+              currentTool = 'paint';
+              document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach(b => b.classList.remove('active'));
+              document.getElementById('toolPaint').classList.add('active');
+            }
+          }
+          brushSelectStart = null;
+          brushSelectEnd = null;
+          updateUI();
+          renderMap();
+        }
+
+        if (isPointerDown) {
+          commitUndoAction();
+        }
+        isPointerDown = false;
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        if (isPanning) return;
+        if (isPlacingObject || isPlacingObjectArea) {
+          isPlacingObject = false;
+          isPlacingObjectArea = false;
+          objectPlaceStartTile = null;
+          objectPlaceEndTile = null;
+          objectPlaceStartPos = null;
+          objectPlaceEndPos = null;
+          renderMap();
+        }
+        if (isPointerDown) {
+          commitUndoAction();
+        }
+        isPointerDown = false;
+        if (hoverTile !== null) { hoverTile = null; renderMap(); }
+      });
+
+      canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      window.addEventListener('keydown', (e) => {
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+          e.preventDefault();
+          undoEdit();
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'g') {
+          e.preventDefault();
+          toggleGrid(!showGrid);
+          updateUI();
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'o') {
+          e.preventDefault();
+          handleObjectsButtonPress();
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 't') {
+          e.preventDefault();
+          handleTilesetButtonPress();
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Space') {
+          e.preventDefault();
+          transformActiveBrush('rotate90');
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'x') {
+          e.preventDefault();
+          transformActiveBrush('flipX');
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'y') {
+          e.preventDefault();
+          transformActiveBrush('flipY');
+          return;
+        }
+
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-8]$/.test(e.key)) {
+          e.preventDefault();
+          handleLayerHotkey(parseInt(e.key, 10) - 1);
+        }
+      });
+    }
+    
+    async function loadExampleMap(filename) {
+      if (!filename) return;
+      try {
+        window.loadedTilesets = {};
+        mapBaseUrl = new URL(filename, window.location.href);
+        const response = await fetch(filename);
+        if (!response.ok) throw new Error(`File not found: ${filename}`);
+        
+        const text = await response.text();
+        mapData = TMXImporter.parse(text);
+        normalizeLayerData();
+        mapData.filename = filename;
+        currentLayer = 0;
+        activeTabType = 'tile';
+        undoStack = [];
+        activeUndoAction = null;
+        extraCanvasLeft = 0;
+        extraCanvasTop = 0;
+        applyCanvasMargins();
+        
+        // Load tilesets
+        await loadTilesets();
+        setActiveTileset(mapData.tilesets?.[0]?.firstGid, false);
+        
+        renderMap();
+        updateUI();
+        updateStatus(`✓ Loaded: ${filename}`);
+      } catch (e) {
+        updateStatus(`✗ Error: ${e.message}`, true);
+      }
+    }
+    
+    async function loadTMXFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      try {
+        window.loadedTilesets = {};
+        mapBaseUrl = new URL(window.location.href);
+        const text = await file.text();
+        mapData = TMXImporter.parse(text);
+        normalizeLayerData();
+        mapData.filename = file.name;
+        currentLayer = 0;
+        activeTabType = 'tile';
+        undoStack = [];
+        activeUndoAction = null;
+        extraCanvasLeft = 0;
+        extraCanvasTop = 0;
+        applyCanvasMargins();
+        
+        // Load tilesets
+        await loadTilesets();
+        setActiveTileset(mapData.tilesets?.[0]?.firstGid, false);
+        
+        renderMap();
+        updateUI();
+        updateStatus(`✓ Loaded: ${file.name}`);
+      } catch (e) {
+        updateStatus(`✗ Error: ${e.message}`, true);
+      }
+    }
+    
+    async function loadTilesets() {
+      if (!mapData || !mapData.tilesets) return;
+
+      for (let i = 0; i < mapData.tilesets.length; i++) {
+        let ts = mapData.tilesets[i];
+        ts = await resolveExternalTileset(ts);
+        mapData.tilesets[i] = ts;
+
+        // Try to load image file
+        if (ts.image && ts.image.source) {
+          const loaded = await loadTilesetImage(ts);
+          if (!loaded) {
+            // Failed to load, generate placeholder
+            generateTilesetPlaceholder(ts);
+            updateStatus(`⚠ Generated placeholder: ${ts.name}`);
+          }
+        } else {
+          // No image source, generate
+          generateTilesetPlaceholder(ts);
+        }
+      }
+    }
+
+    async function resolveExternalTileset(ts) {
+      if (!ts || !ts.source) return ts;
+
+      try {
+        const tsxUrl = new URL(ts.source, mapBaseUrl);
+        const response = await fetch(tsxUrl.href);
+        if (!response.ok) return ts;
+        const tsxText = await response.text();
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(tsxText, 'text/xml');
+        if (doc.getElementsByTagName('parsererror').length > 0) return ts;
+
+        const tsEl = doc.querySelector('tileset');
+        if (!tsEl) return ts;
+
+        const resolved = { ...ts };
+        resolved.name = tsEl.getAttribute('name') || resolved.name;
+        resolved.tileWidth = parseInt(tsEl.getAttribute('tilewidth') || resolved.tileWidth || mapData.map.tileWidth, 10);
+        resolved.tileHeight = parseInt(tsEl.getAttribute('tileheight') || resolved.tileHeight || mapData.map.tileHeight, 10);
+        resolved.spacing = parseInt(tsEl.getAttribute('spacing') || resolved.spacing || 0, 10);
+        resolved.margin = parseInt(tsEl.getAttribute('margin') || resolved.margin || 0, 10);
+        resolved.columns = parseInt(tsEl.getAttribute('columns') || resolved.columns || 0, 10);
+        resolved.tileCount = parseInt(tsEl.getAttribute('tilecount') || resolved.tileCount || 0, 10);
+
+        const offsetEl = tsEl.querySelector('tileoffset');
+        if (offsetEl) {
+          resolved.tileOffset = {
+            x: parseInt(offsetEl.getAttribute('x') || 0, 10),
+            y: parseInt(offsetEl.getAttribute('y') || 0, 10)
+          };
+        }
+
+        resolved.tiles = parseTilesetTileData(tsEl);
+
+        const imageEl = tsEl.querySelector('image');
+        if (imageEl) {
+          const source = imageEl.getAttribute('source');
+          resolved.image = {
+            source: source,
+            width: parseInt(imageEl.getAttribute('width') || 0, 10),
+            height: parseInt(imageEl.getAttribute('height') || 0, 10),
+            trans: imageEl.getAttribute('trans') || null,
+            resolvedSource: source ? new URL(source, tsxUrl).href : null
+          };
+        }
+
+        return resolved;
+      } catch {
+        return ts;
+      }
+    }
+    
+    async function loadTilesetImage(ts) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        const timeout = setTimeout(() => {
+          resolve(false); // Timeout
+        }, 10000);
+
+        img.crossOrigin = 'anonymous';
+        
+        img.onload = () => {
+          clearTimeout(timeout);
+          let keyedImage = img;
+          try {
+            keyedImage = applyTilesetColorKey(img, ts);
+          } catch {
+            keyedImage = img;
+          }
+          window.loadedTilesets[ts.firstGid] = {
+            image: keyedImage,
+            tileset: ts,
+            isFile: true,
+            hasColorKey: keyedImage !== img
+          };
+          updateStatus(`✓ Loaded tileset: ${ts.image.source}`);
+          resolve(true);
+        };
+        
+        img.onerror = () => {
+          clearTimeout(timeout);
+          resolve(false);
+        };
+
+        const resolvedSrc = ts.image.resolvedSource || new URL(ts.image.source, mapBaseUrl).href;
+        img.src = resolvedSrc;
+      });
+    }
+
+    function applyTilesetColorKey(image, tileset) {
+      const keyHex = tileset?.image?.trans;
+      if (!keyHex) return image;
+
+      const normalized = keyHex.replace('#', '').trim();
+      if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return image;
+
+      const r = parseInt(normalized.slice(0, 2), 16);
+      const g = parseInt(normalized.slice(2, 4), 16);
+      const b = parseInt(normalized.slice(4, 6), 16);
+
+      const keyedCanvas = document.createElement('canvas');
+      keyedCanvas.width = image.width;
+      keyedCanvas.height = image.height;
+      const kctx = keyedCanvas.getContext('2d');
+      kctx.drawImage(image, 0, 0);
+
+      const imgData = kctx.getImageData(0, 0, keyedCanvas.width, keyedCanvas.height);
+      const data = imgData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] === r && data[i + 1] === g && data[i + 2] === b) {
+          data[i + 3] = 0;
+        }
+      }
+      kctx.putImageData(imgData, 0, 0);
+      return keyedCanvas;
+    }
+
+    function parseTilesetTileData(tsEl) {
+      const tiles = {};
+      const tileEls = tsEl.querySelectorAll('tile');
+
+      const readEditorAnimMeta = (tileEl) => {
+        const propEls = tileEl.querySelectorAll('properties > property');
+        if (!propEls || propEls.length === 0) return null;
+
+        const rawMeta = {};
+        propEls.forEach((propEl) => {
+          const key = propEl.getAttribute('name');
+          if (!key || !key.startsWith('retrowww.anim.')) return;
+          const value = propEl.hasAttribute('value') ? propEl.getAttribute('value') : (propEl.textContent || '');
+          if (key === 'retrowww.anim.group') rawMeta.groupId = value;
+          if (key === 'retrowww.anim.blockW') rawMeta.width = parseInt(value, 10);
+          if (key === 'retrowww.anim.blockH') rawMeta.height = parseInt(value, 10);
+          if (key === 'retrowww.anim.cell') rawMeta.cellIndex = parseInt(value, 10);
+          if (key === 'retrowww.anim.name') rawMeta.name = value;
+        });
+
+        return normalizeEditorAnimationMeta(rawMeta);
+      };
+
+      tileEls.forEach((tileEl) => {
+        const tileId = parseInt(tileEl.getAttribute('id'), 10);
+        if (Number.isNaN(tileId)) return;
+
+        const editorAnimationMeta = readEditorAnimMeta(tileEl);
+        const animationEl = tileEl.querySelector('animation');
+        if (!animationEl && !editorAnimationMeta) return;
+
+        const frames = animationEl ? Array.from(animationEl.querySelectorAll('frame')).map((frameEl) => ({
+          tileId: parseInt(frameEl.getAttribute('tileid'), 10),
+          duration: Math.max(1, parseInt(frameEl.getAttribute('duration'), 10) || 0)
+        })).filter((frame) => Number.isInteger(frame.tileId) && frame.tileId >= 0) : [];
+
+        const tileInfo = {};
+        if (frames.length > 0) tileInfo.animation = frames;
+        if (editorAnimationMeta) tileInfo.editorAnimationMeta = editorAnimationMeta;
+        if (Object.keys(tileInfo).length > 0) tiles[tileId] = tileInfo;
+      });
+
+      return Object.keys(tiles).length > 0 ? tiles : null;
+    }
+
+    function getAnimatedTileInfo(resolved, nowMs = performance.now()) {
+      if (!resolved || !resolved.tileset) return resolved;
+
+      const tileData = resolved.tileset.tiles && resolved.tileset.tiles[resolved.localTileId];
+      if (!tileData || !Array.isArray(tileData.animation) || tileData.animation.length === 0) {
+        return resolved;
+      }
+
+      const totalDuration = tileData.animation.reduce((sum, frame) => sum + Math.max(1, frame.duration || 0), 0);
+      if (totalDuration <= 0) return resolved;
+
+      const elapsed = nowMs % totalDuration;
+      let frameCursor = 0;
+      for (const frame of tileData.animation) {
+        frameCursor += Math.max(1, frame.duration || 0);
+        if (elapsed < frameCursor) {
+          return {
+            ...resolved,
+            localTileId: frame.tileId
+          };
+        }
+      }
+
+      const lastFrame = tileData.animation[tileData.animation.length - 1];
+      return {
+        ...resolved,
+        localTileId: lastFrame.tileId
+      };
+    }
+
+    function mapHasAnimatedTiles() {
+      if (!mapData || !mapData.tilesets) return false;
+      return mapData.tilesets.some((ts) => {
+        if (!ts || !ts.tiles) return false;
+        return Object.values(ts.tiles).some((tile) => tile && Array.isArray(tile.animation) && tile.animation.length > 0);
+      });
+    }
+
+    function ensureAnimationLoop() {
+      const needsLoop = mapHasAnimatedTiles();
+      if (!needsLoop) {
+        if (animationLoopHandle !== null) {
+          cancelAnimationFrame(animationLoopHandle);
+          animationLoopHandle = null;
+        }
+        return;
+      }
+
+      if (animationLoopHandle !== null) return;
+
+      const tick = () => {
+        if (!mapHasAnimatedTiles()) {
+          animationLoopHandle = null;
+          return;
+        }
+        renderMap();
+        animationLoopHandle = requestAnimationFrame(tick);
+      };
+
+      animationLoopHandle = requestAnimationFrame(tick);
+    }
+
+    function resolveTilesetForGid(rawGid) {
+      const decoded = decodeGid(rawGid);
+      if (!mapData || !mapData.tilesets || decoded.gid <= 0) return null;
+
+      let tileset = null;
+      for (let i = mapData.tilesets.length - 1; i >= 0; i--) {
+        if (decoded.gid >= mapData.tilesets[i].firstGid) {
+          tileset = mapData.tilesets[i];
+          break;
+        }
+      }
+
+      if (!tileset) return null;
+      return {
+        tileset,
+        localTileId: decoded.gid - tileset.firstGid,
+        flags: decoded
+      };
+    }
+
+    function getTilesetMetrics(tileset, loadedImage) {
+      const spacing = Number(tileset.spacing || 0);
+      const margin = Number(tileset.margin || 0);
+      const imgWidth = (loadedImage && loadedImage.width) || tileset.image?.width || 0;
+      const imgHeight = (loadedImage && loadedImage.height) || tileset.image?.height || 0;
+
+      let columns = Number(tileset.columns || 0);
+      if (columns <= 0 && tileset.tileWidth > 0) {
+        const usableWidth = Math.max(0, imgWidth - (margin * 2));
+        columns = Math.floor((usableWidth + spacing) / (tileset.tileWidth + spacing));
+      }
+      if (columns <= 0) columns = 1;
+
+      let tileCount = Number(tileset.tileCount || 0);
+      if (tileCount <= 0 && tileset.tileHeight > 0) {
+        const usableHeight = Math.max(0, imgHeight - (margin * 2));
+        const rows = Math.floor((usableHeight + spacing) / (tileset.tileHeight + spacing));
+        tileCount = Math.max(0, rows * columns);
+      }
+
+      return { spacing, margin, columns, tileCount };
+    }
+
+    function drawTileByGid(rawGid, dx, dy, dw, dh) {
+      const resolved = getAnimatedTileInfo(resolveTilesetForGid(rawGid));
+      if (!resolved) return;
+
+      const { tileset, localTileId, flags } = resolved;
+      const loaded = window.loadedTilesets[tileset.firstGid];
+      if (!loaded || !loaded.image) return;
+
+      const metrics = getTilesetMetrics(tileset, loaded.image);
+      const col = localTileId % metrics.columns;
+      const row = Math.floor(localTileId / metrics.columns);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const sx = margin + (col * (tileset.tileWidth + spacing));
+      const sy = margin + (row * (tileset.tileHeight + spacing));
+
+      // Use tileset tile size (not map grid size) and apply tile offsets for perspective-style tiles.
+      const drawW = tileset.tileWidth * zoom;
+      const drawH = tileset.tileHeight * zoom;
+      const offsetX = (tileset.tileOffset?.x || 0) * zoom;
+      const offsetY = (tileset.tileOffset?.y || 0) * zoom;
+      const drawX = dx + offsetX;
+      const drawY = dy + ((mapData.map.tileHeight - tileset.tileHeight) * zoom) + offsetY;
+      // Snap destination edges to reduce sub-pixel cracks at non-integer zoom.
+      const destX = Math.round(drawX);
+      const destY = Math.round(drawY);
+      const destW = Math.max(1, Math.round(drawW));
+      const destH = Math.max(1, Math.round(drawH));
+      // Slightly inset source sampling to avoid atlas edge bleeding.
+      const srcInset = 0.02;
+      const srcX = sx + srcInset;
+      const srcY = sy + srcInset;
+      const srcW = Math.max(0.01, tileset.tileWidth - (srcInset * 2));
+      const srcH = Math.max(0.01, tileset.tileHeight - (srcInset * 2));
+
+      if (flags.flipH || flags.flipV || flags.flipD) {
+        const p00 = applyTileFlagsToUnitPoint(0, 0, flags);
+        const p10 = applyTileFlagsToUnitPoint(1, 0, flags);
+        const p01 = applyTileFlagsToUnitPoint(0, 1, flags);
+        const ax = p10.u - p00.u;
+        const ay = p10.v - p00.v;
+        const bx = p01.u - p00.u;
+        const by = p01.v - p00.v;
+
+        ctx.save();
+        ctx.transform(
+          ax,
+          (destH / Math.max(1, destW)) * ay,
+          (destW / Math.max(1, destH)) * bx,
+          by,
+          destX + (p00.u * destW),
+          destY + (p00.v * destH)
+        );
+        ctx.drawImage(loaded.image, srcX, srcY, srcW, srcH, 0, 0, destW, destH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(loaded.image, srcX, srcY, srcW, srcH, destX, destY, destW, destH);
+      }
+    }
+
+    function drawTileByGidGL(rawGid, dx, dy, layerOpacity = 1) {
+      const resolved = getAnimatedTileInfo(resolveTilesetForGid(rawGid));
+      if (!resolved || !initWebGLRenderer()) return false;
+
+      const { tileset, localTileId, flags } = resolved;
+      const loaded = window.loadedTilesets[tileset.firstGid];
+      if (!loaded || !loaded.image) return false;
+
+      const texture = ensureTilesetTexture(loaded);
+      if (!texture) return false;
+
+      const metrics = getTilesetMetrics(tileset, loaded.image);
+      const col = localTileId % metrics.columns;
+      const row = Math.floor(localTileId / metrics.columns);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const sx = margin + (col * (tileset.tileWidth + spacing));
+      const sy = margin + (row * (tileset.tileHeight + spacing));
+
+      const drawW = tileset.tileWidth * zoom;
+      const drawH = tileset.tileHeight * zoom;
+      const offsetX = (tileset.tileOffset?.x || 0) * zoom;
+      const offsetY = (tileset.tileOffset?.y || 0) * zoom;
+      const drawX = dx + offsetX;
+      const drawY = dy + ((mapData.map.tileHeight - tileset.tileHeight) * zoom) + offsetY;
+      const destX = drawX;
+      const destY = drawY;
+      const destW = Math.max(1, drawW);
+      const destH = Math.max(1, drawH);
+
+      const texW = loaded.image.width || tileset.image?.width || 1;
+      const texH = loaded.image.height || tileset.image?.height || 1;
+      const srcInset = 0.02;
+      const su0 = sx + srcInset;
+      const sv0 = sy + srcInset;
+      const su1 = (sx + tileset.tileWidth) - srcInset;
+      const sv1 = (sy + tileset.tileHeight) - srcInset;
+      const u0 = su0 / texW;
+      const v0 = sv0 / texH;
+      const u1 = su1 / texW;
+      const v1 = sv1 / texH;
+
+      const sampleUv = (x, y) => {
+        const t = applyTileFlagsToUnitPoint(x, y, flags);
+        return {
+          u: u0 + (u1 - u0) * t.u,
+          v: v0 + (v1 - v0) * t.v
+        };
+      };
+
+      const uvTL = sampleUv(0, 0);
+      const uvTR = sampleUv(1, 0);
+      const uvBL = sampleUv(0, 1);
+      const uvBR = sampleUv(1, 1);
+
+      const vertices = new Float32Array([
+        destX, destY, uvTL.u, uvTL.v,
+        destX + destW, destY, uvTR.u, uvTR.v,
+        destX, destY + destH, uvBL.u, uvBL.v,
+        destX, destY + destH, uvBL.u, uvBL.v,
+        destX + destW, destY, uvTR.u, uvTR.v,
+        destX + destW, destY + destH, uvBR.u, uvBR.v
+      ]);
+
+      gl.useProgram(glState.program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, glState.buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+      gl.vertexAttribPointer(glState.attribPosition, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(glState.attribTexCoord, 2, gl.FLOAT, false, 16, 8);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.uniform1i(glState.uniformImage, 0);
+      gl.uniform2f(glState.uniformResolution, canvas.width || 1, canvas.height || 1);
+      gl.uniform1f(glState.uniformAlpha, Math.max(0, Math.min(1, layerOpacity)));
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      return true;
+    }
+
+    function queueTileByGidGL(rawGid, dx, dy, layerOpacity, batches) {
+      const resolved = getAnimatedTileInfo(resolveTilesetForGid(rawGid));
+      if (!resolved || !initWebGLRenderer()) return false;
+
+      const { tileset, localTileId, flags } = resolved;
+      const loaded = window.loadedTilesets[tileset.firstGid];
+      if (!loaded || !loaded.image) return false;
+
+      const texture = ensureTilesetTexture(loaded);
+      if (!texture) return false;
+
+      const metrics = getTilesetMetrics(tileset, loaded.image);
+      const col = localTileId % metrics.columns;
+      const row = Math.floor(localTileId / metrics.columns);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const sx = margin + (col * (tileset.tileWidth + spacing));
+      const sy = margin + (row * (tileset.tileHeight + spacing));
+
+      const drawW = tileset.tileWidth * zoom;
+      const drawH = tileset.tileHeight * zoom;
+      const ox = (tileset.tileOffset?.x || 0) * zoom;
+      const oy = (tileset.tileOffset?.y || 0) * zoom;
+      const drawX = dx + ox;
+      const drawY = dy + ((mapData.map.tileHeight - tileset.tileHeight) * zoom) + oy;
+      const destX = drawX;
+      const destY = drawY;
+      const destW = Math.max(1, drawW);
+      const destH = Math.max(1, drawH);
+
+      const texW = loaded.image.width || tileset.image?.width || 1;
+      const texH = loaded.image.height || tileset.image?.height || 1;
+      const srcInset = 0.02;
+      const su0 = sx + srcInset;
+      const sv0 = sy + srcInset;
+      const su1 = (sx + tileset.tileWidth) - srcInset;
+      const sv1 = (sy + tileset.tileHeight) - srcInset;
+      const u0 = su0 / texW;
+      const v0 = sv0 / texH;
+      const u1 = su1 / texW;
+      const v1 = sv1 / texH;
+
+      const sampleUv = (x, y) => {
+        const t = applyTileFlagsToUnitPoint(x, y, flags);
+        return {
+          u: u0 + (u1 - u0) * t.u,
+          v: v0 + (v1 - v0) * t.v
+        };
+      };
+
+      const uvTL = sampleUv(0, 0);
+      const uvTR = sampleUv(1, 0);
+      const uvBL = sampleUv(0, 1);
+      const uvBR = sampleUv(1, 1);
+
+      const alpha = Math.max(0, Math.min(1, layerOpacity));
+      const key = `${tileset.firstGid}|${alpha.toFixed(3)}`;
+      let batch = batches.get(key);
+      if (!batch) {
+        batch = { texture, alpha, vertices: [] };
+        batches.set(key, batch);
+      }
+
+      const v = batch.vertices;
+      v.push(
+        destX, destY, uvTL.u, uvTL.v,
+        destX + destW, destY, uvTR.u, uvTR.v,
+        destX, destY + destH, uvBL.u, uvBL.v,
+        destX, destY + destH, uvBL.u, uvBL.v,
+        destX + destW, destY, uvTR.u, uvTR.v,
+        destX + destW, destY + destH, uvBR.u, uvBR.v
+      );
+      return true;
+    }
+
+    function flushTileBatchesGL(batches) {
+      if (!gl || !glState || !batches || batches.size === 0) return;
+
+      gl.useProgram(glState.program);
+      gl.bindBuffer(gl.ARRAY_BUFFER, glState.buffer);
+      gl.vertexAttribPointer(glState.attribPosition, 2, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribPointer(glState.attribTexCoord, 2, gl.FLOAT, false, 16, 8);
+      gl.uniform2f(glState.uniformResolution, canvas.width || 1, canvas.height || 1);
+      gl.uniform1i(glState.uniformImage, 0);
+
+      batches.forEach((batch) => {
+        if (!batch || !batch.texture || !batch.vertices || batch.vertices.length === 0) return;
+        const data = new Float32Array(batch.vertices);
+        gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, batch.texture);
+        gl.uniform1f(glState.uniformAlpha, batch.alpha);
+        gl.drawArrays(gl.TRIANGLES, 0, data.length / 4);
+      });
+    }
+
+    function createTilePreviewCanvas(gid) {
+      const preview = document.createElement('canvas');
+      preview.width = 32;
+      preview.height = 32;
+      const pctx = preview.getContext('2d');
+      pctx.imageSmoothingEnabled = false;
+
+      if (gid === 0) {
+        pctx.fillStyle = '#222';
+        pctx.fillRect(0, 0, 32, 32);
+        pctx.strokeStyle = '#666';
+        pctx.beginPath();
+        pctx.moveTo(0, 0);
+        pctx.lineTo(32, 32);
+        pctx.stroke();
+        return preview;
+      }
+
+      const resolved = resolveTilesetForGid(gid);
+      if (!resolved) {
+        pctx.fillStyle = '#333';
+        pctx.fillRect(0, 0, 32, 32);
+        return preview;
+      }
+
+      const { tileset, localTileId } = getAnimatedTileInfo(resolved);
+      const loaded = window.loadedTilesets[tileset.firstGid];
+      if (!loaded || !loaded.image) {
+        pctx.fillStyle = '#333';
+        pctx.fillRect(0, 0, 32, 32);
+        return preview;
+      }
+
+      const metrics = getTilesetMetrics(tileset, loaded.image);
+      const col = localTileId % metrics.columns;
+      const row = Math.floor(localTileId / metrics.columns);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const sx = margin + (col * (tileset.tileWidth + spacing));
+      const sy = margin + (row * (tileset.tileHeight + spacing));
+      pctx.drawImage(loaded.image, sx, sy, tileset.tileWidth, tileset.tileHeight, 0, 0, 32, 32);
+      return preview;
+    }
+
+    function getPaletteGids() {
+      if (!mapData || !mapData.tilesets) return [0];
+
+      const gids = [0];
+      mapData.tilesets.forEach((ts) => {
+        const loaded = window.loadedTilesets[ts.firstGid];
+        const tileCount = getTilesetMetrics(ts, loaded?.image).tileCount;
+        for (let i = 0; i < tileCount; i++) {
+          gids.push(ts.firstGid + i);
+        }
+      });
+      return gids;
+    }
+
+    function getTilesetLocalIdFromPixel(tileset, loadedImage, px, py) {
+      const metrics = getTilesetMetrics(tileset, loadedImage);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const tw = tileset.tileWidth;
+      const th = tileset.tileHeight;
+      if (px < margin || py < margin) return -1;
+
+      const cellX = tw + spacing;
+      const cellY = th + spacing;
+      const relX = px - margin;
+      const relY = py - margin;
+      const col = Math.floor(relX / cellX);
+      const row = Math.floor(relY / cellY);
+      if (col < 0 || row < 0 || col >= metrics.columns) return -1;
+      if ((relX % cellX) >= tw || (relY % cellY) >= th) return -1;
+
+      const localTileId = row * metrics.columns + col;
+      if (localTileId < 0 || localTileId >= metrics.tileCount) return -1;
+      return localTileId;
+    }
+
+    function getLocalTileRectSelection(tileset, loadedImage, startLocalId, endLocalId) {
+      if (!Number.isInteger(startLocalId) || !Number.isInteger(endLocalId) || startLocalId < 0 || endLocalId < 0) {
+        return new Set();
+      }
+      const metrics = getTilesetMetrics(tileset, loadedImage);
+      const cols = Math.max(1, metrics.columns || 1);
+      const startCol = startLocalId % cols;
+      const startRow = Math.floor(startLocalId / cols);
+      const endCol = endLocalId % cols;
+      const endRow = Math.floor(endLocalId / cols);
+      const minCol = Math.min(startCol, endCol);
+      const maxCol = Math.max(startCol, endCol);
+      const minRow = Math.min(startRow, endRow);
+      const maxRow = Math.max(startRow, endRow);
+
+      const selected = new Set();
+      for (let row = minRow; row <= maxRow; row++) {
+        for (let col = minCol; col <= maxCol; col++) {
+          const localId = row * cols + col;
+          if (localId >= 0 && localId < metrics.tileCount) {
+            selected.add(localId);
+          }
+        }
+      }
+      return selected;
+    }
+
+    function createTilesetSheetElement(ts) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'tileset-sheet';
+
+      const loaded = window.loadedTilesets[ts.firstGid];
+
+      if (!loaded || !loaded.image) {
+        const missing = document.createElement('div');
+        missing.style.fontSize = '11px';
+        missing.style.color = '#f48771';
+        missing.textContent = 'Tileset image unavailable';
+        wrapper.appendChild(missing);
+        return wrapper;
+      }
+
+      const viewport = document.createElement('div');
+      viewport.className = 'tileset-sheet-viewport';
+      const canvas = document.createElement('canvas');
+      canvas.className = 'tileset-sheet-canvas';
+      canvas.width = Math.max(1, loaded.image.width || ts.image?.width || 1);
+      canvas.height = Math.max(1, loaded.image.height || ts.image?.height || 1);
+
+      const cctx = canvas.getContext('2d');
+      cctx.imageSmoothingEnabled = false;
+      const metrics = getTilesetMetrics(ts, loaded.image);
+      const spacing = metrics.spacing;
+      const margin = metrics.margin;
+      const cols = Math.max(1, metrics.columns || 1);
+
+      const drawSelection = (localIds) => {
+        cctx.clearRect(0, 0, canvas.width, canvas.height);
+        cctx.drawImage(loaded.image, 0, 0);
+        if (!localIds || localIds.size === 0) return;
+        cctx.strokeStyle = '#4ec9b0';
+        cctx.lineWidth = 2;
+        localIds.forEach((localId) => {
+          const col = localId % cols;
+          const row = Math.floor(localId / cols);
+          const sx = margin + col * (ts.tileWidth + spacing);
+          const sy = margin + row * (ts.tileHeight + spacing);
+          cctx.strokeRect(sx + 0.5, sy + 0.5, Math.max(1, ts.tileWidth - 1), Math.max(1, ts.tileHeight - 1));
+        });
+      };
+
+      const getInitialSelection = () => {
+        const selected = getTilesetSelectionSet(ts.firstGid);
+        if (selected.size > 0) return selected;
+        const selectedResolved = resolveTilesetForGid(selectedTile);
+        if (!brushPattern && selectedResolved && selectedResolved.tileset && selectedResolved.tileset.firstGid === ts.firstGid) {
+          selected.add(selectedResolved.localTileId);
+        }
+        return selected;
+      };
+
+      let committedSelection = getInitialSelection();
+      drawSelection(committedSelection);
+
+      const updateBrushFromSelection = (selection) => {
+        if (!selection || selection.size === 0) {
+          clearTilesetSelectionState();
+          brushPattern = null;
+          tileAnimationDraft = [];
+          return;
+        }
+
+        setTilesetSelectionSet(ts.firstGid, selection);
+        if (selection.size === 1) {
+          const onlyId = Array.from(selection)[0];
+          selectedTile = ts.firstGid + onlyId;
+          brushPattern = null;
+        } else {
+          const sorted = Array.from(selection).sort((a, b) => a - b);
+          selectedTile = ts.firstGid + sorted[0];
+          brushPattern = buildBrushPatternFromLocalIds(ts, selection);
+        }
+        tileAnimationDraft = [];
+
+        currentTool = 'paint';
+        document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach((b) => b.classList.remove('active'));
+        document.getElementById('toolPaint').classList.add('active');
+      };
+
+      const getCanvasPixel = (ev) => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: Math.floor((ev.clientX - rect.left) * (canvas.width / rect.width)),
+          y: Math.floor((ev.clientY - rect.top) * (canvas.height / rect.height))
+        };
+      };
+
+      let dragStartLocalId = -1;
+      let dragCurrentLocalId = -1;
+      let dragAdditive = false;
+      let dragBaseSelection = new Set();
+      let dragActive = false;
+
+      const handleDragMove = (ev) => {
+        if (!dragActive) return;
+        const pos = getCanvasPixel(ev);
+        const localId = getTilesetLocalIdFromPixel(ts, loaded.image, pos.x, pos.y);
+        if (localId < 0) return;
+        if (localId === dragCurrentLocalId) return;
+        dragCurrentLocalId = localId;
+        const dragRectSelection = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
+        let preview = new Set();
+        if (dragAdditive) {
+          preview = new Set(dragBaseSelection);
+          dragRectSelection.forEach((id) => {
+            if (preview.has(id)) preview.delete(id);
+            else preview.add(id);
+          });
+        } else {
+          preview = dragRectSelection;
+        }
+        drawSelection(preview);
+      };
+
+      const handleDragEnd = () => {
+        if (!dragActive) return;
+        window.removeEventListener('mousemove', handleDragMove);
+        window.removeEventListener('mouseup', handleDragEnd);
+
+        const dragRectSelection = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
+        let finalSelection = new Set();
+        if (dragAdditive) {
+          finalSelection = new Set(dragBaseSelection);
+          dragRectSelection.forEach((id) => {
+            if (finalSelection.has(id)) finalSelection.delete(id);
+            else finalSelection.add(id);
+          });
+        } else {
+          finalSelection = dragRectSelection;
+        }
+
+        dragActive = false;
+        committedSelection = finalSelection;
+        updateBrushFromSelection(finalSelection);
+        updateUI();
+      };
+
+      canvas.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        const pos = getCanvasPixel(ev);
+        const localId = getTilesetLocalIdFromPixel(ts, loaded.image, pos.x, pos.y);
+        if (localId < 0) return;
+        ev.preventDefault();
+
+        dragActive = true;
+        dragStartLocalId = localId;
+        dragCurrentLocalId = localId;
+        dragAdditive = !!(ev.ctrlKey || ev.metaKey);
+        dragBaseSelection = dragAdditive ? getTilesetSelectionSet(ts.firstGid) : new Set();
+
+        const initialRect = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
+        if (dragAdditive) {
+          const preview = new Set(dragBaseSelection);
+          initialRect.forEach((id) => {
+            if (preview.has(id)) preview.delete(id);
+            else preview.add(id);
+          });
+          drawSelection(preview);
+        } else {
+          drawSelection(initialRect);
+        }
+
+        window.addEventListener('mousemove', handleDragMove);
+        window.addEventListener('mouseup', handleDragEnd);
+      });
+
+      viewport.appendChild(canvas);
+      wrapper.appendChild(viewport);
+      return wrapper;
+    }
+    
+    function generateTilesetPlaceholder(ts) {
+      const tileCount = ts.tileCount || 256;
+      const cols = ts.columns || 16;
+      const rows = Math.ceil(tileCount / cols);
+      
+      const genCanvas = document.createElement('canvas');
+      genCanvas.width = cols * ts.tileWidth;
+      genCanvas.height = rows * ts.tileHeight;
+      const genCtx = genCanvas.getContext('2d');
+      
+      const placeholderColors = ['#2a2a2a', '#4a4a4a', '#6a6a6a', '#8a8a8a', 
+                                   '#3d5a3d', '#5a7a5a', '#7a9a7a', '#8ab08a',
+                                   '#3a4a7a', '#4a6a9a', '#5a8aba', '#7aaacd'];
+      
+      for (let i = 0; i < tileCount; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const x = col * ts.tileWidth;
+        const y = row * ts.tileHeight;
+        
+        const baseColor = placeholderColors[i % placeholderColors.length];
+        genCtx.fillStyle = baseColor;
+        genCtx.fillRect(x, y, ts.tileWidth, ts.tileHeight);
+        
+        genCtx.fillStyle = placeholderColors[(i + 1) % placeholderColors.length];
+        if (i % 3 === 0) {
+          genCtx.fillRect(x + 1, y + 1, ts.tileWidth - 2, ts.tileHeight - 2);
+        }
+        
+        genCtx.strokeStyle = '#1a1a1a';
+        genCtx.lineWidth = 1;
+        genCtx.strokeRect(x, y, ts.tileWidth, ts.tileHeight);
+      }
+      
+      window.loadedTilesets[ts.firstGid] = {
+        image: genCanvas,
+        tileset: ts,
+        isGenerated: true
+      };
+    }
+    
+    /**
+     * Calculate screen position for a tile based on map orientation.
+     * Supports orthogonal, isometric, and hexagonal orientations.
+     */
+    function calculateTilePosition(x, y, map, zoom) {
+      const tileWidth = map.tileWidth;
+      const tileHeight = map.tileHeight;
+      
+      if (map.orientation === 'hexagonal') {
+        // Hexagonal rendering
+        const staggerAxis = map.staggerAxis || 'y';
+        const staggerIndex = map.staggerIndex || 'odd';
+        const hexSideLength = map.hexSideLength || 0;
+        
+        if (staggerAxis === 'y') {
+          // Vertical stagger (odd/even rows offset)
+          const isStaggered = (staggerIndex === 'odd' && y % 2 === 1) || 
+                              (staggerIndex === 'even' && y % 2 === 0);
+          const rowHeight = tileHeight - hexSideLength;
+          
+          return {
+            x: (x * tileWidth + (isStaggered ? tileWidth / 2 : 0)) * zoom,
+            y: (y * rowHeight) * zoom
+          };
+        } else {
+          // Horizontal stagger (odd/even columns offset)
+          const isStaggered = (staggerIndex === 'odd' && x % 2 === 1) || 
+                              (staggerIndex === 'even' && x % 2 === 0);
+          const colWidth = tileWidth - hexSideLength;
+          
+          return {
+            x: (x * colWidth) * zoom,
+            y: (y * tileHeight + (isStaggered ? tileHeight / 2 : 0)) * zoom
+          };
+        }
+      } else if (map.orientation === 'isometric') {
+        // Isometric rendering (diamond layout)
+        return {
+          x: ((x - y) * (tileWidth / 2)) * zoom,
+          y: ((x + y) * (tileHeight / 2)) * zoom
+        };
+      } else {
+        // Orthogonal rendering (default)
+        return {
+          x: x * tileWidth * zoom,
+          y: y * tileHeight * zoom
+        };
+      }
+    }
+    
+    function renderMap() {
+      if (!mapData) return;
+      
+      const map = mapData.map;
+      const tileWidth = map.tileWidth;
+      const tileHeight = map.tileHeight;
+      const width = map.width;
+      const height = map.height;
+      
+      // Calculate canvas dimensions and offset based on orientation
+      let canvasWidth, canvasHeight;
+      offsetX = 0; offsetY = 0;
+      
+      if (map.orientation === 'isometric') {
+        // Isometric needs more space for the diamond layout
+        canvasWidth = (width + height) * (tileWidth / 2) * zoom;
+        canvasHeight = (width + height) * (tileHeight / 2) * zoom;
+        // Offset to center the map
+        offsetX = height * (tileWidth / 2) * zoom;
+        offsetY = 0;
+      } else if (map.orientation === 'hexagonal') {
+        // Hexagonal might also need adjusted sizing
+        const staggerAxis = map.staggerAxis || 'y';
+        if (staggerAxis === 'y') {
+          canvasWidth = width * tileWidth * zoom;
+          canvasHeight = (height * (tileHeight - (map.hexSideLength || 0)) + (tileHeight - (map.hexSideLength || 0))) * zoom;
+        } else {
+          canvasWidth = (width * (tileWidth - (map.hexSideLength || 0)) + (tileWidth - (map.hexSideLength || 0))) * zoom;
+          canvasHeight = height * tileHeight * zoom;
+        }
+      } else {
+        // Orthogonal standard sizing
+        canvasWidth = width * tileWidth * zoom;
+        canvasHeight = height * tileHeight * zoom;
+      }
+      
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
+      overlayCanvas.width = canvasWidth;
+      overlayCanvas.height = canvasHeight;
+      ctx.imageSmoothingEnabled = false;
+
+      const webglReady = initWebGLRenderer();
+      if (webglReady) {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+      const isOrthogonal = map.orientation === 'orthogonal';
+      let startX = 0;
+      let endX = width - 1;
+      let startY = 0;
+      let endY = height - 1;
+      if (isOrthogonal) {
+        const viewportLeft = Math.max(0, canvasArea.scrollLeft - (BASE_CANVAS_MARGIN + extraCanvasLeft));
+        const viewportTop = Math.max(0, canvasArea.scrollTop - (BASE_CANVAS_MARGIN + extraCanvasTop));
+        const viewportRight = viewportLeft + canvasArea.clientWidth;
+        const viewportBottom = viewportTop + canvasArea.clientHeight;
+        const cellW = Math.max(1, tileWidth * zoom);
+        const cellH = Math.max(1, tileHeight * zoom);
+        startX = Math.max(0, Math.floor(viewportLeft / cellW) - 2);
+        endX = Math.min(width - 1, Math.ceil(viewportRight / cellW) + 2);
+        startY = Math.max(0, Math.floor(viewportTop / cellH) - 2);
+        endY = Math.min(height - 1, Math.ceil(viewportBottom / cellH) + 2);
+      }
+
+      // Draw all layers in order so the map renders as-authored.
+      mapData.layers.forEach((layer, layerIndex) => {
+        if (soloLayerIndex !== null && layerIndex !== soloLayerIndex) return;
+        const layerOpacity = layer.opacity !== undefined ? Number(layer.opacity) : 1;
+        if (layer.visible === false || layerOpacity <= 0) return;
+        const layerBatches = webglReady ? new Map() : null;
+
+        for (let y = startY; y <= endY; y++) {
+          for (let x = startX; x <= endX; x++) {
+            const tileId = layer.data[y * layer.width + x];
+            if (tileId <= 0) continue;
+
+            const pos = calculateTilePosition(x, y, map, zoom);
+            const screenX = pos.x + offsetX;
+            const screenY = pos.y + offsetY;
+
+            try {
+              if (webglReady) {
+                queueTileByGidGL(tileId, screenX, screenY, layerOpacity, layerBatches);
+              } else {
+                drawTileByGid(tileId, screenX, screenY, tileWidth * zoom, tileHeight * zoom);
+              }
+            } catch (e) {
+              ctx.fillStyle = tileColors[tileId % 11] || '#333333';
+              ctx.globalAlpha = Math.max(0, Math.min(1, layerOpacity));
+              ctx.fillRect(screenX, screenY, tileWidth * zoom, tileHeight * zoom);
+            }
+          }
+        }
+
+        if (webglReady) {
+          flushTileBatchesGL(layerBatches);
+        }
+      });
+
+      ctx.globalAlpha = 1;
+
+      // Draw orientation-specific grid overlay.
+      if (showGrid) {
+        ctx.strokeStyle = '#333333';
+        ctx.lineWidth = 1;
+        const gridStartX = isOrthogonal ? startX : 0;
+        const gridEndX = isOrthogonal ? endX : width - 1;
+        const gridStartY = isOrthogonal ? startY : 0;
+        const gridEndY = isOrthogonal ? endY : height - 1;
+        for (let y = gridStartY; y <= gridEndY; y++) {
+          for (let x = gridStartX; x <= gridEndX; x++) {
+            const pos = calculateTilePosition(x, y, map, zoom);
+            drawGridCellShape(pos.x + offsetX, pos.y + offsetY, map, zoom);
+          }
+        }
+      }
+
+      // Draw object groups on top of tile layers (hidden during solo-layer preview).
+      if (soloLayerIndex === null) {
+        (mapData.objectGroups || []).forEach((group) => {
+        if (group.visible === false) return;
+        ctx.globalAlpha = 0.9;
+        group.objects.forEach((obj) => {
+          let screenX, screenY;
+          if (map.orientation === 'isometric') {
+            // Object pixel coords are in isometric map space — convert via tile fractions.
+            const tx = obj.x / tileWidth;
+            const ty = obj.y / tileHeight;
+            const pos = calculateTilePosition(tx, ty, map, zoom);
+            screenX = pos.x + offsetX;
+            screenY = pos.y + offsetY;
+          } else {
+            screenX = obj.x * zoom + offsetX;
+            screenY = obj.y * zoom + offsetY;
+          }
+
+          if (obj.gid) {
+            if (!webglReady || !drawTileByGidGL(obj.gid, screenX, screenY, 0.9)) {
+              drawTileByGid(obj.gid, screenX, screenY, tileWidth * zoom, tileHeight * zoom);
+            }
+          } else {
+            const w = (obj.width || 0) * zoom;
+            const h = (obj.height || 0) * zoom;
+            ctx.strokeStyle = group.color || '#ff8800';
+            ctx.fillStyle = (group.color || '#ff8800').replace(/^#/, 'rgba(') + ',0.18)';
+            // Fallback: direct rgba for the default orange
+            ctx.fillStyle = 'rgba(255,136,0,0.18)';
+            ctx.lineWidth = 2;
+            if (w > 4 && h > 4) {
+              ctx.fillRect(screenX, screenY, w, h);
+              ctx.strokeRect(screenX, screenY, w, h);
+            } else {
+              // Point marker — draw a cross
+              ctx.beginPath();
+              ctx.moveTo(screenX - 7, screenY);
+              ctx.lineTo(screenX + 7, screenY);
+              ctx.moveTo(screenX, screenY - 7);
+              ctx.lineTo(screenX, screenY + 7);
+              ctx.stroke();
+              ctx.beginPath();
+              ctx.arc(screenX, screenY, 4, 0, Math.PI * 2);
+              ctx.fillStyle = group.color || '#ff8800';
+              ctx.fill();
+            }
+            if (obj.name) {
+              ctx.fillStyle = group.color || '#ff8800';
+              ctx.font = `bold ${Math.max(9, Math.round(11 * zoom))}px sans-serif`;
+              ctx.fillText(obj.name, screenX + 2, screenY - 4);
+            }
+          }
+        });
+        ctx.globalAlpha = 1;
+      });
+      }
+
+      // Brush selection marquee while right-dragging.
+      if (isSelectingBrush && brushSelectStart && brushSelectEnd) {
+        const minX = Math.min(brushSelectStart.x, brushSelectEnd.x);
+        const minY = Math.min(brushSelectStart.y, brushSelectEnd.y);
+        const maxX = Math.max(brushSelectStart.x, brushSelectEnd.x);
+        const maxY = Math.max(brushSelectStart.y, brushSelectEnd.y);
+
+        ctx.save();
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2;
+        ctx.fillStyle = 'rgba(255, 209, 102, 0.12)';
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
+            const pos = calculateTilePosition(x, y, map, zoom);
+            const sx = pos.x + offsetX;
+            const sy = pos.y + offsetY;
+            drawGridCellShape(sx, sy, map, zoom);
+            if (map.orientation === 'orthogonal') {
+              ctx.fillRect(sx, sy, map.tileWidth * zoom, map.tileHeight * zoom);
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      // Object area placement marquee while dragging in Objects tab.
+      if (isPlacingObjectArea && objectPlaceStartPos && objectPlaceEndPos && map.orientation === 'orthogonal') {
+        let px;
+        let py;
+        let pw;
+        let ph;
+        if (isObjectSnapEnabled() && objectPlaceStartTile && objectPlaceEndTile) {
+          const minX = Math.min(objectPlaceStartTile.x, objectPlaceEndTile.x);
+          const minY = Math.min(objectPlaceStartTile.y, objectPlaceEndTile.y);
+          const maxX = Math.max(objectPlaceStartTile.x, objectPlaceEndTile.x);
+          const maxY = Math.max(objectPlaceStartTile.y, objectPlaceEndTile.y);
+          px = minX * map.tileWidth * zoom + offsetX;
+          py = minY * map.tileHeight * zoom + offsetY;
+          pw = (maxX - minX + 1) * map.tileWidth * zoom;
+          ph = (maxY - minY + 1) * map.tileHeight * zoom;
+        } else {
+          const minMapX = Math.min(objectPlaceStartPos.x, objectPlaceEndPos.x);
+          const minMapY = Math.min(objectPlaceStartPos.y, objectPlaceEndPos.y);
+          const maxMapX = Math.max(objectPlaceStartPos.x, objectPlaceEndPos.x);
+          const maxMapY = Math.max(objectPlaceStartPos.y, objectPlaceEndPos.y);
+          px = minMapX * zoom + offsetX;
+          py = minMapY * zoom + offsetY;
+          pw = Math.max(1, (maxMapX - minMapX) * zoom);
+          ph = Math.max(1, (maxMapY - minMapY) * zoom);
+        }
+        ctx.save();
+        ctx.strokeStyle = '#4ec9b0';
+        ctx.lineWidth = 2;
+        ctx.fillStyle = 'rgba(78,201,176,0.16)';
+        ctx.fillRect(px, py, pw, ph);
+        ctx.strokeRect(px, py, pw, ph);
+        ctx.restore();
+      }
+
+      // Hover snap preview — drawn last so it sits on top.
+      renderHoverOverlay();
+      ensureAnimationLoop();
+    }
+
+    /**
+     * Draw orientation-specific grid cell outline at screen position (sx, sy).
+     */
+    function drawGridCellShape(sx, sy, map, zoom) {
+      const tw = map.tileWidth * zoom;
+      const th = map.tileHeight * zoom;
+      if (map.orientation === 'isometric') {
+        ctx.beginPath();
+        ctx.moveTo(sx + tw / 2, sy);
+        ctx.lineTo(sx + tw,     sy + th / 2);
+        ctx.lineTo(sx + tw / 2, sy + th);
+        ctx.lineTo(sx,           sy + th / 2);
+        ctx.closePath();
+        ctx.stroke();
+      } else if (map.orientation === 'hexagonal') {
+        const staggerAxis = map.staggerAxis || 'y';
+        const hl = (map.hexSideLength || 0) * zoom;
+        ctx.beginPath();
+        if (staggerAxis === 'y') {
+          const s = (th - hl) / 2;
+          ctx.moveTo(sx + tw / 2, sy);
+          ctx.lineTo(sx + tw,     sy + s);
+          ctx.lineTo(sx + tw,     sy + s + hl);
+          ctx.lineTo(sx + tw / 2, sy + th);
+          ctx.lineTo(sx,          sy + s + hl);
+          ctx.lineTo(sx,          sy + s);
+        } else {
+          const s = (tw - hl) / 2;
+          ctx.moveTo(sx + s,      sy);
+          ctx.lineTo(sx + s + hl, sy);
+          ctx.lineTo(sx + tw,     sy + th / 2);
+          ctx.lineTo(sx + s + hl, sy + th);
+          ctx.lineTo(sx + s,      sy + th);
+          ctx.lineTo(sx,          sy + th / 2);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(sx, sy, tw, th);
+      }
+    }
+
+    /**
+     * Convert screen client coords → tile (x,y), accounting for orientation and canvas offset.
+     */
+    function screenToTile(clientX, clientY) {
+      if (!mapData) return null;
+      const rect = canvas.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      const map = mapData.map;
+      if (map.orientation === 'isometric') {
+        const lx = (px - offsetX) / zoom - map.tileWidth / 2;
+        const ly = (py - offsetY) / zoom - map.tileHeight / 2;
+        const u = lx / (map.tileWidth / 2);
+        const v = ly / (map.tileHeight / 2);
+        return { x: Math.round((u + v) / 2), y: Math.round((v - u) / 2) };
+      } else if (map.orientation === 'hexagonal') {
+        const staggerAxis = map.staggerAxis || 'y';
+        const staggerIndex = map.staggerIndex || 'odd';
+        const hexSideLength = map.hexSideLength || 0;
+        if (staggerAxis === 'y') {
+          const rowH = (map.tileHeight - hexSideLength) * zoom;
+          const roughY = Math.floor(py / rowH);
+          const staggered = (staggerIndex === 'odd' && roughY % 2 === 1) ||
+                            (staggerIndex === 'even' && roughY % 2 === 0);
+          const roughX = Math.floor((px - (staggered ? map.tileWidth / 2 * zoom : 0)) / (map.tileWidth * zoom));
+          return { x: roughX, y: roughY };
+        } else {
+          const colW = (map.tileWidth - hexSideLength) * zoom;
+          const roughX = Math.floor(px / colW);
+          const staggered = (staggerIndex === 'odd' && roughX % 2 === 1) ||
+                            (staggerIndex === 'even' && roughX % 2 === 0);
+          const roughY = Math.floor((py - (staggered ? map.tileHeight / 2 * zoom : 0)) / (map.tileHeight * zoom));
+          return { x: roughX, y: roughY };
+        }
+      } else {
+        return {
+          x: Math.floor((px - offsetX) / (map.tileWidth * zoom)),
+          y: Math.floor((py - offsetY) / (map.tileHeight * zoom))
+        };
+      }
+    }
+
+    /**
+     * Draw semi-transparent selected tile + cell outline at the hovered grid position.
+     */
+    function renderHoverOverlay() {
+      if (!hoverTile || !mapData) return;
+      const { x, y } = hoverTile;
+      if (x < 0 || y < 0 || x >= mapData.map.width || y >= mapData.map.height) return;
+      const map = mapData.map;
+      const tw = map.tileWidth * zoom;
+      const th = map.tileHeight * zoom;
+
+      if (brushPattern) {
+        for (let by = 0; by < brushPattern.height; by++) {
+          for (let bx = 0; bx < brushPattern.width; bx++) {
+            const tx = x + bx;
+            const ty = y + by;
+            if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue;
+            const gid = brushPattern.data[by * brushPattern.width + bx] || 0;
+            if (gid <= 0) continue;
+            const p = calculateTilePosition(tx, ty, map, zoom);
+            try { drawTileByGid(gid, p.x + offsetX, p.y + offsetY, tw, th); } catch {}
+          }
+        }
+      } else if (selectedTile > 0) {
+        const pos = calculateTilePosition(x, y, map, zoom);
+        const sx = pos.x + offsetX;
+        const sy = pos.y + offsetY;
+        try { drawTileByGid(selectedTile, sx, sy, tw, th); } catch {}
+      }
+
+      const pos = calculateTilePosition(x, y, map, zoom);
+      const sx = pos.x + offsetX;
+      const sy = pos.y + offsetY;
+      ctx.save();
+      if (showGrid) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 4;
+        drawGridCellShape(sx, sy, map, zoom);
+      }
+      ctx.restore();
+    }
+
+    function updateUI() {
+      if (!mapData) return;
+      hideLayerContextMenu();
+      
+      document.getElementById('currentFile').textContent = mapData.filename || '—';
+      document.getElementById('mapSize').textContent = `${mapData.map.width} × ${mapData.map.height}`;
+      document.getElementById('selectedTileDisplay').textContent = brushPattern
+        ? `Brush ${brushPattern.width}×${brushPattern.height}`
+        : `GID ${selectedTile}`;
+      updateUndoButtonState();
+      const gridToggle = document.getElementById('showGridToggle');
+      if (gridToggle) gridToggle.checked = showGrid;
+      
+      // Top layer tabs
+      const layerTabs = document.getElementById('layerTabs');
+      layerTabs.innerHTML = '';
+      mapData.layers.forEach((layer, idx) => {
+        const tab = document.createElement('div');
+        tab.className = 'layer-tab';
+        tab.draggable = true;
+        tab.title = 'Drag to reorder';
+        tab.addEventListener('dragstart', () => {
+          draggingLayerIndex = idx;
+        });
+        tab.addEventListener('dragover', (ev) => {
+          ev.preventDefault();
+        });
+        tab.addEventListener('drop', (ev) => {
+          ev.preventDefault();
+          if (draggingLayerIndex === null) return;
+          moveLayer(draggingLayerIndex, idx);
+          draggingLayerIndex = null;
+        });
+        tab.addEventListener('dragend', () => {
+          draggingLayerIndex = null;
+        });
+
+        const selectBtn = document.createElement('button');
+        const isActiveTileTab = activeTabType === 'tile' && idx === currentLayer;
+        selectBtn.className = 'layer-tab-btn' + (isActiveTileTab ? ' active' : '');
+        selectBtn.textContent = `${idx + 1}. ${layer.name}`;
+        selectBtn.title = `Layer ${idx + 1}`;
+        selectBtn.onclick = () => handleLayerButtonPress(idx, false);
+        selectBtn.oncontextmenu = (ev) => onLayerContextMenu(ev, idx);
+
+        const visBtn = document.createElement('button');
+        const isVisible = layer.visible !== false;
+        visBtn.className = 'layer-tab-eye';
+        visBtn.textContent = isVisible ? '👁' : '🙈';
+        visBtn.title = isVisible ? 'Hide layer' : 'Show layer';
+        visBtn.onclick = (ev) => {
+          ev.stopPropagation();
+          toggleLayerVisibility(idx);
+        };
+
+        tab.appendChild(selectBtn);
+        tab.appendChild(visBtn);
+        layerTabs.appendChild(tab);
+      });
+
+      const addTab = document.createElement('div');
+      addTab.className = 'layer-tab';
+      const addBtn = document.createElement('button');
+      addBtn.className = 'layer-tab-btn';
+      addBtn.textContent = '+';
+      addBtn.title = 'Add layer';
+      addBtn.onclick = () => showAddLayerDialog();
+      addTab.appendChild(addBtn);
+      layerTabs.appendChild(addTab);
+
+      const tilesetTab = document.createElement('div');
+      tilesetTab.className = 'layer-tab';
+      const tilesetBtn = document.createElement('button');
+      tilesetBtn.className = 'layer-tab-btn' + (activeTabType === 'tileset' ? ' active' : '');
+      tilesetBtn.textContent = 'T. Tilesets';
+      tilesetBtn.title = 'Tilesets tab (hotkey: T)';
+      tilesetBtn.onclick = () => handleTilesetButtonPress();
+      tilesetTab.appendChild(tilesetBtn);
+      layerTabs.appendChild(tilesetTab);
+
+      if (activeTabType === 'tileset') {
+        const tilesetSelectWrap = document.createElement('div');
+        tilesetSelectWrap.className = 'layer-tab-select-wrap';
+        const tilesetSelect = document.createElement('select');
+        tilesetSelect.id = 'activeTilesetSelect';
+        tilesetSelect.className = 'layer-tab-select';
+        tilesetSelect.onchange = () => setActiveTilesetFromDropdown(tilesetSelect.value);
+        tilesetSelectWrap.appendChild(tilesetSelect);
+        layerTabs.appendChild(tilesetSelectWrap);
+      }
+
+      const objectsTab = document.createElement('div');
+      objectsTab.className = 'layer-tab';
+
+      const objectsBtn = document.createElement('button');
+      objectsBtn.className = 'layer-tab-btn' + (activeTabType === 'objects' ? ' active' : '');
+      objectsBtn.textContent = 'O. Objects';
+      objectsBtn.title = 'Objects tab (hotkey: O)';
+      objectsBtn.onclick = () => handleObjectsButtonPress();
+
+      const objectsVisBtn = document.createElement('button');
+      const objectsVisible = areObjectsVisible();
+      objectsVisBtn.className = 'layer-tab-eye';
+      objectsVisBtn.textContent = objectsVisible ? '👁' : '🙈';
+      objectsVisBtn.title = objectsVisible ? 'Hide objects' : 'Show objects';
+      objectsVisBtn.onclick = (ev) => {
+        ev.stopPropagation();
+        toggleObjectsVisibility();
+      };
+
+      objectsTab.appendChild(objectsBtn);
+      objectsTab.appendChild(objectsVisBtn);
+      layerTabs.appendChild(objectsTab);
+
+      const activeLayer = activeTabType === 'tile' ? mapData.layers[currentLayer] : null;
+      if (activeTabType === 'objects') {
+        const objectGroups = mapData.objectGroups || [];
+        const objectCount = objectGroups.reduce((sum, g) => sum + (g.objects?.length || 0), 0);
+        const visibilityLabel = areObjectsVisible() ? '' : ' (hidden)';
+        document.getElementById('currentLayerDisplay').textContent = `Objects${visibilityLabel} · ${objectCount}`;
+      } else if (activeTabType === 'tileset') {
+        const activeTileset = getActiveTileset();
+        document.getElementById('currentLayerDisplay').textContent = activeTileset ? `Tileset: ${activeTileset.name}` : 'Tilesets';
+      } else if (activeLayer) {
+        const visibilityLabel = activeLayer.visible === false ? ' (hidden)' : '';
+        document.getElementById('currentLayerDisplay').textContent = `${activeLayer.name}${visibilityLabel}`;
+      } else {
+        document.getElementById('currentLayerDisplay').textContent = '—';
+      }
+
+      const objectPanel = document.getElementById('objectPlacementPanel');
+      const objectHint = document.getElementById('objectPlacementHint');
+      const tilePanel = document.getElementById('tileEditingPanel');
+      const tilesetPanel = document.getElementById('tilesetEditingPanel');
+      const objectEditingPanel = document.getElementById('objectEditingPanel');
+      const workspacePanel = document.querySelector('.workspace');
+      if (tilePanel) tilePanel.classList.toggle('panel-hidden', activeTabType !== 'tile');
+      if (tilesetPanel) tilesetPanel.classList.toggle('panel-hidden', activeTabType !== 'tileset');
+      if (objectEditingPanel) objectEditingPanel.classList.toggle('panel-hidden', activeTabType !== 'objects');
+      if (workspacePanel) workspacePanel.classList.toggle('panel-hidden', activeTabType === 'tileset');
+      if (objectPanel) objectPanel.style.opacity = activeTabType === 'objects' ? '1' : '0.65';
+      if (activeTabType !== 'tileset') stopTileAnimationPreview();
+      refreshObjectCollectionUI();
+      if (objectHint) {
+        const snapLabel = isObjectSnapEnabled() ? 'grid snap on' : 'free placement';
+        objectHint.textContent = activeTabType === 'objects'
+          ? `Objects tab active: click to place a point, drag more than one tile to place an area (${snapLabel}).`
+          : 'Select Objects tab (O), then click/drag on map.';
+      }
+      
+      // Tile palette in native tileset layout
+      const palette = document.getElementById('tilePalette');
+      palette.innerHTML = '';
+
+      const tilesetSelect = document.getElementById('activeTilesetSelect');
+      if (tilesetSelect) {
+        tilesetSelect.innerHTML = '';
+        if (mapData && Array.isArray(mapData.tilesets)) {
+          setActiveTileset(activeTilesetFirstGid, false);
+          mapData.tilesets.forEach((ts) => {
+            const option = document.createElement('option');
+            option.value = String(ts.firstGid);
+            option.textContent = `${ts.name} (gid ${ts.firstGid})`;
+            if (ts.firstGid === activeTilesetFirstGid) option.selected = true;
+            tilesetSelect.appendChild(option);
+          });
+        }
+      }
+
+      const activeTileset = getActiveTileset();
+      if (activeTileset) {
+        palette.appendChild(createTilesetSheetElement(activeTileset));
+      }
+
+      renderTileAnimationEditor();
+      
+      // Tilesets
+      const tilesetsList = document.getElementById('tilesetsList');
+      if (tilesetsList) {
+        if (activeTileset) {
+          const isLoaded = window.loadedTilesets && window.loadedTilesets[activeTileset.firstGid];
+          const status = isLoaded ? '✓' : '✗';
+          const source = activeTileset.image?.source || '(generated)';
+          const mode = isLoaded && isLoaded.isFile
+            ? (isLoaded.hasColorKey ? 'png+colorkey' : 'png')
+            : (isLoaded ? 'placeholder' : 'missing');
+          const loadedClass = isLoaded ? ' loaded' : '';
+          tilesetsList.innerHTML = `<div${loadedClass}>
+            <div style="color: ${isLoaded ? '#84d984' : '#f48771'}">${status} ${activeTileset.name}</div>
+            <div style="font-size: 10px; color: #858585; margin-top: 2px;">${source}</div>
+            <div style="font-size: 10px; color: #858585;">mode: ${mode}</div>
+          </div>`;
+        } else {
+          tilesetsList.innerHTML = '<div style="color:#858585;">No tilesets in this map.</div>';
+        }
+      }
+
+      updatePropertiesPanel();
+    }
+
+    function updatePropertiesPanel() {
+      if (!mapData) return;
+      const activeLayer = activeTabType === 'tile' ? mapData.layers[currentLayer] : null;
+      if (activeTabType === 'objects') {
+        const objectGroups = mapData.objectGroups || [];
+        const objectCount = objectGroups.reduce((sum, g) => sum + (g.objects?.length || 0), 0);
+        document.getElementById('propLayer').textContent = `O. Objects (${objectCount})`;
+        document.getElementById('propLayerVisible').textContent = areObjectsVisible() ? 'Shown' : 'Hidden';
+      } else if (activeTabType === 'tileset') {
+        const activeTileset = getActiveTileset();
+        document.getElementById('propLayer').textContent = activeTileset ? `T. ${activeTileset.name}` : 'T. Tilesets';
+        document.getElementById('propLayerVisible').textContent = activeTileset ? 'Loaded' : '—';
+      } else {
+        document.getElementById('propLayer').textContent = activeLayer ? `${currentLayer + 1}. ${activeLayer.name}` : '—';
+        document.getElementById('propLayerVisible').textContent = activeLayer ? (activeLayer.visible === false ? 'Hidden' : 'Shown') : '—';
+      }
+      if (activeTabType === 'objects') {
+        const snapLabel = isObjectSnapEnabled() ? 'Auto (grid snap)' : 'Auto (freeform)';
+        document.getElementById('propSelected').textContent = snapLabel;
+      } else {
+        document.getElementById('propSelected').textContent = brushPattern
+          ? `Brush ${brushPattern.width}×${brushPattern.height}`
+          : `GID ${selectedTile}`;
+      }
+      document.getElementById('propCursor').textContent = lastCursorTile ? `(${lastCursorTile.x}, ${lastCursorTile.y})` : '—';
+      document.getElementById('propOrientation').textContent = mapData.map?.orientation || '—';
+      document.getElementById('propZoom').textContent = `${Math.round(zoom * 100)}%`;
+    }
+    
+    function selectTool(tool) {
+      currentTool = tool;
+      document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach(b => b.classList.remove('active'));
+      document.getElementById(`tool${tool.charAt(0).toUpperCase() + tool.slice(1)}`).classList.add('active');
+    }
+
+    function toggleGrid(enabled) {
+      showGrid = !!enabled;
+      renderMap();
+    }
+
+    function stampBrush(layer, startX, startY) {
+      let changed = false;
+      if (!brushPattern) {
+        const idx = startY * layer.width + startX;
+        if (layer.data[idx] !== selectedTile) {
+          layer.data[idx] = selectedTile;
+          changed = true;
+        }
+        return changed;
+      }
+
+      for (let by = 0; by < brushPattern.height; by++) {
+        for (let bx = 0; bx < brushPattern.width; bx++) {
+          const tx = startX + bx;
+          const ty = startY + by;
+          if (tx < 0 || ty < 0 || tx >= layer.width || ty >= layer.height) continue;
+          const src = brushPattern.data[by * brushPattern.width + bx] || 0;
+          const idx = ty * layer.width + tx;
+          if (layer.data[idx] !== src) {
+            layer.data[idx] = src;
+            changed = true;
+          }
+        }
+      }
+      return changed;
+    }
+
+    function updateCursor(e) {
+      if (!mapData) return;
+      const tile = screenToTile(e.clientX, e.clientY);
+      if (!tile) return;
+      lastCursorTile = tile;
+      document.getElementById('cursorPos').textContent = `(${tile.x}, ${tile.y})`;
+      updatePropertiesPanel();
+      // Only re-render when the hovered tile changes (debounce to tile boundary).
+      if (!hoverTile || hoverTile.x !== tile.x || hoverTile.y !== tile.y) {
+        hoverTile = tile;
+        renderMap();
+      }
+    }
+
+    function handleCanvasEdit(e, allowFill) {
+      if (!mapData) return;
+      if (activeTabType !== 'tile') {
+        updateStatus('Select a tile layer (1-8) to paint. Tilesets/Objects tabs are inspector/editor views.');
+        return;
+      }
+      const tile = screenToTile(e.clientX, e.clientY);
+      if (!tile) return;
+      const { x, y } = tile;
+      if (x < 0 || y < 0 || x >= mapData.map.width || y >= mapData.map.height) return;
+
+      const layer = mapData.layers[currentLayer];
+      if (!layer) return;
+
+      const idx = y * layer.width + x;
+      let changed = false;
+      if (currentTool === 'paint') {
+        changed = stampBrush(layer, x, y);
+      } else if (currentTool === 'erase') {
+        if (layer.data[idx] !== 0) {
+          layer.data[idx] = 0;
+          changed = true;
+        }
+      } else if (currentTool === 'fill' && allowFill) {
+        changed = floodFillLayer(layer, x, y, layer.data[idx], selectedTile);
+      }
+
+      if (changed) {
+        markUndoChanged();
+        renderMap();
+        updateUI();
+      }
+    }
+
+    function floodFillLayer(layer, startX, startY, fromTile, toTile) {
+      if (fromTile === toTile) return false;
+
+      const queue = [[startX, startY]];
+      let changed = false;
+      while (queue.length > 0) {
+        const [x, y] = queue.pop();
+        if (x < 0 || y < 0 || x >= layer.width || y >= layer.height) continue;
+
+        const idx = y * layer.width + x;
+        if (layer.data[idx] !== fromTile) continue;
+
+        layer.data[idx] = toTile;
+        changed = true;
+        queue.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+      }
+      return changed;
+    }
+    
+    function exportMap() {
+      if (!mapData) {
+        alert('No map loaded');
+        return;
+      }
+      
+      let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+      xml += `<map version="1.0" tiledversion="1.7.0" orientation="orthogonal" renderorder="right-down" width="${mapData.map.width}" height="${mapData.map.height}" tilewidth="${mapData.map.tileWidth}" tileheight="${mapData.map.tileHeight}">\n`;
+
+      const escapeXmlAttr = (v) => String(v)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      
+      mapData.tilesets.forEach(ts => {
+        xml += `  <tileset firstgid="${ts.firstGid}" name="${ts.name}" tilewidth="${ts.tileWidth}" tileheight="${ts.tileHeight}" tilecount="${ts.tileCount}" columns="${ts.columns}">\n`;
+        if (ts.image) {
+          xml += `    <image source="${ts.image.source}" width="${ts.image.width}" height="${ts.image.height}"/>\n`;
+        }
+
+        if (ts.tiles) {
+          const tileIds = Object.keys(ts.tiles)
+            .map((k) => parseInt(k, 10))
+            .filter((id) => Number.isInteger(id) && id >= 0)
+            .sort((a, b) => a - b);
+
+          tileIds.forEach((tileId) => {
+            const tileInfo = ts.tiles[tileId];
+            const frames = tileInfo && Array.isArray(tileInfo.animation) ? tileInfo.animation : null;
+            const meta = normalizeEditorAnimationMeta(tileInfo && tileInfo.editorAnimationMeta ? tileInfo.editorAnimationMeta : null);
+            if ((!frames || frames.length === 0) && !meta) return;
+            xml += `    <tile id="${tileId}">\n`;
+            if (meta) {
+              xml += `      <properties>\n`;
+              xml += `        <property name="retrowww.anim.group" value="${escapeXmlAttr(meta.groupId)}"/>\n`;
+              xml += `        <property name="retrowww.anim.blockW" type="int" value="${meta.width}"/>\n`;
+              xml += `        <property name="retrowww.anim.blockH" type="int" value="${meta.height}"/>\n`;
+              xml += `        <property name="retrowww.anim.cell" type="int" value="${meta.cellIndex}"/>\n`;
+              if (meta.name) {
+                xml += `        <property name="retrowww.anim.name" value="${escapeXmlAttr(meta.name)}"/>\n`;
+              }
+              xml += `      </properties>\n`;
+            }
+            if (frames && frames.length > 0) {
+            xml += `      <animation>\n`;
+            frames.forEach((frame) => {
+              const frameTileId = Math.max(0, parseInt(frame.tileId, 10) || 0);
+              const frameDuration = Math.max(1, parseInt(frame.duration, 10) || 1);
+              xml += `        <frame tileid="${frameTileId}" duration="${frameDuration}"/>\n`;
+            });
+            xml += `      </animation>\n`;
+            }
+            xml += `    </tile>\n`;
+          });
+        }
+
+        xml += `  </tileset>\n`;
+      });
+      
+      mapData.layers.forEach(layer => {
+        xml += `  <layer id="${mapData.layers.indexOf(layer) + 1}" name="${layer.name}" width="${layer.width}" height="${layer.height}">\n`;
+        xml += `    <data encoding="csv">\n`;
+        let csv = '';
+        for (let i = 0; i < layer.data.length; i++) {
+          csv += layer.data[i];
+          if ((i + 1) % layer.width === 0) {
+            csv += '\n';
+          } else {
+            csv += ',';
+          }
+        }
+        xml += csv;
+        xml += `    </data>\n`;
+        xml += `  </layer>\n`;
+      });
+      
+      xml += `</map>\n`;
+      
+      const blob = new Blob([xml], { type: 'text/xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = mapData.filename || 'map.tmx';
+      a.click();
+    }
+    
+    // Returns the canvas pixel dimensions for a given zoom without mutating any state.
+    function getRenderedMapSize(z) {
+      if (!mapData) return { w: 1, h: 1 };
+      const map = mapData.map;
+      const tw = map.tileWidth, th = map.tileHeight;
+      const W = map.width, H = map.height;
+      if (map.orientation === 'isometric') {
+        return { w: (W + H) * (tw / 2) * z, h: (W + H) * (th / 2) * z };
+      } else if (map.orientation === 'hexagonal') {
+        const sax = map.staggerAxis || 'y';
+        if (sax === 'y') {
+          return { w: W * tw * z, h: (H * (th - (map.hexSideLength || 0)) + (th - (map.hexSideLength || 0))) * z };
+        } else {
+          return { w: (W * (tw - (map.hexSideLength || 0)) + (tw - (map.hexSideLength || 0))) * z, h: H * th * z };
+        }
+      }
+      return { w: W * tw * z, h: H * th * z };
+    }
+
+    function handleZoom(event) {
+      event.preventDefault();
+      if (!mapData) return;
+      const canvasArea = document.getElementById('canvasArea');
+      const oldZoom = zoom;
+      const zoomFactor = getWheelZoomFactor(event);
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, oldZoom * zoomFactor));
+      if (newZoom === oldZoom) return;
+
+      const areaRect = canvasArea.getBoundingClientRect();
+      const mouseInArea = { x: event.clientX - areaRect.left, y: event.clientY - areaRect.top };
+      const contentLeft = BASE_CANVAS_MARGIN + extraCanvasLeft;
+      const contentTop  = BASE_CANVAS_MARGIN + extraCanvasTop;
+
+      // Map-space anchor under the mouse cursor.
+      const mapX = (canvasArea.scrollLeft + mouseInArea.x - contentLeft) / oldZoom;
+      const mapY = (canvasArea.scrollTop  + mouseInArea.y - contentTop)  / oldZoom;
+
+      // Compute the desired scroll position at the new zoom.
+      let desiredLeft = contentLeft + mapX * newZoom - mouseInArea.x;
+      let desiredTop  = contentTop  + mapY * newZoom - mouseInArea.y;
+
+      // Adjust virtual gutter so scroll never needs to go negative.
+      if (desiredLeft < 0) {
+        extraCanvasLeft += -desiredLeft;
+        desiredLeft = 0;
+      } else if (extraCanvasLeft > 0) {
+        const reduce = Math.min(extraCanvasLeft, desiredLeft);
+        extraCanvasLeft -= reduce;
+        desiredLeft -= reduce;
+      }
+      if (desiredTop < 0) {
+        extraCanvasTop += -desiredTop;
+        desiredTop = 0;
+      } else if (extraCanvasTop > 0) {
+        const reduce = Math.min(extraCanvasTop, desiredTop);
+        extraCanvasTop -= reduce;
+        desiredTop -= reduce;
+      }
+
+      zoom = newZoom;
+
+      // Pre-size the canvas to the new dimensions BEFORE setting scroll.
+      // Without this, the scroll container still knows only the old (smaller) content
+      // size and will silently clamp desiredLeft/Top to the old range, breaking the anchor.
+      const newSize = getRenderedMapSize(newZoom);
+      canvas.width       = Math.max(1, newSize.w);
+      canvas.height      = Math.max(1, newSize.h);
+      overlayCanvas.width  = canvas.width;
+      overlayCanvas.height = canvas.height;
+
+      // Apply margins so scroll container reflects both the new canvas size AND gutter.
+      applyCanvasMargins();
+      void canvasArea.scrollWidth; // flush layout
+
+      // Now set scroll — the container has the correct range so no clamping occurs.
+      canvasArea.scrollLeft = desiredLeft;
+      canvasArea.scrollTop  = desiredTop;
+
+      // Render last: at this point zoom, extraCanvas*, and scroll are all final so
+      // viewport culling inside renderMap uses the correct region.
+      renderMap();
+      updateZoomLevelLabel();
+    }
+    
+    function fitView() {
+      if (!mapData) return;
+      const map = mapData.map;
+      const areaWidth = document.getElementById('canvasArea').clientWidth - 20;
+      const areaHeight = document.getElementById('canvasArea').clientHeight - 20;
+      const mapWidth = map.width * map.tileWidth;
+      const mapHeight = map.height * map.tileHeight;
+      zoom = Math.min(areaWidth / mapWidth, areaHeight / mapHeight);
+      extraCanvasLeft = 0;
+      extraCanvasTop = 0;
+      applyCanvasMargins();
+      updateZoomLevelLabel();
+      renderMap();
+    }
+
+    function updateZoomLevelLabel() {
+      const el = document.getElementById('zoomLevel');
+      if (el) el.textContent = Math.round(zoom * 100) + '%';
+    }
+    
+    function updateStatus(msg, isError = false) {
+      const el = document.getElementById('statusMessage');
+      el.textContent = msg;
+      if (isError) el.className = 'status-error';
+      else el.className = '';
+    }
+
+    function initObjectEditorControls() {
+      const addBtn = document.getElementById('addObjectCollectionBtn');
+      const nameInput = document.getElementById('newObjectCollectionInput');
+      const snapToggle = document.getElementById('objectSnapToGrid');
+      const collectionSelect = document.getElementById('objectCollectionSelect');
+
+      if (addBtn) {
+        addBtn.addEventListener('click', () => addObjectCollection());
+      }
+      if (nameInput) {
+        nameInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            addObjectCollection();
+          }
+        });
+      }
+      if (snapToggle) {
+        snapToggle.addEventListener('change', () => {
+          if (mapData) updateUI();
+        });
+      }
+      if (collectionSelect) {
+        collectionSelect.addEventListener('change', () => {
+          if (mapData) updateUI();
+        });
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      applyCanvasMargins();
+      populateExampleSelector();
+      initObjectEditorControls();
+      initEditor();
+    });
+  </script>
+</body>
+</html>
