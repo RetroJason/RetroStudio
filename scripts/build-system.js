@@ -64,6 +64,9 @@ class BuildSystem {
         return 'sprite';
       case '.frameset':
         return 'frameset';
+      case '.tilemap':
+      case '.tmj':
+        return 'tilemap';
       default: return 'copy';
     }
   }

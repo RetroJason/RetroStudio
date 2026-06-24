@@ -1298,6 +1298,134 @@
       ]
     },
     {
+      "name": "TileMap",
+      "description": "Tilemap loading, rendering, and manipulation functions",
+      "functions": [
+        {
+          "name": "Load",
+          "description": "Load a tilemap from a built D2M binary file",
+          "parameters": [
+            {"name": "mapPath", "type": "string", "description": "Path to .d2m file (relative to package build/)"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque tilemap handle"},
+          "example": "local map = TileMap.Load(\"Maps/level-1.d2m\")"
+        },
+        {
+          "name": "GetDimensions",
+          "description": "Get tilemap dimensions in tiles",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height in tiles"},
+          "example": "local w, h = TileMap.GetDimensions(map)"
+        },
+        {
+          "name": "GetTileSize",
+          "description": "Get the size of each tile in pixels",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Tile width and height"},
+          "example": "local tw, th = TileMap.GetTileSize(map)"
+        },
+        {
+          "name": "GetTile",
+          "description": "Get the global tile ID at a specific layer and position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index (0-based)"},
+            {"name": "tx", "type": "int32", "description": "Tile X coordinate"},
+            {"name": "ty", "type": "int32", "description": "Tile Y coordinate"}
+          ],
+          "returns": {"type": "int32", "description": "Global tile ID (0 if out of bounds)"},
+          "example": "local gid = TileMap.GetTile(map, 0, 10, 15)"
+        },
+        {
+          "name": "SetTile",
+          "description": "Set the global tile ID at a specific layer and position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "tx", "type": "int32", "description": "Tile X coordinate"},
+            {"name": "ty", "type": "int32", "description": "Tile Y coordinate"},
+            {"name": "gid", "type": "int32", "description": "Global tile ID to assign"}
+          ],
+          "example": "TileMap.SetTile(map, 0, 10, 15, 0x00010005)"
+        },
+        {
+          "name": "GetLayerCount",
+          "description": "Get the number of layers in the tilemap",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32", "description": "Layer count"},
+          "example": "local layerCount = TileMap.GetLayerCount(map)"
+        },
+        {
+          "name": "GetLayerVisibility",
+          "description": "Check if a layer is marked as visible",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local visible = TileMap.GetLayerVisibility(map, 0)"
+        },
+        {
+          "name": "SetLayerVisibility",
+          "description": "Set layer visibility at runtime",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "TileMap.SetLayerVisibility(map, 0, false)"
+        },
+        {
+          "name": "DrawLayer",
+          "description": "Render a layer at the given screen offset (camera position)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "offsetX", "type": "int32", "description": "Camera X offset (typically negative)"},
+            {"name": "offsetY", "type": "int32", "description": "Camera Y offset (typically negative)"}
+          ],
+          "example": "TileMap.DrawLayer(map, 0, -scrollX, -scrollY)"
+        },
+        {
+          "name": "GetWangData",
+          "description": "Get optional Wang terrain metadata (if present in D2M)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "string or nil", "description": "JSON string of Wang data, or nil"},
+          "example": "local wangJson = TileMap.GetWangData(map)"
+        },
+        {
+          "name": "ScreenClamp",
+          "description": "Clamp camera coordinates to prevent scrolling past map boundaries",
+          "parameters": [
+            {"name": "cameraX", "type": "int32", "description": "Camera X position"},
+            {"name": "cameraY", "type": "int32", "description": "Camera Y position"},
+            {"name": "mapWidth", "type": "int32", "description": "Map pixel width (mapW * tileW)"},
+            {"name": "mapHeight", "type": "int32", "description": "Map pixel height (mapH * tileH)"},
+            {"name": "screenWidth", "type": "int32", "description": "Screen width (default 368)"},
+            {"name": "screenHeight", "type": "int32", "description": "Screen height (default 448)"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Clamped camera X and Y"},
+          "example": "local clampedX, clampedY = TileMap.ScreenClamp(camX, camY, mapW*tileW, mapH*tileH, 368, 448)"
+        },
+        {
+          "name": "Unload",
+          "description": "Release tilemap resources",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "example": "TileMap.Unload(map)"
+        }
+      ]
+    },
+    {
       "name": "Battery",
       "description": "Battery charge-state functions",
       "functions": [

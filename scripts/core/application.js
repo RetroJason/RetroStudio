@@ -190,6 +190,7 @@ class RetroStudioApplication {
       'scripts/editors/texture-editor.js',
       'scripts/editors/sprite-editor.js',
       'scripts/editors/frameset-editor.js',
+      'scripts/editors/tilemap-editor.js',
       'scripts/editors/package-settings-editor.js',
       'scripts/font/font-atlas-generator.js',
       'scripts/editors/font-editor.js',
