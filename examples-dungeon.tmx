@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="16" height="12" tilewidth="16" tileheight="16" infinite="0" nextlayerid="5" nextobjectid="5">
+  <!-- Dungeon level with collision layer -->
+  <tileset firstgid="1" name="dungeon" tilewidth="16" tileheight="16" tilecount="20" columns="5">
+    <image source="dungeon.png" width="80" height="64"/>
+  </tileset>
+  
+  <layer id="1" name="background" width="16" height="12">
+    <data encoding="csv">
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,
+1,2,3,3,3,3,3,3,3,3,3,3,3,3,2,1,
+1,2,3,3,3,3,3,3,3,3,3,3,3,3,2,1,
+1,2,3,3,4,4,4,4,4,4,4,4,3,3,2,1,
+1,2,3,3,4,5,5,5,5,5,5,4,3,3,2,1,
+1,2,3,3,4,5,6,6,6,5,5,4,3,3,2,1,
+1,2,3,3,4,5,5,5,5,5,5,4,3,3,2,1,
+1,2,3,3,4,4,4,4,4,4,4,4,3,3,2,1,
+1,2,3,3,3,3,3,3,3,3,3,3,3,3,2,1,
+1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    </data>
+  </layer>
+  
+  <layer id="2" name="collision" width="16" height="12" opacity="0.5">
+    <data encoding="csv">
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,2,2,2,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    </data>
+  </layer>
+  
+  <objectgroup id="3" name="objects">
+    <object id="1" name="player_spawn" type="spawn" x="80" y="96" width="0" height="0"/>
+    <object id="2" name="exit" type="trigger" x="240" y="96" width="16" height="16"/>
+    <object id="3" name="treasure" type="item" x="144" y="112" width="0" height="0"/>
+    <object id="4" name="trap" type="hazard" x="128" y="112" width="16" height="16"/>
+  </objectgroup>
+</map>

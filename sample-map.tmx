@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="12" height="10" tilewidth="16" tileheight="16" infinite="0" nextlayerid="4" nextobjectid="3">
+  <!--
+    EXAMPLE TMX FILE - Shows how TMX separates:
+    1. TILESETS (graphics/sprite references)
+    2. LAYERS (which tiles are placed where)
+  -->
+  
+  <!-- ============================================ -->
+  <!-- TILESETS SECTION (GRAPHICS REFERENCES) -->
+  <!-- This tells us WHAT images to use as tiles -->
+  <!-- ============================================ -->
+  <tileset firstgid="1" name="terrain" tilewidth="16" tileheight="16" tilecount="16" columns="4">
+    <image source="assets/terrain.png" width="64" height="64"/>
+  </tileset>
+  
+  <tileset firstgid="17" name="objects" tilewidth="16" tileheight="16" tilecount="8" columns="4">
+    <image source="assets/objects.png" width="64" height="32"/>
+  </tileset>
+  
+  <!-- ============================================ -->
+  <!-- LAYERS SECTION (MAP DATA) -->
+  <!-- This tells us WHICH tiles go WHERE -->
+  <!-- ============================================ -->
+  
+  <!-- Background layer: grass/dirt tiles -->
+  <layer id="1" name="background" width="12" height="10">
+    <data encoding="csv">
+1,2,2,2,2,2,2,2,2,3,3,3,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+4,5,5,5,5,5,5,5,5,6,6,6,
+7,8,8,8,8,8,8,8,8,9,9,9,
+0,0,0,0,0,0,0,0,0,0,0,0
+    </data>
+  </layer>
+  
+  <!-- Collision layer: solid/hazard tiles -->
+  <layer id="2" name="collision" width="12" height="10" opacity="0.5">
+    <data encoding="csv">
+1,1,1,1,1,1,1,1,1,1,1,1,
+1,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,2,2,0,0,0,0,0,1,
+1,0,0,0,2,2,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,1,
+1,1,1,1,1,1,1,1,1,1,1,1,
+0,0,0,0,0,0,0,0,0,0,0,0
+    </data>
+  </layer>
+  
+  <!-- Object layer: spawn points, triggers -->
+  <objectgroup id="3" name="objects">
+    <object id="1" name="player_spawn" type="spawn" x="80" y="128" width="0" height="0"/>
+    <object id="2" name="enemy_spawn" type="spawn" x="160" y="96" width="0" height="0"/>
+  </objectgroup>
+</map>

@@ -159,7 +159,47 @@ class TMXImporter {
           tileset.tiles[tileId] = tileInfo;
         }
       });
-      
+
+      // Parse Wang sets (terrain auto-tile data).
+      // wangid format (Tiled 1.5+): 8 integers [e0, c0, e1, c1, e2, c2, e3, c3]
+      // For corner-type sets only corners matter (indices 1,3,5,7 = TR,BR,BL,TL).
+      // For edge-type sets only edges matter (indices 0,2,4,6 = T,R,B,L).
+      // Color index 0 = "no terrain" / empty.
+      const wangsetEls = tsEl.querySelectorAll('wangsets > wangset');
+      if (wangsetEls.length > 0) {
+        tileset.wangsets = [];
+        wangsetEls.forEach(wsEl => {
+          const wangset = {
+            name: wsEl.getAttribute('name') || 'Terrain',
+            type: wsEl.getAttribute('type') || 'corner', // 'corner' | 'edge' | 'mixed'
+            tile: parseInt(wsEl.getAttribute('tile') || -1, 10), // representative tile local id
+            colors: [],   // [{name, color, tile}]  index 0 = unused (empty)
+            tiles: {},    // localTileId -> wangid array [8 ints]
+            fromXml: true // Mark as loaded from XML, don't allow UI reassignment
+          };
+
+          // wangcolor index starts at 1; index 0 is always "empty"
+          wangset.colors.push({ name: '', color: '#000000', tile: -1 }); // slot 0 = empty
+          wsEl.querySelectorAll('wangcolor').forEach(wcEl => {
+            wangset.colors.push({
+              name: wcEl.getAttribute('name') || '',
+              color: wcEl.getAttribute('color') || '#888888',
+              tile: parseInt(wcEl.getAttribute('tile') || -1, 10)
+            });
+          });
+
+          wsEl.querySelectorAll('wangtile').forEach(wtEl => {
+            const localId = parseInt(wtEl.getAttribute('tileid'), 10);
+            const raw = (wtEl.getAttribute('wangid') || '').split(',').map(v => parseInt(v.trim(), 10));
+            if (!Number.isNaN(localId) && raw.length === 8) {
+              wangset.tiles[localId] = raw;
+            }
+          });
+
+          tileset.wangsets.push(wangset);
+        });
+      }
+
       tilesets.push(tileset);
     });
     

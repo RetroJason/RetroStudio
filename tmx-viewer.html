@@ -121,6 +121,65 @@
       min-width: 220px;
     }
 
+    .layer-tool-row {
+      background: #1f2126;
+      border-bottom: 1px solid #32353b;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .layer-tool-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .layer-tool-btn {
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      background: #2a2a2f;
+      color: #d4d4d4;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .layer-tool-btn:hover { background: #32323a; }
+    .layer-tool-btn.active { background: #094771; color: #ffffff; }
+
+    .layer-tool-select {
+      background: #1f1f22;
+      color: #d4d4d4;
+      border: 1px solid #3e3e42;
+      border-radius: 4px;
+      padding: 6px 8px;
+      font-size: 12px;
+      min-width: 220px;
+    }
+
+    .wang-editor-shell {
+      margin-top: 14px;
+      border-top: 1px solid #32353b;
+      padding-top: 14px;
+    }
+
+    .wang-editor-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .wang-editor-note {
+      font-size: 11px;
+      color: #858585;
+    }
+
     .workspace {
       flex: 1;
       display: flex;
@@ -624,14 +683,16 @@
       background: #1177bb;
     }
   </style>
+  <script src="wang-template-system.js"></script>
 </head>
 <body>
   <div class="container">
     <div class="sidebar">
       <h3>📂 File</h3>
-      <button onclick="document.getElementById('fileInput').click()">Open TMX...</button>
+      <button onclick="document.getElementById('fileInput').click()">Open Map...</button>
+      <button onclick="exportStudioJson()">Save JSON</button>
       <button onclick="exportMap()">Export TMX</button>
-      <input type="file" id="fileInput" accept=".tmx" onchange="loadTMXFile(event)">
+      <input type="file" id="fileInput" accept=".json,.tmx" onchange="loadMapFile(event)">
       
       <div style="margin-top: 15px; padding: 10px; background: #2d2d30; border-radius: 3px; font-size: 11px;">
         <div style="color: #858585;">Current File</div>
@@ -639,10 +700,7 @@
       </div>
       
       <div id="tileEditingPanel">
-        <h3>🎨 Tools</h3>
-        <button id="toolPaint" class="active" onclick="selectTool('paint')">Paint</button>
-        <button id="toolFill" onclick="selectTool('fill')">Fill</button>
-        <button id="toolErase" onclick="selectTool('erase')">Erase</button>
+        <h3>🎨 Editing</h3>
         <button id="toolUndo" onclick="undoEdit()">Undo</button>
         <div style="margin-top: 10px; font-size: 11px; color: #b9b9b9;">
           <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
@@ -721,8 +779,18 @@
 
       <div class="layer-tabs" id="layerTabs"></div>
 
+      <div id="layerToolToolbar" class="layer-tool-row panel-hidden"></div>
+
       <div id="tilesetEditingPanel" class="panel-hidden">
         <div id="tilePalette"></div>
+
+        <div class="wang-editor-shell">
+          <div class="wang-editor-toggle">
+            <button id="toggleWangEditorBtn" type="button" onclick="toggleWangEditor()">Wang Tools</button>
+            <span class="wang-editor-note">Terrain types, color overlays, and tile assignments live here now.</span>
+          </div>
+          <div id="terrainEditorInner" class="panel-hidden" style="padding:0 0 10px; font-size:12px;"></div>
+        </div>
 
         <h3>🎞 Tile Animator</h3>
         <div id="tileAnimationPanel">
@@ -792,7 +860,7 @@
           <span class="status-value" id="currentLayerDisplay">—</span>
         </div>
         <div class="status-item" style="margin-left: auto;">
-          <span id="statusMessage">Ready. Load a TMX file to begin.</span>
+          <span id="statusMessage">Ready. Load a JSON or TMX map to begin.</span>
         </div>
       </div>
     </div>
@@ -823,6 +891,13 @@
     let tilesetSelectionLocalIds = [];
     let tileAnimationDraft = [];
     let tileAnimationCatalog = [];
+    // Terrain / auto-tile state
+    let activeTerrainTilesetGid = null; // firstGid of tileset hosting the active wangset
+    let activeWangsetIndex = 0;
+    let activeTerrainColorIndex = 1;    // which wangcolor is being painted (1-based)
+    let showTerrainColorOverlay = true;
+    let isWangEditorOpen = false;
+    let wangDebugEnabled = true;
     let tileAnimationCatalogTilesetGid = null;
     let activeTileAnimationId = null;
     let activeTileAnimationFrameIndex = 0;
@@ -1080,6 +1155,76 @@
         if (!(layer.data instanceof Uint32Array)) {
           layer.data = Uint32Array.from(layer.data || []);
         }
+      });
+    }
+
+    const RETRO_WANG_BLOCKS_PROPERTY = 'retrowww.retroWangBlocks';
+
+    function sanitizeRetroWangBlock(raw) {
+      if (!raw || typeof raw !== 'object') return null;
+      const templateId = String(raw.templateId || 'corner-2');
+      const definition = window.wangTemplateSystem?.getTemplateDefinition(templateId);
+      if (!definition) return null;
+      const colors = Array.isArray(raw.colors) && raw.colors.length > 1
+        ? raw.colors.map((color, index) => ({
+            name: String(color?.name || (index === 0 ? '' : 'Color ' + index)),
+            color: String(color?.color || (index === 0 ? '#000000' : '#888888')),
+            tile: Number.isInteger(color?.tile) ? color.tile : -1
+          }))
+        : window.wangTemplateSystem.createBlock(templateId, raw.name || definition.name).colors;
+      const tiles = {};
+      Object.entries(raw.tiles || {}).forEach(([localIdStr, wangid]) => {
+        const localId = parseInt(localIdStr, 10);
+        if (!Number.isInteger(localId) || localId < 0) return;
+        if (!Array.isArray(wangid) || wangid.length !== 8) return;
+        tiles[localId] = wangid.map((value) => parseInt(value, 10) || 0).slice(0, 8);
+      });
+      return {
+        id: String(raw.id || ('wang-block-' + Date.now() + '-' + Math.floor(Math.random() * 10000))),
+        name: String(raw.name || definition.name),
+        templateId: definition.id,
+        type: definition.type,
+        tile: Number.isInteger(raw.tile) ? raw.tile : -1,
+        colors,
+        tiles
+      };
+    }
+
+    function parseRetroWangBlocksValue(value) {
+      if (!value) return [];
+      try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.map(sanitizeRetroWangBlock).filter(Boolean);
+      } catch {
+        return [];
+      }
+    }
+
+    function readRetroWangBlocksFromElement(parentEl) {
+      if (!parentEl) return [];
+      const propEls = parentEl.querySelectorAll(':scope > properties > property');
+      for (const propEl of propEls) {
+        if (propEl.getAttribute('name') !== RETRO_WANG_BLOCKS_PROPERTY) continue;
+        const value = propEl.hasAttribute('value') ? propEl.getAttribute('value') : (propEl.textContent || '');
+        return parseRetroWangBlocksValue(value);
+      }
+      return [];
+    }
+
+    function applyInlineRetroWangBlocksFromMapXml(xmlText) {
+      if (!mapData || !Array.isArray(mapData.tilesets) || !xmlText) return;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlText, 'text/xml');
+      if (doc.getElementsByTagName('parsererror').length > 0) return;
+      const tilesetEls = Array.from(doc.querySelectorAll('map > tileset'));
+      tilesetEls.forEach((tilesetEl) => {
+        if (tilesetEl.getAttribute('source')) return;
+        const firstGid = parseInt(tilesetEl.getAttribute('firstgid') || 0, 10);
+        const ts = mapData.tilesets.find((item) => item.firstGid === firstGid);
+        if (!ts) return;
+        const blocks = readRetroWangBlocksFromElement(tilesetEl);
+        if (blocks.length > 0) ts.retroWangBlocks = blocks;
       });
     }
 
@@ -2156,6 +2301,42 @@
       updateUI();
     }
 
+    function hasAvailableTerrainSets() {
+      return !!(mapData && Array.isArray(mapData.tilesets) && mapData.tilesets.some((ts) => Array.isArray(ts.retroWangBlocks) && ts.retroWangBlocks.length > 0));
+    }
+
+    function syncActiveTerrainContext(preferredTilesetGid = null) {
+      if (!mapData || !Array.isArray(mapData.tilesets) || mapData.tilesets.length === 0) return null;
+      const wangTilesets = mapData.tilesets.filter((ts) => Array.isArray(ts.retroWangBlocks) && ts.retroWangBlocks.length > 0);
+      if (wangTilesets.length === 0) return null;
+
+      const preferred = Number(preferredTilesetGid);
+      const nextTileset = wangTilesets.find((ts) => ts.firstGid === preferred)
+        || wangTilesets.find((ts) => ts.firstGid === activeTerrainTilesetGid)
+        || wangTilesets[0];
+
+      activeTerrainTilesetGid = nextTileset.firstGid;
+      if (activeWangsetIndex < 0 || activeWangsetIndex >= nextTileset.retroWangBlocks.length) {
+        activeWangsetIndex = 0;
+      }
+
+      const ws = nextTileset.retroWangBlocks[activeWangsetIndex] || nextTileset.retroWangBlocks[0] || null;
+      if (!ws) return null;
+      if (Array.isArray(ws.colors) && ws.colors.length > 1) {
+        if (activeTerrainColorIndex <= 0 || activeTerrainColorIndex >= ws.colors.length) {
+          activeTerrainColorIndex = 1;
+        }
+      }
+      return ws;
+    }
+
+    function toggleWangEditor(forceOpen = null) {
+      isWangEditorOpen = forceOpen === null ? !isWangEditorOpen : !!forceOpen;
+      if (activeTabType !== 'tileset') activeTabType = 'tileset';
+      updateUI();
+      renderMap();
+    }
+
     function selectTilesetTab() {
       activeTabType = 'tileset';
       if (!getActiveTileset()) {
@@ -2848,9 +3029,7 @@
               }
               brushPattern = { width, height, data };
               clearTilesetSelectionState();
-              currentTool = 'paint';
-              document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach(b => b.classList.remove('active'));
-              document.getElementById('toolPaint').classList.add('active');
+              selectTool('paint');
             }
           }
           brushSelectStart = null;
@@ -2914,6 +3093,12 @@
           return;
         }
 
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'w') {
+          e.preventDefault();
+          handleTerrainTabPress();
+          return;
+        }
+
         if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Space') {
           e.preventDefault();
           transformActiveBrush('rotate90');
@@ -2939,67 +3124,105 @@
       });
     }
     
+    function resetEditorStateForLoadedMap(filename) {
+      normalizeLayerData();
+      mapData.filename = filename;
+      currentLayer = 0;
+      activeTabType = 'tile';
+      undoStack = [];
+      activeUndoAction = null;
+      tileAnimationDraft = [];
+      tileAnimationCatalog = [];
+      tileAnimationCatalogTilesetGid = null;
+      activeTileAnimationId = null;
+      activeTileAnimationFrameIndex = 0;
+      tileAnimPreviewZoom = 1;
+      activeTerrainTilesetGid = null;
+      activeWangsetIndex = 0;
+      activeTerrainColorIndex = 1;
+      clearTilesetSelectionState();
+      extraCanvasLeft = 0;
+      extraCanvasTop = 0;
+      applyCanvasMargins();
+    }
+
+    function serializeStudioMapPayload() {
+      if (!mapData) return null;
+      return {
+        schema: 'retrostudio-map-v1',
+        app: 'RetroStudio',
+        exportedAt: new Date().toISOString(),
+        mapData: JSON.parse(JSON.stringify(mapData))
+      };
+    }
+
+    function parseStudioMapPayload(text) {
+      const parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON map payload.');
+      const directMap = parsed.mapData && typeof parsed.mapData === 'object' ? parsed.mapData : parsed;
+      if (!directMap || typeof directMap !== 'object') throw new Error('JSON map missing map data.');
+      if (!directMap.map || !Array.isArray(directMap.layers) || !Array.isArray(directMap.tilesets)) {
+        throw new Error('JSON map missing required fields (map, layers, tilesets).');
+      }
+      return directMap;
+    }
+
+    async function loadMapFromText(text, filename, format) {
+      window.loadedTilesets = {};
+      mapBaseUrl = new URL(window.location.href);
+      if (format === 'tmx') {
+        mapData = TMXImporter.parse(text);
+        applyInlineRetroWangBlocksFromMapXml(text);
+      } else {
+        mapData = parseStudioMapPayload(text);
+      }
+      resetEditorStateForLoadedMap(filename);
+
+      await loadTilesets();
+      setActiveTileset(mapData.tilesets?.[0]?.firstGid, false);
+
+      renderMap();
+      updateUI();
+      const tag = format === 'tmx' ? 'TMX' : 'JSON';
+      updateStatus(`✓ Loaded ${tag}: ${filename}`);
+    }
+
     async function loadExampleMap(filename) {
       if (!filename) return;
       try {
-        window.loadedTilesets = {};
         mapBaseUrl = new URL(filename, window.location.href);
         const response = await fetch(filename);
         if (!response.ok) throw new Error(`File not found: ${filename}`);
-        
         const text = await response.text();
-        mapData = TMXImporter.parse(text);
-        normalizeLayerData();
-        mapData.filename = filename;
-        currentLayer = 0;
-        activeTabType = 'tile';
-        undoStack = [];
-        activeUndoAction = null;
-        extraCanvasLeft = 0;
-        extraCanvasTop = 0;
-        applyCanvasMargins();
-        
-        // Load tilesets
-        await loadTilesets();
-        setActiveTileset(mapData.tilesets?.[0]?.firstGid, false);
-        
-        renderMap();
-        updateUI();
-        updateStatus(`✓ Loaded: ${filename}`);
+        await loadMapFromText(text, filename, 'tmx');
       } catch (e) {
         updateStatus(`✗ Error: ${e.message}`, true);
       }
     }
-    
-    async function loadTMXFile(event) {
+
+    async function loadMapFile(event) {
       const file = event.target.files[0];
       if (!file) return;
-      
+      const lowerName = (file.name || '').toLowerCase();
+      const inferredFormat = lowerName.endsWith('.tmx') ? 'tmx' : 'json';
+
       try {
-        window.loadedTilesets = {};
-        mapBaseUrl = new URL(window.location.href);
         const text = await file.text();
-        mapData = TMXImporter.parse(text);
-        normalizeLayerData();
-        mapData.filename = file.name;
-        currentLayer = 0;
-        activeTabType = 'tile';
-        undoStack = [];
-        activeUndoAction = null;
-        extraCanvasLeft = 0;
-        extraCanvasTop = 0;
-        applyCanvasMargins();
-        
-        // Load tilesets
-        await loadTilesets();
-        setActiveTileset(mapData.tilesets?.[0]?.firstGid, false);
-        
-        renderMap();
-        updateUI();
-        updateStatus(`✓ Loaded: ${file.name}`);
+        let format = inferredFormat;
+        if (inferredFormat === 'json') {
+          const lead = text.trimStart();
+          if (lead.startsWith('<')) format = 'tmx';
+        }
+        await loadMapFromText(text, file.name, format);
       } catch (e) {
         updateStatus(`✗ Error: ${e.message}`, true);
+      } finally {
+        event.target.value = '';
       }
+    }
+
+    async function loadTMXFile(event) {
+      return loadMapFile(event);
     }
     
     async function loadTilesets() {
@@ -3059,6 +3282,7 @@
         }
 
         resolved.tiles = parseTilesetTileData(tsEl);
+        resolved.retroWangBlocks = readRetroWangBlocksFromElement(tsEl);
 
         const imageEl = tsEl.querySelector('image');
         if (imageEl) {
@@ -3653,6 +3877,7 @@
       viewport.className = 'tileset-sheet-viewport';
       const canvas = document.createElement('canvas');
       canvas.className = 'tileset-sheet-canvas';
+      canvas.draggable = true;
       canvas.width = Math.max(1, loaded.image.width || ts.image?.width || 1);
       canvas.height = Math.max(1, loaded.image.height || ts.image?.height || 1);
 
@@ -3662,10 +3887,10 @@
       const spacing = metrics.spacing;
       const margin = metrics.margin;
       const cols = Math.max(1, metrics.columns || 1);
-
-      const drawSelection = (localIds) => {
+      const drawSheet = (localIds) => {
         cctx.clearRect(0, 0, canvas.width, canvas.height);
         cctx.drawImage(loaded.image, 0, 0);
+
         if (!localIds || localIds.size === 0) return;
         cctx.strokeStyle = '#4ec9b0';
         cctx.lineWidth = 2;
@@ -3689,7 +3914,7 @@
       };
 
       let committedSelection = getInitialSelection();
-      drawSelection(committedSelection);
+      drawSheet(committedSelection);
 
       const updateBrushFromSelection = (selection) => {
         if (!selection || selection.size === 0) {
@@ -3711,9 +3936,7 @@
         }
         tileAnimationDraft = [];
 
-        currentTool = 'paint';
-        document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach((b) => b.classList.remove('active'));
-        document.getElementById('toolPaint').classList.add('active');
+        selectTool('paint');
       };
 
       const getCanvasPixel = (ev) => {
@@ -3738,6 +3961,10 @@
         if (localId === dragCurrentLocalId) return;
         dragCurrentLocalId = localId;
         const dragRectSelection = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
+        if (activeTabType === 'tileset' && isWangEditorOpen) {
+          drawSheet(dragRectSelection);
+          return;
+        }
         let preview = new Set();
         if (dragAdditive) {
           preview = new Set(dragBaseSelection);
@@ -3748,7 +3975,7 @@
         } else {
           preview = dragRectSelection;
         }
-        drawSelection(preview);
+        drawSheet(preview);
       };
 
       const handleDragEnd = () => {
@@ -3757,6 +3984,26 @@
         window.removeEventListener('mouseup', handleDragEnd);
 
         const dragRectSelection = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
+        if (activeTabType === 'tileset' && isWangEditorOpen) {
+          dragActive = false;
+          committedSelection = dragRectSelection;
+          setTilesetSelectionSet(ts.firstGid, committedSelection);
+          if (committedSelection.size > 0) {
+            if (committedSelection.size === 1) {
+              const onlyId = Array.from(committedSelection)[0];
+              selectedTile = ts.firstGid + onlyId;
+              brushPattern = null;
+            } else {
+              const sorted = Array.from(committedSelection).sort((a, b) => a - b);
+              selectedTile = ts.firstGid + sorted[0];
+              brushPattern = buildBrushPatternFromLocalIds(ts, committedSelection);
+            }
+            tileAnimationDraft = [];
+          }
+          drawSheet(committedSelection);
+          updateUI();
+          return;
+        }
         let finalSelection = new Set();
         if (dragAdditive) {
           finalSelection = new Set(dragBaseSelection);
@@ -3788,19 +4035,27 @@
         dragBaseSelection = dragAdditive ? getTilesetSelectionSet(ts.firstGid) : new Set();
 
         const initialRect = getLocalTileRectSelection(ts, loaded.image, dragStartLocalId, dragCurrentLocalId);
-        if (dragAdditive) {
+        if (activeTabType === 'tileset' && isWangEditorOpen) {
+          drawSheet(initialRect);
+        } else if (dragAdditive) {
           const preview = new Set(dragBaseSelection);
           initialRect.forEach((id) => {
             if (preview.has(id)) preview.delete(id);
             else preview.add(id);
           });
-          drawSelection(preview);
+          drawSheet(preview);
         } else {
-          drawSelection(initialRect);
+          drawSheet(initialRect);
         }
 
         window.addEventListener('mousemove', handleDragMove);
         window.addEventListener('mouseup', handleDragEnd);
+      });
+
+      canvas.addEventListener('contextmenu', (ev) => {
+        if (!(activeTabType === 'tileset' && isWangEditorOpen)) return;
+        ev.preventDefault();
+        updateStatus('Use the template rows below to assign or remove selected tiles.');
       });
 
       viewport.appendChild(canvas);
@@ -4383,6 +4638,8 @@
       objectsTab.appendChild(objectsVisBtn);
       layerTabs.appendChild(objectsTab);
 
+      renderLayerToolToolbar();
+
       const activeLayer = activeTabType === 'tile' ? mapData.layers[currentLayer] : null;
       if (activeTabType === 'objects') {
         const objectGroups = mapData.objectGroups || [];
@@ -4411,6 +4668,9 @@
       if (workspacePanel) workspacePanel.classList.toggle('panel-hidden', activeTabType === 'tileset');
       if (objectPanel) objectPanel.style.opacity = activeTabType === 'objects' ? '1' : '0.65';
       if (activeTabType !== 'tileset') stopTileAnimationPreview();
+      const terrainEditorInner = document.getElementById('terrainEditorInner');
+      if (terrainEditorInner) terrainEditorInner.classList.toggle('panel-hidden', !(activeTabType === 'tileset' && isWangEditorOpen));
+      if (activeTabType === 'tileset' && isWangEditorOpen) refreshTerrainEditorUI();
       refreshObjectCollectionUI();
       if (objectHint) {
         const snapLabel = isObjectSnapEnabled() ? 'grid snap on' : 'free placement';
@@ -4500,8 +4760,9 @@
     
     function selectTool(tool) {
       currentTool = tool;
-      document.querySelectorAll('#toolPaint, #toolFill, #toolErase').forEach(b => b.classList.remove('active'));
-      document.getElementById(`tool${tool.charAt(0).toUpperCase() + tool.slice(1)}`).classList.add('active');
+      document.querySelectorAll('[data-tool-button]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.toolButton === tool);
+      });
     }
 
     function toggleGrid(enabled) {
@@ -4553,7 +4814,7 @@
     function handleCanvasEdit(e, allowFill) {
       if (!mapData) return;
       if (activeTabType !== 'tile') {
-        updateStatus('Select a tile layer (1-8) to paint. Tilesets/Objects tabs are inspector/editor views.');
+        updateStatus('Select a tile layer (1-8) to paint. Tilesets and Objects are editor views.');
         return;
       }
       const tile = screenToTile(e.clientX, e.clientY);
@@ -4575,6 +4836,8 @@
         }
       } else if (currentTool === 'fill' && allowFill) {
         changed = floodFillLayer(layer, x, y, layer.data[idx], selectedTile);
+      } else if (currentTool === 'terrain') {
+        changed = stampTerrain(layer, x, y);
       }
 
       if (changed) {
@@ -4603,6 +4866,858 @@
       return changed;
     }
     
+
+    // ─── Wang / Auto-tile Engine ─────────────────────────────────────────────
+
+    function getActiveWangset() {
+      if (!mapData || !activeTerrainTilesetGid) return null;
+      const ts = mapData.tilesets.find(t => t.firstGid === activeTerrainTilesetGid);
+      if (!ts || !Array.isArray(ts.retroWangBlocks) || ts.retroWangBlocks.length === 0) return null;
+      return ts.retroWangBlocks[activeWangsetIndex] || ts.retroWangBlocks[0];
+    }
+
+    function ensureRetroWangBlocks(ts) {
+      if (!ts) return [];
+      ts.retroWangBlocks = Array.isArray(ts.retroWangBlocks) ? ts.retroWangBlocks : [];
+      return ts.retroWangBlocks;
+    }
+
+    function getOrCreateTilesetWangset(ts) {
+      if (!ts) return null;
+      const blocks = ensureRetroWangBlocks(ts);
+      if (blocks.length === 0) {
+        const defaultBlock = window.wangTemplateSystem?.createBlock('corner-2', '2-Corner Wang');
+        if (defaultBlock) blocks.push(defaultBlock);
+      }
+      activeTerrainTilesetGid = ts.firstGid;
+      if (activeWangsetIndex < 0 || activeWangsetIndex >= blocks.length) activeWangsetIndex = 0;
+      return blocks[activeWangsetIndex] || blocks[0] || null;
+    }
+
+    function getTilesetWangset(ts) {
+      if (!ts || !Array.isArray(ts.retroWangBlocks) || ts.retroWangBlocks.length === 0) return null;
+      if (ts.firstGid === activeTerrainTilesetGid) {
+        return ts.retroWangBlocks[activeWangsetIndex] || ts.retroWangBlocks[0] || null;
+      }
+      return ts.retroWangBlocks[0] || null;
+    }
+
+    function makeTilesetTileThumb(ts, localId, scale = 2) {
+      const loaded = window.loadedTilesets?.[ts.firstGid];
+      if (!loaded || !loaded.image) return null;
+      const metrics = getTilesetMetrics(ts, loaded.image);
+      const col = localId % metrics.columns;
+      const row = Math.floor(localId / metrics.columns);
+      const sx = metrics.margin + (col * (ts.tileWidth + metrics.spacing));
+      const sy = metrics.margin + (row * (ts.tileHeight + metrics.spacing));
+      const canvas = document.createElement('canvas');
+      canvas.width = ts.tileWidth * scale;
+      canvas.height = ts.tileHeight * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(loaded.image, sx, sy, ts.tileWidth, ts.tileHeight, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    }
+
+    function makeWangTemplatePreview(ws, row) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 42;
+      canvas.height = 42;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1e1e1e';
+      ctx.fillRect(0, 0, 42, 42);
+      ctx.strokeStyle = '#5a5a5a';
+      ctx.strokeRect(0.5, 0.5, 41, 41);
+      const colors = ws.colors || [];
+      const colorAt = (index) => colors[row.slotValues[index]]?.color || '#777777';
+
+      if (row.type === 'edge') {
+        ctx.fillStyle = '#2b2b2b';
+        ctx.fillRect(10, 10, 22, 22);
+        ctx.fillStyle = colorAt(0);
+        ctx.fillRect(2, 2, 38, 8);
+        ctx.fillStyle = colorAt(1);
+        ctx.fillRect(32, 2, 8, 38);
+        ctx.fillStyle = colorAt(2);
+        ctx.fillRect(2, 32, 38, 8);
+        ctx.fillStyle = colorAt(3);
+        ctx.fillRect(2, 2, 8, 38);
+      } else {
+        ctx.fillStyle = colorAt(0);
+        ctx.fillRect(2, 2, 19, 19);
+        ctx.fillStyle = colorAt(1);
+        ctx.fillRect(21, 2, 19, 19);
+        ctx.fillStyle = colorAt(2);
+        ctx.fillRect(21, 21, 19, 19);
+        ctx.fillStyle = colorAt(3);
+        ctx.fillRect(2, 21, 19, 19);
+      }
+      return canvas;
+    }
+
+    function getWangTileOverlayColor(ws, localId) {
+      if (!ws || !ws.tiles) return null;
+      const wid = ws.tiles[localId];
+      if (!wid) return null;
+      const counts = {};
+      wid.forEach((slot) => {
+        if (slot > 0) counts[slot] = (counts[slot] || 0) + 1;
+      });
+      let best = 0;
+      let bestCount = 0;
+      Object.entries(counts).forEach(([slot, count]) => {
+        if (count > bestCount) {
+          best = Number(slot);
+          bestCount = count;
+        }
+      });
+      return best > 0 ? ws.colors?.[best] || null : null;
+    }
+
+    function assignTerrainToTiles(ws, localIds, colorIndex, clearOnly = false) {
+      if (!ws || !Array.isArray(localIds) || localIds.length === 0) return;
+      localIds.forEach((localId) => {
+        if (!Number.isInteger(localId) || localId < 0) return;
+        if (clearOnly || colorIndex <= 0) {
+          delete ws.tiles[localId];
+          return;
+        }
+        const wid = [0, 0, 0, 0, 0, 0, 0, 0];
+        const isCorner = ws.type === 'corner' || ws.type === 'mixed';
+        const isEdge = ws.type === 'edge' || ws.type === 'mixed';
+        if (isCorner) { wid[1] = colorIndex; wid[3] = colorIndex; wid[5] = colorIndex; wid[7] = colorIndex; }
+        if (isEdge) { wid[0] = colorIndex; wid[2] = colorIndex; wid[4] = colorIndex; wid[6] = colorIndex; }
+        ws.tiles[localId] = wid;
+      });
+    }
+
+    function getCellTerrainColor(layer, x, y) {
+      if (!layer || x < 0 || y < 0 || x >= layer.width || y >= layer.height) return 0;
+      const gid = layer.data[y * layer.width + x] & 0x1FFFFFFF;
+      if (gid === 0) return 0;
+      const ws = getActiveWangset();
+      if (!ws) return 0;
+      const ts = mapData.tilesets.find(t => t.firstGid === activeTerrainTilesetGid);
+      if (!ts) return 0;
+      const localId = gid - ts.firstGid;
+      const wangid = ws.tiles[localId];
+      if (!wangid) return 0;
+      // Use corner slots for corner/mixed sets, edge slots for edge sets
+      const isCorner = ws.type === 'corner' || ws.type === 'mixed';
+      const isEdge   = ws.type === 'edge'   || ws.type === 'mixed';
+      const slots = [];
+      if (isCorner) slots.push(wangid[1], wangid[3], wangid[5], wangid[7]);
+      if (isEdge)   slots.push(wangid[0], wangid[2], wangid[4], wangid[6]);
+      const counts = {};
+      slots.forEach(c => { if (c > 0) counts[c] = (counts[c] || 0) + 1; });
+      let best = 0, bestN = 0;
+      for (const [c, n] of Object.entries(counts)) { if (n > bestN) { bestN = n; best = Number(c); } }
+      return best;
+    }
+
+    // wangid indices: 0=top-edge, 1=TR-corner, 2=right-edge, 3=BR-corner,
+    //                 4=bottom-edge, 5=BL-corner, 6=left-edge, 7=TL-corner
+    //
+    // Computes the wangid for a cell of terrain C, given the surrounding
+    // layer state. This is used for RE-SOLVING neighbor cells after a paint.
+    // Key rule: a corner owned by C if all 3 adjacent cells are compatible
+    // (= C or empty). If a different non-zero terrain T blocks the corner,
+    // the corner gets T — this is what makes the wangset tile lookup find the
+    // correct transition tile rather than a zero-score toss-up.
+    function computeWangId(layer, x, y, colorIndex, bounds = null) {
+      const ws = getActiveWangset();
+      if (!ws) return null;
+      const isCorner = ws.type === 'corner' || ws.type === 'mixed';
+      const isEdge   = ws.type === 'edge'   || ws.type === 'mixed';
+
+      const sample = (sx, sy) => {
+        if (bounds) {
+          if (sx < bounds.minX || sx > bounds.maxX || sy < bounds.minY || sy > bounds.maxY) return 0;
+        }
+        return getCellTerrainColor(layer, sx, sy);
+      };
+
+      const N  = sample(x, y - 1);
+      const NE = sample(x + 1, y - 1);
+      const E  = sample(x + 1, y);
+      const SE = sample(x + 1, y + 1);
+      const S  = sample(x, y + 1);
+      const SW = sample(x - 1, y + 1);
+      const W  = sample(x - 1, y);
+      const NW = sample(x - 1, y - 1);
+      const C  = colorIndex;
+
+      const compat = (t) => t === 0 || t === C;
+
+      // Returns the terrain that owns a corner shared by three adjacent cells.
+      // If all three are compatible with C, C owns the corner.
+      // Otherwise the dominant DIFFERENT terrain gets the corner (so that
+      // wangIdMatchScore can find the right transition tile).
+      const cornerOwner = (a, diag, b) => {
+        if (compat(a) && compat(diag) && compat(b)) return C;
+        const votes = {};
+        for (const t of [a, diag, b]) {
+          if (t !== 0 && t !== C) votes[t] = (votes[t] || 0) + 1;
+        }
+        let best = 0, bestN = 0;
+        for (const [t, n] of Object.entries(votes)) {
+          if (n > bestN) { bestN = n; best = Number(t); }
+        }
+        return best;
+      };
+
+      const edgeOwner = (t) => compat(t) ? C : (t || 0);
+
+      const wangid = [0, 0, 0, 0, 0, 0, 0, 0];
+      if (isEdge) {
+        wangid[0] = edgeOwner(N);
+        wangid[2] = edgeOwner(E);
+        wangid[4] = edgeOwner(S);
+        wangid[6] = edgeOwner(W);
+      }
+      if (isCorner) {
+        wangid[7] = cornerOwner(W, NW, N);  // TL
+        wangid[1] = cornerOwner(N, NE, E);  // TR
+        wangid[3] = cornerOwner(E, SE, S);  // BR
+        wangid[5] = cornerOwner(S, SW, W);  // BL
+      }
+      return wangid;
+    }
+
+    function wangIdMatchScore(a, b) {
+      let score = 0;
+      for (let i = 0; i < 8; i++) {
+        if (a[i] === b[i]) {
+          // Exact match: extra reward when both are non-zero (real terrain slot)
+          score += a[i] !== 0 ? 3 : 1;
+        } else if (a[i] !== 0 && b[i] !== 0) {
+          // Two different non-zero colors clash — heavy penalty
+          score -= 8;
+        } else if (a[i] !== 0 && b[i] === 0) {
+          // We need a terrain slot but tile has none — small penalty
+          score -= 1;
+        } else if (a[i] === 0 && b[i] !== 0) {
+          // Tile contains extra terrain detail where the target expects empty.
+          // Penalize to avoid over-detailed "random" picks.
+          score -= 2;
+        }
+      }
+      return score;
+    }
+
+    function dominantWangColor(wangid) {
+      const ws = getActiveWangset();
+      if (!ws || !Array.isArray(wangid) || wangid.length !== 8) return 0;
+      const isCorner = ws.type === 'corner' || ws.type === 'mixed';
+      const isEdge   = ws.type === 'edge'   || ws.type === 'mixed';
+      const slots = [];
+      if (isCorner) slots.push(wangid[1], wangid[3], wangid[5], wangid[7]);
+      if (isEdge)   slots.push(wangid[0], wangid[2], wangid[4], wangid[6]);
+      const counts = {};
+      slots.forEach((c) => { if (c > 0) counts[c] = (counts[c] || 0) + 1; });
+      let best = 0, bestN = 0;
+      for (const [c, n] of Object.entries(counts)) {
+        if (n > bestN) { best = Number(c); bestN = n; }
+      }
+      return best;
+    }
+
+    function resolveWangTile(wangid, debugOut = null, preferredColor = 0, requirePreferredColor = false) {
+      const ws = getActiveWangset();
+      if (!ws) return -1;
+
+      // Standard wang approach: prefer exact wangid matches first.
+      // Scoring fallback is only for sparse/incomplete wangsets.
+      const exactMatches = [];
+      for (const [localIdStr, tileWangId] of Object.entries(ws.tiles)) {
+        let exact = true;
+        for (let i = 0; i < 8; i++) {
+          if (wangid[i] !== tileWangId[i]) { exact = false; break; }
+        }
+        if (exact) exactMatches.push(parseInt(localIdStr, 10));
+      }
+
+      if (exactMatches.length > 0) {
+        let candidates = exactMatches.slice();
+        if (preferredColor > 0) {
+          const preferredExact = candidates.filter((localId) => dominantWangColor(ws.tiles[localId]) === preferredColor);
+          if (preferredExact.length > 0) {
+            candidates = preferredExact;
+          } else if (requirePreferredColor) {
+            if (debugOut) {
+              debugOut.bestScore = -Infinity;
+              debugOut.exactMatches = [];
+              debugOut.top = [];
+            }
+            return -1;
+          }
+        }
+        candidates.sort((a, b) => a - b);
+        if (debugOut) {
+          debugOut.bestScore = Number.POSITIVE_INFINITY;
+          debugOut.exactMatches = candidates.slice();
+          debugOut.top = candidates.slice(0, 8).map((localId) => ({
+            localId,
+            score: Number.POSITIVE_INFINITY,
+            dominantColor: dominantWangColor(ws.tiles[localId]),
+            wangid: ws.tiles[localId].slice(),
+            exact: true
+          }));
+        }
+        return candidates[0];
+      }
+
+      let bestId = -1, bestScore = -Infinity;
+      const scored = debugOut ? [] : null;
+      for (const [localIdStr, tileWangId] of Object.entries(ws.tiles)) {
+        let score = wangIdMatchScore(wangid, tileWangId);
+        const dom = dominantWangColor(tileWangId);
+        if (requirePreferredColor && preferredColor > 0 && dom !== preferredColor) continue;
+        if (preferredColor > 0) {
+          // Keep terrain identity preference, but don't overpower shape match.
+          if (dom === preferredColor) score += 4;
+          else if (dom > 0 && dom !== preferredColor) score -= 12;
+        }
+        const localId = parseInt(localIdStr, 10);
+        if (scored) scored.push({ localId, score, dominantColor: dom, wangid: tileWangId.slice() });
+        if (score > bestScore || (score === bestScore && localId < bestId)) {
+          bestScore = score;
+          bestId = localId;
+        }
+      }
+      if (debugOut) {
+        scored.sort((a, b) => b.score - a.score);
+        debugOut.bestScore = bestScore;
+        debugOut.exactMatches = [];
+        debugOut.top = scored.slice(0, 8);
+      }
+      return bestId;
+    }
+
+    function stampTerrain(layer, cx, cy) {
+      const ws = getActiveWangset();
+      if (!ws) { updateStatus('No wangset active. Open Wang Tools in Tilesets and select one.'); return false; }
+      const ts = mapData.tilesets.find(t => t.firstGid === activeTerrainTilesetGid);
+      if (!ts) return false;
+
+      const sampleCell = (srcLayer, x, y) => {
+        if (!srcLayer || x < 0 || y < 0 || x >= srcLayer.width || y >= srcLayer.height) {
+          return { x, y, gid: 0, localId: -1, terrainColor: 0, wangid: null };
+        }
+        const gid = srcLayer.data[y * srcLayer.width + x] & 0x1FFFFFFF;
+        if (gid === 0) return { x, y, gid: 0, localId: -1, terrainColor: 0, wangid: null };
+        const localId = gid - ts.firstGid;
+        return {
+          x,
+          y,
+          gid,
+          localId,
+          terrainColor: getCellTerrainColor(srcLayer, x, y),
+          wangid: ws.tiles[localId] ? ws.tiles[localId].slice() : null
+        };
+      };
+
+      const C = activeTerrainColorIndex;
+      const isCorner = ws.type === 'corner' || ws.type === 'mixed';
+      const isEdge   = ws.type === 'edge'   || ws.type === 'mixed';
+      const debugEnabled = !!wangDebugEnabled;
+
+      const debug = debugEnabled ? {
+        pos: { x: cx, y: cy },
+        wangset: { name: ws.name, type: ws.type },
+        selectedTerrain: {
+          index: C,
+          name: ws.colors?.[C]?.name || ('Terrain ' + C),
+          color: ws.colors?.[C]?.color || '#000000'
+        },
+        center: null
+      } : null;
+
+      // Build the INTERIOR wangid — all corners/edges owned by C.
+      // This is intentionally NOT computed from neighbors, but hardcoded to ensure
+      // the center tile is always fully interior.
+      const interiorWid = [0, 0, 0, 0, 0, 0, 0, 0];
+      if (isEdge)   { interiorWid[0]=C; interiorWid[2]=C; interiorWid[4]=C; interiorWid[6]=C; }
+      if (isCorner) { interiorWid[1]=C; interiorWid[3]=C; interiorWid[5]=C; interiorWid[7]=C; }
+
+      const centerResolve = {};
+      const paintedLocalId = resolveWangTile(interiorWid, centerResolve, C, true);
+      if (paintedLocalId < 0) { updateStatus('No matching tile for terrain ' + C + '. Assign tiles in Wang Tools first.'); return false; }
+
+      // Place the interior tile.
+      layer.data[cy * layer.width + cx] = ts.firstGid + paintedLocalId;
+
+      if (debug) {
+        debug.center = {
+          targetWangid: interiorWid.slice(),
+          resolvedLocalId: paintedLocalId,
+          resolvedWangid: ws.tiles[paintedLocalId] ? ws.tiles[paintedLocalId].slice() : null,
+          bestScore: centerResolve.bestScore,
+          candidates: centerResolve.top || []
+        };
+      }
+
+      // Re-solve the 8 neighbors so they pick transition tiles that border the new center terrain.
+      // Only re-solve neighbors that are DIFFERENT terrain (not interior cells of same terrain).
+      const solveLayer = {
+        width: layer.width,
+        height: layer.height,
+        data: layer.data.slice()
+      };
+
+      const neighborWrites = [];
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx2 = -1; dx2 <= 1; dx2++) {
+          if (dx2 === 0 && dy === 0) continue;
+          const nx = cx + dx2, ny = cy + dy;
+          if (nx < 0 || ny < 0 || nx >= layer.width || ny >= layer.height) continue;
+          const existingColor = getCellTerrainColor(solveLayer, nx, ny);
+          if (existingColor === 0) continue;  // skip unrecognised / empty cells
+          if (existingColor === C) continue;  // CRITICAL: skip interior cells already same terrain as center
+          
+          // This is a boundary cell (different terrain). Compute wangid with FULL layer context.
+          const nWid = computeWangId(solveLayer, nx, ny, existingColor, null);
+          const neighborResolve = {};
+          const lid = resolveWangTile(nWid, neighborResolve, existingColor);
+          if (lid >= 0) {
+            neighborWrites.push({ x: nx, y: ny, localId: lid });
+          }
+        }
+      }
+
+      neighborWrites.forEach((w) => {
+        layer.data[w.y * layer.width + w.x] = ts.firstGid + w.localId;
+      });
+      return true;
+    }
+
+    // ─── Wang Tools / Terrain Paint ─────────────────────────────────────────
+
+    function handleTerrainTabPress() {
+      const ws = syncActiveTerrainContext(activeTilesetFirstGid);
+      if (!ws) {
+        isWangEditorOpen = true;
+        activeTabType = 'tileset';
+        updateUI();
+        renderMap();
+        updateStatus('No Wang blocks yet. Open Wang Tools in Tilesets to create one from a template.');
+        return;
+      }
+      activeTabType = 'tile';
+      selectTool('terrain');
+      updateUI();
+      renderMap();
+      updateStatus('Wang paint active. Choose a terrain in the top bar and paint on the map.');
+    }
+
+    function renderLayerToolToolbar() {
+      const host = document.getElementById('layerToolToolbar');
+      if (!host) return;
+      host.innerHTML = '';
+
+      const visible = !!mapData && activeTabType === 'tile';
+      host.classList.toggle('panel-hidden', !visible);
+      if (!visible) return;
+
+      const tools = document.createElement('div');
+      tools.className = 'layer-tool-group';
+
+      const makeButton = (label, tool, handler = null) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.className = 'layer-tool-btn' + (currentTool === tool ? ' active' : '');
+        button.dataset.toolButton = tool;
+        button.onclick = handler || (() => selectTool(tool));
+        return button;
+      };
+
+      tools.appendChild(makeButton('Paint', 'paint'));
+      tools.appendChild(makeButton('Flood', 'fill'));
+      tools.appendChild(makeButton('Wang', 'terrain', () => handleTerrainTabPress()));
+      host.appendChild(tools);
+
+      const terrainGroup = document.createElement('div');
+      terrainGroup.className = 'layer-tool-group';
+      const ws = syncActiveTerrainContext(activeTilesetFirstGid);
+
+      if (ws && Array.isArray(ws.colors) && ws.colors.length > 1) {
+        const terrainSelect = document.createElement('select');
+        terrainSelect.className = 'layer-tool-select';
+        ws.colors.slice(1).forEach((wc, index) => {
+          const colorIndex = index + 1;
+          const option = document.createElement('option');
+          option.value = String(colorIndex);
+          option.textContent = `${wc.name || ('Terrain ' + colorIndex)} · ${ws.name}`;
+          option.selected = colorIndex === activeTerrainColorIndex;
+          terrainSelect.appendChild(option);
+        });
+        terrainSelect.onchange = () => {
+          activeTerrainColorIndex = Number(terrainSelect.value) || 1;
+          updateUI();
+          const activeColor = ws.colors[activeTerrainColorIndex];
+          updateStatus('Active terrain: ' + (activeColor?.name || ('Terrain ' + activeTerrainColorIndex)));
+        };
+        terrainGroup.appendChild(terrainSelect);
+      } else {
+        const empty = document.createElement('span');
+        empty.className = 'wang-editor-note';
+        empty.textContent = 'No terrain types yet. Open Wang Tools in Tilesets.';
+        terrainGroup.appendChild(empty);
+      }
+
+      host.appendChild(terrainGroup);
+    }
+
+    function refreshTerrainEditorUI() {
+      const container = document.getElementById('terrainEditorInner');
+      if (!container) return;
+      container.innerHTML = '';
+      if (!mapData || !Array.isArray(mapData.tilesets) || mapData.tilesets.length === 0) {
+        container.innerHTML = '<p style="color:#858585;">Load a map first.</p>';
+        return;
+      }
+
+      const ts = getActiveTileset();
+      if (!ts) {
+        container.innerHTML = '<p style="color:#858585;font-size:11px;">No active tileset.</p>';
+        return;
+      }
+
+      const blocks = ensureRetroWangBlocks(ts);
+      if (activeWangsetIndex < 0 || activeWangsetIndex >= blocks.length) activeWangsetIndex = 0;
+      const ws = blocks[activeWangsetIndex] || null;
+      const selection = Array.from(getTilesetSelectionSet(ts.firstGid) || []).sort((a, b) => a - b);
+
+      const controls = document.createElement('div');
+      controls.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;';
+
+      const templateSelect = document.createElement('select');
+      templateSelect.style.cssText = 'font-size:11px;padding:4px 6px;';
+      (window.wangTemplateSystem?.TEMPLATE_LIBRARY || []).forEach((item) => {
+        const option = document.createElement('option');
+        option.value = item.id;
+        option.textContent = item.name;
+        templateSelect.appendChild(option);
+      });
+      controls.appendChild(templateSelect);
+
+      const createBlockBtn = Object.assign(document.createElement('button'), { textContent: 'New Wang Block' });
+      createBlockBtn.style.cssText = 'font-size:11px;padding:5px 8px;';
+      createBlockBtn.onclick = () => {
+        const definition = window.wangTemplateSystem?.getTemplateDefinition(templateSelect.value);
+        const name = prompt('Block name:', definition?.name || 'Wang Block');
+        if (!name) return;
+        const block = window.wangTemplateSystem?.createBlock(templateSelect.value, name);
+        if (!block) return;
+        blocks.push(block);
+        activeTerrainTilesetGid = ts.firstGid;
+        activeWangsetIndex = blocks.length - 1;
+        updateUI();
+      };
+      controls.appendChild(createBlockBtn);
+
+      if (blocks.length > 0) {
+        const blockSelect = document.createElement('select');
+        blockSelect.style.cssText = 'font-size:11px;padding:4px 6px;min-width:180px;';
+        blocks.forEach((block, index) => {
+          const option = document.createElement('option');
+          option.value = String(index);
+          option.textContent = block.name;
+          if (index === activeWangsetIndex) option.selected = true;
+          blockSelect.appendChild(option);
+        });
+        blockSelect.onchange = () => {
+          activeWangsetIndex = Math.max(0, parseInt(blockSelect.value, 10) || 0);
+          updateUI();
+        };
+        controls.appendChild(blockSelect);
+
+        const renameBtn = Object.assign(document.createElement('button'), { textContent: 'Rename Block' });
+        renameBtn.style.cssText = 'font-size:11px;padding:5px 8px;';
+        renameBtn.onclick = () => {
+          if (!ws) return;
+          const nextName = prompt('Block name:', ws.name || 'Wang Block');
+          if (!nextName) return;
+          ws.name = nextName;
+          updateUI();
+        };
+        controls.appendChild(renameBtn);
+
+        const deleteBtn = Object.assign(document.createElement('button'), { textContent: 'Delete Block' });
+        deleteBtn.style.cssText = 'font-size:11px;padding:5px 8px;';
+        deleteBtn.onclick = () => {
+          if (!ws) return;
+          if (!confirm('Delete Wang block "' + ws.name + '"?')) return;
+          blocks.splice(activeWangsetIndex, 1);
+          activeWangsetIndex = Math.max(0, Math.min(activeWangsetIndex, blocks.length - 1));
+          updateUI();
+        };
+        controls.appendChild(deleteBtn);
+      }
+
+      container.appendChild(controls);
+
+      const hint = document.createElement('div');
+      hint.className = 'wang-editor-note';
+      hint.style.marginTop = '8px';
+      hint.textContent = 'Select tiles on the sheet, then click a tray below a template to place those tiles as variants. Right-click a tile to remove it, or right-click a tray to clear that template.';
+      container.appendChild(hint);
+
+      if (!ws) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'margin-top:10px;font-size:11px;color:#858585;';
+        empty.textContent = 'No Wang blocks yet. Create one from a standard template.';
+        container.appendChild(empty);
+        return;
+      }
+
+      const rows = window.wangTemplateSystem?.getVariantRows(ws) || [];
+      const covered = rows.filter((row) => row.variants.length > 0).length;
+
+      const summary = document.createElement('div');
+      summary.style.cssText = 'margin-top:10px;padding:8px;background:#252526;border:1px solid #3e3e42;border-radius:4px;font-size:11px;color:#d4d4d4;';
+      summary.textContent = ws.name + ' · ' + rows.length + ' template rows · ' + covered + ' filled · ' + selection.length + ' tiles selected';
+      
+      container.appendChild(summary);
+
+      const palette = document.createElement('div');
+      palette.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;';
+      ws.colors.slice(1).forEach((color, index) => {
+        const chip = document.createElement('div');
+        chip.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:11px;padding:4px 8px;border:1px solid #3e3e42;border-radius:999px;background:#1f1f1f;color:#d4d4d4;';
+        const dot = document.createElement('span');
+        dot.style.cssText = 'width:12px;height:12px;border-radius:999px;background:' + color.color + ';border:1px solid #666;';
+        const label = document.createElement('span');
+        label.textContent = color.name || ('Color ' + (index + 1));
+        chip.append(dot, label);
+        palette.appendChild(chip);
+      });
+      container.appendChild(palette);
+
+      const cellSize = 50;
+      const gridCols = rows.length;
+      const gridRows = 8;
+      const gridWidth = gridCols * cellSize;
+      const gridHeight = gridRows * cellSize;
+      const gridLineWidth = 2;
+
+      const wangCanvas = document.createElement('canvas');
+      wangCanvas.width = gridWidth;
+      wangCanvas.height = gridHeight;
+      wangCanvas.style.cssText = 'border:1px solid #3e3e42;background:#181a1b;margin-top:12px;display:block;image-rendering:pixelated;cursor:crosshair;';
+
+      const wangCtx = wangCanvas.getContext('2d');
+      let mouseX = -1, mouseY = -1;
+      let hoveredCol = -1, hoveredRow = -1;
+
+      function getCurrentWangSelection() {
+        return Array.from(getTilesetSelectionSet(ts.firstGid) || []).sort((a, b) => a - b);
+      }
+
+      function getActivePreviewLocalId(currentSelection) {
+        if (!Array.isArray(currentSelection) || currentSelection.length === 0) return -1;
+        const selectedResolved = resolveTilesetForGid(selectedTile);
+        if (selectedResolved && selectedResolved.tileset && selectedResolved.tileset.firstGid === ts.firstGid) {
+          if (currentSelection.includes(selectedResolved.localTileId)) return selectedResolved.localTileId;
+        }
+        return currentSelection[0];
+      }
+
+      function placeSelectionAtSlot(row, slotIndex, localIds) {
+        if (!row || !Array.isArray(localIds) || localIds.length === 0) return false;
+        const start = Math.max(0, slotIndex);
+        let changed = false;
+        localIds.forEach((localId, offset) => {
+          if (!Number.isInteger(localId) || localId < 0) return;
+          const targetIndex = start + offset;
+          const existingAtTarget = row.variants[targetIndex];
+          if (Number.isInteger(existingAtTarget) && existingAtTarget !== localId) {
+            window.wangTemplateSystem?.removeVariant(ws, existingAtTarget);
+          }
+          window.wangTemplateSystem?.removeVariant(ws, localId);
+          window.wangTemplateSystem?.assignVariants(ws, row.wangid, [localId]);
+          changed = true;
+        });
+        return changed;
+      }
+
+      function drawWangGrid() {
+        // Only use selections from the ACTIVE tileset, not other tilesets
+        const currentSelection = getCurrentWangSelection();
+        const previewLocalId = getActivePreviewLocalId(currentSelection);
+        
+        wangCtx.fillStyle = '#181a1b';
+        wangCtx.fillRect(0, 0, gridWidth, gridHeight);
+
+        wangCtx.strokeStyle = '#3e3e42';
+        wangCtx.lineWidth = gridLineWidth;
+
+        for (let col = 0; col <= gridCols; col++) {
+          wangCtx.beginPath();
+          wangCtx.moveTo(col * cellSize, 0);
+          wangCtx.lineTo(col * cellSize, gridHeight);
+          wangCtx.stroke();
+        }
+
+        for (let row = 0; row <= gridRows; row++) {
+          wangCtx.beginPath();
+          wangCtx.moveTo(0, row * cellSize);
+          wangCtx.lineTo(gridWidth, row * cellSize);
+          wangCtx.stroke();
+        }
+
+        rows.forEach((row, col) => {
+          const previewCanvas = makeWangTemplatePreview(ws, row);
+          if (previewCanvas) {
+            const srcCtx = previewCanvas.getContext('2d');
+            const imgData = srcCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const offsetX = col * cellSize + (cellSize - previewCanvas.width) / 2;
+            const offsetY = (cellSize - previewCanvas.height) / 2;
+            wangCtx.putImageData(imgData, offsetX, offsetY);
+          }
+        });
+
+        rows.forEach((row, col) => {
+          row.variants.forEach((localId, varIdx) => {
+            if (varIdx >= gridRows - 1) return;
+            const variantRow = varIdx + 1;
+            const variantCanvas = makeTilesetTileThumb(ts, localId, 2);
+            if (variantCanvas) {
+              const srcCtx = variantCanvas.getContext('2d');
+              const imgData = srcCtx.getImageData(0, 0, variantCanvas.width, variantCanvas.height);
+              const offsetX = col * cellSize + (cellSize - variantCanvas.width) / 2;
+              const offsetY = variantRow * cellSize + (cellSize - variantCanvas.height) / 2;
+              wangCtx.putImageData(imgData, offsetX, offsetY);
+            }
+          });
+        });
+
+        if (hoveredCol >= 0 && hoveredRow >= 0 && hoveredRow > 0 && previewLocalId >= 0) {
+          const previewCanvas = makeTilesetTileThumb(ts, previewLocalId, 2);
+          if (previewCanvas) {
+            const srcCtx = previewCanvas.getContext('2d');
+            const imgData = srcCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+            const offsetX = hoveredCol * cellSize + (cellSize - previewCanvas.width) / 2;
+            const offsetY = hoveredRow * cellSize + (cellSize - previewCanvas.height) / 2;
+            wangCtx.globalAlpha = 0.6;
+            wangCtx.putImageData(imgData, offsetX, offsetY);
+            wangCtx.globalAlpha = 1.0;
+          }
+        }
+      }
+
+      wangCanvas.onmousemove = (event) => {
+        const rect = wangCanvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        hoveredCol = Math.floor(x / cellSize);
+        hoveredRow = Math.floor(y / cellSize);
+        drawWangGrid();
+      };
+
+      wangCanvas.onmouseleave = () => {
+        hoveredCol = -1;
+        hoveredRow = -1;
+        drawWangGrid();
+      };
+
+      wangCanvas.onclick = (event) => {
+        const currentSelection = getCurrentWangSelection();
+        if (currentSelection.length === 0 || hoveredRow === 0 || hoveredCol < 0 || hoveredCol >= gridCols || hoveredRow < 0 || hoveredRow >= gridRows) return;
+        const row = rows[hoveredCol];
+        if (!row) return;
+        const slotIndex = hoveredRow - 1;
+        const changed = placeSelectionAtSlot(row, slotIndex, currentSelection);
+        if (!changed) return;
+        updateUI();
+        updateStatus('Placed ' + currentSelection.length + ' tile(s) into template ' + row.label + ' at slot ' + slotIndex + '.');
+      };
+
+      wangCanvas.oncontextmenu = (event) => {
+        event.preventDefault();
+        if (hoveredCol < 0 || hoveredCol >= gridCols) return;
+        const row = rows[hoveredCol];
+        if (!row) return;
+
+        if (hoveredRow === 0) {
+          row.variants.forEach((localId) => window.wangTemplateSystem?.removeVariant(ws, localId));
+          updateUI();
+          updateStatus('Cleared template ' + row.label + '.');
+        } else if (hoveredRow > 0) {
+          const tileIndex = hoveredRow - 1;
+          if (tileIndex < row.variants.length) {
+            const localId = row.variants[tileIndex];
+            window.wangTemplateSystem?.removeVariant(ws, localId);
+            updateUI();
+            updateStatus('Removed tile ' + localId + ' from template ' + row.label + '.');
+          }
+        }
+      };
+
+      drawWangGrid();
+      container.appendChild(wangCanvas);
+
+      const updateInterval = setInterval(() => {
+        if (!container.isConnected || !wangCanvas.isConnected) {
+          clearInterval(updateInterval);
+          return;
+        }
+        const currentSelection = getCurrentWangSelection();
+        let statusText = ws.name + ' · ' + rows.length + ' template rows · ' + covered + ' filled · ';
+        
+        // Check if there's a selection from the active tileset
+        if (currentSelection.length > 0) {
+          statusText += currentSelection.length + ' tiles selected';
+        } else {
+          // Check if there's a selection from a different tileset
+          let otherTilesetHasSelection = false;
+          if (mapData && Array.isArray(mapData.tilesets)) {
+            for (const otherTs of mapData.tilesets) {
+              if (otherTs.firstGid !== ts.firstGid) {
+                const otherSelection = Array.from(getTilesetSelectionSet(otherTs.firstGid) || []).sort((a, b) => a - b);
+                if (otherSelection.length > 0) {
+                  otherTilesetHasSelection = true;
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (otherTilesetHasSelection) {
+            statusText += '⚠ selection from different tileset - select tiles from "' + ts.name + '"';
+          } else {
+            statusText += '0 tiles selected - select tiles from the tileset sheet';
+          }
+        }
+        
+        summary.textContent = statusText;
+        drawWangGrid();
+      }, 100);
+    }
+
+    // ─── Wang / Auto-tile Engine ─────────────────────────────────────────────
+
+    function exportStudioJson() {
+      if (!mapData) {
+        alert('No map loaded');
+        return;
+      }
+
+      const payload = serializeStudioMapPayload();
+      const json = JSON.stringify(payload, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const baseName = String(mapData.filename || 'map').replace(/\.[^.]+$/, '');
+      a.href = url;
+      a.download = baseName + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      updateStatus('✓ Saved JSON: ' + a.download);
+    }
+
     function exportMap() {
       if (!mapData) {
         alert('No map loaded');
@@ -4660,6 +5775,13 @@
           });
         }
 
+        if (Array.isArray(ts.retroWangBlocks) && ts.retroWangBlocks.length > 0) {
+          const serialized = escapeXmlAttr(JSON.stringify(ts.retroWangBlocks));
+          xml += `    <properties>\n`;
+          xml += `      <property name="${RETRO_WANG_BLOCKS_PROPERTY}" value="${serialized}"/>\n`;
+          xml += `    </properties>\n`;
+        }
+
         xml += `  </tileset>\n`;
       });
       
@@ -4686,8 +5808,11 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = mapData.filename || 'map.tmx';
+      const baseName = String(mapData.filename || 'map').replace(/\.[^.]+$/, '');
+      a.download = baseName + '.tmx';
       a.click();
+      URL.revokeObjectURL(url);
+      updateStatus('✓ Exported TMX: ' + a.download);
     }
     
     // Returns the canvas pixel dimensions for a given zoom without mutating any state.
