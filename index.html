@@ -44,6 +44,10 @@
           <span id="hostedSaveStateLabel" class="ribbon-save-state-label">Saved</span>
         </div>
         <div class="ribbon-buttons">
+          <button id="saveRevisionBtn" class="ribbon-btn" title="Save a new cloud revision">
+            <div class="ribbon-icon">🕘</div>
+            <div class="ribbon-text">Save Revision</div>
+          </button>
           <button id="newProjectBtn" class="ribbon-btn" title="Create New Project">
             <div class="ribbon-icon">🧩</div>
             <div class="ribbon-text">New Project</div>
@@ -230,7 +234,7 @@
   
   <!-- Build System -->
   <script src="scripts/build-system.js?v=4"></script>
-  <script src="scripts/builders/texture-builder.js?v=3"></script>
+  <script src="scripts/builders/texture-builder.js?v=4"></script>
   <script src="scripts/builders/frameset-builder.js?v=1"></script>
   <script src="scripts/builders/sprite-builder.js?v=2"></script>
   <script src="scripts/builders/font-builder.js?v=2"></script>
@@ -249,7 +253,7 @@
   <script src="scripts/tab-manager.js?v=4"></script>
   <script src="scripts/project-explorer.js?v=7"></script>
   <script src="scripts/game-emulator/simulator-logger.js"></script>
-  <script src="scripts/game-emulator/game-emulator.js?v=3"></script>
+  <script src="scripts/game-emulator/game-emulator.js?v=4"></script>
   <script src="scripts/game-emulator/embedded-runtime-player.js?v=2"></script>
   <script src="scripts/game-emulator/runtime-host.js?v=2"></script>
 
@@ -257,7 +261,7 @@
   <script src="test/retrowatch-ble-client-v2.js"></script>
   
   <!-- Application Bootstrap (components will be loaded dynamically after init) -->
-  <script src="scripts/core/application.js?v=5"></script>
+  <script src="scripts/core/application.js?v=6"></script>
   
   <!-- Monaco Editor (load after everything else) -->
   <script src="scripts/vendor/monaco-editor/vs/loader.js"></script>

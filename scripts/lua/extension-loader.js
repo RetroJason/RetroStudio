@@ -115,7 +115,7 @@ class LuaExtensionLoader {
       
       // First load the base extension class
       await this.loadBaseExtensionFile();
-      
+
       // Load all extension files (only for categories with functions)
       const loadPromises = this.extensionConfig.categories
         .filter(category => category.functions.length > 0)

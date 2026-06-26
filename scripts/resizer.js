@@ -245,6 +245,7 @@ class PanelResizer {
     panelState.resizer.addEventListener('mousedown', (e) => this.startResize(e, panelState.id));
     document.addEventListener('mousemove', (e) => this.handleResize(e, panelState.id));
     document.addEventListener('mouseup', () => this.stopResize(panelState.id));
+    window.addEventListener('blur', () => this.stopResize(panelState.id));
     
     // Prevent text selection during resize
     panelState.resizer.addEventListener('selectstart', (e) => e.preventDefault());
@@ -257,6 +258,10 @@ class PanelResizer {
   startResize(event, panelId) {
     const panelState = this.panels.get(panelId);
     if (!panelState) return;
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
     
     panelState.isResizing = true;
     panelState.startX = event.clientX;

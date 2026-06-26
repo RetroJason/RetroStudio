@@ -48,7 +48,8 @@ class RwpService {
     return normalizedStoragePath;
   }
 
-  getPackageFieldValidationError(settings) {
+  getPackageFieldValidationError(settings, options = {}) {
+    const requirePublishMetadata = options.requirePublishMetadata === true;
     const uniqueId = String(settings.uniqueId || '').trim();
     const applicationType = String(settings.category || '').trim();
     const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim();
@@ -58,6 +59,10 @@ class RwpService {
     const versionCode = Number.parseInt(String(settings.versionCode ?? ''), 10);
     const iconPath = String(settings.icons?.icon32 || '').trim();
     const screenshots = Array.isArray(settings.screenshots) ? settings.screenshots.filter(Boolean) : [];
+
+    if (!requirePublishMetadata) {
+      return null;
+    }
 
     if (!uniqueId) {
       return { fieldName: 'uniqueId', message: 'Package Settings: Application ID is required.' };
@@ -252,18 +257,20 @@ class RwpService {
   }
 
   buildPackageIni(projectName, settings, runtimePkg, retroStudioVersion, options = {}) {
-    const validationError = this.getPackageFieldValidationError(settings);
+    const requirePublishMetadata = options.requirePublishMetadata === true;
+    const validationError = this.getPackageFieldValidationError(settings, { requirePublishMetadata });
     if (validationError) {
       throw new Error(validationError.message);
     }
 
-    const uniqueId = String(settings.uniqueId || '').trim();
-    const category = String(settings.category || '').trim();
-    const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim();
-    const shortDescription = String(settings.shortDescription || '').trim();
-    const longDescription = String(settings.description || '').trim();
-    const versionString = String(settings.version || '').trim();
-    const rawVersionCode = Number.parseInt(String(settings.versionCode ?? ''), 10);
+    const fallbackSlug = this.getCanonicalProjectSlug(projectName) || 'untitled-project';
+    const uniqueId = String(settings.uniqueId || '').trim() || fallbackSlug;
+    const category = String(settings.category || '').trim() || 'watch';
+    const targetDeviceSlug = String(settings.targetDeviceSlug || '').trim() || 'retrowatch';
+    const shortDescription = String(settings.shortDescription || '').trim() || 'Draft RetroStudio project';
+    const longDescription = String(settings.description || '').trim() || 'Saved draft project from RetroStudio.';
+    const versionString = String(settings.version || '').trim() || '0.0.1';
+    const rawVersionCode = Number.parseInt(String(settings.versionCode ?? ''), 10) || 1;
     const iconPath = String(settings.icons?.icon32 || '').trim();
     const releaseChannel = String(settings.releaseChannel || '').trim();
     const minFirmwareVersion = String(settings.minFirmwareVersion || '').trim();
@@ -362,6 +369,7 @@ class RwpService {
       returnBlob: true,
       skipDownload: true,
       shareSource: options.shareSource === true,
+      requirePublishMetadata: true,
     });
     const workspacePackage = await this.buildWorkspacePackage(projectName, { projectPackage });
     const formData = new FormData();
@@ -399,30 +407,48 @@ class RwpService {
   getProjectSourceFileUiPaths(projectName) {
   this.ensureDeps();
     const files = [];
+    const seen = new Set();
   const explorer = this.projectExplorer;
     if (!explorer) return files;
+    const projectNode = explorer.projectData?.structure?.[projectName];
+    if (!projectNode?.children) return files;
+
     const sourcesRoot = this.getSourcesRootUi();
-    const srcNode = explorer.projectData?.structure?.[projectName]?.children?.[sourcesRoot];
-    if (!srcNode) return files;
+    const candidateRoots = [sourcesRoot];
+    // Backward compatibility: older projects may still store source files under Resources.
+    if (!candidateRoots.includes('Resources')) {
+      candidateRoots.push('Resources');
+    }
+
+    const addFile = (path) => {
+      if (!path || seen.has(path)) return;
+      seen.add(path);
+      files.push(path);
+    };
 
     const walk = (node, base) => {
       if (!node) return;
       if (node.type === 'file') {
-        files.push(base);
+        addFile(base);
       } else if (node.type === 'folder' && node.children) {
         for (const [name, child] of Object.entries(node.children)) {
           const next = base ? `${base}/${name}` : name;
-          if (child.type === 'file') files.push(`${next}`);
+          if (child.type === 'file') addFile(`${next}`);
           else walk(child, `${next}`);
         }
       }
     };
 
-    // Start at project/Sources
-    for (const [name, child] of Object.entries(srcNode.children || {})) {
-      const p = `${projectName}/${sourcesRoot}/${name}`;
-      if (child.type === 'file') files.push(p);
-      else walk(child, p);
+    // Start at project/<source-root> for both current and legacy roots.
+    for (const rootName of candidateRoots) {
+      const srcNode = projectNode.children[rootName];
+      if (!srcNode || srcNode.type !== 'folder') continue;
+
+      for (const [name, child] of Object.entries(srcNode.children || {})) {
+        const p = `${projectName}/${rootName}/${name}`;
+        if (child.type === 'file') addFile(p);
+        else walk(child, p);
+      }
     }
     return files;
   }
@@ -630,12 +656,43 @@ class RwpService {
     const buf = await file.arrayBuffer();
     const zip = await JSZip.loadAsync(buf);
 
-    // Read manifest
-    const manifestFile = zip.file('rwp.json');
-    if (!manifestFile) throw new Error('Invalid RWP: missing rwp.json');
-    const manifestText = await manifestFile.async('string');
-    const archive = JSON.parse(manifestText);
-    if (!archive || archive.format !== 'retro-watch-project') throw new Error('Not a valid RWP archive');
+    let projectZip = zip;
+    let manifestFile = zip.file('rwp.json');
+
+    if (!manifestFile && String(file?.name || '').toLowerCase().endsWith('.rws')) {
+      const embeddedProjectPackages = Object.values(zip.files).filter((entry) =>
+        !entry.dir && entry.name.toLowerCase().endsWith('.rwp')
+      );
+
+      if (embeddedProjectPackages.length !== 1) {
+        console.warn('[RwpService] Invalid RWS: expected exactly one embedded .rwp package. Continuing with empty manifest.');
+      } else {
+        const embeddedBuffer = await embeddedProjectPackages[0].async('nodebuffer');
+        projectZip = await JSZip.loadAsync(embeddedBuffer);
+        manifestFile = projectZip.file('rwp.json');
+      }
+    }
+
+    // Read manifest. Missing/invalid manifests are treated as incomplete draft projects.
+    let archive = null;
+    if (manifestFile) {
+      try {
+        const manifestText = await manifestFile.async('string');
+        archive = JSON.parse(manifestText);
+      } catch (error) {
+        console.warn('[RwpService] Failed to parse rwp.json. Continuing with empty manifest:', error);
+      }
+    } else {
+      console.warn('[RwpService] Missing rwp.json. Continuing with empty manifest.');
+    }
+
+    if (!archive || archive.format !== 'retro-watch-project') {
+      archive = {
+        format: 'retro-watch-project',
+        projectName: String(options.projectNameOverride || file?.name || 'ImportedProject').replace(/\.[^.]+$/, ''),
+        files: [],
+      };
+    }
 
   const incomingName = archive.projectName || 'ImportedProject';
     const explorer = this.projectExplorer;
@@ -655,10 +712,13 @@ class RwpService {
     const importEntries = [];
     const seenTargetEntries = new Map();
 
-    for (const f of archive.files || []) {
+    const manifestFiles = Array.isArray(archive.files) ? archive.files : [];
+
+    for (const f of manifestFiles) {
       const key = String(f?.path || f?.uiPath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
       if (!key) {
-        throw new Error('RWP manifest contains a file entry without a path.');
+        console.warn('[RwpService] Skipping manifest file entry without a path:', f);
+        continue;
       }
 
       const relUi = this.stripProjectPrefix(key);
@@ -701,8 +761,7 @@ class RwpService {
           continue;
         }
 
-        throw new Error(`RWP manifest contains conflicting duplicate file entries for ${targetStoragePath}.`);
-
+        console.warn('[RwpService] Skipping conflicting duplicate manifest entries for:', targetStoragePath);
         continue;
       }
 
@@ -711,9 +770,10 @@ class RwpService {
     }
 
     for (const entry of importEntries) {
-      const fileEntry = zip.file(entry.key);
+      const fileEntry = projectZip.file(entry.key);
       if (!fileEntry) {
-        throw new Error(`RWP archive is missing the file entry referenced by manifest: ${entry.key}`);
+        console.warn('[RwpService] Missing manifest-referenced file. Skipping entry:', entry.key);
+        continue;
       }
 
       const rawBytes = new Uint8Array(await fileEntry.async('uint8array'));

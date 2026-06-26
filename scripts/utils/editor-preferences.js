@@ -2,6 +2,101 @@
 // Shared Monaco editor preferences for RetroStudio.
 
 class EditorPreferences {
+  static getPreferenceFieldDefinitions() {
+    return [
+      { key: 'fontSize', label: 'Editor Font Size', type: 'number', min: 8, max: 32 },
+      { key: 'tabSize', label: 'Tab Size', type: 'number', min: 1, max: 8 },
+      { key: 'indentSize', label: 'Indent Size', type: 'number', min: 1, max: 8 },
+      { key: 'insertSpaces', label: 'Insert Spaces', type: 'checkbox' },
+      { key: 'wordWrap', label: 'Word Wrap', type: 'checkbox' },
+      {
+        key: 'renderWhitespace',
+        label: 'Render Whitespace',
+        type: 'select',
+        options: [
+          { value: 'none', text: 'Never' },
+          { value: 'selection', text: 'Selection Only' },
+          { value: 'boundary', text: 'Boundary' },
+          { value: 'all', text: 'Always' }
+        ]
+      },
+      { key: 'showLineNumbers', label: 'Show Line Numbers', type: 'checkbox' },
+      { key: 'highlightCurrentLine', label: 'Highlight Current Line', type: 'checkbox' },
+      { key: 'minimapEnabled', label: 'Show Minimap', type: 'checkbox' },
+      { key: 'quickSuggestions', label: 'Enable Auto Complete While Typing', type: 'checkbox' },
+      { key: 'quickSuggestionsDelay', label: 'Suggestion Delay (ms)', type: 'number', min: 0, max: 5000 },
+      { key: 'suggestOnTriggerCharacters', label: 'Trigger Suggestions From Special Characters', type: 'checkbox' },
+      { key: 'acceptSuggestionOnEnter', label: 'Accept Suggestions On Enter', type: 'checkbox' },
+      { key: 'acceptSuggestionOnCommitCharacter', label: 'Accept On Commit Character', type: 'checkbox' },
+      {
+        key: 'snippetSuggestions',
+        label: 'Snippet Suggestions',
+        type: 'select',
+        options: [
+          { value: 'top', text: 'Top' },
+          { value: 'inline', text: 'Inline' },
+          { value: 'bottom', text: 'Bottom' },
+          { value: 'none', text: 'Off' }
+        ]
+      },
+      {
+        key: 'tabCompletion',
+        label: 'Tab Completion',
+        type: 'select',
+        options: [
+          { value: 'off', text: 'Off' },
+          { value: 'on', text: 'On' },
+          { value: 'onlySnippets', text: 'Snippets Only' }
+        ]
+      },
+      {
+        key: 'wordBasedSuggestions',
+        label: 'Word Based Suggestions',
+        type: 'select',
+        options: [
+          { value: 'off', text: 'Off' },
+          { value: 'currentDocument', text: 'Current Document' },
+          { value: 'matchingDocuments', text: 'Matching Open Documents' },
+          { value: 'allDocuments', text: 'All Open Documents' }
+        ]
+      },
+      {
+        key: 'suggestSelection',
+        label: 'Default Suggestion Selection',
+        type: 'select',
+        options: [
+          { value: 'first', text: 'First' },
+          { value: 'recentlyUsed', text: 'Recently Used' },
+          { value: 'recentlyUsedByPrefix', text: 'Recently Used By Prefix' }
+        ]
+      },
+      { key: 'parameterHintsEnabled', label: 'Show Parameter Hints', type: 'checkbox' },
+      { key: 'inlineSuggestEnabled', label: 'Enable Inline Suggestions', type: 'checkbox' }
+    ];
+  }
+
+  static _normalizePreferencePayload(preferences) {
+    let value = preferences;
+    let parseAttempts = 0;
+
+    while (typeof value === 'string' && parseAttempts < 2) {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        break;
+      }
+
+      try {
+        value = JSON.parse(trimmed);
+      } catch (_) {
+        break;
+      }
+
+      parseAttempts += 1;
+    }
+
+    return value;
+  }
+
   static getDefaultPreferences() {
     return {
       fontSize: 14,
@@ -73,11 +168,12 @@ class EditorPreferences {
   }
 
   static validatePreferences(preferences) {
-    if (!preferences || typeof preferences !== 'object') {
+    const value = this._normalizePreferencePayload(preferences);
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error('IDE preferences payload must be an object');
     }
 
-    const value = preferences;
     const renderWhitespaceValues = new Set(['none', 'selection', 'boundary', 'all']);
     const snippetSuggestionValues = new Set(['top', 'bottom', 'inline', 'none']);
     const tabCompletionValues = new Set(['off', 'on', 'onlySnippets']);
@@ -246,6 +342,28 @@ class EditorPreferences {
     return validatedPreferences;
   }
 
+  static async openPreferencesTab() {
+    const tabManager = this.getTabManager();
+    const componentInfo = {
+      type: 'editor',
+      name: 'ide-preferences-editor',
+      displayName: 'IDE Preferences',
+      class: IdePreferencesTabEditor,
+      editorClass: IdePreferencesTabEditor
+    };
+
+    const tabId = await tabManager.openInTab('temp://ide-preferences', componentInfo, {
+      forceNew: false,
+      isReadOnly: false
+    });
+
+    if (tabId && typeof tabManager.updateTabTitle === 'function') {
+      tabManager.updateTabTitle(tabId, 'IDE Preferences');
+    }
+
+    return tabId;
+  }
+
   static buildMonacoOptions(overrides = {}) {
     const preferences = this.getPreferences();
 
@@ -322,210 +440,177 @@ class EditorPreferences {
   }
 
   static async showPreferencesDialog() {
-    if (!window.ModalUtils || typeof window.ModalUtils.showForm !== 'function') {
-      throw new Error('ModalUtils.showForm is not available');
-    }
-
-    const preferences = this.getPreferences();
-    const result = await window.ModalUtils.showForm(
-      'IDE Preferences',
-      [
-        {
-          type: 'section',
-          label: 'Editor',
-          hint: 'Layout, indentation, and visibility options for Monaco-based editors.'
-        },
-        {
-          type: 'number',
-          name: 'fontSize',
-          label: 'Editor Font Size',
-          defaultValue: preferences.fontSize,
-          min: 8,
-          max: 32,
-          required: true,
-          hint: 'Applies to Monaco-based editors.'
-        },
-        {
-          type: 'number',
-          name: 'tabSize',
-          label: 'Tab Size',
-          defaultValue: preferences.tabSize,
-          min: 1,
-          max: 8,
-          required: true,
-          hint: 'Number of spaces a tab represents.'
-        },
-        {
-          type: 'number',
-          name: 'indentSize',
-          label: 'Indent Size',
-          defaultValue: preferences.indentSize,
-          min: 1,
-          max: 8,
-          required: true,
-          hint: 'Size Monaco uses for indentation operations.'
-        },
-        {
-          type: 'checkbox',
-          name: 'insertSpaces',
-          label: 'Insert Spaces',
-          defaultValue: preferences.insertSpaces,
-          hint: 'Uses spaces instead of literal tab characters when indenting.'
-        },
-        {
-          type: 'checkbox',
-          name: 'wordWrap',
-          label: 'Word Wrap',
-          defaultValue: preferences.wordWrap,
-          hint: 'Wrap long lines inside the editor viewport.'
-        },
-        {
-          type: 'checkbox',
-          name: 'showLineNumbers',
-          label: 'Show Line Numbers',
-          defaultValue: preferences.showLineNumbers
-        },
-        {
-          type: 'checkbox',
-          name: 'highlightCurrentLine',
-          label: 'Highlight Current Line',
-          defaultValue: preferences.highlightCurrentLine
-        },
-        {
-          type: 'checkbox',
-          name: 'minimapEnabled',
-          label: 'Show Minimap',
-          defaultValue: preferences.minimapEnabled
-        },
-        {
-          type: 'select',
-          name: 'renderWhitespace',
-          label: 'Render Whitespace',
-          defaultValue: preferences.renderWhitespace,
-          options: [
-            { value: 'none', text: 'Never' },
-            { value: 'selection', text: 'Selection Only' },
-            { value: 'boundary', text: 'Boundary' },
-            { value: 'all', text: 'Always' }
-          ],
-          hint: 'Controls visible whitespace markers in the editor.'
-        },
-        {
-          type: 'section',
-          label: 'IntelliSense',
-          hint: 'Suggestion and auto-complete behavior.'
-        },
-        {
-          type: 'checkbox',
-          name: 'quickSuggestions',
-          label: 'Enable Auto Complete While Typing',
-          defaultValue: preferences.quickSuggestions,
-          hint: 'Controls Monaco quick suggestions.'
-        },
-        {
-          type: 'number',
-          name: 'quickSuggestionsDelay',
-          label: 'Suggestion Delay (ms)',
-          defaultValue: preferences.quickSuggestionsDelay,
-          min: 0,
-          max: 5000,
-          required: true,
-          hint: 'Delay before quick suggestions appear while typing.'
-        },
-        {
-          type: 'checkbox',
-          name: 'suggestOnTriggerCharacters',
-          label: 'Trigger Suggestions From Special Characters',
-          defaultValue: preferences.suggestOnTriggerCharacters,
-          hint: 'Shows IntelliSense after trigger characters such as ".".'
-        },
-        {
-          type: 'checkbox',
-          name: 'acceptSuggestionOnEnter',
-          label: 'Accept Suggestions On Enter',
-          defaultValue: preferences.acceptSuggestionOnEnter,
-          hint: 'When enabled, pressing Enter commits the selected suggestion.'
-        },
-        {
-          type: 'checkbox',
-          name: 'acceptSuggestionOnCommitCharacter',
-          label: 'Accept On Commit Character',
-          defaultValue: preferences.acceptSuggestionOnCommitCharacter,
-          hint: 'Allows characters like "." or "(" to accept a suggestion.'
-        },
-        {
-          type: 'checkbox',
-          name: 'parameterHintsEnabled',
-          label: 'Show Parameter Hints',
-          defaultValue: preferences.parameterHintsEnabled
-        },
-        {
-          type: 'checkbox',
-          name: 'inlineSuggestEnabled',
-          label: 'Enable Inline Suggestions',
-          defaultValue: preferences.inlineSuggestEnabled
-        },
-        {
-          type: 'select',
-          name: 'snippetSuggestions',
-          label: 'Snippet Suggestions',
-          defaultValue: preferences.snippetSuggestions,
-          options: [
-            { value: 'top', text: 'Top' },
-            { value: 'inline', text: 'Inline' },
-            { value: 'bottom', text: 'Bottom' },
-            { value: 'none', text: 'Off' }
-          ]
-        },
-        {
-          type: 'select',
-          name: 'tabCompletion',
-          label: 'Tab Completion',
-          defaultValue: preferences.tabCompletion,
-          options: [
-            { value: 'off', text: 'Off' },
-            { value: 'on', text: 'On' },
-            { value: 'onlySnippets', text: 'Snippets Only' }
-          ]
-        },
-        {
-          type: 'select',
-          name: 'wordBasedSuggestions',
-          label: 'Word Based Suggestions',
-          defaultValue: preferences.wordBasedSuggestions,
-          options: [
-            { value: 'off', text: 'Off' },
-            { value: 'currentDocument', text: 'Current Document' },
-            { value: 'matchingDocuments', text: 'Matching Open Documents' },
-            { value: 'allDocuments', text: 'All Open Documents' }
-          ]
-        },
-        {
-          type: 'select',
-          name: 'suggestSelection',
-          label: 'Default Suggestion Selection',
-          defaultValue: preferences.suggestSelection,
-          options: [
-            { value: 'first', text: 'First' },
-            { value: 'recentlyUsed', text: 'Recently Used' },
-            { value: 'recentlyUsedByPrefix', text: 'Recently Used By Prefix' }
-          ]
-        }
-      ],
-      {
-        okText: 'Save',
-        cancelText: 'Cancel'
-      }
-    );
-
-    if (!result) {
-      return false;
-    }
-
-    await this.savePreferences(result);
-    window.gameEmulator?.updateStatus?.('IDE preferences updated', 'success');
+    await this.openPreferencesTab();
     return true;
   }
 }
 
+class IdePreferencesTabEditor {
+  constructor() {
+    this._controls = new Map();
+    this._element = document.createElement('div');
+    this._element.className = 'ide-preferences-tab';
+    this._element.style.cssText = 'height:100%; overflow:auto; padding:16px; color:#d7dbe4; background:#151821;';
+
+    this._render();
+    this._load(EditorPreferences.getPreferences());
+  }
+
+  getElement() {
+    return this._element;
+  }
+
+  cleanup() {
+    // No-op for tab manager compatibility.
+  }
+
+  destroy() {
+    // No-op for tab manager compatibility.
+  }
+
+  _render() {
+    const title = document.createElement('h2');
+    title.textContent = 'IDE Preferences';
+    title.style.cssText = 'margin:0 0 8px 0; font-size:18px;';
+    this._element.appendChild(title);
+
+    const note = document.createElement('p');
+    note.textContent = 'Changes apply to Monaco editors immediately after save and persist to your hosted account.';
+    note.style.cssText = 'margin:0 0 14px 0; color:#9aa3b8; font-size:12px;';
+    this._element.appendChild(note);
+
+    this._status = document.createElement('div');
+    this._status.style.cssText = 'min-height:18px; margin:0 0 12px 0; font-size:12px; color:#9aa3b8;';
+    this._element.appendChild(this._status);
+
+    const form = document.createElement('div');
+    form.style.cssText = 'display:grid; grid-template-columns: 220px minmax(240px, 1fr); gap:10px 12px; align-items:center; max-width:860px;';
+
+    for (const field of EditorPreferences.getPreferenceFieldDefinitions()) {
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      label.htmlFor = `ide-pref-${field.key}`;
+      label.style.cssText = 'font-size:12px; color:#bac4db;';
+      form.appendChild(label);
+
+      let control;
+      if (field.type === 'checkbox') {
+        control = document.createElement('input');
+        control.type = 'checkbox';
+      } else if (field.type === 'select') {
+        control = document.createElement('select');
+        for (const option of field.options || []) {
+          const optionEl = document.createElement('option');
+          optionEl.value = option.value;
+          optionEl.textContent = option.text;
+          control.appendChild(optionEl);
+        }
+      } else {
+        control = document.createElement('input');
+        control.type = 'number';
+        if (Number.isFinite(field.min)) {
+          control.min = String(field.min);
+        }
+        if (Number.isFinite(field.max)) {
+          control.max = String(field.max);
+        }
+      }
+
+      control.id = `ide-pref-${field.key}`;
+      if (field.type !== 'checkbox') {
+        control.style.cssText = 'height:30px; border:1px solid #3f4a67; border-radius:4px; background:#0f1218; color:#e4e8f2; padding:0 8px;';
+      }
+
+      this._controls.set(field.key, { control, field });
+      form.appendChild(control);
+    }
+
+    this._element.appendChild(form);
+
+    const actions = document.createElement('div');
+    actions.style.cssText = 'margin-top:14px; display:flex; gap:8px;';
+
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.textContent = 'Save';
+    saveButton.style.cssText = 'height:32px; padding:0 14px; border:1px solid #4f5f87; border-radius:4px; background:#1b2750; color:#fff; cursor:pointer;';
+    saveButton.addEventListener('click', async () => {
+      try {
+        this._setStatus('Saving preferences...', 'info');
+        const saved = await EditorPreferences.savePreferences(this._collect());
+        this._load(saved);
+        this._setStatus('IDE preferences saved.', 'success');
+        window.gameEmulator?.updateStatus?.('IDE preferences updated', 'success');
+      } catch (error) {
+        this._setStatus('Save failed: ' + (error?.message || String(error)), 'error');
+      }
+    });
+    actions.appendChild(saveButton);
+
+    const reloadButton = document.createElement('button');
+    reloadButton.type = 'button';
+    reloadButton.textContent = 'Reload Current';
+    reloadButton.style.cssText = 'height:32px; padding:0 14px; border:1px solid #3f4a67; border-radius:4px; background:#171d2a; color:#d7dbe4; cursor:pointer;';
+    reloadButton.addEventListener('click', () => {
+      this._load(EditorPreferences.getPreferences());
+      this._setStatus('Reloaded current local values.', 'info');
+    });
+    actions.appendChild(reloadButton);
+
+    const resetButton = document.createElement('button');
+    resetButton.type = 'button';
+    resetButton.textContent = 'Reset To Defaults';
+    resetButton.style.cssText = 'height:32px; padding:0 14px; border:1px solid #3f4a67; border-radius:4px; background:#171d2a; color:#d7dbe4; cursor:pointer;';
+    resetButton.addEventListener('click', () => {
+      this._load(EditorPreferences.getDefaultPreferences());
+      this._setStatus('Defaults loaded. Click Save to apply.', 'info');
+    });
+    actions.appendChild(resetButton);
+
+    this._element.appendChild(actions);
+  }
+
+  _load(preferences) {
+    const valid = EditorPreferences.validatePreferences(preferences);
+    for (const [key, entry] of this._controls.entries()) {
+      if (!Object.prototype.hasOwnProperty.call(valid, key)) {
+        continue;
+      }
+
+      if (entry.field.type === 'checkbox') {
+        entry.control.checked = !!valid[key];
+      } else {
+        entry.control.value = String(valid[key]);
+      }
+    }
+  }
+
+  _collect() {
+    const value = {};
+    for (const [key, entry] of this._controls.entries()) {
+      if (entry.field.type === 'checkbox') {
+        value[key] = !!entry.control.checked;
+      } else if (entry.field.type === 'number') {
+        value[key] = Number.parseInt(entry.control.value, 10);
+      } else {
+        value[key] = String(entry.control.value);
+      }
+    }
+
+    return value;
+  }
+
+  _setStatus(message, kind) {
+    this._status.textContent = message;
+    if (kind === 'error') {
+      this._status.style.color = '#f48c8c';
+    } else if (kind === 'success') {
+      this._status.style.color = '#8fd99c';
+    } else {
+      this._status.style.color = '#9aa3b8';
+    }
+  }
+}
+
 window.EditorPreferences = EditorPreferences;
+window.IdePreferencesTabEditor = IdePreferencesTabEditor;

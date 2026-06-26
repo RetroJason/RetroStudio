@@ -327,6 +327,12 @@ class TabManager {
         return;
       }
 
+      if (action === 'copy-project') {
+        e.preventDefault();
+        await this._handleWelcomeProjectCopy(actionTarget);
+        return;
+      }
+
       if (action === 'restore-project') {
         e.preventDefault();
         await this._handleWelcomeProjectRestore(actionTarget);
@@ -1726,6 +1732,58 @@ class TabManager {
     }
   }
 
+  async _handleWelcomeProjectCopy(actionTarget) {
+    const projectUuid = actionTarget.dataset.projectUuid;
+    const projectName = actionTarget.dataset.projectNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.projectNameEncoded)
+      : actionTarget.dataset.projectName;
+    const sourceName = projectName || 'project';
+
+    if (!projectUuid) {
+      throw new Error('Welcome copy action is missing a project UUID.');
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.copyProject !== 'function') {
+      throw new Error('RetroWatch project copy service is unavailable.');
+    }
+
+    const suggestedName = sourceName + ' Copy';
+    const requestedName = window.prompt('Copy project as:', suggestedName);
+    if (requestedName == null) {
+      return;
+    }
+
+    const copyName = String(requestedName || '').trim();
+    if (!copyName) {
+      window.gameEmulator?.updateStatus?.('Copy canceled: project name is required.', 'warning');
+      return;
+    }
+
+    if (copyName === sourceName) {
+      window.gameEmulator?.updateStatus?.('Copy canceled: choose a different project name.', 'warning');
+      return;
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      window.gameEmulator?.updateStatus?.('Copying ' + sourceName + ' to ' + copyName + '...', 'info');
+      await hostedStudioApi.copyProject(projectUuid, copyName);
+      window.gameEmulator?.updateStatus?.('Copied project to ' + copyName, 'success');
+      await this.refreshWelcomePreviewProjects();
+    } catch (error) {
+      console.error('[TabManager] Failed to copy project:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to copy project: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+      throw error;
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
   async _handleWelcomeProjectRestore(actionTarget) {
     const projectUuid = actionTarget.dataset.projectUuid;
     const projectName = actionTarget.dataset.projectNameEncoded
@@ -1882,6 +1940,9 @@ class TabManager {
           const rowAction = showDeletedProjects ? 'restore-project' : 'delete-project';
           const rowActionClass = showDeletedProjects ? 'welcome-project-restore-button' : 'welcome-project-delete-button';
           const rowActionLabel = showDeletedProjects ? 'Restore' : 'Delete';
+          const actionsClass = showDeletedProjects
+            ? 'welcome-project-card-actions welcome-project-card-actions--deleted'
+            : 'welcome-project-card-actions welcome-project-card-actions--active';
 
           return `
             <div class="welcome-recent-project-card">
@@ -1907,7 +1968,18 @@ class TabManager {
                   <span class="welcome-project-meta">${this._escapeHtml(showDeletedProjects ? deletedLabel : savedLabel)}</span>
                 </span>
               </button>
-              <div class="welcome-project-card-actions">
+              <div class="${actionsClass}">
+                ${!showDeletedProjects ? `
+                  <button
+                    type="button"
+                    class="welcome-project-copy-button"
+                    data-welcome-action="copy-project"
+                    data-project-uuid="${projectUuid}"
+                    data-project-name-encoded="${encodedProjectName}"
+                  >
+                    Copy
+                  </button>
+                ` : ''}
                 <button
                   type="button"
                   class="${rowActionClass}"
@@ -1951,6 +2023,14 @@ class TabManager {
           event.preventDefault();
           event.stopPropagation();
           await this._handleWelcomeProjectDelete(deleteButton);
+        });
+      }
+
+      for (const copyButton of projectsContainer.querySelectorAll('.welcome-project-copy-button')) {
+        copyButton.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await this._handleWelcomeProjectCopy(copyButton);
         });
       }
 
@@ -2684,14 +2764,23 @@ class TabManager {
     return unsavedTabs;
   }
 
-  async saveAllOpenTabs() {
+  async saveAllOpenTabs(options = {}) {
     console.log('[TabManager] Saving all open tabs...');
+    console.error('[SaveDebug] TabManager.saveAllOpenTabs called', options || {});
     const savePromises = [];
     let savedCount = 0;
+    const force = options && options.force === true;
     
     // Save preview tab if it has content and is modified
     if (this.previewViewer && typeof this.previewViewer.save === 'function') {
-      if (typeof this.previewViewer.isModified === 'function' && this.previewViewer.isModified()) {
+      const previewModified = typeof this.previewViewer.isModified === 'function' ? this.previewViewer.isModified() : true;
+      if (force || previewModified) {
+        console.error('[SaveDebug] Saving preview tab', {
+          modified: previewModified,
+          force,
+          viewerType: this.previewViewer?.constructor?.name || 'unknown',
+          path: this.previewPath || null,
+        });
         console.log('[TabManager] Saving preview tab...');
         savePromises.push(
           this.previewViewer.save().then(() => {
@@ -2709,7 +2798,15 @@ class TabManager {
     // Save all dedicated tabs
     for (const [tabId, tabInfo] of this.dedicatedTabs.entries()) {
       if (tabInfo.viewer && typeof tabInfo.viewer.save === 'function') {
-        if (typeof tabInfo.viewer.isModified === 'function' && tabInfo.viewer.isModified()) {
+        const modified = typeof tabInfo.viewer.isModified === 'function' ? tabInfo.viewer.isModified() : true;
+        if (force || modified) {
+          console.error('[SaveDebug] Saving dedicated tab', {
+            tabId,
+            modified,
+            force,
+            viewerType: tabInfo.viewer?.constructor?.name || 'unknown',
+            path: tabInfo.fullPath || null,
+          });
           console.log(`[TabManager] Saving tab ${tabId}...`);
           savePromises.push(
             tabInfo.viewer.save().then(() => {

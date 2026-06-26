@@ -563,16 +563,58 @@ class TextureEditor extends EditorBase {
    */
   async _saveTextureJson() {
     try {
-      if (!this.path || !this.textureData) return;
+      if (!this.textureData) return;
+
+      const normalizePath = (value) => String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
+      const activeProject = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.()
+        || window.gameEmulator?.currentProject
+        || null;
+
+      const toProjectQualifiedTexturePath = (value) => {
+        const normalized = normalizePath(value);
+        if (!normalized || !normalized.toLowerCase().endsWith('.texture')) {
+          return '';
+        }
+
+        const parsed = window.ProjectPaths?.parseProjectPath
+          ? window.ProjectPaths.parseProjectPath(normalized)
+          : { project: null, rest: normalized };
+
+        if (parsed?.project) {
+          return `${parsed.project}/${parsed.rest}`;
+        }
+
+        const rest = parsed?.rest || normalized;
+        return activeProject ? `${activeProject}/${rest}` : normalized;
+      };
+
+      const targetPaths = [this.path, this.file?.path]
+        .map(toProjectQualifiedTexturePath)
+        .filter(Boolean);
+      const uniqueTargetPaths = Array.from(new Set(targetPaths));
+      if (uniqueTargetPaths.length === 0) return;
+
+      const normalizedPath = String(uniqueTargetPaths[0]).toLowerCase();
+      if (!normalizedPath.endsWith('.texture')) {
+        // When editing directly from an image source, persist to the linked
+        // companion .texture file instead of overwriting the image path.
+        if (this.isCreatingFromImage) {
+          await this.autoSaveLinkedTextureFile();
+        }
+        return;
+      }
+
       const content = this.getContent();
       if (!content) return;
       const fileService = window.serviceContainer?.get('fileIOService') || window.fileIOService;
       if (fileService) {
-        await fileService.saveFile(this.path, content);
-        console.log(`[TextureEditor] Persisted .texture JSON: ${this.path}`);
+        for (const targetPath of uniqueTargetPaths) {
+          await fileService.saveFile(targetPath, content);
+          console.log(`[TextureEditor] Persisted .texture JSON: ${targetPath}`);
+        }
       }
     } catch (e) {
-      console.warn('[TextureEditor] .texture auto-save failed:', e.message);
+      console.error('[TextureEditor] .texture auto-save failed:', e);
     }
   }
 
@@ -2698,17 +2740,20 @@ class TextureEditor extends EditorBase {
       console.log(`[TextureEditor] Original image path: ${originalPath}`);
       
       // Try multiple ways to get the current active project context
-      let currentProject = window.gameEmulator?.currentProject;
-      if (!currentProject && window.gameEmulator?.projectExplorer) {
-        // Try to get from project explorer
-        currentProject = window.gameEmulator.projectExplorer.getCurrentProject?.();
+      let currentProject = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.()
+        || window.gameEmulator?.currentProject
+        || null;
+      if (!currentProject) {
+        const parsed = window.ProjectPaths?.parseProjectPath
+          ? window.ProjectPaths.parseProjectPath(originalPath)
+          : null;
+        if (parsed?.project) {
+          currentProject = parsed.project;
+        }
       }
       if (!currentProject) {
-        // Try to extract from the full path we know works (from tab manager)
-        // The tab manager showed: test/Sources/Images/Animating-A-Sprite.png
-        // But our originalPath is: Sources/Images/Animating-A-Sprite.png
-        // So we can infer the project from context
-        currentProject = 'test'; // Hardcode for now, but we'll improve this
+        console.error('[TextureEditor] Unable to determine active project for linked texture autosave');
+        return;
       }
       
       console.log(`[TextureEditor] Current project: ${currentProject}`);
@@ -3169,7 +3214,11 @@ class TextureEditor extends EditorBase {
       // Update palettePath metadata to point to the newly saved palette file
       const savedPalettePath = `Sources/Palettes/${fullFileName}`;
       this.textureData.palettePath = savedPalettePath;
+      this.textureData.palette = this.currentPalette.getColors();
       console.log(`[TextureEditor] Updated palettePath to: ${savedPalettePath}`);
+
+      // Persist palette metadata and embedded colors in the .texture file.
+      await this._saveTextureJson();
 
       // Update the palette dropdown
       this.populatePaletteOptions();
@@ -3646,6 +3695,9 @@ class TextureEditor extends EditorBase {
       this.textureData.palette = palette.getColors();
       console.log(`[TextureEditor] Embedded ${palette.getColors().length} extracted palette colors into textureData`);
 
+      // Persist immediately so extraction survives reload/build without manual save.
+      await this._saveTextureJson();
+
       this.displayPalette(palette.getColors());
       this.enableApplyButton();
       
@@ -3676,6 +3728,9 @@ class TextureEditor extends EditorBase {
       // Also update the palettePath metadata to point to this palette file
       this.textureData.palettePath = `Sources/Palettes/${filename}`;
       console.log(`[TextureEditor] Embedded ${palette.getColors().length} loaded palette colors into textureData, palettePath: Sources/Palettes/${filename}`);
+
+      // Persist immediately so palette selection survives reload/build without manual save.
+      await this._saveTextureJson();
 
       this.displayPalette(palette.getColors());
       this.enableApplyButton();
@@ -4293,19 +4348,22 @@ class TextureEditor extends EditorBase {
         console.log(`[TextureEditor] Auto-saved palette: ${storagePath}`);
       }
 
+      // Persist .texture metadata before any explorer-tree operations.
+      this.textureData.palettePath = palettePath;
+      this.textureData.palette = this.currentPalette.getColors();
+      await this._saveTextureJson();
+      console.log(`[TextureEditor] Updated palettePath → ${palettePath} (${this.currentPalette.getColors().length} colors)`);
+
       // Add to the project explorer tree so it's visible & buildable
       // skipAutoOpen = true (don't open in a new tab), skipRender = false (refresh tree)
       const actBlob = new Blob([actData], { type: 'application/octet-stream' });
       const actFile = new File([actBlob], fullFileName, { lastModified: Date.now() });
-      await projectExplorer.addFileToProject(actFile, paletteFolder, true, false);
-
-      // Update textureData metadata so .texture JSON references this palette
-      this.textureData.palettePath = palettePath;
-      this.textureData.palette = this.currentPalette.getColors();
-      console.log(`[TextureEditor] Updated palettePath → ${palettePath} (${this.currentPalette.getColors().length} colors)`);
-
-      // Persist the .texture file with the new palettePath
-      await this.autoSaveLinkedTextureFile();
+      try {
+        await projectExplorer.addFileToProject(actFile, paletteFolder, true, false);
+      } catch (treeError) {
+        // Tree refresh must not block palette/.texture persistence.
+        console.warn('[TextureEditor] Palette file saved but tree insertion failed:', treeError);
+      }
 
     } catch (error) {
       console.error('[TextureEditor] Auto-save palette failed (non-fatal):', error);

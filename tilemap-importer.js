@@ -373,3 +373,7 @@ class TMXImporter {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = TMXImporter;
 }
+
+if (typeof window !== 'undefined') {
+  window.TMXImporter = TMXImporter;
+}

@@ -243,6 +243,29 @@
     .status-label { color: #858585; }
     .status-value { color: #4ec9b0; }
     .status-error { color: #f48771; }
+
+    body.embedded-mode .sidebar,
+    body.embedded-mode .toolbar {
+      display: none;
+    }
+
+    body.embedded-mode .status-bar {
+      border-top: 0;
+    }
+
+    body.embedded-mode .workspace {
+      min-height: 0;
+    }
+
+    body.embedded-mode .canvas-area {
+      padding: 0;
+      background: #1e1e1e;
+    }
+
+    body.embedded-mode #mapCanvas {
+      margin: 0;
+      border: 0;
+    }
     
     button {
       background: #007acc;
@@ -693,6 +716,7 @@
       <button onclick="exportStudioJson()">Save JSON</button>
       <button onclick="exportMap()">Export TMX</button>
       <input type="file" id="fileInput" accept=".json,.tmx" onchange="loadMapFile(event)">
+      <input type="file" id="supportFileInput" accept=".tsx,.png,.jpg,.jpeg,.gif,.webp" multiple style="display:none;">
       
       <div style="margin-top: 15px; padding: 10px; background: #2d2d30; border-radius: 3px; font-size: 11px;">
         <div style="color: #858585;">Current File</div>
@@ -871,6 +895,8 @@
   <script>
     // State
     let mapData = null;
+    const embeddedMode = new URLSearchParams(window.location.search).get('embedded') === '1';
+    const importedSupportFiles = new Map();
     let currentLayer = 0;
     let selectedTile = 1;
     let currentTool = 'paint';
@@ -3167,7 +3193,102 @@
       return directMap;
     }
 
-    async function loadMapFromText(text, filename, format) {
+    function normalizeImportedSupportPath(path) {
+      const normalized = String(path || '')
+        .replace(/^file:\/\//i, '')
+        .replace(/\\/g, '/')
+        .replace(/^[a-zA-Z]:\//, '')
+        .replace(/^\/+/, '')
+        .trim()
+        .toLowerCase();
+
+      return normalized;
+    }
+
+    function getSupportPathBasename(path) {
+      const normalized = normalizeImportedSupportPath(path);
+      if (!normalized) return '';
+      const parts = normalized.split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : normalized;
+    }
+
+    function tryResolveSupportUrl(path, baseUrl) {
+      const raw = String(path || '').trim();
+      if (!raw) return null;
+
+      try {
+        return new URL(raw, baseUrl).href;
+      } catch {
+        const basename = getSupportPathBasename(raw);
+        if (!basename || !baseUrl) return null;
+        try {
+          return new URL(basename, baseUrl).href;
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    function registerImportedSupportFiles(files) {
+      for (const file of Array.from(files || [])) {
+        if (!(file instanceof File)) continue;
+        importedSupportFiles.set(normalizeImportedSupportPath(file.name), file);
+        importedSupportFiles.set(getSupportPathBasename(file.name), file);
+      }
+    }
+
+    function findImportedSupportFile(path) {
+      const normalized = normalizeImportedSupportPath(path);
+      if (!normalized) return null;
+      if (importedSupportFiles.has(normalized)) {
+        return importedSupportFiles.get(normalized);
+      }
+
+      const basename = normalized.split('/').pop();
+      if (basename && importedSupportFiles.has(basename)) {
+        return importedSupportFiles.get(basename);
+      }
+
+      for (const [key, file] of importedSupportFiles.entries()) {
+        if (key.endsWith('/' + basename) || key === basename) {
+          return file;
+        }
+      }
+
+      return null;
+    }
+
+    function collectRequiredSupportPaths(directMap) {
+      const required = new Set();
+      for (const ts of (directMap?.tilesets || [])) {
+        if (ts?.source) required.add(ts.source);
+        if (ts?.image?.source) required.add(ts.image.source);
+      }
+      return [...required];
+    }
+
+    async function promptForSupportFilesIfNeeded(directMap) {
+      const requiredPaths = collectRequiredSupportPaths(directMap);
+      const missingPaths = requiredPaths.filter((path) => !findImportedSupportFile(path));
+      if (!missingPaths.length) return;
+
+      const supportFileInput = document.getElementById('supportFileInput');
+      if (!supportFileInput) return;
+
+      updateStatus('Select referenced tileset and image files for this map.');
+
+      await new Promise((resolve) => {
+        supportFileInput.value = '';
+        supportFileInput.onchange = (event) => {
+          registerImportedSupportFiles(event.target.files || []);
+          supportFileInput.onchange = null;
+          resolve();
+        };
+        supportFileInput.click();
+      });
+    }
+
+    async function loadMapFromText(text, filename, format, options = {}) {
       window.loadedTilesets = {};
       mapBaseUrl = new URL(window.location.href);
       if (format === 'tmx') {
@@ -3176,6 +3297,11 @@
       } else {
         mapData = parseStudioMapPayload(text);
       }
+
+      if (options.promptForSupportFiles) {
+        await promptForSupportFilesIfNeeded(mapData);
+      }
+
       resetEditorStateForLoadedMap(filename);
 
       await loadTilesets();
@@ -3221,6 +3347,34 @@
       }
     }
 
+    async function handleDroppedMapFiles(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+
+      const mapFile = files.find((file) => /\.(tmx|json)$/i.test(file.name || ''));
+      if (!mapFile) {
+        updateStatus('Drop a .tmx or .json map file to import.', true);
+        return;
+      }
+
+      registerImportedSupportFiles(files.filter((file) => file !== mapFile));
+
+      const lowerName = (mapFile.name || '').toLowerCase();
+      const inferredFormat = lowerName.endsWith('.tmx') ? 'tmx' : 'json';
+
+      try {
+        const text = await mapFile.text();
+        let format = inferredFormat;
+        if (inferredFormat === 'json') {
+          const lead = text.trimStart();
+          if (lead.startsWith('<')) format = 'tmx';
+        }
+        await loadMapFromText(text, mapFile.name, format, { promptForSupportFiles: true });
+      } catch (e) {
+        updateStatus(`✗ Error: ${e.message}`, true);
+      }
+    }
+
     async function loadTMXFile(event) {
       return loadMapFile(event);
     }
@@ -3252,10 +3406,17 @@
       if (!ts || !ts.source) return ts;
 
       try {
-        const tsxUrl = new URL(ts.source, mapBaseUrl);
-        const response = await fetch(tsxUrl.href);
-        if (!response.ok) return ts;
-        const tsxText = await response.text();
+        const importedTsxFile = findImportedSupportFile(ts.source);
+        const tsxUrl = importedTsxFile ? null : tryResolveSupportUrl(ts.source, mapBaseUrl);
+        const tsxText = importedTsxFile
+          ? await importedTsxFile.text()
+          : await (async () => {
+              if (!tsxUrl) return null;
+              const response = await fetch(tsxUrl);
+              if (!response.ok) return null;
+              return response.text();
+            })();
+        if (!tsxText) return ts;
 
         const parser = new DOMParser();
         const doc = parser.parseFromString(tsxText, 'text/xml');
@@ -3287,12 +3448,15 @@
         const imageEl = tsEl.querySelector('image');
         if (imageEl) {
           const source = imageEl.getAttribute('source');
+          const importedImageFile = findImportedSupportFile(source);
           resolved.image = {
             source: source,
             width: parseInt(imageEl.getAttribute('width') || 0, 10),
             height: parseInt(imageEl.getAttribute('height') || 0, 10),
             trans: imageEl.getAttribute('trans') || null,
-            resolvedSource: source ? new URL(source, tsxUrl).href : null
+            resolvedSource: importedImageFile
+              ? URL.createObjectURL(importedImageFile)
+              : tryResolveSupportUrl(source, tsxUrl || mapBaseUrl)
           };
         }
 
@@ -3334,7 +3498,14 @@
           resolve(false);
         };
 
-        const resolvedSrc = ts.image.resolvedSource || new URL(ts.image.source, mapBaseUrl).href;
+        const importedImageFile = findImportedSupportFile(ts?.image?.source);
+        const resolvedSrc = ts.image.resolvedSource
+          || (importedImageFile ? URL.createObjectURL(importedImageFile) : tryResolveSupportUrl(ts.image.source, mapBaseUrl));
+        if (!resolvedSrc) {
+          clearTimeout(timeout);
+          resolve(false);
+          return;
+        }
         img.src = resolvedSrc;
       });
     }
@@ -5955,10 +6126,40 @@
       }
     }
 
+    function initEmbeddedMode() {
+      if (!embeddedMode) return;
+
+      document.body.classList.add('embedded-mode');
+
+      const canvasAreaEl = document.getElementById('canvasArea');
+      const mapSelector = document.getElementById('mapSelector');
+      if (mapSelector) {
+        mapSelector.value = '';
+      }
+
+      const dropTarget = canvasAreaEl || document.body;
+      ['dragenter', 'dragover'].forEach((eventName) => {
+        dropTarget.addEventListener(eventName, (event) => {
+          event.preventDefault();
+        });
+      });
+
+      ['dragleave', 'dragend'].forEach((eventName) => {
+        dropTarget.addEventListener(eventName, () => {
+        });
+      });
+
+      dropTarget.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        await handleDroppedMapFiles(event.dataTransfer?.files || []);
+      });
+    }
+
     window.addEventListener('DOMContentLoaded', () => {
       applyCanvasMargins();
       populateExampleSelector();
       initObjectEditorControls();
+      initEmbeddedMode();
       initEditor();
     });
   </script>

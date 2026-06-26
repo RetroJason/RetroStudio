@@ -10,72 +10,27 @@ class TilemapEditor extends EditorBase {
   constructor(fileObject = null, readOnly = false) {
     super(fileObject, readOnly);
     this.mapPayload = null;
+    this.sourceFormat = 'json';
+    this.rawSourceText = '';
     this.sourceTextArea = null;
     this.visualFrame = null;
     this.visualReady = false;
-    this.currentView = 'visual';
     this.host = null;
+    this.isInitializingContent = false;
+    this.hasUserEdited = false;
   }
 
   createBody(bodyContainer) {
     bodyContainer.style.display = 'flex';
     bodyContainer.style.flexDirection = 'column';
-    bodyContainer.style.gap = '8px';
-    bodyContainer.style.padding = '8px';
-
-    const toolbar = document.createElement('div');
-    toolbar.style.cssText = 'display:flex;align-items:center;gap:8px;';
-
-    const title = document.createElement('div');
-    title.textContent = 'Tilemap Editor';
-    title.style.cssText = 'font-size:12px;font-weight:600;color:#d4d4d4;';
-    toolbar.appendChild(title);
-
-    const visualBtn = document.createElement('button');
-    visualBtn.type = 'button';
-    visualBtn.textContent = 'Visual';
-    visualBtn.style.cssText = 'font-size:11px;padding:4px 8px;';
-    visualBtn.onclick = () => this.switchView('visual');
-
-    const sourceBtn = document.createElement('button');
-    sourceBtn.type = 'button';
-    sourceBtn.textContent = 'Source';
-    sourceBtn.style.cssText = 'font-size:11px;padding:4px 8px;';
-    sourceBtn.onclick = () => this.switchView('source');
-
-    const reloadVisualBtn = document.createElement('button');
-    reloadVisualBtn.type = 'button';
-    reloadVisualBtn.textContent = 'Reload Visual';
-    reloadVisualBtn.style.cssText = 'font-size:11px;padding:4px 8px;';
-    reloadVisualBtn.onclick = async () => {
-      try {
-        await this.pushPayloadToVisualEditor();
-      } catch (error) {
-        alert(`Visual reload failed: ${error.message}`);
-      }
-    };
-
-    const spacer = document.createElement('div');
-    spacer.style.cssText = 'flex:1;';
-
-    const hint = document.createElement('div');
-    hint.textContent = 'Build output: .d2m';
-    hint.style.cssText = 'font-size:11px;color:#8a8a8a;';
-
-    toolbar.appendChild(visualBtn);
-    toolbar.appendChild(sourceBtn);
-    toolbar.appendChild(reloadVisualBtn);
-    toolbar.appendChild(spacer);
-    toolbar.appendChild(hint);
-
-    bodyContainer.appendChild(toolbar);
+    bodyContainer.style.padding = '0';
 
     const host = document.createElement('div');
-    host.style.cssText = 'display:flex;flex:1;min-height:520px;border:1px solid #3e3e42;border-radius:4px;overflow:hidden;background:#1e1e1e;';
+    host.style.cssText = 'display:flex;flex:1;min-height:520px;overflow:hidden;background:#1e1e1e;';
     this.host = host;
 
     const frame = document.createElement('iframe');
-    frame.src = 'tmx-viewer.html';
+    frame.src = 'tmx-viewer.html?embedded=1';
     frame.style.cssText = 'width:100%;height:100%;border:none;display:block;background:#1e1e1e;';
     frame.onload = async () => {
       this.visualReady = true;
@@ -90,7 +45,7 @@ class TilemapEditor extends EditorBase {
     const source = document.createElement('textarea');
     source.spellcheck = false;
     source.style.cssText = 'display:none;width:100%;height:100%;border:none;outline:none;resize:none;background:#1e1e1e;color:#d4d4d4;padding:10px;font-family:Consolas,monospace;font-size:12px;line-height:1.4;';
-    source.addEventListener('input', () => this.markDirty());
+    source.addEventListener('input', () => this.markUserEdited());
     this.sourceTextArea = source;
 
     host.appendChild(frame);
@@ -98,10 +53,15 @@ class TilemapEditor extends EditorBase {
     bodyContainer.appendChild(host);
 
     this.loadContentFromFile();
-    this.switchView('visual');
+  }
+
+  markUserEdited() {
+    this.hasUserEdited = true;
+    this.markDirty();
   }
 
   async loadContentFromFile() {
+    this.isInitializingContent = true;
     let content = this.file?.content;
     if (content == null) content = this.file?.fileContent;
 
@@ -112,15 +72,28 @@ class TilemapEditor extends EditorBase {
       content = new TextDecoder('utf-8').decode(bytes);
     }
 
-    if (typeof content !== 'string' || content.trim().length === 0) {
+    const normalizedText = typeof content === 'string' ? content : '';
+    const isTmxSource = this.isTmxFilePath(this.path || this.file?.path || this.file?.name || '');
+
+    if (!normalizedText.trim().length) {
       this.mapPayload = this.getDefaultMapTemplate();
+      this.sourceFormat = 'json';
+      this.rawSourceText = '';
       this.isNewResource = true;
-      this.markDirty();
+      this.isDirty = false;
+      this.hasUnsavedChanges = false;
+    } else if (isTmxSource) {
+      this.sourceFormat = 'tmx';
+      this.rawSourceText = normalizedText;
+      this.mapPayload = this.getDefaultMapTemplate();
     } else {
       try {
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(normalizedText);
         this.mapPayload = this.normalizePayload(parsed);
+        this.sourceFormat = 'json';
+        this.rawSourceText = '';
       } catch (error) {
+        this.isInitializingContent = false;
         throw new Error(`Invalid tilemap JSON: ${error.message}`);
       }
     }
@@ -130,6 +103,36 @@ class TilemapEditor extends EditorBase {
     if (this.visualReady) {
       await this.pushPayloadToVisualEditor();
     }
+
+    this.isInitializingContent = false;
+  }
+
+  isModified() {
+    if (this.isNewResource && !this.hasUserEdited) {
+      return false;
+    }
+    return super.isModified();
+  }
+
+  getSafeVisualFilename() {
+    const rawName = String(this.getFileName?.() || '').trim();
+    const fallback = 'untitled.tilemap';
+    if (!rawName) return fallback;
+
+    // Avoid passing path separators or illegal path characters into iframe loaders.
+    const sanitized = rawName
+      .replace(/[\\/]+/g, '_')
+      .replace(/[<>:"|?*]/g, '_')
+      .replace(/^\.+/, '')
+      .trim();
+
+    if (!sanitized) return fallback;
+    return /\.(tilemap|tmj|tmx|json)$/i.test(sanitized) ? sanitized : `${sanitized}.tilemap`;
+  }
+
+  isTmxFilePath(pathLike) {
+    const normalized = String(pathLike || '').trim().toLowerCase();
+    return normalized.endsWith('.tmx');
   }
 
   normalizePayload(parsed) {
@@ -150,20 +153,11 @@ class TilemapEditor extends EditorBase {
 
   syncSourceText() {
     if (!this.sourceTextArea) return;
-    this.sourceTextArea.value = JSON.stringify(this.mapPayload, null, 2);
-  }
-
-  switchView(view) {
-    this.currentView = view;
-    if (!this.visualFrame || !this.sourceTextArea) return;
-
-    if (view === 'source') {
-      this.visualFrame.style.display = 'none';
-      this.sourceTextArea.style.display = 'block';
-    } else {
-      this.visualFrame.style.display = 'block';
-      this.sourceTextArea.style.display = 'none';
+    if (this.sourceFormat === 'tmx' && this.rawSourceText) {
+      this.sourceTextArea.value = this.rawSourceText;
+      return;
     }
+    this.sourceTextArea.value = JSON.stringify(this.mapPayload, null, 2);
   }
 
   async pushPayloadToVisualEditor() {
@@ -173,7 +167,20 @@ class TilemapEditor extends EditorBase {
 
     // Preferred path: use unified loader
     if (typeof win.loadMapFromText === 'function') {
-      await win.loadMapFromText(JSON.stringify(this.mapPayload), this.getFileName(), 'json');
+      const format = this.sourceFormat === 'tmx' ? 'tmx' : 'json';
+      const sourceText = format === 'tmx'
+        ? (this.rawSourceText || this.sourceTextArea?.value || '')
+        : JSON.stringify(this.mapPayload);
+      await win.loadMapFromText(sourceText, this.getSafeVisualFilename(), format);
+
+      if (format === 'tmx') {
+        // After parsing TMX in the visual editor, normalize into Studio JSON payload.
+        const parsedPayload = await this.pullPayloadFromVisualEditor();
+        this.mapPayload = this.normalizePayload(parsedPayload);
+        this.sourceFormat = 'json';
+        this.rawSourceText = '';
+        this.syncSourceText();
+      }
       return;
     }
 
@@ -222,7 +229,7 @@ class TilemapEditor extends EditorBase {
 
   async save() {
     try {
-      if (this.currentView === 'source') {
+      if (!this.visualReady) {
         this.mapPayload = this.pullPayloadFromSourceEditor();
       } else {
         this.mapPayload = await this.pullPayloadFromVisualEditor();
@@ -232,6 +239,7 @@ class TilemapEditor extends EditorBase {
       throw error;
     }
 
+    this.hasUserEdited = true;
     this.syncSourceText();
     return super.save();
   }
@@ -263,7 +271,11 @@ class TilemapEditor extends EditorBase {
   }
 
   static getFileExtensions() {
-    return ['.tilemap', '.tmj'];
+    return ['.tilemap', '.tmj', '.tmx'];
+  }
+
+  static getFileExtension() {
+    return '.tilemap';
   }
 
   static getDisplayName() {

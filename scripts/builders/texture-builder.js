@@ -86,33 +86,35 @@ class TextureBuilder extends BaseBuilder {
 
       let d2Bytes;
 
-      // ── 3. Resolve palette index from the build-time palette registry ──
+      // ── 3. Resolve palette data and palette-map registration key ──
       let paletteIndex = 0;
       let palette = null;
-      if (palettePath) {
-        const embeddedPalette = textureJson.palette;
-        if (Array.isArray(embeddedPalette) && embeddedPalette.length > 0) {
-          palette = embeddedPalette.map(c => {
-            if (typeof c === 'string') return c;
-            if (c && typeof c === 'object' && c.r !== undefined) {
-              const toHex = v => v.toString(16).padStart(2, '0');
-              return `#${toHex(c.r)}${toHex(c.g)}${toHex(c.b)}`;
-            }
-            return '#000000';
-          });
-        } else {
-          // Load from palette file
-          const paletteContent = await this.loadFileContent(resolvedPalettePath);
-          if (!paletteContent) throw new Error(`Palette not found: ${resolvedPalettePath}`);
-          const PaletteClass = window.Palette;
-          if (!PaletteClass) throw new Error('Palette class not available');
-          const paletteObj = new PaletteClass();
-          await paletteObj.loadFromContent(paletteContent, resolvedPalettePath);
-          palette = paletteObj.colors.map(c => typeof c === 'string' ? c : '#000000');
-        }
+      const embeddedPalette = textureJson.palette;
 
-        paletteIndex = TextureBuilder.getPaletteIndex(resolvedPalettePath, palette);
-        console.log(`${tag} Palette index ${paletteIndex} for ${resolvedPalettePath} (${palette.length} colors)`);
+      if (Array.isArray(embeddedPalette) && embeddedPalette.length > 0) {
+        palette = embeddedPalette.map(c => {
+          if (typeof c === 'string') return c;
+          if (c && typeof c === 'object' && c.r !== undefined) {
+            const toHex = v => v.toString(16).padStart(2, '0');
+            return `#${toHex(c.r)}${toHex(c.g)}${toHex(c.b)}`;
+          }
+          return '#000000';
+        });
+      } else if (palettePath) {
+        // Load from palette file when no embedded palette was persisted
+        const paletteContent = await this.loadFileContent(resolvedPalettePath);
+        if (!paletteContent) throw new Error(`Palette not found: ${resolvedPalettePath}`);
+        const PaletteClass = window.Palette;
+        if (!PaletteClass) throw new Error('Palette class not available');
+        const paletteObj = new PaletteClass();
+        await paletteObj.loadFromContent(paletteContent, resolvedPalettePath);
+        palette = paletteObj.colors.map(c => typeof c === 'string' ? c : '#000000');
+      }
+
+      if (palette && palette.length > 0) {
+        const paletteRegistryKey = resolvedPalettePath || `${file.path}#embedded-palette`;
+        paletteIndex = TextureBuilder.getPaletteIndex(paletteRegistryKey, palette);
+        console.log(`${tag} Palette index ${paletteIndex} for ${paletteRegistryKey} (${palette.length} colors)`);
       }
 
       const D2FileClass = window.D2File;
@@ -122,7 +124,21 @@ class TextureBuilder extends BaseBuilder {
 
       if (this.isIndexedFormatEnum(fmtEnum)) {
         if (!palette || palette.length === 0) {
-          throw new Error(`Indexed texture requires a palette: ${file.path}`);
+          const hasEmbeddedPalette = Array.isArray(textureJson.palette);
+          const embeddedPaletteLength = hasEmbeddedPalette ? textureJson.palette.length : 0;
+          console.error(`${tag} FATAL indexed palette missing`, {
+            texturePath: file.path,
+            outputPixelFormat: format,
+            palettePath,
+            hasEmbeddedPalette,
+            embeddedPaletteLength,
+            metadataKeys: Object.keys(meta || {}),
+          });
+          throw new Error(
+            `Indexed texture requires a palette: ${file.path} ` +
+            `(format=${format}, palettePath=${palettePath || '(empty)'}, ` +
+            `embeddedPalette=${hasEmbeddedPalette ? embeddedPaletteLength : 0})`
+          );
         }
 
         const chunkSize = this.getIndexedPaletteColorCount(fmtEnum);

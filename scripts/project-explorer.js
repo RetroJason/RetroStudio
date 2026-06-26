@@ -38,6 +38,7 @@ class ProjectExplorer {
               Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
               SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
               Images: { type: 'folder', filter: ['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'], children: {} },
+              Maps: { type: 'folder', filter: ['.tilemap', '.tmj', '.tmx'], children: {} },
               Palettes: { type: 'folder', filter: ['.act', '.pal', '.aco'], children: {} },
               Lua: { type: 'folder', filter: ['.lua', '.txt'], children: {} },
               Sprites: { type: 'folder', filter: ['.sprite'], children: {} },
@@ -134,6 +135,52 @@ class ProjectExplorer {
     return configuredRoot;
   }
 
+  getPreferredManagedFolderForExtension(projectName, extension) {
+    const focusedProject = projectName || this.getFocusedProjectName();
+    if (!focusedProject) return null;
+
+    const ext = String(extension || '').toLowerCase();
+    const configuredRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+
+    // Normalize extension to a managed subfolder name.
+    let subfolder = null;
+    if (window.ProjectPaths && typeof window.ProjectPaths.resolveFolderForExtension === 'function') {
+      const resolved = window.ProjectPaths.resolveFolderForExtension(ext || '.bin'); // e.g. "Sources/Lua"
+      if (typeof resolved === 'string' && resolved.includes('/')) {
+        subfolder = resolved.split('/').pop();
+      }
+    }
+
+    if (!subfolder) {
+      if (ext === '.lua' || ext === '.txt') subfolder = 'Lua';
+      else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) subfolder = 'Music';
+      else if (ext === '.wav' || ext === '.sfx') subfolder = 'SFX';
+      else if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(ext)) subfolder = 'Images';
+      else if (['.tilemap', '.tmj', '.tmx'].includes(ext)) subfolder = 'Maps';
+      else if (['.pal', '.act', '.aco'].includes(ext)) subfolder = 'Palettes';
+      else if (ext === '.sprite') subfolder = 'Sprites';
+      else subfolder = 'Binary';
+    }
+
+    const candidateFolders = [
+      `${focusedProject}/${configuredRoot}/${subfolder}`,
+      `${focusedProject}/Resources/${subfolder}`,
+      `${focusedProject}/${subfolder}`
+    ];
+
+    // Reuse the first existing folder path to keep files in one visible branch.
+    for (const candidate of candidateFolders) {
+      const node = this.getNodeByPath(candidate);
+      if (node && node.type === 'folder') {
+        return candidate;
+      }
+    }
+
+    return candidateFolders[0];
+  }
+
   isManagedPackagePath(path) {
     if (!path || typeof path !== 'string') return false;
     const pp = window.ProjectPaths?.parseProjectPath
@@ -187,7 +234,7 @@ class ProjectExplorer {
           icon32: `${sourcesRoot}/Package/icons/icon32.png`,
           icon128: ''
         },
-        screenshots: [],
+        screenshots: [`${sourcesRoot}/Package/screenshots/default.png`],
         videos: []
       };
       const settingsFile = this.createFileLike([
@@ -270,9 +317,146 @@ class ProjectExplorer {
       changed = true;
     }
 
+    const luaFolderPath = this.getPreferredManagedFolderForExtension(projectName, '.lua')
+      || `${projectName}/${sourcesRoot}/Lua`;
+    const luaFolderNode = this.getNodeByPath(luaFolderPath);
+    const hasLuaEntry = !!(luaFolderNode && luaFolderNode.type === 'folder' && luaFolderNode.children &&
+      Object.keys(luaFolderNode.children).some((name) => String(name).toLowerCase().endsWith('.lua')));
+
+    // Backward compatibility: detect Lua across all supported layouts.
+    const alternateLuaFolderPaths = [
+      `${projectName}/${sourcesRoot}/Lua`,
+      `${projectName}/Resources/Lua`,
+      `${projectName}/Lua`
+    ].filter((value, index, self) => self.indexOf(value) === index && value !== luaFolderPath);
+    const hasAlternateLuaEntry = alternateLuaFolderPaths.some((candidatePath) => {
+      const node = this.getNodeByPath(candidatePath);
+      return !!(node && node.type === 'folder' && node.children &&
+        Object.keys(node.children).some((name) => String(name).toLowerCase().endsWith('.lua')));
+    });
+
+    // Storage backstop: avoid regenerating main.lua if it already exists in storage
+    // but has not yet been reflected into the in-memory tree.
+    let hasLuaInStorage = false;
+    try {
+      const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+      if (fm && typeof fm.fileExists === 'function') {
+        const currentMainPath = window.ProjectPaths?.normalizeStoragePath
+          ? window.ProjectPaths.normalizeStoragePath(`${luaFolderPath}/main.lua`)
+          : `${luaFolderPath}/main.lua`;
+        const alternateMainPaths = alternateLuaFolderPaths.map((candidatePath) => (
+          window.ProjectPaths?.normalizeStoragePath
+            ? window.ProjectPaths.normalizeStoragePath(`${candidatePath}/main.lua`)
+            : `${candidatePath}/main.lua`
+        ));
+        hasLuaInStorage = await fm.fileExists(currentMainPath);
+        if (!hasLuaInStorage) {
+          for (const candidatePath of alternateMainPaths) {
+            if (await fm.fileExists(candidatePath)) {
+              hasLuaInStorage = true;
+              break;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      hasLuaInStorage = false;
+    }
+
+    if (!hasLuaEntry && !hasAlternateLuaEntry && !hasLuaInStorage) {
+      const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
+      const luaFile = this.createFileLike([luaContent], 'main.lua', 'text/plain');
+      await this.addFileToProject(luaFile, luaFolderPath, true, true);
+      changed = true;
+    }
+
     if (changed) {
       this.renderTree();
     }
+
+    const metadataChanged = await this.ensureDefaultPackagePreviewMetadata(projectName, sourcesRoot);
+    if (metadataChanged && !changed) {
+      this.renderTree();
+    }
+  }
+
+  async ensureDefaultPackagePreviewMetadata(projectName, sourcesRoot) {
+    if (!projectName || !sourcesRoot) {
+      return false;
+    }
+
+    const packagePath = `${projectName}/${sourcesRoot}/Package/app.package`;
+    const iconPath = `${sourcesRoot}/Package/icons/icon32.png`;
+    const screenshotPath = `${sourcesRoot}/Package/screenshots/default.png`;
+    const hasIconFile = !!this.getNodeByPath(`${projectName}/${iconPath}`);
+    const hasScreenshotFile = !!this.getNodeByPath(`${projectName}/${screenshotPath}`);
+
+    const fm = window.serviceContainer?.get?.('fileManager') || window.fileManager;
+    if (!fm || typeof fm.loadFile !== 'function' || typeof fm.saveFile !== 'function') {
+      return false;
+    }
+
+    const storagePath = window.ProjectPaths?.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(packagePath)
+      : packagePath;
+    const record = await fm.loadFile(storagePath);
+    if (!record) {
+      return false;
+    }
+
+    const content = record.content !== undefined ? record.content : (record.fileContent || '');
+    if (typeof content !== 'string') {
+      return false;
+    }
+
+    let settings;
+    try {
+      settings = JSON.parse(content);
+    } catch (_) {
+      return false;
+    }
+
+    let changed = false;
+    if (!settings || typeof settings !== 'object') {
+      return false;
+    }
+
+    if (!settings.icons || typeof settings.icons !== 'object') {
+      settings.icons = { icon32: '', icon128: '' };
+      changed = true;
+    }
+
+    const currentIcon = typeof settings.icons.icon32 === 'string' ? settings.icons.icon32.trim() : '';
+    if (!currentIcon && hasIconFile) {
+      settings.icons.icon32 = iconPath;
+      changed = true;
+    }
+
+    if (!Array.isArray(settings.screenshots)) {
+      settings.screenshots = [];
+      changed = true;
+    }
+
+    const existingScreenshots = settings.screenshots
+      .map((value) => String(value || '').trim())
+      .filter((value) => value.length > 0);
+
+    if (existingScreenshots.length === 0 && hasScreenshotFile) {
+      settings.screenshots = [screenshotPath];
+      changed = true;
+    }
+
+    if (!changed) {
+      return false;
+    }
+
+    const metadata = { binaryData: false };
+    if (record.builderId) {
+      metadata.builderId = record.builderId;
+    }
+
+    await fm.saveFile(storagePath, JSON.stringify(settings, null, 2), metadata);
+    return true;
   }
 
   ensurePackageScaffoldForAllProjects() {
@@ -1119,6 +1303,24 @@ class ProjectExplorer {
   
   async addFiles(files, targetPath) {
     const fileList = Array.from(files || []);
+
+    const tmxFiles = fileList.filter((file) => this.getFileExtension(file?.name || '').toLowerCase() === '.tmx');
+    if (tmxFiles.length > 0) {
+      const nonTmxFiles = fileList.filter((file) => this.getFileExtension(file?.name || '').toLowerCase() !== '.tmx');
+      for (const tmxFile of tmxFiles) {
+        await this.importTmxFileToProject(tmxFile, targetPath, nonTmxFiles);
+      }
+      const remainingFiles = nonTmxFiles.filter((file) => {
+        const ext = this.getFileExtension(file?.name || '').toLowerCase();
+        return !['.tsx', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tga'].includes(ext);
+      });
+      if (remainingFiles.length === 0) {
+        this.renderTree();
+        return;
+      }
+      return this.addFiles(remainingFiles, targetPath);
+    }
+
     const multiDrop = fileList.length > 1;
     let lastAddedFile = null;
     let lastAddedPath = null;
@@ -1226,8 +1428,11 @@ class ProjectExplorer {
       return { allowed: true, path: `${project}/${sourcesRoot}/Images` };
     } else if (['.sprite'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Sprites` };
+    } else if (['.tilemap', '.tmj', '.tmx'].includes(ext)) {
+      return { allowed: true, path: `${project}/${sourcesRoot}/Maps` };
     } else if (luaExts.includes(ext)) {
-      return { allowed: true, path: `${project}/${sourcesRoot}/Lua` };
+      const luaFolder = this.getPreferredManagedFolderForExtension(project, ext) || `${project}/${sourcesRoot}/Lua`;
+      return { allowed: true, path: luaFolder };
     } else if (['.pal', '.act', '.aco'].includes(ext)) {
       return { allowed: true, path: `${project}/${sourcesRoot}/Palettes` };
     } else if (['.fnt', '.font', '.ttf', '.otf', '.woff', '.woff2'].includes(ext)) {
@@ -1356,7 +1561,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font', '.texture', '.frameset'];
+        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font', '.texture', '.frameset', '.tilemap', '.tmj', '.tmx'];
         const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
@@ -3691,6 +3896,290 @@ class ProjectExplorer {
 
   isLinkedFile(filename) {
     return this.findLinkedFile(filename) !== null;
+  }
+
+  async ensureTmxImporterLoaded() {
+    if (window.TMXImporter) return window.TMXImporter;
+
+    await new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[data-retrostudio-tmx-importer="1"]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(), { once: true });
+        existing.addEventListener('error', () => reject(new Error('Failed to load TMX importer script.')), { once: true });
+        return;
+      }
+
+      const script = document.createElement('script');
+      script.src = 'tilemap-importer.js?v=1';
+      script.async = true;
+      script.dataset.retrostudioTmxImporter = '1';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load TMX importer script.'));
+      document.head.appendChild(script);
+    });
+
+    if (!window.TMXImporter) {
+      throw new Error('TMX importer is not available.');
+    }
+
+    return window.TMXImporter;
+  }
+
+  normalizeTmxSupportPath(path) {
+    return String(path || '')
+      .replace(/^file:\/\//i, '')
+      .replace(/\\/g, '/')
+      .replace(/^[a-zA-Z]:\//, '')
+      .replace(/^\/+/, '')
+      .trim()
+      .toLowerCase();
+  }
+
+  getTmxSupportBasename(path) {
+    const normalized = this.normalizeTmxSupportPath(path);
+    if (!normalized) return '';
+    const parts = normalized.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : normalized;
+  }
+
+  buildTmxSupportFileMap(files) {
+    const supportFiles = new Map();
+    for (const file of Array.from(files || [])) {
+      if (!(file instanceof File)) continue;
+      const normalized = this.normalizeTmxSupportPath(file.name);
+      const basename = this.getTmxSupportBasename(file.name);
+      if (normalized) supportFiles.set(normalized, file);
+      if (basename) supportFiles.set(basename, file);
+    }
+    return supportFiles;
+  }
+
+  findTmxSupportFile(fileMap, path) {
+    if (!fileMap) return null;
+    const normalized = this.normalizeTmxSupportPath(path);
+    const basename = this.getTmxSupportBasename(path);
+    return fileMap.get(normalized) || fileMap.get(basename) || null;
+  }
+
+  async promptForTmxSupportFiles(missingPaths) {
+    const missingList = Array.from(new Set((missingPaths || []).map((item) => this.getTmxSupportBasename(item)).filter(Boolean)));
+    if (!missingList.length) return [];
+
+    if (window.ModalUtils?.showConfirm) {
+      const confirmed = await window.ModalUtils.showConfirm(
+        'Import TMX Support Files',
+        `Select the tileset/image files referenced by this TMX:\n\n${missingList.join('\n')}`,
+        { okText: 'Select Files', cancelText: 'Cancel' }
+      );
+      if (!confirmed) return [];
+    }
+
+    return await new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.tsx,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tga';
+      input.style.display = 'none';
+      input.onchange = () => {
+        const selectedFiles = Array.from(input.files || []);
+        input.remove();
+        resolve(selectedFiles);
+      };
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
+
+  parseTsxSupportFile(tsxFile) {
+    const parser = new DOMParser();
+    return tsxFile.text().then((tsxText) => {
+      const doc = parser.parseFromString(tsxText, 'text/xml');
+      if (doc.getElementsByTagName('parsererror').length > 0) {
+        throw new Error(`Invalid TSX XML: ${tsxFile.name}`);
+      }
+      const tsEl = doc.querySelector('tileset');
+      if (!tsEl) {
+        throw new Error(`TSX missing <tileset>: ${tsxFile.name}`);
+      }
+      return { tsEl, tsxText };
+    });
+  }
+
+  parseTsxTilesetTileData(tsEl) {
+    const tiles = {};
+    tsEl.querySelectorAll('tile').forEach((tileEl) => {
+      const tileId = parseInt(tileEl.getAttribute('id'), 10);
+      if (Number.isNaN(tileId)) return;
+      const animationEl = tileEl.querySelector('animation');
+      if (!animationEl) return;
+      const frames = Array.from(animationEl.querySelectorAll('frame')).map((frameEl) => ({
+        tileId: parseInt(frameEl.getAttribute('tileid'), 10),
+        duration: Math.max(1, parseInt(frameEl.getAttribute('duration'), 10) || 0),
+      })).filter((frame) => Number.isInteger(frame.tileId) && frame.tileId >= 0);
+      if (frames.length > 0) {
+        tiles[tileId] = { animation: frames };
+      }
+    });
+    return Object.keys(tiles).length > 0 ? tiles : undefined;
+  }
+
+  async resolveTmxTilesets(parsedMap, supportFiles) {
+    const missingPaths = new Set();
+    const resolvedTilesets = [];
+
+    for (const sourceTileset of (parsedMap.tilesets || [])) {
+      const ts = { ...sourceTileset };
+      if (ts.source) {
+        const tsxFile = this.findTmxSupportFile(supportFiles, ts.source);
+        if (!tsxFile) {
+          missingPaths.add(ts.source);
+          resolvedTilesets.push(ts);
+          continue;
+        }
+
+        const { tsEl } = await this.parseTsxSupportFile(tsxFile);
+        ts.name = tsEl.getAttribute('name') || ts.name;
+        ts.tileWidth = parseInt(tsEl.getAttribute('tilewidth') || ts.tileWidth || parsedMap.map.tileWidth, 10);
+        ts.tileHeight = parseInt(tsEl.getAttribute('tileheight') || ts.tileHeight || parsedMap.map.tileHeight, 10);
+        ts.spacing = parseInt(tsEl.getAttribute('spacing') || ts.spacing || 0, 10);
+        ts.margin = parseInt(tsEl.getAttribute('margin') || ts.margin || 0, 10);
+        ts.columns = parseInt(tsEl.getAttribute('columns') || ts.columns || 0, 10);
+        ts.tileCount = parseInt(tsEl.getAttribute('tilecount') || ts.tileCount || 0, 10);
+        ts.tiles = this.parseTsxTilesetTileData(tsEl);
+
+        const imageEl = tsEl.querySelector('image');
+        if (imageEl) {
+          const imageSource = imageEl.getAttribute('source');
+          ts.image = {
+            source: imageSource,
+            width: parseInt(imageEl.getAttribute('width') || 0, 10),
+            height: parseInt(imageEl.getAttribute('height') || 0, 10),
+            trans: imageEl.getAttribute('trans') || null,
+          };
+        }
+      }
+
+      if (ts.image?.source && !this.findTmxSupportFile(supportFiles, ts.image.source)) {
+        missingPaths.add(ts.image.source);
+      }
+
+      resolvedTilesets.push(ts);
+    }
+
+    return { tilesets: resolvedTilesets, missingPaths: Array.from(missingPaths) };
+  }
+
+  async importTmxSupportImage(file, projectName) {
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
+    const imagePath = `${projectName}/${sourcesRoot}/Images`;
+    const imageUiPath = `${imagePath}/${file.name}`;
+
+    await this.addFileToProject(file, imagePath, true, true);
+    await this.createTextureFileForImage(imageUiPath, imagePath, file.name);
+
+    const baseName = file.name.substring(0, file.name.lastIndexOf('.'));
+    return `${imagePath}/${baseName}.texture`;
+  }
+
+  buildTilemapPayloadFromTmx(parsedMap, textureRefsBySource) {
+    const tilesets = (parsedMap.tilesets || []).map((ts) => {
+      const imageSource = ts.image?.source || '';
+      const textureRef = textureRefsBySource.get(this.normalizeTmxSupportPath(imageSource))
+        || textureRefsBySource.get(this.getTmxSupportBasename(imageSource))
+        || '';
+
+      return {
+        firstGid: Number(ts.firstGid || 0),
+        name: ts.name || 'tileset',
+        tileWidth: Number(ts.tileWidth || ts.tilewidth || parsedMap.map.tileWidth || 16),
+        tileHeight: Number(ts.tileHeight || ts.tileheight || parsedMap.map.tileHeight || 16),
+        tileCount: Number(ts.tileCount || ts.tilecount || 0),
+        columns: Number(ts.columns || 0),
+        spacing: Number(ts.spacing || 0),
+        margin: Number(ts.margin || 0),
+        texturePath: textureRef,
+        image: ts.image ? { ...ts.image } : undefined,
+        tiles: ts.tiles,
+      };
+    });
+
+    return {
+      schema: 'retrostudio-map-v1',
+      app: 'RetroStudio',
+      mapData: {
+        map: parsedMap.map,
+        tilesets,
+        layers: parsedMap.layers || [],
+        objectGroups: parsedMap.objectGroups || [],
+      },
+    };
+  }
+
+  async importTmxFileToProject(mapFile, targetPath, siblingFiles = []) {
+    const TMXImporter = await this.ensureTmxImporterLoaded();
+    const project = this.getFocusedProjectName();
+    if (!project) {
+      throw new Error('No active project');
+    }
+
+    const mapText = await mapFile.text();
+    const parsedMap = TMXImporter.parse(mapText);
+    const initialSupportFiles = this.buildTmxSupportFileMap(siblingFiles);
+
+    let resolved = await this.resolveTmxTilesets(parsedMap, initialSupportFiles);
+    let supportFiles = initialSupportFiles;
+
+    if (resolved.missingPaths.length > 0) {
+      const selectedFiles = await this.promptForTmxSupportFiles(resolved.missingPaths);
+      supportFiles = this.buildTmxSupportFileMap([...siblingFiles, ...selectedFiles]);
+      resolved = await this.resolveTmxTilesets(parsedMap, supportFiles);
+    }
+
+    if (resolved.missingPaths.length > 0) {
+      throw new Error(`TMX import is missing required support files: ${resolved.missingPaths.join(', ')}`);
+    }
+
+    parsedMap.tilesets = resolved.tilesets;
+
+    const textureRefsBySource = new Map();
+    for (const tileset of parsedMap.tilesets || []) {
+      const imageSource = tileset.image?.source;
+      if (!imageSource) continue;
+      const imageFile = this.findTmxSupportFile(supportFiles, imageSource);
+      if (!imageFile) continue;
+      const textureRef = await this.importTmxSupportImage(imageFile, project);
+      textureRefsBySource.set(this.normalizeTmxSupportPath(imageSource), textureRef);
+      textureRefsBySource.set(this.getTmxSupportBasename(imageSource), textureRef);
+    }
+
+    const payload = this.buildTilemapPayloadFromTmx(parsedMap, textureRefsBySource);
+    const content = JSON.stringify(payload, null, 2);
+
+    const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
+    const mapFolderPath = `${project}/${sourcesRoot}/Maps`;
+    const baseName = (mapFile.name || 'map.tmx').replace(/\.tmx$/i, '');
+    const mapFileName = `${baseName}.tilemap`;
+    const mapUiPath = `${mapFolderPath}/${mapFileName}`;
+    const mapStoragePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(mapUiPath) : mapUiPath;
+
+    const fileIO = window.fileIOService || window.serviceContainer?.get?.('fileIOService');
+    if (!fileIO || typeof fileIO.saveFile !== 'function') {
+      throw new Error('File I/O service is unavailable for TMX import.');
+    }
+
+    await fileIO.saveFile(mapStoragePath, content, { binaryData: false, builderId: 'tilemap' });
+
+    const fileMetadata = {
+      name: mapFileName,
+      path: mapUiPath,
+      size: content.length,
+      lastModified: Date.now(),
+      isNewFile: true,
+      builderId: 'tilemap'
+    };
+
+    await this.addFileToProject(fileMetadata, mapFolderPath, false, true);
+    this.renderTree();
   }
 
   // Helper method to check if a file is an image

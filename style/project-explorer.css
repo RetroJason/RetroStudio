@@ -668,6 +668,27 @@
   padding: 8px 10px;
 }
 
+.welcome-project-copy-button {
+  border: 1px solid rgba(255, 181, 92, 0.34);
+  border-radius: 10px;
+  background: rgba(68, 42, 18, 0.72);
+  color: #ffe7c8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-copy-button:hover {
+  border-color: rgba(255, 211, 132, 0.78);
+  background: rgba(118, 74, 30, 0.82);
+}
+
+.welcome-project-copy-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
 .welcome-project-delete-button:hover {
   border-color: rgba(255, 150, 132, 0.78);
   background: rgba(118, 30, 24, 0.82);
@@ -681,6 +702,14 @@
 .welcome-project-card-actions {
   display: grid;
   gap: 8px;
+}
+
+.welcome-project-card-actions--active {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.welcome-project-card-actions--deleted {
+  grid-template-columns: 1fr;
 }
 
 .welcome-project-restore-button {

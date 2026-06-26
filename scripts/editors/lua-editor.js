@@ -10,6 +10,8 @@ class LuaEditor extends EditorBase {
     this.monacoEditor = null;
     this.editorContainer = null;
     this._isLoadingContent = false;
+    this._autoSaveTimer = null;
+    this._autoSaveInFlight = false;
   }
 
   createElement() { return super.createElement(); }
@@ -92,6 +94,7 @@ class LuaEditor extends EditorBase {
       this.monacoEditor.onDidChangeModelContent(() => {
         if (!this.readOnly && !this._isLoadingContent) {
           this.markDirty();
+          this.scheduleAutoSave();
         }
       });
 
@@ -109,6 +112,36 @@ class LuaEditor extends EditorBase {
       console.error('[LuaEditor] Failed to initialize Monaco Editor:', error);
       throw error;
     }
+  }
+
+  scheduleAutoSave() {
+    if (this.readOnly || this.isNewResource || !this.path) {
+      return;
+    }
+
+    if (this._autoSaveTimer) {
+      clearTimeout(this._autoSaveTimer);
+    }
+
+    this._autoSaveTimer = setTimeout(async () => {
+      this._autoSaveTimer = null;
+      if (this._autoSaveInFlight) {
+        return;
+      }
+
+      if (typeof this.isModified === 'function' && !this.isModified()) {
+        return;
+      }
+
+      this._autoSaveInFlight = true;
+      try {
+        await this.save();
+      } catch (error) {
+        console.warn('[LuaEditor] Autosave failed:', error);
+      } finally {
+        this._autoSaveInFlight = false;
+      }
+    }, 1200);
   }
 
   _applyReadOnly() {
@@ -590,6 +623,13 @@ class LuaEditor extends EditorBase {
     }
   }
 
+  cleanup() {
+    if (this._autoSaveTimer) {
+      clearTimeout(this._autoSaveTimer);
+      this._autoSaveTimer = null;
+    }
+  }
+
   onFocus() {
     super.onFocus();
     if (this.monacoEditor) {
@@ -811,7 +851,7 @@ class LuaEditor extends EditorBase {
   }
 
   static getDefaultFolder() {
-    return (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Lua` : 'Resources/Lua';
+    return 'Lua';
   }
 
   static createNew() { return ''; }
