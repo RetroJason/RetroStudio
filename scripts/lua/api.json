@@ -96,6 +96,35 @@
           "example": "local x, y = Sprite.GetXY(hero)"
         },
         {
+          "name": "SetZ",
+          "description": "Set sprite Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Sprite.SetZ(hero, 2100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get sprite Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = Sprite.GetZ(hero)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set sprite X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Sprite.SetXYZ(hero, 100, 200, 2100)"
+        },
+        {
           "name": "SetCenter",
           "description": "Set sprite center of rotation",
           "parameters": [
@@ -367,6 +396,35 @@
           ],
           "returns": {"type": "float, float", "description": "X and Y position"},
           "example": "local x, y = Image.GetXY(logo)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set image Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Image.SetZ(logo, 1100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get image Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = Image.GetZ(logo)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set image X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Image.SetXYZ(logo, 100, 120, 1100)"
         },
         {
           "name": "SetCenter",
@@ -643,6 +701,35 @@
           ],
           "returns": {"type": "float, float", "description": "X and Y position"},
           "example": "local x, y = TextBox.GetXY(title)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set textbox Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "TextBox.SetZ(title, 3100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get textbox Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = TextBox.GetZ(title)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set textbox X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "TextBox.SetXYZ(title, 100, 200, 3100)"
         },
         {
           "name": "SetCenter",
@@ -1388,9 +1475,10 @@
             {"name": "handle", "type": "int32", "description": "Tilemap handle"},
             {"name": "layer", "type": "int32", "description": "Layer index"},
             {"name": "offsetX", "type": "int32", "description": "Camera X offset (typically negative)"},
-            {"name": "offsetY", "type": "int32", "description": "Camera Y offset (typically negative)"}
+            {"name": "offsetY", "type": "int32", "description": "Camera Y offset (typically negative)"},
+            {"name": "z", "type": "float", "description": "Optional explicit depth override for this DrawLayer call"}
           ],
-          "example": "TileMap.DrawLayer(map, 0, -scrollX, -scrollY)"
+          "example": "TileMap.DrawLayer(map, 0, -scrollX, -scrollY, 100)"
         },
         {
           "name": "GetWangData",

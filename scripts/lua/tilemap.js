@@ -15,7 +15,7 @@
 //   3. Decompose layer cell data (uint32 GIDs per tile)
 //   4. On DrawLayer: blit tiles using resolved GPU texture handles
 
-class LuaTilemapExtensions extends BaseLuaExtension {
+class LuaTileMapExtensions extends BaseLuaExtension {
   constructor(gameEmulator) {
     super();
     this.gameEmulator = gameEmulator;
@@ -37,6 +37,12 @@ class LuaTilemapExtensions extends BaseLuaExtension {
 
     /** @type {Object|null} File manager for runtime package (set during initialize) */
     this.fileManager = null;
+
+    /** @type {Array<object>} DrawLayer calls staged for this frame */
+    this.pendingDrawCalls = [];
+
+    /** @type {number} Monotonic order for staged draw calls */
+    this._drawCallOrder = 1;
   }
 
   /**
@@ -58,6 +64,8 @@ class LuaTilemapExtensions extends BaseLuaExtension {
     this.tilemapAssets.clear();
     this.gpuTextures.clear();
     this.gpu = null;
+    this.pendingDrawCalls = [];
+    this._drawCallOrder = 1;
     console.log('[LuaTileMap] Tilemap system reset');
   }
 
@@ -520,13 +528,16 @@ class LuaTilemapExtensions extends BaseLuaExtension {
 
   /**
    * Draw a layer at screen offset.
-   * Lua usage: TileMap.DrawLayer(map, layerIndex, cameraX, cameraY)
+    * Lua usage: TileMap.DrawLayer(map, layerIndex, cameraX, cameraY, z)
    */
   DrawLayer() {
     const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
     const layerIndex = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
     const cameraX = parseInt(this.luaState?.raw_tostring?.(4) || '0', 10);
     const cameraY = parseInt(this.luaState?.raw_tostring?.(5) || '0', 10);
+    const zRaw = this.luaState?.raw_tostring?.(6);
+    const parsedZ = Number.parseFloat(zRaw);
+    const z = Number.isFinite(parsedZ) ? parsedZ : null;
 
     const map = this.tilemaps.get(handle);
     if (!map) {
@@ -537,7 +548,38 @@ class LuaTilemapExtensions extends BaseLuaExtension {
       return;
     }
 
-    this._drawLayerInternal(map, layerIndex, cameraX, cameraY);
+    this.pendingDrawCalls.push({
+      map,
+      layerIndex,
+      cameraX,
+      cameraY,
+      z,
+      creationOrder: this._drawCallOrder++,
+    });
+  }
+
+  renderFrame(gpu, deltaMs, renderOptions = null) {
+    if (!Array.isArray(this.pendingDrawCalls) || this.pendingDrawCalls.length === 0) {
+      return;
+    }
+
+    const calls = this.pendingDrawCalls;
+    this.pendingDrawCalls = [];
+
+    for (const call of calls) {
+      const drawTileLayer = () => this._drawLayerInternal(call.map, call.layerIndex, call.cameraX, call.cameraY);
+      if (typeof renderOptions?.enqueue === 'function') {
+        renderOptions.enqueue({
+          type: 'tilemap',
+          z: Number.isFinite(call.z) ? call.z : null,
+          defaultLayer: 0,
+          creationOrder: call.creationOrder,
+          draw: drawTileLayer,
+        });
+      } else {
+        drawTileLayer();
+      }
+    }
   }
 
   /**
@@ -651,7 +693,9 @@ class LuaTilemapExtensions extends BaseLuaExtension {
 
 // Export for module system
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = LuaTilemapExtensions;
+  module.exports = LuaTileMapExtensions;
 } else {
-  window.LuaTilemapExtensions = LuaTilemapExtensions;
+  window.LuaTileMapExtensions = LuaTileMapExtensions;
+  // Backward-compatible alias for any legacy references.
+  window.LuaTilemapExtensions = LuaTileMapExtensions;
 }

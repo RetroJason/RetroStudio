@@ -92,6 +92,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       _frameIndex: 0,
       _posX: 0,
       _posY: 0,
+      _z: null,
       _centerX: 0,
       _centerY: 0,
       _hasCustomCenter: false,
@@ -110,6 +111,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
     const handle = this._nextHandle++;
     state._handle = handle;
+    state._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? handle;
     this.images.set(handle, state);
 
     console.log(`[LuaImage] Created image "${name}" as handle ${handle} (${asset.frames.length} frame(s))`);
@@ -166,6 +168,7 @@ class LuaImageExtensions extends BaseLuaExtension {
     const clone = { ...src };
     const handle = this._nextHandle++;
     clone._handle = handle;
+    clone._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? handle;
     this.images.set(handle, clone);
     return handle;
   }
@@ -200,6 +203,34 @@ class LuaImageExtensions extends BaseLuaExtension {
   GetXY() {
     const s = this._getImageByHandleArg(2);
     return [s._posX || 0, s._posY || 0];
+  }
+
+  SetZ() {
+    const s = this._getImageByHandleArg(2);
+    const z = Number.parseFloat(this.luaState.raw_tostring(3));
+    if (!Number.isFinite(z)) {
+      throw new Error('Image.SetZ: bad argument #2 (number expected)');
+    }
+    s._z = z;
+  }
+
+  GetZ() {
+    const s = this._getImageByHandleArg(2);
+    return Number.isFinite(s._z) ? s._z : 0;
+  }
+
+  SetXYZ() {
+    const L = this.luaState;
+    const s = this._getImageByHandleArg(2);
+    const x = Number.parseFloat(L.raw_tostring(3));
+    const y = Number.parseFloat(L.raw_tostring(4));
+    const z = Number.parseFloat(L.raw_tostring(5));
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      throw new Error('Image.SetXYZ: bad arguments #2/#3/#4 (number expected)');
+    }
+    s._posX = x;
+    s._posY = y;
+    s._z = z;
   }
 
   SetCenter() {
@@ -342,55 +373,72 @@ class LuaImageExtensions extends BaseLuaExtension {
     }
   }
 
-  renderFrame(gpu, deltaMs) {
+  renderFrame(gpu, deltaMs, renderOptions = null) {
     for (const [, s] of this.images) {
       if (s._visible === false) continue;
 
-      const asset = this.imageAssets.get(s._assetName);
-      if (!asset) continue;
-
-      const texHandle = this.gpuTextures.get(s._assetName);
-      if (!texHandle) continue;
-
-      const frame = this._getFrameForState(s, asset);
-      if (!frame) continue;
-
-      const paletteIndex = (s._paletteSlot != null && s._paletteSlot > 0)
-        ? s._paletteSlot
-        : (texHandle.paletteIndex || asset.paletteSlot || 1);
-      const paletteOffset = asset.paletteOffset || 0;
-
-      if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
-        this._activatePalette(paletteIndex, paletteOffset);
+      const drawImage = () => this._drawImage(gpu, s);
+      if (typeof renderOptions?.enqueue === 'function') {
+        renderOptions.enqueue({
+          type: 'image',
+          z: Number.isFinite(s._z) ? s._z : null,
+          defaultLayer: 1000,
+          creationOrder: s._creationOrder ?? s._handle ?? 0,
+          draw: drawImage,
+        });
+      } else {
+        drawImage();
       }
-
-      const posX = s._posX || 0;
-      const posY = s._posY || 0;
-      const rotation = s._rotation || 0;
-      const scaleX = s._scaleX ?? 1;
-      const scaleY = s._scaleY ?? 1;
-      const flipX = !!(s._attributes & 0x08);
-      const flipY = !!(s._attributes & 0x04);
-
-      const resolvedCenter = this._resolveFrameCenter(frame, asset);
-      const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
-      const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
-
-      gpu.blit(texHandle, {
-        x: posX,
-        y: posY,
-        srcX: frame.x,
-        srcY: frame.y,
-        srcW: frame.w,
-        srcH: frame.h,
-        scaleX: scaleX * (flipX ? -1 : 1),
-        scaleY: scaleY * (flipY ? -1 : 1),
-        rotation,
-        pivotX: centerX / (frame.w || 1),
-        pivotY: centerY / (frame.h || 1),
-        filter: 'nearest',
-      });
     }
+  }
+
+  _drawImage(gpu, s) {
+    if (s._visible === false) return;
+
+    const asset = this.imageAssets.get(s._assetName);
+    if (!asset) return;
+
+    const texHandle = this.gpuTextures.get(s._assetName);
+    if (!texHandle) return;
+
+    const frame = this._getFrameForState(s, asset);
+    if (!frame) return;
+
+    const paletteIndex = (s._paletteSlot != null && s._paletteSlot > 0)
+      ? s._paletteSlot
+      : (texHandle.paletteIndex || asset.paletteSlot || 1);
+    const paletteOffset = asset.paletteOffset || 0;
+
+    if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
+      this._activatePalette(paletteIndex, paletteOffset);
+    }
+
+    const posX = s._posX || 0;
+    const posY = s._posY || 0;
+    const rotation = s._rotation || 0;
+    const scaleX = s._scaleX ?? 1;
+    const scaleY = s._scaleY ?? 1;
+    const flipX = !!(s._attributes & 0x08);
+    const flipY = !!(s._attributes & 0x04);
+
+    const resolvedCenter = this._resolveFrameCenter(frame, asset);
+    const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
+    const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
+
+    gpu.blit(texHandle, {
+      x: posX,
+      y: posY,
+      srcX: frame.x,
+      srcY: frame.y,
+      srcW: frame.w,
+      srcH: frame.h,
+      scaleX: scaleX * (flipX ? -1 : 1),
+      scaleY: scaleY * (flipY ? -1 : 1),
+      rotation,
+      pivotX: centerX / (frame.w || 1),
+      pivotY: centerY / (frame.h || 1),
+      filter: 'nearest',
+    });
   }
 
   _getFrameForState(state, asset) {

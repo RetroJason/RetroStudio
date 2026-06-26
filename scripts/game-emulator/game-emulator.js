@@ -52,6 +52,7 @@ class GameEmulator {
     this.compileOverlayHidden = true;
     this.extensionLoader = null; // Lua extension loader
     this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
+    this._renderOrderCounter = 1;
 
     // Initialize the game engine panel content
     this.initializeGameEnginePanel();
@@ -170,6 +171,12 @@ class GameEmulator {
 
   normalizeStoragePath(path) {
     return this.pathResolver.normalizeStoragePath(path);
+  }
+
+  allocateRenderOrder() {
+    const order = this._renderOrderCounter;
+    this._renderOrderCounter += 1;
+    return order;
   }
 
   registerExternalService(name, instance) {
@@ -1266,89 +1273,10 @@ class GameEmulator {
     return null;
   }
   
-  runLuaScript(scriptSource) {
-    let content = '';
-    let scriptName = '';
-    
-    if (scriptSource.getContent) {
-      // It's an editor
-      content = scriptSource.getContent();
-      scriptName = scriptSource.file.name;
-    } else if (scriptSource.file) {
-      // It's a file data object
-      scriptName = scriptSource.file.name;
-      // Read file content
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        content = e.target.result;
-        this.executeScript(content, scriptName);
-      };
-      reader.readAsText(scriptSource.file);
-      return;
-    }
-    
-    this.executeScript(content, scriptName);
-  }
-  
-  executeScript(content, scriptName) {
-    if (!content.trim()) {
-      this.updateStatus('Script is empty!', 'warning');
-      this.showErrorPopup(
-        'Empty Script',
-        'The script you are trying to execute is empty.',
-        `Script: ${scriptName}\n\nPlease add some content to your script and try again.`
-      );
-      return;
-    }
-    
-    console.log(`[GameEditor] Running Lua script: ${scriptName}`);
-    console.log(content);
-    
-    // Create a simple output window for now
-    const outputWindow = window.open('', '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
-    outputWindow.document.write(`
-      <html>
-        <head>
-          <title>Game Project - ${scriptName}</title>
-          <style>
-            body { 
-              font-family: 'Consolas', 'Courier New', monospace; 
-              background: #1e1e1e; 
-              color: #cccccc; 
-              padding: 20px; 
-              margin: 0;
-            }
-            .header { 
-              color: #0078d4; 
-              margin-bottom: 15px; 
-              font-size: 18px;
-              border-bottom: 1px solid #3c3c3c;
-              padding-bottom: 10px;
-            }
-            .code { 
-              background: #2d2d30; 
-              padding: 20px; 
-              border-radius: 6px; 
-              white-space: pre-wrap; 
-              border: 1px solid #3c3c3c;
-              line-height: 1.5;
-            }
-            .note {
-              margin-top: 15px;
-              color: #ffb74d;
-              font-style: italic;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="header">🚀 Running: ${scriptName}</div>
-          <div class="code">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-          <div class="note">Note: Actual Lua execution will be implemented in future updates</div>
-        </body>
-      </html>
-    `);
-    
-    this.updateStatus(`Running ${scriptName}`, 'success');
+  async runLuaScript(scriptSource) {
+    const scriptName = scriptSource?.file?.name || 'script';
+    console.warn(`[GameEmulator] Legacy runLuaScript(${scriptName}) invoked; delegating to playProject() to use the single runtime execution path.`);
+    return this.playProject();
   }
   
   createProject() {
@@ -1968,6 +1896,7 @@ class GameEmulator {
   async loadAndExecuteScript(scriptData) {
     console.log('[GameEmulator] Loading and executing Lua script...');
     this.updateStatus('Loading Lua script...', 'info');
+    this._renderOrderCounter = 1;
 
     const runStart = performance.now();
     let runPhaseStart = runStart;
@@ -2029,6 +1958,7 @@ class GameEmulator {
       console.log('[GameEmulator] Loading Lua extensions...');
       try {
         await this.loadLuaExtensions(L);
+        await this.verifyLuaApiContract(L);
         console.log('[GameEmulator] Lua extensions loaded successfully');
         logRunPhase('loadLuaExtensions');
         
@@ -2046,9 +1976,17 @@ class GameEmulator {
         }
         
       } catch (error) {
-        console.warn('[GameEmulator] Failed to load Lua extensions:', error);
-        // Continue anyway - extensions are optional
+        this.reportFatalLuaApiInitializationError(error);
+        console.error('[GameEmulator] Failed to load Lua extensions:', error);
         logRunPhase('loadLuaExtensions (failed)');
+        this.updateStatus(`Lua extension initialization failed: ${error.message}`, 'error');
+
+        await this.showErrorPopup(
+          'Lua API Initialization Error',
+          'Required Lua APIs failed to initialize. Execution has been stopped to prevent hidden runtime faults.',
+          `Error: ${error.message}\n\nFix the extension/API mismatch and run again.`
+        );
+        return;
       }
 
       await this.initializeInputManager();
@@ -2179,6 +2117,10 @@ class GameEmulator {
           const imageExt = this.extensionLoader?.getExtension('Image');
           if (imageExt) {
             await imageExt.initGpu(this._gpu);
+          }
+          const tileMapExt = this.extensionLoader?.getExtension('TileMap');
+          if (tileMapExt && typeof tileMapExt.setGpu === 'function') {
+            tileMapExt.setGpu(this._gpu);
           }
           const textboxExt = this.extensionLoader?.getExtension('TextBox');
           if (textboxExt) {
@@ -2311,17 +2253,46 @@ class GameEmulator {
             this.clearColor.b,
             this.clearColor.a
           );
+          const renderQueue = [];
+          const enqueueRenderItem = (item) => {
+            if (item && typeof item.draw === 'function') {
+              renderQueue.push(item);
+            }
+          };
+          const renderOptions = { enqueue: enqueueRenderItem };
+
+          const tileMapExt = this.extensionLoader?.getExtension('TileMap');
+          if (tileMapExt && typeof tileMapExt.renderFrame === 'function') {
+            tileMapExt.renderFrame(this._gpu, deltaTime, renderOptions);
+          }
           const spriteExt = this.extensionLoader?.getExtension('Sprite');
           if (spriteExt) {
-            spriteExt.renderFrame(this._gpu, deltaTime);
+            spriteExt.renderFrame(this._gpu, deltaTime, renderOptions);
           }
           const imageExt = this.extensionLoader?.getExtension('Image');
           if (imageExt) {
-            imageExt.renderFrame(this._gpu, deltaTime);
+            imageExt.renderFrame(this._gpu, deltaTime, renderOptions);
           }
           const textboxExt = this.extensionLoader?.getExtension('TextBox');
           if (textboxExt) {
-            textboxExt.renderFrame(this._gpu, deltaTime);
+            textboxExt.renderFrame(this._gpu, deltaTime, renderOptions);
+          }
+
+          if (renderQueue.length > 0) {
+            renderQueue.sort((a, b) => {
+              const aLayer = Number.isFinite(a.z) ? a.z : (a.defaultLayer ?? 0);
+              const bLayer = Number.isFinite(b.z) ? b.z : (b.defaultLayer ?? 0);
+              if (aLayer !== bLayer) {
+                return aLayer - bLayer;
+              }
+              const aOrder = a.creationOrder ?? 0;
+              const bOrder = b.creationOrder ?? 0;
+              return aOrder - bOrder;
+            });
+
+            for (const item of renderQueue) {
+              item.draw();
+            }
           }
           const didDrawFrame = this._gpu.present();
           this.updateCompileOverlay(didDrawFrame);
@@ -2728,6 +2699,53 @@ class GameEmulator {
     } catch (error) {
       console.error('[GameEmulator] Failed to load Lua extensions:', error);
       throw error;
+    }
+  }
+
+  async verifyLuaApiContract(luaState) {
+    const config = this.extensionLoader?.getExtensionConfig?.();
+    if (!config || !Array.isArray(config.categories)) {
+      throw new Error('Lua API contract not available for verification.');
+    }
+
+    for (const category of config.categories) {
+      if (!Array.isArray(category.functions) || category.functions.length === 0) {
+        continue;
+      }
+
+      const categoryType = luaState.execute(`return type(${category.name})`);
+      const categoryTypeValue = Array.isArray(categoryType) ? categoryType[0] : categoryType;
+      if (categoryTypeValue !== 'table') {
+        throw new Error(`Lua API verification failed: ${category.name} expected table, got ${categoryTypeValue || 'nil'}`);
+      }
+
+      for (const func of category.functions) {
+        const funcType = luaState.execute(`return type(${category.name}.${func.name})`);
+        const funcTypeValue = Array.isArray(funcType) ? funcType[0] : funcType;
+        if (funcTypeValue !== 'function') {
+          throw new Error(`Lua API verification failed: ${category.name}.${func.name} expected function, got ${funcTypeValue || 'nil'}`);
+        }
+      }
+    }
+  }
+
+  reportFatalLuaApiInitializationError(error) {
+    const message = error?.message || String(error);
+    console.error('============================================================');
+    console.error('[FATAL][LuaAPI] Initialization/verification failed. Execution must stop.');
+    console.error(`[FATAL][LuaAPI] ${message}`);
+    console.error('[FATAL][LuaAPI] Missing or invalid Lua API is catastrophic by design.');
+    console.error('============================================================');
+
+    try {
+      window.dispatchEvent(new CustomEvent('retrostudio:lua-api-fatal', {
+        detail: {
+          message,
+          timestamp: new Date().toISOString(),
+        },
+      }));
+    } catch (_) {
+      // Event emission is best-effort; never mask the fatal failure.
     }
   }
   

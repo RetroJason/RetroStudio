@@ -215,15 +215,19 @@ class RibbonToolbar {
     const button = document.createElement('button');
     button.className = 'ribbon-btn';
     button.setAttribute('data-dynamic', 'true');
-    button.title = `Create ${editorInfo.displayName}`;
+    const isTilemapButton = (editorInfo?.name === 'tilemap-editor') || /tilemap/i.test(editorInfo?.displayName || '');
+    button.title = isTilemapButton
+      ? `Create ${editorInfo.displayName} (comming soon)`
+      : `Create ${editorInfo.displayName}`;
     
     // Get create icon and label from editor class
     const icon = editorInfo.editorClass.getCreateIcon ? 
                  editorInfo.editorClass.getCreateIcon() : 
                  editorInfo.icon;
-    const label = editorInfo.editorClass.getCreateLabel ? 
+    const rawLabel = editorInfo.editorClass.getCreateLabel ? 
                   editorInfo.editorClass.getCreateLabel() : 
                   editorInfo.displayName;
+    const label = isTilemapButton ? `${rawLabel} (comming soon)` : rawLabel;
 
     console.log(`[RibbonToolbar] Button details - Icon: ${icon}, Label: ${label}`);
 
@@ -234,6 +238,10 @@ class RibbonToolbar {
 
     button.addEventListener('click', () => {
       console.log(`[RibbonToolbar] Clicked create button for ${editorInfo.displayName}`);
+      if (isTilemapButton) {
+        window.gameEmulator?.updateStatus?.('Tilemap create is comming soon', 'info');
+        return;
+      }
       this.createNewResourceFromEditor(editorInfo);
     });
 
@@ -760,20 +768,54 @@ class RibbonToolbar {
   // File operations
   this.setupButton('saveBtn', async () => {
     try {
+      console.error('[SaveDebug] File->Save clicked');
+      try {
+        window.gameEmulator?.updateStatus?.('SaveDebug: File->Save click reached', 'info');
+      } catch (_) {}
       const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
       if (!projectName) {
         throw new Error('No active project selected.');
       }
+
+      // Flush all in-memory editor buffers before hosted project save so
+      // Monaco edits are persisted to storage/package inputs.
+      if (window.gameEmulator?.tabManager?.saveAllOpenTabs) {
+        console.error('[SaveDebug] Invoking tabManager.saveAllOpenTabs(force=true)');
+        await window.gameEmulator.tabManager.saveAllOpenTabs({ force: true, reason: 'manual-save' });
+      } else if (window.gameEmulator?.tabManager?.saveActiveTab) {
+        console.error('[SaveDebug] Invoking tabManager.saveActiveTab()');
+        await window.gameEmulator.tabManager.saveActiveTab();
+      }
+
+      // Lua-specific safeguard: explicitly invoke save() on every open Lua editor
+      // in case generic dirty/tab routing misses Monaco-backed Lua tabs.
+      const tabManager = window.gameEmulator?.tabManager;
+      const allTabs = tabManager?.getAllTabs ? tabManager.getAllTabs() : [];
+      let luaSaves = 0;
+      for (const tab of allTabs) {
+        const viewer = tab?.viewer;
+        const fullPath = String(tab?.fullPath || '').toLowerCase();
+        const fileName = String(tab?.fileName || '').toLowerCase();
+        const isLuaPath = fullPath.endsWith('.lua') || fileName.endsWith('.lua');
+        const isLuaEditor = viewer?.constructor?.name === 'LuaEditor';
+        if (!(isLuaEditor || isLuaPath) || typeof viewer.save !== 'function') {
+          continue;
+        }
+        luaSaves++;
+        console.error('[SaveDebug] Explicit Lua save invoke', { tabId: tab?.tabId || null, path: tab?.fullPath || null });
+        await viewer.save();
+      }
+      console.error('[SaveDebug] Explicit Lua save count', luaSaves);
 
       const hostedStudioApi = window.retrowwwHostedStudio;
       if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
         throw new Error('Retrowww hosted project save service is unavailable.');
       }
 
-      const summary = await hostedStudioApi.saveProject(projectName);
-      const revisionNumber = summary?.currentRevision?.revisionNumber;
-      const revisionSuffix = Number.isFinite(revisionNumber) ? ' revision ' + revisionNumber : '';
-      window.gameEmulator?.updateStatus?.('Saved ' + projectName + revisionSuffix, 'success');
+        console.error('[SaveDebug] Invoking hostedStudioApi.saveProject(save)');
+        await hostedStudioApi.saveProject(projectName, { saveSource: 'save' });
+        console.error('[SaveDebug] hostedStudioApi.saveProject(save) complete');
+        window.gameEmulator?.updateStatus?.('Saved ' + projectName, 'success');
     } catch (error) {
       console.error('[RibbonToolbar] Failed to save project:', error);
       window.gameEmulator?.updateStatus?.(
@@ -782,6 +824,65 @@ class RibbonToolbar {
       );
     }
   });
+
+    this.setupButton('saveRevisionBtn', async () => {
+      try {
+        const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+        if (!projectName) {
+          throw new Error('No active project selected.');
+        }
+
+        // Revision snapshots must include latest editor buffers.
+        if (window.gameEmulator?.tabManager?.saveAllOpenTabs) {
+          await window.gameEmulator.tabManager.saveAllOpenTabs({ force: true, reason: 'manual-save-revision' });
+        } else if (window.gameEmulator?.tabManager?.saveActiveTab) {
+          await window.gameEmulator.tabManager.saveActiveTab();
+        }
+
+        const hostedStudioApi = window.retrowwwHostedStudio;
+        if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
+          throw new Error('Retrowww hosted project save service is unavailable.');
+        }
+
+        const revisionPrompt = await window.ModalUtils?.showForm?.('Save Revision', [
+          {
+            type: 'text',
+            name: 'revisionMessage',
+            label: 'Revision Message',
+            defaultValue: '',
+            required: true,
+            placeholder: 'Describe what changed in this revision',
+            hint: 'This message will be stored with the revision history entry.'
+          }
+        ], {
+          okText: 'Save Revision',
+          cancelText: 'Cancel'
+        });
+
+        if (!revisionPrompt || !revisionPrompt.revisionMessage) {
+          return;
+        }
+
+        const revisionMessage = String(revisionPrompt.revisionMessage).trim();
+        if (!revisionMessage) {
+          throw new Error('Revision message is required.');
+        }
+
+        const summary = await hostedStudioApi.saveProject(projectName, {
+          saveSource: 'revision',
+          revisionMessage,
+        });
+        const revisionNumber = summary?.currentRevision?.revisionNumber;
+        const revisionSuffix = Number.isFinite(revisionNumber) ? ' revision ' + revisionNumber : '';
+        window.gameEmulator?.updateStatus?.('Saved revision for ' + projectName + revisionSuffix, 'success');
+      } catch (error) {
+        console.error('[RibbonToolbar] Failed to save revision:', error);
+        window.gameEmulator?.updateStatus?.(
+          'Failed to save revision: ' + (error && error.message ? error.message : String(error)),
+          'error'
+        );
+      }
+    });
     
     // New Project
     this.setupButton('newProjectBtn', async () => {
@@ -789,7 +890,7 @@ class RibbonToolbar {
     });
 
     this.setupButton('idePreferencesBtn', async () => {
-      await window.EditorPreferences.showPreferencesDialog();
+      await window.EditorPreferences.openPreferencesTab();
     });
 
     // Import/Export RWP
@@ -1382,13 +1483,19 @@ class RibbonToolbar {
           await explorer.ensurePackageScaffold(projectName);
         }
 
-        // Create default main.lua with Setup/Update stubs
+        // Ensure default main.lua with Setup/Update stubs when no Lua file exists yet
         const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
           ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
-        const luaFolder = `${projectName}/${sourcesRoot}/Lua`;
-        const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
-        const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
-        await explorer.addFileToProject(luaFile, luaFolder, true, true);
+        const preferredLuaFolder = explorer.getPreferredManagedFolderForExtension
+          ? explorer.getPreferredManagedFolderForExtension(projectName, '.lua')
+          : `${projectName}/${sourcesRoot}/Lua`;
+        const mainLuaPath = `${preferredLuaFolder}/main.lua`;
+        if (!explorer.getNodeByPath?.(mainLuaPath)) {
+          const luaFolder = preferredLuaFolder;
+          const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
+          const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
+          await explorer.addFileToProject(luaFile, luaFolder, true, true);
+        }
 
         if (typeof explorer.initializeProjectConfig === 'function') {
           await explorer.initializeProjectConfig();
