@@ -119,6 +119,8 @@
   font-size: 14px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
 }
 
 .modal-input:focus {
@@ -145,6 +147,8 @@
   font-size: 14px;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   box-sizing: border-box;
+  position: relative;
+  z-index: 1;
 }
 
 .modal-select:focus {
@@ -165,6 +169,8 @@
   box-sizing: border-box;
   resize: vertical;
   min-height: 60px;
+  position: relative;
+  z-index: 1;
 }
 
 .modal-textarea:focus {
@@ -2067,6 +2073,30 @@ body.no-select {
 
 .explorer-header .panel-toggle-btn {
   right: 20px;
+}
+
+.explorer-add-files-btn {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 210, 126, 0.12);
+  border: 1px solid rgba(255, 210, 126, 0.3);
+  color: var(--studio-accent-strong);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  transition: background 120ms ease;
+}
+.explorer-add-files-btn:hover {
+  background: rgba(255, 210, 126, 0.22);
+  border-color: rgba(255, 210, 126, 0.55);
 }
 
 .game-engine-header .panel-toggle-btn {

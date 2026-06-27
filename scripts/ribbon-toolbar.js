@@ -215,10 +215,7 @@ class RibbonToolbar {
     const button = document.createElement('button');
     button.className = 'ribbon-btn';
     button.setAttribute('data-dynamic', 'true');
-    const isTilemapButton = (editorInfo?.name === 'tilemap-editor') || /tilemap/i.test(editorInfo?.displayName || '');
-    button.title = isTilemapButton
-      ? `Create ${editorInfo.displayName} (comming soon)`
-      : `Create ${editorInfo.displayName}`;
+    button.title = `Create ${editorInfo.displayName}`;
     
     // Get create icon and label from editor class
     const icon = editorInfo.editorClass.getCreateIcon ? 
@@ -227,7 +224,7 @@ class RibbonToolbar {
     const rawLabel = editorInfo.editorClass.getCreateLabel ? 
                   editorInfo.editorClass.getCreateLabel() : 
                   editorInfo.displayName;
-    const label = isTilemapButton ? `${rawLabel} (comming soon)` : rawLabel;
+    const label = rawLabel;
 
     console.log(`[RibbonToolbar] Button details - Icon: ${icon}, Label: ${label}`);
 
@@ -238,10 +235,6 @@ class RibbonToolbar {
 
     button.addEventListener('click', () => {
       console.log(`[RibbonToolbar] Clicked create button for ${editorInfo.displayName}`);
-      if (isTilemapButton) {
-        window.gameEmulator?.updateStatus?.('Tilemap create is comming soon', 'info');
-        return;
-      }
       this.createNewResourceFromEditor(editorInfo);
     });
 

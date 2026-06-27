@@ -1,0 +1,301 @@
+/* tilemap-editor.css */
+
+.tilemap-editor-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: var(--studio-font, 'Segoe UI', Arial, sans-serif);
+  font-size: 12px;
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────── */
+
+.tilemap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3a3a3a;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.te-btn {
+  background: #3c3c3c;
+  border: 1px solid #555;
+  color: #d4d4d4;
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 100ms;
+}
+.te-btn:hover { background: #4a4a4a; }
+.te-btn[data-active] { background: #1a4a7a; border-color: #3a8fdd; color: #fff; }
+
+.te-sep {
+  width: 1px;
+  height: 18px;
+  background: #555;
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+.te-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #aaa;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.te-check input { cursor: pointer; }
+
+/* ── Main layout ─────────────────────────────────────────────────── */
+
+.tilemap-main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Left panel ──────────────────────────────────────────────────── */
+
+.tilemap-left-panel {
+  display: flex;
+  flex-direction: column;
+  width: 180px;
+  min-width: 140px;
+  background: #252525;
+  border-right: 1px solid #3a3a3a;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.tilemap-layer-tabs {
+  border-bottom: 1px solid #3a3a3a;
+  flex-shrink: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.tilemap-tileset-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  padding: 4px;
+  gap: 4px;
+}
+
+.te-add-tileset-btn {
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  padding: 4px 4px;
+  margin-bottom: 4px;
+}
+
+.tilemap-tile-palette {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ── Panel headers ───────────────────────────────────────────────── */
+
+.te-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: #2d2d2d;
+  font-size: 11px;
+  font-weight: 600;
+  color: #aaa;
+  border-bottom: 1px solid #3a3a3a;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.te-icon-btn {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 12px;
+  line-height: 1;
+}
+.te-icon-btn:hover { color: #fff; background: #444; }
+.te-icon-btn.te-danger:hover { color: #f48771; }
+
+/* ── Layer list ──────────────────────────────────────────────────── */
+
+.te-layer-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.te-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  cursor: pointer;
+  border-bottom: 1px solid #2d2d2d;
+}
+.te-layer-row:hover { background: #2e2e2e; }
+.te-layer-row.active { background: #1a3a5c; }
+
+.te-layer-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: #d4d4d4;
+  padding: 0 2px;
+}
+
+/* ── Tileset palette ─────────────────────────────────────────────── */
+
+.te-tileset-section {
+  margin-bottom: 6px;
+}
+
+.te-tileset-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 600;
+  color: #888;
+  padding: 2px 4px;
+  background: #2d2d2d;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.te-palette-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  padding: 3px;
+}
+
+.te-palette-tile {
+  cursor: pointer;
+  image-rendering: pixelated;
+  outline: 1px solid transparent;
+  flex-shrink: 0;
+}
+.te-palette-tile:hover  { outline-color: #5a9fd4; }
+.te-palette-tile.selected { outline-color: #f9c74f; outline-width: 2px; }
+
+.te-palette-hint {
+  color: #666;
+  font-size: 11px;
+  padding: 12px 8px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* ── Canvas area ─────────────────────────────────────────────────── */
+
+.tilemap-canvas-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #1e1e1e;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 8px;
+  cursor: crosshair;
+}
+
+.tilemap-canvas {
+  image-rendering: pixelated;
+  display: block;
+  flex-shrink: 0;
+}
+
+/* ── Status bar ──────────────────────────────────────────────────── */
+
+.tilemap-status {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: #888;
+  background: #2d2d2d;
+  border-top: 1px solid #3a3a3a;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Progress overlay ────────────────────────────────────────────── */
+
+.tilemap-progress-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.tilemap-progress-box {
+  background: #2d2d2d;
+  border: 2px solid #3a8fdd;
+  border-radius: 6px;
+  padding: 24px;
+  min-width: 300px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.8);
+}
+
+.tilemap-progress-label {
+  color: #d4d4d4;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.tilemap-progress-bar {
+  width: 100%;
+  height: 24px;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.tilemap-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3a8fdd 0%, #5a9fd4 100%);
+  transition: width 100ms ease-out;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tilemap-progress-percent {
+  text-align: center;
+  color: #888;
+  font-size: 12px;
+}
+

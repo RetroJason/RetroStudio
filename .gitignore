@@ -24,6 +24,9 @@ dist/
 ehthumbs.db
 Thumbs.db
 
+# Scratch / prototype work — not part of the production studio
+scratch/
+
 # Logs
 *.log
 

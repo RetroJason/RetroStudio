@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="style/project-explorer.css?v=3">
   <link rel="stylesheet" href="style/viewers.css?v=2">
   <link rel="stylesheet" href="style/palette-editor.css?v=2">
+  <link rel="stylesheet" href="style/tilemap-editor.css?v=1">
   <link rel="stylesheet" href="style/font-editor.css?v=3">
   <link rel="stylesheet" href="scripts/game-emulator/game-engine.css?v=3">
   <link rel="stylesheet" href="styles/mod-player.css?v=2">
@@ -126,6 +127,9 @@
       <div class="project-explorer" id="projectExplorer">
         <div class="explorer-header">
           <h3>Project Explorer</h3>
+          <button id="addFilesBtn" class="explorer-add-files-btn" title="Add files to project">
+            <span>+</span> Add Files
+          </button>
         </div>
         <div class="explorer-tree" id="projectTree">
           <!-- Tree will be populated by JavaScript -->
@@ -201,6 +205,7 @@
   <script src="scripts/graphics/d2-canvas.js"></script>
   <script src="scripts/graphics/d2-file.js"></script>
   <script src="scripts/graphics/d2-sprite.js"></script>
+  <script src="scripts/graphics/tilemap-gl-renderer.js"></script>
   
   <!-- Utilities and Services -->
   <script src="scripts/resizer.js"></script>

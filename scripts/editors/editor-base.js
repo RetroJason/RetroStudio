@@ -1,21 +1,16 @@
 // editor-base.js
 // Base class for all resource editors (extends ViewerBase and implements Registerable)
 
-console.log('[EditorBase] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
-
 class EditorBase extends ViewerBase {
   constructor(fileObject = null, readOnly = false) {
     // Extract path from file object or use null for new files
     const path = fileObject?.path || null;
-    console.log(`[EditorBase] Constructor called with NEW SIGNATURE - fileObject:`, fileObject, `readOnly:`, readOnly);
-    console.log(`[EditorBase] fileObject is null:`, fileObject === null, `fileObject is undefined:`, fileObject === undefined);
     super(path);
     
     this.file = fileObject;
     this.isNewResource = !fileObject; // New file if no file object provided
     this.readOnly = readOnly;
 
-    console.log(`[EditorBase] Set this.isNewResource to: ${this.isNewResource}`);
     this.isDirty = false;
     this.hasUnsavedChanges = false;
     
@@ -23,7 +18,6 @@ class EditorBase extends ViewerBase {
     if (this.isNewResource) {
       this.isDirty = true;
       this.hasUnsavedChanges = true;
-      console.log(`[EditorBase] New file created - marked as dirty`);
     }
     
     this._readonlyGuardsInstalled = false;
@@ -75,6 +69,9 @@ class EditorBase extends ViewerBase {
       const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
     };
     const onDrop = (e) => {
+      // Allow OS file drops to bubble to ProjectExplorer global handlers.
+      const hasFiles = !!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0);
+      if (hasFiles) return;
       const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
     };
     const onClick = (e) => {

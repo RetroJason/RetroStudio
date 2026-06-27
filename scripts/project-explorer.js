@@ -615,6 +615,19 @@ class ProjectExplorer {
   }
   
   setupEventListeners() {
+    const dropDebugEnabled = (() => {
+      try {
+        return window.localStorage && window.localStorage.getItem('retrostudio.debugDrop') === '1';
+      } catch (_) {
+        return false;
+      }
+    })();
+    const logDropDebug = (...args) => {
+      if (dropDebugEnabled) {
+        console.log('[ProjectExplorer][DropDebug]', ...args);
+      }
+    };
+
     // Listen to tab manager events for file highlighting (with deferred setup)
     this.setupTabManagerEventListener();
 
@@ -623,6 +636,15 @@ class ProjectExplorer {
       this.handleFileUpload(e.target.files);
       e.target.value = ''; // Reset input
     });
+
+    // "Add Files" header button — opens file picker targeting current project default path
+    const addFilesBtn = document.getElementById('addFilesBtn');
+    if (addFilesBtn) {
+      addFilesBtn.addEventListener('click', () => {
+        this.currentUploadPath = this.getDefaultPath();
+        this.fileUpload.click();
+      });
+    }
     
     // Global drag and drop (robust overlay handling)
     this._dragDepth = 0;
@@ -635,11 +657,13 @@ class ProjectExplorer {
       // Increment depth and show overlay
       this._dragDepth++;
       document.body.classList.add('drag-over');
+      logDropDebug('dragenter', { depth: this._dragDepth, types: Array.from(e.dataTransfer?.types || []) });
     });
 
     document.addEventListener('dragover', (e) => {
       e.preventDefault();
       document.body.classList.add('drag-over');
+      logDropDebug('dragover', { depth: this._dragDepth, types: Array.from(e.dataTransfer?.types || []) });
     });
     
     document.addEventListener('dragleave', (e) => {
@@ -648,12 +672,19 @@ class ProjectExplorer {
       if (this._dragDepth === 0) {
         document.body.classList.remove('drag-over');
       }
+      logDropDebug('dragleave', { depth: this._dragDepth, types: Array.from(e.dataTransfer?.types || []) });
     });
     
     document.addEventListener('drop', (e) => {
       e.preventDefault();
       // Remove visual feedback and reset depth
       clearDragOverlay();
+      logDropDebug('drop', {
+        fileCount: e.dataTransfer?.files?.length || 0,
+        types: Array.from(e.dataTransfer?.types || []),
+        targetTag: e.target?.tagName || null,
+        targetClass: e.target?.className || null
+      });
       // Handle file drops anywhere on the page
       this.handleFileDrop(e);
     });
@@ -1209,17 +1240,39 @@ class ProjectExplorer {
   }
   
   async handleFileDrop(event, targetPath = null) {
+    const dropDebugEnabled = (() => {
+      try {
+        return window.localStorage && window.localStorage.getItem('retrostudio.debugDrop') === '1';
+      } catch (_) {
+        return false;
+      }
+    })();
+    const logDropDebug = (...args) => {
+      if (dropDebugEnabled) {
+        console.log('[ProjectExplorer][DropDebug]', ...args);
+      }
+    };
+
     const files = event.dataTransfer.files;
     const path = targetPath || this.getDropTargetPath(event.target);
+    logDropDebug('handleFileDrop.enter', {
+      requestedTargetPath: targetPath || null,
+      resolvedPath: path,
+      fileCount: files?.length || 0
+    });
 
     if (this.isManagedPackagePath(path)) {
+      logDropDebug('handleFileDrop.blocked', { reason: 'managed-package-path', path });
       try {
         window.gameEmulator?.updateStatus?.('Drop blocked: Package folder is managed by Package Settings editor', 'warning');
       } catch (_) {}
       return;
     }
 
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0) {
+      logDropDebug('handleFileDrop.blocked', { reason: 'no-files' });
+      return;
+    }
 
     // Check if there's an active project before allowing file drops
     // Exception: .rwp files should be allowed even without an active project (they create projects)
@@ -1232,6 +1285,7 @@ class ProjectExplorer {
       
       if (!hasRwpFile) {
         console.log('[ProjectExplorer] No active project - blocking file drop (non-RWP files)');
+        logDropDebug('handleFileDrop.blocked', { reason: 'no-active-project-non-rwp' });
         // Show a visual indication that the drop was blocked
         const dropOverlay = document.createElement('div');
         dropOverlay.className = 'drop-blocked-overlay';
@@ -1964,7 +2018,15 @@ class ProjectExplorer {
   }
   
   getDropTargetPath(element) {
-    const treeItem = element.closest('.tree-item');
+    if (!element) {
+      return this.getDefaultPath();
+    }
+
+    const targetElement = (element && typeof element.closest === 'function')
+      ? element
+      : (element.parentElement || null);
+
+    const treeItem = targetElement ? targetElement.closest('.tree-item') : null;
     if (treeItem) {
       const path = treeItem.dataset.path;
       const type = treeItem.dataset.type;
@@ -3910,7 +3972,7 @@ class ProjectExplorer {
       }
 
       const script = document.createElement('script');
-      script.src = 'tilemap-importer.js?v=1';
+      script.src = 'scripts/tilemap-importer.js?v=1';
       script.async = true;
       script.dataset.retrostudioTmxImporter = '1';
       script.onload = () => resolve();
