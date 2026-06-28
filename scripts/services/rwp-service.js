@@ -782,6 +782,16 @@ class RwpService {
         content = rawBytes.buffer.slice(rawBytes.byteOffset, rawBytes.byteOffset + rawBytes.byteLength);
       } else {
         content = new TextDecoder().decode(rawBytes);
+        // Migration: strip any stale project-name prefix from internal asset
+        // references so copied/renamed projects resolve them against the
+        // currently focused project. Safe no-op for already project-relative refs.
+        if (window.ProjectPaths && typeof window.ProjectPaths.rewriteAssetReferencesToProjectRelative === 'function') {
+          try {
+            content = window.ProjectPaths.rewriteAssetReferencesToProjectRelative(entry.fileName, content);
+          } catch (migrationError) {
+            console.warn('[RwpService] Failed to normalize asset references for', entry.fileName, migrationError);
+          }
+        }
       }
 
       const fileBlob = new Blob([content], {

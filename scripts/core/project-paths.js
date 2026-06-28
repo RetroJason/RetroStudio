@@ -176,6 +176,79 @@
       return this.withProjectPrefix(ownerParsed.project, resourceRest);
     },
 
+    // Strip a project-name prefix from a managed resource reference, leaving a
+    // project-relative path (e.g. 'MyGame/Sources/Images/x.png' -> 'Sources/Images/x.png').
+    // Paths that are already project-relative, or that are not managed project
+    // paths, are returned unchanged. This keeps asset references portable so a
+    // copied/renamed project resolves them against the currently focused project.
+    toProjectRelative(path) {
+      if (!path || typeof path !== 'string') return path;
+      const normalized = String(path).replace(/\\/g, '/');
+      const parsed = this.parseProjectPath(normalized);
+      if (parsed.project && this.isManagedProjectPath(parsed.rest)) {
+        return parsed.rest;
+      }
+      return normalized;
+    },
+
+    // Known internal reference fields per asset type that may carry a stale
+    // project-name prefix. Used to normalize stored references to project-relative.
+    _assetReferenceFields: {
+      '.frameset': ['imagePath'],
+      '.texture': ['sourceImage', 'sourceImagePath', 'palettePath'],
+      '.sprite': ['imagePath'],
+      '.tilemap': ['sourceTexturePath', 'texturePath', 'runtimeTexturePath', 'imagePath'],
+    },
+
+    // Rewrite an asset's JSON text so all internal resource references are
+    // project-relative. Returns the (possibly rewritten) text. Non-asset or
+    // unparseable content is returned unchanged.
+    rewriteAssetReferencesToProjectRelative(fileName, textContent) {
+      if (typeof textContent !== 'string' || !textContent.trim()) return textContent;
+      const name = String(fileName || '').toLowerCase();
+      const dotIdx = name.lastIndexOf('.');
+      const ext = dotIdx >= 0 ? name.substring(dotIdx) : '';
+      const fields = this._assetReferenceFields[ext];
+      if (!fields) return textContent;
+
+      let data;
+      try {
+        data = JSON.parse(textContent);
+      } catch (_) {
+        return textContent;
+      }
+      if (!data || typeof data !== 'object') return textContent;
+
+      let changed = false;
+      const relabel = (obj, key) => {
+        if (obj && typeof obj === 'object' && typeof obj[key] === 'string' && obj[key]) {
+          const next = this.toProjectRelative(obj[key]);
+          if (next !== obj[key]) {
+            obj[key] = next;
+            changed = true;
+          }
+        }
+      };
+
+      for (const field of fields) {
+        relabel(data, field);
+        if (data.metadata && typeof data.metadata === 'object') {
+          relabel(data.metadata, field);
+        }
+      }
+
+      // Sprites reference their framesets via per-entry paths.
+      if (ext === '.sprite' && Array.isArray(data.framesets)) {
+        for (const fs of data.framesets) {
+          relabel(fs, 'path');
+          relabel(fs, 'imagePath');
+        }
+      }
+
+      if (!changed) return textContent;
+      return JSON.stringify(data, null, 2);
+    },
+
     // Convert any UI-ish path to storage path
     // - Map UI build root to storage build/
     // - Normalize any legacy 'Build/' casing to 'build/'

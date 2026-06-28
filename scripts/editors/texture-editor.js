@@ -135,6 +135,20 @@ class TextureData extends EventTarget {
 
   // Serialize to JSON
   toJSON() {
+    // Store resource references project-relative so a copied/renamed project
+    // resolves them against the currently focused project at build time.
+    const rel = (value) => (
+      (window.ProjectPaths && typeof window.ProjectPaths.toProjectRelative === 'function')
+        ? window.ProjectPaths.toProjectRelative(value)
+        : value
+    );
+    const metadata = this._metadata
+      ? {
+          ...this._metadata,
+          sourceImagePath: rel(this._metadata.sourceImagePath),
+          palettePath: rel(this._metadata.palettePath),
+        }
+      : this._metadata;
     return {
       width: this.width,
       height: this.height,
@@ -146,9 +160,9 @@ class TextureData extends EventTarget {
       mipmaps: this.mipmaps,
       format: this.format,
       name: this.name,
-      sourceImage: this.sourceImage,
+      sourceImage: rel(this.sourceImage),
       rotation: this.rotation,
-      metadata: this._metadata
+      metadata
     };
   }
 
