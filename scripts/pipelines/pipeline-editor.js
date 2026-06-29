@@ -84,14 +84,20 @@ class PipelineEditor {
       const nodeType = e.dataTransfer.getData('nodeType');
       const label = e.dataTransfer.getData('label');
 
+      console.log(`[Editor] Drop event - nodeType: ${nodeType}, label: ${label}`);
+
       if (nodeType) {
         // Get canvas position relative to the drop point
         const rect = this.canvasElement.getBoundingClientRect();
         const canvasX = e.clientX - rect.left;
         const canvasY = e.clientY - rect.top;
 
+        console.log(`[Editor] Drop position: (${canvasX}, ${canvasY})`);
+
         // Create node at drop position
         this.addNodeAtPosition(nodeType, label, canvasX, canvasY);
+      } else {
+        console.log('[Editor] Drop had no nodeType data');
       }
     };
 
@@ -100,12 +106,14 @@ class PipelineEditor {
       const rect = canvasContainer.getBoundingClientRect();
       this.canvasElement.width = rect.width;
       this.canvasElement.height = rect.height;
+      console.log(`[Editor] Canvas resized to ${rect.width}x${rect.height}`);
     };
     updateCanvasSize();
     window.addEventListener('resize', updateCanvasSize);
 
     // Initialize canvas
     this.canvas = new PipelineCanvas(this.canvasElement, this.canvasElement.width, this.canvasElement.height);
+    console.log(`[Editor] Canvas initialized with dimensions ${this.canvasElement.width}x${this.canvasElement.height}`);
     this.canvas.onConnectionCreated = (from, to) => this.onConnectionCreated(from, to);
 
     content.appendChild(canvasContainer);
@@ -374,9 +382,13 @@ class PipelineEditor {
    * Add a node at a specific canvas position (from drag-drop)
    */
   addNodeAtPosition(type, label, screenX, screenY) {
+    console.log(`[Editor] Adding node: ${type} at screen (${screenX}, ${screenY})`);
+
     // Convert screen coordinates to canvas coordinates
     const canvasX = (screenX - this.canvas.panX) / this.canvas.zoom;
     const canvasY = (screenY - this.canvas.panY) / this.canvas.zoom;
+
+    console.log(`[Editor] Canvas coordinates: (${canvasX}, ${canvasY})`);
 
     const id = `${type}-${Date.now()}`;
     
@@ -400,14 +412,17 @@ class PipelineEditor {
 
     // Add node at the drop position
     this.canvas.addNode(id, type, label, inputs, outputs);
+    console.log(`[Editor] Node added with ID: ${id}`);
     
     // Move node to drop position
     const node = this.canvas.nodes.get(id);
     if (node) {
       node.x = canvasX;
       node.y = canvasY;
+      console.log(`[Editor] Node positioned at (${node.x}, ${node.y})`);
     }
 
+    console.log(`[Editor] Total nodes: ${this.canvas.nodes.size}`);
     this.canvas.draw();
     this.updateNodeCount();
   }

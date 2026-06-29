@@ -88,8 +88,13 @@ class PipelineCanvas {
    * Start continuous animation loop for real-time rendering
    */
   startAnimationLoop() {
+    let frameCount = 0;
     const animate = () => {
       this.draw();
+      frameCount++;
+      if (frameCount === 1) {
+        console.log('[Canvas] Animation loop started');
+      }
       requestAnimationFrame(animate);
     };
     animate();
@@ -361,6 +366,11 @@ class PipelineCanvas {
    * Draw the entire canvas
    */
   draw() {
+    if (!this.ctx) {
+      console.error('[Canvas] No context available');
+      return;
+    }
+
     this.ctx.save();
 
     // Clear background
