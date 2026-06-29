@@ -127,7 +127,10 @@ class PipelineCanvas {
       this.draw();
       frameCount++;
       if (frameCount === 1) {
-        console.log('[Canvas] Animation loop started');
+        console.log(`[Canvas] Animation loop started, canvas: ${this.width}x${this.height}px, nodes: ${this.nodes.size}`);
+      }
+      if (frameCount % 60 === 0) {  // Log every 60 frames (1 second at 60fps)
+        console.log(`[Canvas] Frame ${frameCount}: ${this.nodes.size} nodes, zoom: ${this.zoom.toFixed(2)}, pan: (${this.panX}, ${this.panY})`);
       }
       requestAnimationFrame(animate);
     };
@@ -431,10 +434,10 @@ class PipelineCanvas {
     this.ctx.fillStyle = this.colors.background;
     this.ctx.fillRect(0, 0, this.width, this.height);
 
-    this.ctx.save();
-
-    // Draw grid
+    // Draw grid (before transformations, in screen space)
     this.drawGrid();
+
+    this.ctx.save();
 
     // Apply transformations
     this.ctx.translate(this.panX, this.panY);

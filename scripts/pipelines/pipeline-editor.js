@@ -106,17 +106,27 @@ class PipelineEditor {
       const rect = canvasContainer.getBoundingClientRect();
       this.canvasElement.width = rect.width;
       this.canvasElement.height = rect.height;
-      console.log(`[Editor] Canvas resized to ${rect.width}x${rect.height}`);
+      
+      // Also update the canvas object's dimensions
+      if (this.canvas) {
+        this.canvas.width = rect.width;
+        this.canvas.height = rect.height;
+        console.log(`[Editor] Canvas resized to ${rect.width}x${rect.height}, updated canvas object`);
+      } else {
+        console.log(`[Editor] Canvas element resized to ${rect.width}x${rect.height}`);
+      }
     };
-    updateCanvasSize();
-    window.addEventListener('resize', updateCanvasSize);
 
-    // Initialize canvas
-    this.canvas = new PipelineCanvas(this.canvasElement, this.canvasElement.width, this.canvasElement.height);
-    console.log(`[Editor] Canvas initialized with dimensions ${this.canvasElement.width}x${this.canvasElement.height}`);
+    // Initialize canvas with default size
+    this.canvas = new PipelineCanvas(this.canvasElement, 1200, 800);
+    console.log(`[Editor] Canvas initialized`);
     this.canvas.onConnectionCreated = (from, to) => this.onConnectionCreated(from, to);
 
     content.appendChild(canvasContainer);
+
+    // Now that container is in DOM, update canvas size
+    updateCanvasSize();
+    window.addEventListener('resize', updateCanvasSize);
 
     // Palette (right panel)
     const palette = this.createPalette();
