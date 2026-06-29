@@ -148,6 +148,12 @@ class PipelineRegistry {
    * Register built-in pipelines (texture, sprite, tilemap, frameset, font)
    */
   registerBuiltInPipelines() {
+    // Image-to-Texture Pipeline: Image → ImageToTextureTransformer (with settings) → Texture
+    this.registerBuiltInPipeline(this._createImageToTexturePipeline());
+
+    // Image-to-Palette Pipeline: Image → ImageToPaletteTransformer → Palette
+    this.registerBuiltInPipeline(this._createImageToPalettePipeline());
+
     // Texture Pipeline: .texture JSON → TextureBuilder → .d2
     this.registerBuiltInPipeline(this._createTexturePipeline());
 
@@ -375,6 +381,209 @@ class PipelineRegistry {
       ],
 
       metadata: { version: '1.0' }
+    });
+  }
+
+  /**
+   * Image-to-Texture Pipeline: Image → ImageToTextureTransformer (+ optional palette) → Texture
+   * 
+   * This is the core workflow for creating textures from images with settings:
+   * - Color format (RGBA, i8, RGB565, etc)
+   * - Rotation (0, 90)
+   * - RLE compression
+   * - Palette index
+   */
+  _createImageToTexturePipeline() {
+    return new PipelineDefinition({
+      id: 'image-to-texture',
+      name: 'Image to Texture',
+      description: 'Transform image file to texture with color format, rotation, compression, and palette settings',
+      inputMimeType: 'image/png',
+      outputMimeTypes: ['application/x-texture+json'],
+      fileExtensions: ['.png'],
+
+      nodes: [
+        {
+          id: 'image-input',
+          type: 'InputNode',
+          label: '📥 Image',
+          ports: [
+            {
+              id: 'image-file',
+              name: 'Image File',
+              direction: 'out',
+              mimeType: 'image/png',
+              required: true
+            }
+          ]
+        },
+        {
+          id: 'palette-input',
+          type: 'InputNode',
+          label: '🎨 Palette',
+          ports: [
+            {
+              id: 'palette-file',
+              name: 'Palette (Optional)',
+              direction: 'out',
+              mimeType: 'application/x-palette',
+              required: false
+            }
+          ]
+        },
+        {
+          id: 'image-to-texture',
+          type: 'TransformerNode',
+          label: '⚙️ Image→Texture',
+          builderName: 'ImageToTextureTransformer',
+          ports: [
+            {
+              id: 'transformer-image',
+              name: 'Image',
+              direction: 'in',
+              mimeType: 'image/png',
+              required: true
+            },
+            {
+              id: 'transformer-palette',
+              name: 'Palette',
+              direction: 'in',
+              mimeType: 'application/x-palette',
+              required: false
+            },
+            {
+              id: 'transformer-output',
+              name: 'Texture',
+              direction: 'out',
+              mimeType: 'application/x-texture+json',
+              required: true
+            }
+          ],
+          settings: {
+            colorFormat: 'RGBA',      // RGBA, i8, RGB565, etc
+            rotation: 0,               // 0 or 90
+            rleCompression: false,
+            paletteIndex: 0
+          }
+        },
+        {
+          id: 'texture-output',
+          type: 'OutputNode',
+          label: '📤 Texture',
+          ports: [
+            {
+              id: 'output-texture',
+              name: 'Texture File',
+              direction: 'in',
+              mimeType: 'application/x-texture+json',
+              required: true
+            }
+          ]
+        }
+      ],
+
+      connections: [
+        {
+          from: { nodeId: 'image-input', portId: 'image-file' },
+          to: { nodeId: 'image-to-texture', portId: 'transformer-image' }
+        },
+        {
+          from: { nodeId: 'palette-input', portId: 'palette-file' },
+          to: { nodeId: 'image-to-texture', portId: 'transformer-palette' }
+        },
+        {
+          from: { nodeId: 'image-to-texture', portId: 'transformer-output' },
+          to: { nodeId: 'texture-output', portId: 'output-texture' }
+        }
+      ],
+
+      metadata: { version: '1.0', category: 'core-workflow' }
+    });
+  }
+
+  /**
+   * Image-to-Palette Pipeline: Image → ImageToPaletteTransformer → Palette
+   * 
+   * Creates palette files from images via quantization or extraction
+   */
+  _createImageToPalettePipeline() {
+    return new PipelineDefinition({
+      id: 'image-to-palette',
+      name: 'Image to Palette',
+      description: 'Extract or quantize palette from image file',
+      inputMimeType: 'image/png',
+      outputMimeTypes: ['application/x-palette'],
+      fileExtensions: ['.png'],
+
+      nodes: [
+        {
+          id: 'image-input',
+          type: 'InputNode',
+          label: '📥 Image',
+          ports: [
+            {
+              id: 'image-file',
+              name: 'Image File',
+              direction: 'out',
+              mimeType: 'image/png',
+              required: true
+            }
+          ]
+        },
+        {
+          id: 'image-to-palette',
+          type: 'TransformerNode',
+          label: '⚙️ Image→Palette',
+          builderName: 'ImageToPaletteTransformer',
+          ports: [
+            {
+              id: 'transformer-image',
+              name: 'Image',
+              direction: 'in',
+              mimeType: 'image/png',
+              required: true
+            },
+            {
+              id: 'transformer-output',
+              name: 'Palette',
+              direction: 'out',
+              mimeType: 'application/x-palette',
+              required: true
+            }
+          ],
+          settings: {
+            colorCount: 256,
+            quantizationMethod: 'octree'  // or 'kmeans'
+          }
+        },
+        {
+          id: 'palette-output',
+          type: 'OutputNode',
+          label: '📤 Palette',
+          ports: [
+            {
+              id: 'output-palette',
+              name: 'Palette File',
+              direction: 'in',
+              mimeType: 'application/x-palette',
+              required: true
+            }
+          ]
+        }
+      ],
+
+      connections: [
+        {
+          from: { nodeId: 'image-input', portId: 'image-file' },
+          to: { nodeId: 'image-to-palette', portId: 'transformer-image' }
+        },
+        {
+          from: { nodeId: 'image-to-palette', portId: 'transformer-output' },
+          to: { nodeId: 'palette-output', portId: 'output-palette' }
+        }
+      ],
+
+      metadata: { version: '1.0', category: 'core-workflow' }
     });
   }
 

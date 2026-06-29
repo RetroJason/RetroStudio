@@ -123,6 +123,7 @@ class PipelineEditor {
     this.canvas = new PipelineCanvas(this.canvasElement, 1200, 800);
     console.log(`[Editor] Canvas initialized with zoom=${this.canvas.zoom}`);
     this.canvas.onConnectionCreated = (from, to) => this.onConnectionCreated(from, to);
+    this.canvas.onNodeSelected = (node) => this.onNodeSelected(node);
 
     content.appendChild(canvasContainer);
 
@@ -477,6 +478,205 @@ class PipelineEditor {
   }
 
   /**
+   * Handle node selection to update properties panel
+   */
+  onNodeSelected(node) {
+    console.log(`[Editor] Node selected: ${node.id} (${node.type})`);
+    this.updatePropertiesPanel(node);
+  }
+
+  /**
+   * Update properties panel with node details
+   */
+  updatePropertiesPanel(node) {
+    // Clear previous content
+    this.propertiesPanel.innerHTML = '';
+
+    // Node header
+    const header = document.createElement('div');
+    header.style.cssText = `
+      padding: 8px;
+      background: #2d2d2d;
+      border-bottom: 1px solid #444;
+      font-weight: bold;
+      margin-bottom: 8px;
+    `;
+    header.textContent = `${node.type}`;
+    this.propertiesPanel.appendChild(header);
+
+    // Node ID
+    const idDiv = document.createElement('div');
+    idDiv.style.cssText = `
+      padding: 4px 8px;
+      font-size: 11px;
+      color: #888;
+      word-break: break-all;
+    `;
+    idDiv.textContent = `ID: ${node.id}`;
+    this.propertiesPanel.appendChild(idDiv);
+
+    // Node label
+    const labelDiv = document.createElement('div');
+    labelDiv.style.cssText = `
+      padding: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #333;
+    `;
+    const labelLabel = document.createElement('label');
+    labelLabel.textContent = 'Label: ';
+    labelLabel.style.fontSize = '12px';
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.value = node.label;
+    labelInput.style.cssText = `
+      width: 100%;
+      padding: 4px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      font-size: 11px;
+    `;
+    labelInput.addEventListener('change', () => {
+      node.label = labelInput.value;
+      this.canvas.draw();
+    });
+    labelDiv.appendChild(labelLabel);
+    labelDiv.appendChild(document.createElement('br'));
+    labelDiv.appendChild(labelInput);
+    this.propertiesPanel.appendChild(labelDiv);
+
+    // Show settings if this is a TransformerNode
+    if (node.type === 'TransformerNode' && node.settings) {
+      const settingsDiv = document.createElement('div');
+      settingsDiv.style.cssText = `
+        padding: 8px;
+        border-top: 1px solid #333;
+      `;
+      const settingsTitle = document.createElement('div');
+      settingsTitle.textContent = 'Settings';
+      settingsTitle.style.cssText = `
+        font-weight: bold;
+        margin-bottom: 8px;
+        font-size: 12px;
+      `;
+      settingsDiv.appendChild(settingsTitle);
+
+      // Create input for each setting
+      for (const [key, value] of Object.entries(node.settings)) {
+        const settingDiv = document.createElement('div');
+        settingDiv.style.cssText = `
+          padding: 4px;
+          margin-bottom: 4px;
+        `;
+
+        const label = document.createElement('label');
+        label.textContent = key + ': ';
+        label.style.cssText = `
+          font-size: 11px;
+          display: block;
+          margin-bottom: 2px;
+        `;
+        settingDiv.appendChild(label);
+
+        let input;
+        if (typeof value === 'boolean') {
+          input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = value;
+          input.style.cssText = `
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+          `;
+          input.addEventListener('change', () => {
+            node.settings[key] = input.checked;
+            console.log(`[Editor] Updated ${key} to ${input.checked}`);
+          });
+        } else if (typeof value === 'number') {
+          input = document.createElement('input');
+          input.type = 'number';
+          input.value = value;
+          input.style.cssText = `
+            width: 100%;
+            padding: 4px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            font-size: 11px;
+          `;
+          input.addEventListener('change', () => {
+            node.settings[key] = parseInt(input.value) || value;
+            console.log(`[Editor] Updated ${key} to ${node.settings[key]}`);
+          });
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+          input.value = value;
+          input.style.cssText = `
+            width: 100%;
+            padding: 4px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            font-size: 11px;
+          `;
+          input.addEventListener('change', () => {
+            node.settings[key] = input.value;
+            console.log(`[Editor] Updated ${key} to ${node.settings[key]}`);
+          });
+        }
+
+        settingDiv.appendChild(input);
+        settingsDiv.appendChild(settingDiv);
+      }
+
+      this.propertiesPanel.appendChild(settingsDiv);
+    }
+
+    // Ports info
+    if (node.inputs && node.inputs.length > 0) {
+      const portsDiv = document.createElement('div');
+      portsDiv.style.cssText = `
+        padding: 8px;
+        margin-top: 8px;
+        border-top: 1px solid #333;
+        font-size: 11px;
+      `;
+      const portsTitle = document.createElement('div');
+      portsTitle.textContent = 'Input Ports';
+      portsTitle.style.fontWeight = 'bold';
+      portsDiv.appendChild(portsTitle);
+      for (const port of node.inputs) {
+        const portDiv = document.createElement('div');
+        portDiv.style.padding = '2px 0';
+        portDiv.textContent = `• ${port}`;
+        portsDiv.appendChild(portDiv);
+      }
+      this.propertiesPanel.appendChild(portsDiv);
+    }
+
+    if (node.outputs && node.outputs.length > 0) {
+      const portsDiv = document.createElement('div');
+      portsDiv.style.cssText = `
+        padding: 8px;
+        margin-top: 4px;
+        font-size: 11px;
+      `;
+      const portsTitle = document.createElement('div');
+      portsTitle.textContent = 'Output Ports';
+      portsTitle.style.fontWeight = 'bold';
+      portsDiv.appendChild(portsTitle);
+      for (const port of node.outputs) {
+        const portDiv = document.createElement('div');
+        portDiv.style.padding = '2px 0';
+        portDiv.textContent = `• ${port}`;
+        portsDiv.appendChild(portDiv);
+      }
+      this.propertiesPanel.appendChild(portsDiv);
+    }
+  }
+
+  /**
    * Check if connection is valid
    */
   isValidConnection(from, to) {
@@ -723,7 +923,17 @@ class PipelineEditor {
         ?.filter(p => p.direction === 'out')
         .map(p => p.id) || [];
 
-      this.canvas.addNode(nodeDef.id, nodeDef.type, nodeDef.id, inputs, outputs);
+      // Use label if available, otherwise use id
+      const label = nodeDef.label || nodeDef.id;
+      
+      this.canvas.addNode(nodeDef.id, nodeDef.type, label, inputs, outputs);
+      
+      // Copy settings to the node if it's a TransformerNode with settings
+      const node = this.canvas.nodes.get(nodeDef.id);
+      if (node && nodeDef.settings) {
+        node.settings = { ...nodeDef.settings };
+        console.log(`[Editor] Loaded node ${nodeDef.id} with settings:`, node.settings);
+      }
     }
 
     // Add connections

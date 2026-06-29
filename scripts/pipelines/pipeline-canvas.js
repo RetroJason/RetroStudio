@@ -65,6 +65,10 @@ class PipelineCanvas {
     };
     
     this.setupEventListeners();
+
+    // Callbacks
+    this.onConnectionCreated = null;
+    this.onNodeSelected = null;
   }
 
   /**
@@ -295,6 +299,12 @@ class PipelineCanvas {
       this.draggingNode = node;
       this.dragStartX = screenX;
       this.dragStartY = screenY;
+      
+      // Notify about node selection
+      if (this.onNodeSelected) {
+        this.onNodeSelected(node);
+      }
+      
       return;
     }
 
