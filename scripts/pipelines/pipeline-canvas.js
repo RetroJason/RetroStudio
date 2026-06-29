@@ -41,6 +41,9 @@ class PipelineCanvas {
     this.dragStartY = 0;
     this.connectingFrom = null;  // {node, port}
     this.panningStart = null;  // {x, y, panX, panY} for middle-mouse panning
+    this.currentMouseX = 0;
+    this.currentMouseY = 0;
+    this.compatiblePorts = new Set();  // Ports that can connect to current connecting port
     
     // Data
     this.nodes = new Map();      // id -> {id, x, y, type, label, inputs: [], outputs: []}
@@ -93,7 +96,7 @@ class PipelineCanvas {
   }
 
   /**
-   * Handle keyboard events for panning
+   * Handle keyboard events for panning and deletion
    */
   onKeyDown(e) {
     const panAmount = 20;
@@ -118,6 +121,15 @@ class PipelineCanvas {
         this.panX -= panAmount;
         this.draw();
         e.preventDefault();
+        break;
+      case 'Delete':
+      case 'Backspace':
+        if (this.selectedNode) {
+          this.removeNode(this.selectedNode.id);
+          this.selectedNode = null;
+          this.draw();
+          e.preventDefault();
+        }
         break;
     }
   }
@@ -317,6 +329,11 @@ class PipelineCanvas {
    * Mouse move handler
    */
   onMouseMove(e) {
+    // Track current mouse position for connection preview
+    const rect = this.canvas.getBoundingClientRect();
+    this.currentMouseX = e.clientX - rect.left;
+    this.currentMouseY = e.clientY - rect.top;
+
     // Handle middle-mouse panning
     if (this.panningStart) {
       const deltaX = e.clientX - this.panningStart.x;
@@ -329,9 +346,8 @@ class PipelineCanvas {
       return;
     }
 
-    const rect = this.canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+    const screenX = this.currentMouseX;
+    const screenY = this.currentMouseY;
 
     if (this.draggingNode) {
       const dx = (screenX - this.dragStartX) / this.zoom;
@@ -344,6 +360,11 @@ class PipelineCanvas {
       this.dragStartY = screenY;
 
       this.draw();
+    }
+
+    // Update compatible ports when connecting
+    if (this.connectingFrom) {
+      this.updateCompatiblePorts();
     }
 
     this.draw();
@@ -529,23 +550,26 @@ class PipelineCanvas {
     // Draw input ports
     for (let i = 0; i < inputs.length; i++) {
       const portY = y - (inputs.length - 1) * 15 / 2 + i * 15;
-      this.drawPort(x - width / 2, portY, inputs[i], true);
+      this.drawPort(x - width / 2, portY, inputs[i], true, node);
     }
 
     // Draw output ports
     for (let i = 0; i < outputs.length; i++) {
       const portY = y - (outputs.length - 1) * 15 / 2 + i * 15;
-      this.drawPort(x + width / 2, portY, outputs[i], false);
+      this.drawPort(x + width / 2, portY, outputs[i], false, node);
     }
   }
 
   /**
    * Draw a port
    */
-  drawPort(x, y, portId, isInput) {
-    this.ctx.fillStyle = this.colors.port;
+  drawPort(x, y, portId, isInput, node) {
+    // Check if this port is compatible with current connection
+    const isCompatible = this.compatiblePorts.has(`${node.id}:${portId}`) && this.connectingFrom;
+    
+    this.ctx.fillStyle = isCompatible ? this.colors.portHover : this.colors.port;
     this.ctx.beginPath();
-    this.ctx.arc(x, y, this.portRadius, 0, Math.PI * 2);
+    this.ctx.arc(x, y, isCompatible ? this.portRadius * 1.5 : this.portRadius, 0, Math.PI * 2);
     this.ctx.fill();
 
     // Draw port label
@@ -601,20 +625,27 @@ class PipelineCanvas {
     if (!this.connectingFrom) return;
 
     const fromNode = this.connectingFrom.node;
-    const portY = this.getPortY(fromNode, this.connectingFrom.portId);
+    const fromPortY = this.getPortY(fromNode, this.connectingFrom.portId);
 
     const fromX = this.connectingFrom.isInput
       ? fromNode.x - fromNode.width / 2
       : fromNode.x + fromNode.width / 2;
-    const fromY = fromNode.y + portY;
+    const fromY = fromNode.y + fromPortY;
 
-    // Draw to mouse position (approximate in viewport space)
+    // Convert mouse position to world coordinates
+    const mouseWorldX = (this.currentMouseX - this.panX) / this.zoom;
+    const mouseWorldY = (this.currentMouseY - this.panY) / this.zoom;
+
+    // Draw curved line to mouse position
     this.ctx.strokeStyle = this.colors.connectionValid;
     this.ctx.lineWidth = 2;
     this.ctx.setLineDash([5, 5]);
     this.ctx.beginPath();
     this.ctx.moveTo(fromX, fromY);
-    this.ctx.lineTo(fromX + 200, fromY);  // Draw preview line
+
+    // Draw Bézier curve following mouse
+    const controlX = (fromX + mouseWorldX) / 2;
+    this.ctx.bezierCurveTo(controlX, fromY, controlX, mouseWorldY, mouseWorldX, mouseWorldY);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
   }
@@ -623,13 +654,35 @@ class PipelineCanvas {
    * Get Y offset of port within node
    */
   getPortY(node, portId) {
-    const allPorts = [...node.inputs, ...node.outputs];
-    const portIndex = allPorts.indexOf(portId);
-    if (portIndex === -1) return 0;
-
+    // Determine if it's an input or output port
     const isInput = node.inputs.includes(portId);
     const portList = isInput ? node.inputs : node.outputs;
+    
+    // Get index within the specific port list
+    const portIndex = portList.indexOf(portId);
+    if (portIndex === -1) return 0;
+    
+    // Calculate vertical offset based on port position within its list
     return (portIndex - (portList.length - 1) / 2) * 15;
+  }
+
+  /**
+   * Update compatible ports that can connect to the current port being dragged
+   */
+  updateCompatiblePorts() {
+    this.compatiblePorts.clear();
+    if (!this.connectingFrom) return;
+
+    // Find all ports that would be valid targets
+    for (const node of this.nodes.values()) {
+      const portList = this.connectingFrom.isInput ? node.outputs : node.inputs;
+      for (const portId of portList) {
+        const toPort = { node, portId, isInput: this.connectingFrom.isInput ? false : true };
+        if (this.isValidConnection(this.connectingFrom, toPort)) {
+          this.compatiblePorts.add(`${node.id}:${portId}`);
+        }
+      }
+    }
   }
 
   /**
