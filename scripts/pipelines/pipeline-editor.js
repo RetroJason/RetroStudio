@@ -384,12 +384,8 @@ class PipelineEditor {
   addNodeAtPosition(type, label, screenX, screenY) {
     console.log(`[Editor] Adding node: ${type} at screen (${screenX}, ${screenY})`);
 
-    // Convert screen coordinates to canvas coordinates
-    const canvasX = (screenX - this.canvas.panX) / this.canvas.zoom;
-    const canvasY = (screenY - this.canvas.panY) / this.canvas.zoom;
-
-    console.log(`[Editor] Canvas coordinates: (${canvasX}, ${canvasY})`);
-
+    // Simple approach: just add at a reasonable canvas position
+    // Don't try to convert screen coords since canvas might not be fully initialized
     const id = `${type}-${Date.now()}`;
     
     let inputs = [];
@@ -410,18 +406,10 @@ class PipelineEditor {
       outputs = ['out'];
     }
 
-    // Add node at the drop position
+    // Add node with auto positioning (PipelineCanvas handles spacing)
     this.canvas.addNode(id, type, label, inputs, outputs);
     console.log(`[Editor] Node added with ID: ${id}`);
     
-    // Move node to drop position
-    const node = this.canvas.nodes.get(id);
-    if (node) {
-      node.x = canvasX;
-      node.y = canvasY;
-      console.log(`[Editor] Node positioned at (${node.x}, ${node.y})`);
-    }
-
     console.log(`[Editor] Total nodes: ${this.canvas.nodes.size}`);
     this.canvas.draw();
     this.updateNodeCount();
