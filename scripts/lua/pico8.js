@@ -477,7 +477,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const a = this._requireNumberArg(args, 0, 'mid', 'a');
     const b = this._requireNumberArg(args, 1, 'mid', 'b');
     const c = this._requireNumberArg(args, 2, 'mid', 'c');
-    return Math.max(Math.min(a, b, c), Math.min(Math.max(a, b), Math.max(b, c)));
+    const minValue = Math.min(a, b, c);
+    const maxValue = Math.max(a, b, c);
+    return a + b + c - minValue - maxValue;
   }
 
   /**
@@ -659,8 +661,22 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: add(t, v, [i])
    */
   add(...args) {
-    // Note: Lua tables are handled by the Lua engine
-    // This is a stub for compatibility
+    const t = args[0];
+    const v = args[1];
+    const i = args.length > 2 ? this._optionalIntegerArg(args, 2, undefined, 'add', 'i') : undefined;
+
+    if (!Array.isArray(t)) {
+      throw new Error('[Pico8] add() currently expects an array-like table');
+    }
+
+    if (i === undefined) {
+      t.push(v);
+    } else {
+      const insertAt = Math.max(0, i - 1); // Lua indices are 1-based
+      t.splice(insertAt, 0, v);
+    }
+
+    return v;
   }
 
   /**
@@ -668,8 +684,20 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: del(t, v)
    */
   del(...args) {
-    // Note: Lua tables are handled by the Lua engine
-    // This is a stub for compatibility
+    const t = args[0];
+    const v = args[1];
+
+    if (!Array.isArray(t)) {
+      throw new Error('[Pico8] del() currently expects an array-like table');
+    }
+
+    const index = t.indexOf(v);
+    if (index === -1) {
+      return undefined;
+    }
+
+    t.splice(index, 1);
+    return v;
   }
 
   /**
@@ -677,8 +705,16 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: count(t) -> result
    */
   count(...args) {
-    // Note: Lua tables are handled by the Lua engine
-    // This would need access to the actual Lua table
+    const t = args[0];
+
+    if (Array.isArray(t)) {
+      return t.length;
+    }
+
+    if (t && typeof t === 'object') {
+      return Object.keys(t).length;
+    }
+
     return 0;
   }
 
@@ -687,8 +723,21 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: all(t) -> iterator
    */
   all(...args) {
-    // Note: Lua tables and iterators are handled by the Lua engine
-    // This is a stub for compatibility
+    const t = args[0];
+
+    if (!Array.isArray(t)) {
+      throw new Error('[Pico8] all() currently expects an array-like table');
+    }
+
+    let index = 0;
+    return () => {
+      if (index >= t.length) {
+        return undefined;
+      }
+      const value = t[index];
+      index += 1;
+      return value;
+    };
   }
 
   /**
@@ -696,8 +745,20 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: foreach(t, f)
    */
   foreach(...args) {
-    // Note: Lua tables and functions are handled by the Lua engine
-    // This is a stub for compatibility
+    const t = args[0];
+    const f = args[1];
+
+    if (!Array.isArray(t)) {
+      throw new Error('[Pico8] foreach() currently expects an array-like table');
+    }
+
+    if (typeof f !== 'function') {
+      throw new Error('[Pico8] foreach() requires a callback function');
+    }
+
+    for (const item of t) {
+      f(item);
+    }
   }
 
   // ============================================================

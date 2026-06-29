@@ -1892,7 +1892,44 @@ class GameEmulator {
       return null;
     }
   }
-  
+
+  /**
+   * Preprocess Lua script for pico-8 compatibility
+   * Converts compound assignment operators (+=, -=, etc.) to standard Lua
+   * @param {string} code - Raw Lua code
+   * @returns {string} Preprocessed code
+   */
+  preprocessLuaScript(code) {
+    if (!code) return code;
+    
+    // Convert compound assignment operators to standard Lua
+    // Pattern: variable += value -> variable = variable + value
+    // Handles: +=, -=, *=, /=, %=
+    
+    // Match compound assignments, being careful not to match == or ~= or other operators
+    const compoundOpsPattern = /([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[[^\]]+\])?)\s*(\+=|-=|\*=|\/=|%=)\s*(.+?)(?=\n|;|$)/g;
+    
+    let preprocessed = code.replace(compoundOpsPattern, (match, variable, operator, value) => {
+      // Extract the actual operator (without the =)
+      const actualOp = operator.slice(0, -1);
+      return `${variable} = ${variable} ${actualOp} ${value}`;
+    });
+
+    // Also handle cases where there's no newline at the end of the last statement
+    // This catches += at the very end of the code
+    preprocessed = preprocessed.replace(/([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[[^\]]+\])?)\s*(\+=|-=|\*=|\/=|%=)\s*(.+?)$/gm, (match, variable, operator, value) => {
+      const actualOp = operator.slice(0, -1);
+      return `${variable} = ${variable} ${actualOp} ${value}`;
+    });
+    
+    // Debug: log if preprocessing made changes
+    if (preprocessed !== code) {
+      console.log('[GameEmulator] Lua preprocessing applied - compound operators converted to standard Lua');
+    }
+    
+    return preprocessed;
+  }
+
   async loadAndExecuteScript(scriptData) {
     console.log('[GameEmulator] Loading and executing Lua script...');
     this.updateStatus('Loading Lua script...', 'info');
@@ -1995,10 +2032,13 @@ class GameEmulator {
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
       
+      // Preprocess script for pico-8 compatibility (+=, -=, etc.)
+      const preprocessedCode = this.preprocessLuaScript(scriptData.content);
+      
       // Load the concatenated script into Lua
       console.log('[GameEmulator] Loading script into Lua engine...');
       try {
-        L.execute(scriptData.content);
+        L.execute(preprocessedCode);
         console.log('[GameEmulator] Script loaded successfully');
         logRunPhase('luaLoadScript');
         
