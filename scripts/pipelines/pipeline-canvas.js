@@ -40,6 +40,7 @@ class PipelineCanvas {
     this.dragStartX = 0;
     this.dragStartY = 0;
     this.connectingFrom = null;  // {node, port}
+    this.panningStart = null;  // {x, y, panX, panY} for middle-mouse panning
     
     // Data
     this.nodes = new Map();      // id -> {id, x, y, type, label, inputs: [], outputs: []}
@@ -80,8 +81,41 @@ class PipelineCanvas {
       return false;
     });
 
+    // Add keyboard controls for panning
+    document.addEventListener('keydown', (e) => this.onKeyDown(e));
+
     // Start animation loop
     this.startAnimationLoop();
+  }
+
+  /**
+   * Handle keyboard events for panning
+   */
+  onKeyDown(e) {
+    const panAmount = 20;
+    
+    switch (e.key) {
+      case 'ArrowUp':
+        this.panY += panAmount;
+        this.draw();
+        e.preventDefault();
+        break;
+      case 'ArrowDown':
+        this.panY -= panAmount;
+        this.draw();
+        e.preventDefault();
+        break;
+      case 'ArrowLeft':
+        this.panX += panAmount;
+        this.draw();
+        e.preventDefault();
+        break;
+      case 'ArrowRight':
+        this.panX -= panAmount;
+        this.draw();
+        e.preventDefault();
+        break;
+    }
   }
 
   /**
@@ -233,6 +267,13 @@ class PipelineCanvas {
    * Mouse down handler
    */
   onMouseDown(e) {
+    // Middle mouse button (button 1) for panning
+    if (e.button === 1) {
+      this.panningStart = { x: e.clientX, y: e.clientY, panX: this.panX, panY: this.panY };
+      e.preventDefault();
+      return;
+    }
+
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
@@ -263,6 +304,18 @@ class PipelineCanvas {
    * Mouse move handler
    */
   onMouseMove(e) {
+    // Handle middle-mouse panning
+    if (this.panningStart) {
+      const deltaX = e.clientX - this.panningStart.x;
+      const deltaY = e.clientY - this.panningStart.y;
+      
+      this.panX = this.panningStart.panX + deltaX;
+      this.panY = this.panningStart.panY + deltaY;
+      
+      this.draw();
+      return;
+    }
+
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
@@ -287,14 +340,15 @@ class PipelineCanvas {
    * Mouse up handler
    */
   onMouseUp(e) {
-    const rect = this.canvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
-
+    this.panningStart = null;
     this.draggingNode = null;
 
     // Complete connection if we were connecting
     if (this.connectingFrom) {
+      const rect = this.canvas.getBoundingClientRect();
+      const screenX = e.clientX - rect.left;
+      const screenY = e.clientY - rect.top;
+      
       const port = this.getPortAtPosition(screenX, screenY);
       if (port && this.isValidConnection(this.connectingFrom, port)) {
         // Emit event for connection
@@ -314,6 +368,7 @@ class PipelineCanvas {
   onMouseLeave(e) {
     this.draggingNode = null;
     this.connectingFrom = null;
+    this.panningStart = null;
   }
 
   /**
@@ -371,11 +426,12 @@ class PipelineCanvas {
       return;
     }
 
-    this.ctx.save();
-
-    // Clear background
+    // CRITICAL: Clear the entire canvas first, without any transformations
+    this.ctx.clearRect(0, 0, this.width, this.height);
     this.ctx.fillStyle = this.colors.background;
     this.ctx.fillRect(0, 0, this.width, this.height);
+
+    this.ctx.save();
 
     // Draw grid
     this.drawGrid();
