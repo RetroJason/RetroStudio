@@ -64,8 +64,17 @@ class PipelineEditor {
     `;
     canvasContainer.appendChild(this.canvasElement);
 
+    // Set canvas size to match container (handle resizing)
+    const updateCanvasSize = () => {
+      const rect = canvasContainer.getBoundingClientRect();
+      this.canvasElement.width = rect.width;
+      this.canvasElement.height = rect.height;
+    };
+    updateCanvasSize();
+    window.addEventListener('resize', updateCanvasSize);
+
     // Initialize canvas
-    this.canvas = new PipelineCanvas(this.canvasElement);
+    this.canvas = new PipelineCanvas(this.canvasElement, this.canvasElement.width, this.canvasElement.height);
     this.canvas.onConnectionCreated = (from, to) => this.onConnectionCreated(from, to);
 
     content.appendChild(canvasContainer);
@@ -166,12 +175,13 @@ class PipelineEditor {
   createPalette() {
     const palette = document.createElement('div');
     palette.style.cssText = `
-      width: 250px;
+      width: 280px;
       background: #0f0f0f;
       border-left: 1px solid #333;
       display: flex;
       flex-direction: column;
-      overflow-y: auto;
+      overflow: hidden;
+      z-index: 100;
     `;
 
     // Node templates section
@@ -189,11 +199,11 @@ class PipelineEditor {
     palette.appendChild(templatesTitle);
 
     const templates = [
-      { label: 'Input', type: 'InputNode' },
-      { label: 'Transformer', type: 'TransformerNode' },
-      { label: 'Output', type: 'OutputNode' },
-      { label: 'Filter', type: 'FilterNode' },
-      { label: 'Mux', type: 'MuxNode' },
+      { label: '📥 Input', type: 'InputNode' },
+      { label: '⚙️ Transformer', type: 'TransformerNode' },
+      { label: '📤 Output', type: 'OutputNode' },
+      { label: '🔀 Filter', type: 'FilterNode' },
+      { label: '🔗 Mux', type: 'MuxNode' },
     ];
 
     for (const template of templates) {
@@ -201,20 +211,28 @@ class PipelineEditor {
       btn.textContent = template.label;
       btn.style.cssText = `
         width: 100%;
-        padding: 10px;
+        padding: 12px;
         background: #2d2d2d;
-        border: 1px solid #444;
-        color: #e0e0e0;
-        cursor: pointer;
-        text-align: left;
-        font-size: 12px;
-        transition: background 0.2s;
         border: none;
         border-bottom: 1px solid #333;
+        color: #4ade80;
+        cursor: pointer;
+        text-align: left;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.2s;
       `;
 
-      btn.onmouseover = () => { btn.style.background = '#3a3a3a'; };
-      btn.onmouseout = () => { btn.style.background = '#2d2d2d'; };
+      btn.onmouseover = () => {
+        btn.style.background = '#3a5f4d';
+        btn.style.color = '#86efac';
+        btn.style.paddingLeft = '16px';
+      };
+      btn.onmouseout = () => {
+        btn.style.background = '#2d2d2d';
+        btn.style.color = '#4ade80';
+        btn.style.paddingLeft = '12px';
+      };
 
       btn.onclick = () => this.addNode(template.type, template.label);
       palette.appendChild(btn);

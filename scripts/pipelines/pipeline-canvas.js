@@ -79,6 +79,20 @@ class PipelineCanvas {
       e.preventDefault();
       return false;
     });
+
+    // Start animation loop
+    this.startAnimationLoop();
+  }
+
+  /**
+   * Start continuous animation loop for real-time rendering
+   */
+  startAnimationLoop() {
+    const animate = () => {
+      this.draw();
+      requestAnimationFrame(animate);
+    };
+    animate();
   }
 
   /**
@@ -164,11 +178,13 @@ class PipelineCanvas {
     const y = (screenY - this.panY) / this.zoom;
 
     for (const node of this.nodes.values()) {
-      const dx = x - node.x;
-      const dy = y - node.y;
-      const dist = Math.hypot(dx, dy);
-      
-      if (dist < this.nodeRadius) {
+      // Check if click is within node rectangle
+      if (
+        x > node.x - node.width / 2 &&
+        x < node.x + node.width / 2 &&
+        y > node.y - node.height / 2 &&
+        y < node.y + node.height / 2
+      ) {
         return node;
       }
     }
