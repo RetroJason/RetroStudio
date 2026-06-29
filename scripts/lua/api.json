@@ -1529,6 +1529,427 @@
           "js_implementation": "battery.GetChargeState"
         }
       ]
+    },
+    {
+      "name": "Pico8",
+      "description": "Pico-8 API compatibility layer - enables pico-8 style Lua game development",
+      "functions": [
+        {
+          "name": "pset",
+          "description": "Set pixel color at (x, y) to c",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "pset(10, 20, 7)"
+        },
+        {
+          "name": "pget",
+          "description": "Get pixel color at (x, y)",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local c = pget(10, 20)"
+        },
+        {
+          "name": "color",
+          "description": "Set pen color",
+          "parameters": [{"name": "c", "type": "number"}],
+          "example": "color(3)"
+        },
+        {
+          "name": "line",
+          "description": "Draw line from (x0,y0) to (x1,y1)",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "line(0, 0, 128, 128, 7)"
+        },
+        {
+          "name": "rect",
+          "description": "Draw rectangle outline",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "rect(10, 10, 50, 50, 2)"
+        },
+        {
+          "name": "rectfill",
+          "description": "Draw filled rectangle",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "rectfill(10, 10, 50, 50, 3)"
+        },
+        {
+          "name": "circ",
+          "description": "Draw circle outline",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "r", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "circ(64, 64, 10, 4)"
+        },
+        {
+          "name": "circfill",
+          "description": "Draw filled circle",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "r", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "circfill(64, 64, 10, 5)"
+        },
+        {
+          "name": "cls",
+          "description": "Clear screen",
+          "parameters": [{"name": "c", "type": "number", "optional": true}],
+          "example": "cls(0)"
+        },
+        {
+          "name": "spr",
+          "description": "Draw sprite",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "w", "type": "number", "optional": true},
+            {"name": "h", "type": "number", "optional": true},
+            {"name": "fx", "type": "number", "optional": true},
+            {"name": "fy", "type": "number", "optional": true}
+          ],
+          "example": "spr(1, 10, 20)"
+        },
+        {
+          "name": "sin",
+          "description": "Sine function (takes 0.0-1.0, not radians)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local y = sin(0.25)"
+        },
+        {
+          "name": "cos",
+          "description": "Cosine function (takes 0.0-1.0, not radians)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local x = cos(0.25)"
+        },
+        {
+          "name": "atan2",
+          "description": "Arc tangent 2",
+          "parameters": [
+            {"name": "y", "type": "number"},
+            {"name": "x", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local angle = atan2(10, 10)"
+        },
+        {
+          "name": "sqrt",
+          "description": "Square root",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local root = sqrt(16)"
+        },
+        {
+          "name": "abs",
+          "description": "Absolute value",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local positive = abs(-5)"
+        },
+        {
+          "name": "sgn",
+          "description": "Sign function (-1, 0, or 1)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local sign = sgn(-5)"
+        },
+        {
+          "name": "flr",
+          "description": "Floor function",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local floored = flr(3.7)"
+        },
+        {
+          "name": "ceil",
+          "description": "Ceiling function",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local ceiled = ceil(3.2)"
+        },
+        {
+          "name": "min",
+          "description": "Minimum of two values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local smallest = min(5, 3)"
+        },
+        {
+          "name": "max",
+          "description": "Maximum of two values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local largest = max(5, 3)"
+        },
+        {
+          "name": "mid",
+          "description": "Median/clamp of three values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"},
+            {"name": "c", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local middle = mid(1, 5, 3)"
+        },
+        {
+          "name": "rnd",
+          "description": "Random number (0 to x)",
+          "parameters": [{"name": "x", "type": "number", "optional": true}],
+          "returns": {"type": "number"},
+          "example": "local rand = rnd(10)"
+        },
+        {
+          "name": "srand",
+          "description": "Seed random",
+          "parameters": [{"name": "x", "type": "number"}],
+          "example": "srand(12345)"
+        },
+        {
+          "name": "band",
+          "description": "Bitwise AND",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = band(12, 10)"
+        },
+        {
+          "name": "bor",
+          "description": "Bitwise OR",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = bor(12, 10)"
+        },
+        {
+          "name": "bxor",
+          "description": "Bitwise XOR",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = bxor(12, 10)"
+        },
+        {
+          "name": "bnot",
+          "description": "Bitwise NOT",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local result = bnot(5)"
+        },
+        {
+          "name": "shl",
+          "description": "Shift left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = shl(8, 2)"
+        },
+        {
+          "name": "shr",
+          "description": "Shift right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = shr(32, 2)"
+        },
+        {
+          "name": "lshl",
+          "description": "Logical shift left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = lshl(8, 2)"
+        },
+        {
+          "name": "lshr",
+          "description": "Logical shift right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = lshr(32, 2)"
+        },
+        {
+          "name": "rotl",
+          "description": "Rotate left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = rotl(8, 2)"
+        },
+        {
+          "name": "rotr",
+          "description": "Rotate right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = rotr(32, 2)"
+        },
+        {
+          "name": "sub",
+          "description": "Substring function",
+          "parameters": [
+            {"name": "s", "type": "string"},
+            {"name": "i", "type": "number"},
+            {"name": "j", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "string"},
+          "example": "local part = sub('hello', 2, 4)"
+        },
+        {
+          "name": "tostr",
+          "description": "Convert value to string",
+          "parameters": [
+            {"name": "x", "type": "any"},
+            {"name": "show_decimal", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "string"},
+          "example": "local str = tostr(42)"
+        },
+        {
+          "name": "tonum",
+          "description": "Convert string to number",
+          "parameters": [{"name": "s", "type": "string"}],
+          "returns": {"type": "number"},
+          "example": "local num = tonum('42')"
+        },
+        {
+          "name": "print",
+          "description": "Print text at position",
+          "parameters": [
+            {"name": "text", "type": "string"},
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "color", "type": "number", "optional": true}
+          ],
+          "example": "print('hello', 10, 20, 7)"
+        },
+        {
+          "name": "camera",
+          "description": "Set camera position",
+          "parameters": [
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true}
+          ],
+          "example": "camera(0, 0)"
+        },
+        {
+          "name": "clip",
+          "description": "Set clipping region",
+          "parameters": [
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true},
+            {"name": "w", "type": "number", "optional": true},
+            {"name": "h", "type": "number", "optional": true}
+          ],
+          "example": "clip(10, 10, 100, 100)"
+        },
+        {
+          "name": "pal",
+          "description": "Set palette mapping",
+          "parameters": [
+            {"name": "c0", "type": "number", "optional": true},
+            {"name": "c1", "type": "number", "optional": true}
+          ],
+          "example": "pal(1, 2)"
+        },
+        {
+          "name": "palt",
+          "description": "Set transparent color",
+          "parameters": [
+            {"name": "c", "type": "number", "optional": true},
+            {"name": "t", "type": "number", "optional": true}
+          ],
+          "example": "palt(0, true)"
+        },
+        {
+          "name": "music",
+          "description": "Play music track",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "fade", "type": "number", "optional": true},
+            {"name": "mask", "type": "number", "optional": true}
+          ],
+          "example": "music(1)"
+        },
+        {
+          "name": "sfx",
+          "description": "Play sound effect",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "channel", "type": "number", "optional": true},
+            {"name": "offset", "type": "number", "optional": true},
+            {"name": "length", "type": "number", "optional": true}
+          ],
+          "example": "sfx(10)"
+        },
+        {
+          "name": "stat",
+          "description": "Get statistics",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local fps = stat(4)"
+        },
+        {
+          "name": "printh",
+          "description": "Print to console (debug)",
+          "parameters": [{"name": "text", "type": "string"}],
+          "example": "printh('debug message')"
+        }
+      ]
     }
   ]
 }
