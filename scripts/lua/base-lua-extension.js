@@ -104,6 +104,15 @@ class BaseLuaExtension {
     };
 
    
+    const registerGlobalAlias = className === 'Pico8'
+      ? `
+    -- Pico-8 compatibility: expose function as a Lua global
+    function ${luaFunctionName}(...)
+        return js.global.${globalFunctionName}(unpack({...}))
+    end
+    `
+      : '';
+
     // Register as part of a class/namespace using Lua script
     this.luaState.execute(`
     -- Ensure class table exists
@@ -118,6 +127,7 @@ class BaseLuaExtension {
         --print("Lua calling ${className}.${luaFunctionName} with args:", unpack(args))
         return js.global.${globalFunctionName}(unpack(args))
     end
+    ${registerGlobalAlias}
     `);
    }
 }
