@@ -104,29 +104,33 @@ class PipelineEditor {
     // Set canvas size to match container (handle resizing)
     const updateCanvasSize = () => {
       const rect = canvasContainer.getBoundingClientRect();
-      this.canvasElement.width = rect.width;
-      this.canvasElement.height = rect.height;
       
-      // Also update the canvas object's dimensions
-      if (this.canvas) {
-        this.canvas.width = rect.width;
-        this.canvas.height = rect.height;
-        console.log(`[Editor] Canvas resized to ${rect.width}x${rect.height}, updated canvas object`);
-      } else {
-        console.log(`[Editor] Canvas element resized to ${rect.width}x${rect.height}`);
+      // Only update if we have non-zero dimensions
+      if (rect.width > 0 && rect.height > 0) {
+        this.canvasElement.width = rect.width;
+        this.canvasElement.height = rect.height;
+        
+        // Also update the canvas object's dimensions
+        if (this.canvas) {
+          this.canvas.width = rect.width;
+          this.canvas.height = rect.height;
+          console.log(`[Editor] Canvas resized to ${rect.width}x${rect.height}, updated canvas object`);
+        }
       }
     };
 
-    // Initialize canvas with default size
+    // Initialize canvas with default size first
     this.canvas = new PipelineCanvas(this.canvasElement, 1200, 800);
-    console.log(`[Editor] Canvas initialized`);
+    console.log(`[Editor] Canvas initialized with zoom=${this.canvas.zoom}`);
     this.canvas.onConnectionCreated = (from, to) => this.onConnectionCreated(from, to);
 
     content.appendChild(canvasContainer);
 
-    // Now that container is in DOM, update canvas size
-    updateCanvasSize();
-    window.addEventListener('resize', updateCanvasSize);
+    // Now that container is in DOM, use requestAnimationFrame to ensure layout is calculated
+    requestAnimationFrame(() => {
+      updateCanvasSize();
+      window.addEventListener('resize', updateCanvasSize);
+    });
 
     // Palette (right panel)
     const palette = this.createPalette();
@@ -511,7 +515,13 @@ class PipelineEditor {
    * Fit canvas to view
    */
   fitToView() {
-    if (this.canvas.nodes.size === 0) return;
+    if (this.canvas.nodes.size === 0) {
+      // No nodes, ensure we have valid default zoom and position
+      this.canvas.zoom = 1;
+      this.canvas.panX = 50;
+      this.canvas.panY = 50;
+      return;
+    }
 
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
@@ -526,15 +536,26 @@ class PipelineEditor {
     const width = maxX - minX;
     const height = maxY - minY;
 
-    this.canvas.zoom = Math.min(
-      this.canvas.width / width,
-      this.canvas.height / height,
-      2
-    );
+    // Calculate zoom only if we have valid bounding box
+    let newZoom = 1;
+    if (width > 0 && height > 0 && isFinite(width) && isFinite(height)) {
+      newZoom = Math.min(
+        this.canvas.width / width,
+        this.canvas.height / height,
+        2
+      );
+    }
 
+    // Ensure zoom is a valid positive number
+    if (!isFinite(newZoom) || newZoom <= 0) {
+      newZoom = 1;
+    }
+
+    this.canvas.zoom = newZoom;
     this.canvas.panX = -minX * this.canvas.zoom + 50;
     this.canvas.panY = -minY * this.canvas.zoom + 50;
 
+    console.log(`[Editor] fitToView: zoom=${this.canvas.zoom}, pan=(${this.canvas.panX}, ${this.canvas.panY})`);
     this.canvas.draw();
     this.updateStatus('Fitted to view');
   }

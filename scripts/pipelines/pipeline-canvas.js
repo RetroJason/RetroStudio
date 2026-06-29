@@ -452,7 +452,11 @@ class PipelineCanvas {
     }
 
     // Draw nodes
-    this.drawNodes();
+    if (this.nodes.size > 0) {
+      for (const node of this.nodes.values()) {
+        this.drawNode(node);
+      }
+    }
 
     this.ctx.restore();
   }
