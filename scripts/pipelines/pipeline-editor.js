@@ -64,6 +64,37 @@ class PipelineEditor {
     `;
     canvasContainer.appendChild(this.canvasElement);
 
+    // Handle drag and drop onto canvas
+    canvasContainer.ondragover = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      canvasContainer.style.background = '#1a2d1a';  // Highlight on drag over
+    };
+
+    canvasContainer.ondragleave = (e) => {
+      if (e.target === canvasContainer) {
+        canvasContainer.style.background = '#0a0a0a';  // Remove highlight
+      }
+    };
+
+    canvasContainer.ondrop = (e) => {
+      e.preventDefault();
+      canvasContainer.style.background = '#0a0a0a';  // Remove highlight
+
+      const nodeType = e.dataTransfer.getData('nodeType');
+      const label = e.dataTransfer.getData('label');
+
+      if (nodeType) {
+        // Get canvas position relative to the drop point
+        const rect = this.canvasElement.getBoundingClientRect();
+        const canvasX = e.clientX - rect.left;
+        const canvasY = e.clientY - rect.top;
+
+        // Create node at drop position
+        this.addNodeAtPosition(nodeType, label, canvasX, canvasY);
+      }
+    };
+
     // Set canvas size to match container (handle resizing)
     const updateCanvasSize = () => {
       const rect = canvasContainer.getBoundingClientRect();
@@ -209,6 +240,8 @@ class PipelineEditor {
     for (const template of templates) {
       const btn = document.createElement('button');
       btn.textContent = template.label;
+      btn.draggable = true;  // Enable drag
+      btn.dataset.nodeType = template.type;  // Store node type for drag
       btn.style.cssText = `
         width: 100%;
         padding: 12px;
@@ -216,7 +249,7 @@ class PipelineEditor {
         border: none;
         border-bottom: 1px solid #333;
         color: #4ade80;
-        cursor: pointer;
+        cursor: move;
         text-align: left;
         font-size: 13px;
         font-weight: 500;
@@ -232,6 +265,13 @@ class PipelineEditor {
         btn.style.background = '#2d2d2d';
         btn.style.color = '#4ade80';
         btn.style.paddingLeft = '12px';
+      };
+
+      // Drag start - store the node type
+      btn.ondragstart = (e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('nodeType', template.type);
+        e.dataTransfer.setData('label', template.label);
       };
 
       btn.onclick = () => this.addNode(template.type, template.label);
@@ -328,6 +368,48 @@ class PipelineEditor {
 
     btn.onclick = onclick;
     return btn;
+  }
+
+  /**
+   * Add a node at a specific canvas position (from drag-drop)
+   */
+  addNodeAtPosition(type, label, screenX, screenY) {
+    // Convert screen coordinates to canvas coordinates
+    const canvasX = (screenX - this.canvas.panX) / this.canvas.zoom;
+    const canvasY = (screenY - this.canvas.panY) / this.canvas.zoom;
+
+    const id = `${type}-${Date.now()}`;
+    
+    let inputs = [];
+    let outputs = [];
+
+    if (type === 'InputNode') {
+      outputs = ['file'];
+    } else if (type === 'TransformerNode') {
+      inputs = ['input'];
+      outputs = ['output'];
+    } else if (type === 'OutputNode') {
+      inputs = ['input'];
+    } else if (type === 'FilterNode') {
+      inputs = ['input'];
+      outputs = ['pass', 'reject'];
+    } else if (type === 'MuxNode') {
+      inputs = ['in1', 'in2'];
+      outputs = ['out'];
+    }
+
+    // Add node at the drop position
+    this.canvas.addNode(id, type, label, inputs, outputs);
+    
+    // Move node to drop position
+    const node = this.canvas.nodes.get(id);
+    if (node) {
+      node.x = canvasX;
+      node.y = canvasY;
+    }
+
+    this.canvas.draw();
+    this.updateNodeCount();
   }
 
   /**
