@@ -29,6 +29,7 @@ class RwaService {
       formatVersion: 1,
       projectName,
       packageKind: 'rwa',
+      category: '',
       title: projectName,
       author: '',
       version: '1.0.0',
@@ -37,6 +38,18 @@ class RwaService {
       screenshots: [],
       videos: []
     };
+  }
+
+  getAppManifestType(settings) {
+    const category = String(settings?.category || '').trim();
+    if (!category) {
+      throw new Error('Package Settings: Category is required for app.ini.');
+    }
+    return category;
+  }
+
+  categoryOmitsRuntimeIcons(category) {
+    return category === 'watch' || category === 'low_power_watch';
   }
 
   async loadPackageSettings(projectName) {
@@ -66,32 +79,74 @@ class RwaService {
     return 'rwa';
   }
 
+  collectBuildOutputPaths(buildResult, buildPrefix) {
+    const paths = [];
+    const addPath = (path) => {
+      if (typeof path !== 'string' || !path.startsWith(buildPrefix)) {
+        return;
+      }
+      if (!paths.includes(path)) {
+        paths.push(path);
+      }
+    };
+
+    if (Array.isArray(buildResult?.summary?.outputFiles)) {
+      for (const output of buildResult.summary.outputFiles) {
+        addPath(output?.path);
+      }
+    }
+
+    if (Array.isArray(buildResult?.results)) {
+      for (const result of buildResult.results) {
+        if (!result || result.success !== true || result.skipped) {
+          continue;
+        }
+
+        addPath(result.outputPath);
+
+        if (Array.isArray(result.outputs)) {
+          for (const outputPath of result.outputs) {
+            addPath(outputPath);
+          }
+        }
+
+        if (Array.isArray(result.additionalOutputPaths)) {
+          for (const outputPath of result.additionalOutputPaths) {
+            addPath(outputPath);
+          }
+        }
+      }
+    }
+
+    return paths;
+  }
+
   makeAppIni(projectName, settings) {
     const s = settings || this.getDefaultPackageSettings(projectName);
-    const shots = Array.isArray(s.screenshots) ? s.screenshots : [];
-    const vids = Array.isArray(s.videos) ? s.videos : [];
     const icons = s.icons || {};
+    const manifestType = this.getAppManifestType(s);
+    const includeRuntimeIcons = !this.categoryOmitsRuntimeIcons(manifestType);
 
-    return [
+    const lines = [
       '[app]',
       `title = ${s.title || projectName}`,
       `author = ${s.author || 'Unknown'}`,
       `version = ${s.version || '1.0.0'}`,
       `description = ${s.description || 'Exported from RetroStudio'}`,
-      'type = app',
+      `type = ${manifestType}`,
       `runtime = ${this.normalizePackageKind(s.packageKind)}`,
-      `icon32 = ${icons.icon32 || ''}`,
-      `icon128 = ${icons.icon128 || ''}`,
       '',
       '[display]',
       'fps = 30',
       'orientation = auto',
-      '',
-      '[media]',
-      `screenshots = ${shots.join(',')}`,
-      `videos = ${vids.join(',')}`,
       ''
-    ].join('\n');
+    ];
+
+    if (includeRuntimeIcons) {
+      lines.splice(7, 0, `icon32 = ${icons.icon32 || ''}`, `icon128 = ${icons.icon128 || ''}`);
+    }
+
+    return lines.join('\n');
   }
 
   async buildRuntimePackage(projectName, options = {}) {
@@ -101,14 +156,15 @@ class RwaService {
     if (!this.fileManager) throw new Error('FileManager unavailable');
 
     const buildBeforeExport = options.buildBeforeExport !== false;
+    let buildResult = null;
     if (buildBeforeExport) {
       if (!this.buildSystem || typeof this.buildSystem.buildProject !== 'function') {
         throw new Error('BuildSystem unavailable');
       }
 
-      const result = await this.buildSystem.buildProject();
-      if (!result || result.success !== true) {
-        const msg = result?.error || 'Build failed';
+      buildResult = await this.buildSystem.buildProject();
+      if (!buildResult || buildResult.success !== true) {
+        const msg = buildResult?.error || this.formatBuildFailures(buildResult?.results) || 'Build failed';
         throw new Error(`Build failed: ${msg}`);
       }
     }
@@ -118,12 +174,17 @@ class RwaService {
     const outputName = `${projectName}.${packageKind}`;
 
     const buildPrefix = this.getBuildStoragePrefix();
-    const buildPrefixNoSlash = buildPrefix.replace(/\/$/, '');
-    const records = await this.fileManager.listFiles(buildPrefixNoSlash);
+    let buildPaths = this.collectBuildOutputPaths(buildResult, buildPrefix);
 
-    const buildPaths = (records || [])
-      .map((rec) => rec?.path || rec)
-      .filter((p) => typeof p === 'string' && p.startsWith(buildPrefix));
+    // Backward compatibility: if build metadata is unavailable, fall back to
+    // scanning the build folder.
+    if (!buildPaths.length) {
+      const buildPrefixNoSlash = buildPrefix.replace(/\/$/, '');
+      const records = await this.fileManager.listFiles(buildPrefixNoSlash);
+      buildPaths = (records || [])
+        .map((rec) => rec?.path || rec)
+        .filter((p) => typeof p === 'string' && p.startsWith(buildPrefix));
+    }
 
     if (!buildPaths.length) {
       throw new Error('No build outputs found under build/');
@@ -164,7 +225,8 @@ class RwaService {
       packageKind,
       filename: outputName,
       settings: packageSettings,
-      fileCount: buildPaths.length
+      fileCount: buildPaths.length,
+      buildResult
     };
   }
 
@@ -172,6 +234,18 @@ class RwaService {
     const pkg = await this.buildRuntimePackage(projectName, options);
     this.downloadBlob(pkg.blob, pkg.filename);
     return pkg;
+  }
+
+  formatBuildFailures(buildResults) {
+    const failures = (Array.isArray(buildResults) ? buildResults : [])
+      .filter(result => result && result.success !== true && !result.skipped)
+      .map(result => {
+        const inputPath = result.inputPath || 'unknown file';
+        const message = result.error || 'Unknown build error';
+        return `${inputPath}: ${message}`;
+      });
+
+    return failures.join('; ');
   }
 
   normalizeRecord(rec) {

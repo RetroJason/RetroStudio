@@ -8,9 +8,7 @@ class LuaSystemExtensions extends BaseLuaExtension {
   }
 
   _resolveGameEmulator() {
-    const emulator = this.gameEmulator
-      || window.serviceContainer?.get?.('gameEmulator')
-      || window.gameEmulator;
+    const emulator = this.gameEmulator || this._getService('gameEmulator') || window.gameEmulator;
 
     if (!emulator) {
       throw new Error('[System] SetClearColor emulator backend unavailable');
@@ -60,6 +58,7 @@ class LuaSystemExtensions extends BaseLuaExtension {
       a: 1,
     };
   }
+
 }
 
 // Export for module system

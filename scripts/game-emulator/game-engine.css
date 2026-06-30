@@ -356,6 +356,43 @@
   user-select: none;
 }
 
+.simulator-compile-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(0, 0, 0, 0.68);
+  color: #fff1d6;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.simulator-compile-overlay.hidden {
+  display: none;
+}
+
+.simulator-compile-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 241, 214, 0.24);
+  border-top-color: #ffc46f;
+  border-radius: 50%;
+  animation: simulator-compile-spin 0.9s linear infinite;
+}
+
+@keyframes simulator-compile-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .game-info {
   margin-top: 12px;
   color: #d6a78a;

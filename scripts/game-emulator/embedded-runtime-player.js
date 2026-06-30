@@ -5,11 +5,15 @@ class RuntimeArchiveFileManager {
     }
 
     this.records = new Map();
+    this.uniqueRecords = [];
     this.textDecoder = new TextDecoder();
 
     for (const file of files) {
       const record = this.createRecord(file);
-      this.records.set(record.path, record);
+      this.uniqueRecords.push(record);
+      for (const aliasPath of record.aliasPaths) {
+        this.records.set(aliasPath, record);
+      }
     }
   }
 
@@ -17,13 +21,28 @@ class RuntimeArchiveFileManager {
     return this;
   }
 
-  normalizePath(path) {
+  sanitizePath(path) {
     if (typeof path !== 'string' || path.length === 0) {
       throw new Error('Runtime file path must be a non-empty string.');
     }
 
-    const trimmed = path.replace(/^\.\//, '').replace(/^\/+/, '');
-    return trimmed.startsWith('build/') ? trimmed : `build/${trimmed}`;
+    return path
+      .replace(/\\/g, '/')
+      .replace(/^\.\//, '')
+      .replace(/^\/+/, '')
+      .replace(/^build\//i, 'build/');
+  }
+
+  getAliasPaths(path) {
+    const aliasPaths = new Set([path]);
+
+    if (path.startsWith('build/')) {
+      aliasPaths.add(path.substring('build/'.length));
+    } else {
+      aliasPaths.add(`build/${path}`);
+    }
+
+    return [...aliasPaths];
   }
 
   isTextPath(path) {
@@ -35,7 +54,7 @@ class RuntimeArchiveFileManager {
       throw new Error('Runtime package files must include a path.');
     }
 
-    const path = this.normalizePath(file.path);
+    const path = this.sanitizePath(file.path);
     const bytes = file.bytes instanceof Uint8Array
       ? file.bytes
       : file.bytes instanceof ArrayBuffer
@@ -55,6 +74,7 @@ class RuntimeArchiveFileManager {
 
     return {
       path,
+      aliasPaths: this.getAliasPaths(path),
       filename: path.split('/').pop(),
       directory: path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '',
       binaryData: !isText,
@@ -65,12 +85,16 @@ class RuntimeArchiveFileManager {
   }
 
   async listFiles(prefix = '') {
-    const normalizedPrefix = prefix ? this.normalizePath(prefix).replace(/\/$/, '') : '';
+    const normalizedPrefix = prefix ? this.sanitizePath(prefix).replace(/\/$/, '') : '';
     const results = [];
 
-    for (const record of this.records.values()) {
-      if (!normalizedPrefix || record.path.startsWith(normalizedPrefix)) {
-        results.push({ ...record });
+    for (const record of this.uniqueRecords) {
+      const matchingAlias = !normalizedPrefix
+        ? record.path
+        : record.aliasPaths.find((aliasPath) => aliasPath.startsWith(normalizedPrefix));
+
+      if (matchingAlias) {
+        results.push({ ...record, path: matchingAlias });
       }
     }
 
@@ -78,19 +102,19 @@ class RuntimeArchiveFileManager {
   }
 
   async loadFile(path) {
-    const normalizedPath = this.normalizePath(path);
+    const normalizedPath = this.sanitizePath(path);
     const record = this.records.get(normalizedPath);
-    return record ? { ...record } : null;
+    return record ? { ...record, path: normalizedPath } : null;
   }
 
   async fileExists(path) {
-    return this.records.has(this.normalizePath(path));
+    return this.records.has(this.sanitizePath(path));
   }
 
   async getSourceScripts() {
     const scripts = [];
 
-    for (const record of this.records.values()) {
+    for (const record of this.uniqueRecords) {
       if (record.path.toLowerCase().endsWith('.lua')) {
         scripts.push({ path: record.path });
       }
@@ -110,7 +134,7 @@ class RuntimeArchiveFileManager {
   getBuildFiles() {
     const buildFiles = [];
 
-    for (const record of this.records.values()) {
+    for (const record of this.uniqueRecords) {
       buildFiles.push({
         name: record.filename,
         path: record.path,
@@ -190,6 +214,27 @@ class EmbeddedRuntimePlayer {
 
     const arrayBuffer = await response.arrayBuffer();
     return this.loadRwaFromArrayBuffer(arrayBuffer);
+  }
+
+  static async getExtensionDefinitions(extensionFilePath = 'scripts/lua/api.json') {
+    if (!EmbeddedRuntimePlayer._extensionDefinitionsCache) {
+      EmbeddedRuntimePlayer._extensionDefinitionsCache = new Map();
+    }
+
+    if (EmbeddedRuntimePlayer._extensionDefinitionsCache.has(extensionFilePath)) {
+      return EmbeddedRuntimePlayer._extensionDefinitionsCache.get(extensionFilePath);
+    }
+
+    const response = await fetch(extensionFilePath);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch extension definitions: ${response.status} ${response.statusText}`);
+    }
+
+    const text = await response.text();
+    const cleanJson = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    const parsed = JSON.parse(cleanJson);
+    EmbeddedRuntimePlayer._extensionDefinitionsCache.set(extensionFilePath, parsed);
+    return parsed;
   }
 
   async extractRuntimePackage(zip) {

@@ -1,5 +1,5 @@
 // extension-loader.js - Automatic Lua Extension Loader
-// Loads and registers all Lua extensions based on extensions.json
+// Loads and registers all Lua extensions based on the canonical API contract.
 
 class LuaExtensionLoader {
   constructor(gameEmulator) {
@@ -9,18 +9,32 @@ class LuaExtensionLoader {
     this.reloadToken = Date.now().toString();
   }
 
+  getExtensionClassName(categoryName) {
+    return `Lua${categoryName}Extensions`;
+  }
+
   buildScriptUrl(relativePath) {
     return `${relativePath}?v=${this.reloadToken}`;
   }
 
+  getScriptLoadPromises() {
+    if (!window.__luaExtensionScriptLoadPromises) {
+      window.__luaExtensionScriptLoadPromises = new Map();
+    }
+
+    return window.__luaExtensionScriptLoadPromises;
+  }
+
   /**
-   * Load extension configuration from extensions.json
+   * Load extension configuration from the canonical API contract.
    */
   async loadExtensionConfig() {
     try {
-      const response = await fetch('scripts/lua/extensions.json');
+      const response = await fetch(this.buildScriptUrl('scripts/lua/api.json'), {
+        cache: 'no-store',
+      });
       if (!response.ok) {
-        throw new Error(`Failed to load extensions.json: ${response.status}`);
+        throw new Error(`Failed to load Lua API contract: ${response.status}`);
       }
       this.extensionConfig = await response.json();
       console.log(`[LuaExtensionLoader] Loaded extension config: ${this.extensionConfig.name} v${this.extensionConfig.version}`);
@@ -37,30 +51,56 @@ class LuaExtensionLoader {
    */
   async loadExtensionFile(categoryName) {
     try {
+      const className = this.getExtensionClassName(categoryName);
       const scriptId = `lua-extension-${categoryName.toLowerCase()}`;
+      const scriptPromises = this.getScriptLoadPromises();
+
+      if (typeof window[className] === 'function') {
+        return;
+      }
+
+      if (scriptPromises.has(scriptId)) {
+        await scriptPromises.get(scriptId);
+        if (typeof window[className] !== 'function') {
+          throw new Error(`${className} did not register after script load.`);
+        }
+        return;
+      }
 
       const existingScript = document.getElementById(scriptId);
       if (existingScript) {
-        existingScript.remove();
+        throw new Error(`${scriptId} is present but ${className} is not registered.`);
       }
 
       const script = document.createElement('script');
       script.id = scriptId;
       script.src = this.buildScriptUrl(`scripts/lua/${categoryName.toLowerCase()}.js`);
       
-      return new Promise((resolve, reject) => {
+      const loadPromise = new Promise((resolve, reject) => {
         script.onload = () => {
+          if (typeof window[className] !== 'function') {
+            reject(new Error(`${className} did not register after loading ${script.src}.`));
+            return;
+          }
           console.log(`[LuaExtensionLoader] Loaded ${categoryName} extension`);
           resolve();
         };
         script.onerror = () => {
-          console.warn(`[LuaExtensionLoader] Failed to load ${categoryName} extension`);
-          resolve(); // Don't fail entirely if one extension fails
+          reject(new Error(`Failed to load ${categoryName} extension script: ${script.src}`));
         };
         document.head.appendChild(script);
       });
+
+      scriptPromises.set(scriptId, loadPromise);
+      try {
+        await loadPromise;
+      } catch (error) {
+        scriptPromises.delete(scriptId);
+        throw error;
+      }
     } catch (error) {
       console.error(`[LuaExtensionLoader] Error loading ${categoryName}:`, error);
+      throw error;
     }
   }
 
@@ -75,7 +115,7 @@ class LuaExtensionLoader {
       
       // First load the base extension class
       await this.loadBaseExtensionFile();
-      
+
       // Load all extension files (only for categories with functions)
       const loadPromises = this.extensionConfig.categories
         .filter(category => category.functions.length > 0)
@@ -95,6 +135,7 @@ class LuaExtensionLoader {
       console.log('[LuaExtensionLoader] All extensions initialized');
     } catch (error) {
       console.error('[LuaExtensionLoader] Failed to initialize extensions:', error);
+      throw error;
     }
   }
 
@@ -104,18 +145,35 @@ class LuaExtensionLoader {
   async loadBaseExtensionFile() {
     try {
       const scriptId = 'lua-base-extension';
+      const scriptPromises = this.getScriptLoadPromises();
+
+      if (typeof window.BaseLuaExtension === 'function') {
+        return;
+      }
+
+      if (scriptPromises.has(scriptId)) {
+        await scriptPromises.get(scriptId);
+        if (typeof window.BaseLuaExtension !== 'function') {
+          throw new Error('BaseLuaExtension did not register after script load.');
+        }
+        return;
+      }
 
       const existingScript = document.getElementById(scriptId);
       if (existingScript) {
-        existingScript.remove();
+        throw new Error('lua-base-extension is present but BaseLuaExtension is not registered.');
       }
 
       const script = document.createElement('script');
       script.id = scriptId;
       script.src = this.buildScriptUrl('scripts/lua/base-lua-extension.js');
       
-      return new Promise((resolve, reject) => {
+      const loadPromise = new Promise((resolve, reject) => {
         script.onload = () => {
+          if (typeof window.BaseLuaExtension !== 'function') {
+            reject(new Error(`BaseLuaExtension did not register after loading ${script.src}.`));
+            return;
+          }
           console.log('[LuaExtensionLoader] Loaded base extension class');
           resolve();
         };
@@ -125,6 +183,14 @@ class LuaExtensionLoader {
         };
         document.head.appendChild(script);
       });
+
+      scriptPromises.set(scriptId, loadPromise);
+      try {
+        await loadPromise;
+      } catch (error) {
+        scriptPromises.delete(scriptId);
+        throw error;
+      }
     } catch (error) {
       console.error('[LuaExtensionLoader] Error loading base extension:', error);
       throw error;
@@ -139,7 +205,7 @@ class LuaExtensionLoader {
   async initializeCategory(category, luaState) {
     try {
       const categoryName = category.name;
-      const className = `Lua${categoryName}Extensions`;
+      const className = this.getExtensionClassName(categoryName);
       
       // Check if the extension class exists
       if (window[className]) {
@@ -161,10 +227,11 @@ class LuaExtensionLoader {
         
         console.log(`[LuaExtensionLoader] Registered ${categoryName} functions: ${category.functions.map(f => f.name).join(', ')}`);
       } else {
-        console.warn(`[LuaExtensionLoader] Extension class ${className} not found`);
+        throw new Error(`Extension class ${className} not found`);
       }
     } catch (error) {
       console.error(`[LuaExtensionLoader] Failed to initialize ${category.name}:`, error);
+      throw error;
     }
   }
 
@@ -183,10 +250,11 @@ class LuaExtensionLoader {
         extensionInstance.registerMethod(methodName, extensionInstance[methodName], categoryName);
         console.log(`[LuaExtensionLoader] Registered ${categoryName}.${methodName}`);
       } else {
-        console.error(`[LuaExtensionLoader] Method ${methodName} not found on ${categoryName} extension`);
+        throw new Error(`Method ${methodName} not found on ${categoryName} extension`);
       }
     } catch (error) {
       console.error(`[LuaExtensionLoader] Failed to register ${categoryName}.${funcConfig.name}:`, error);
+      throw error;
     }
   }
 
@@ -217,7 +285,6 @@ class LuaExtensionLoader {
       }
     }
     this.extensions.clear();
-    this.reloadToken = Date.now().toString();
   }
 
   /**

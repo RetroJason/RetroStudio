@@ -262,30 +262,30 @@ class SimpleTextViewer extends ViewerBase {
       console.log('[SimpleTextViewer] Creating Monaco Editor with content length:', content.length);
       console.log('[SimpleTextViewer] Container dimensions:', container.offsetWidth, 'x', container.offsetHeight);
       
-      this.editor = monaco.editor.create(container, {
-        value: content,
-        language: this.language,
-        theme: 'vs-dark',
-        readOnly: this.isReadOnly,
-        automaticLayout: true,
-        scrollBeyondLastLine: false,
-        minimap: { enabled: false },
-        lineNumbers: 'on',
-        wordWrap: 'on',
-        folding: true,
-        lineDecorationsWidth: 10,
-        lineNumbersMinChars: 3,
-        glyphMargin: false,
-        contextmenu: true,
-        selectOnLineNumbers: true,
-        roundedSelection: false,
-        scrollbar: {
-          vertical: 'auto',
-          horizontal: 'auto',
-          verticalScrollbarSize: 14,
-          horizontalScrollbarSize: 14
-        }
-      });
+      this.editor = monaco.editor.create(
+        container,
+        window.EditorPreferences.buildMonacoOptions({
+          value: content,
+          language: this.language,
+          theme: 'vs-dark',
+          readOnly: this.isReadOnly,
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          folding: true,
+          lineDecorationsWidth: 10,
+          lineNumbersMinChars: 3,
+          glyphMargin: false,
+          contextmenu: true,
+          selectOnLineNumbers: true,
+          roundedSelection: false,
+          scrollbar: {
+            vertical: 'auto',
+            horizontal: 'auto',
+            verticalScrollbarSize: 14,
+            horizontalScrollbarSize: 14
+          }
+        })
+      );
 
       console.log('[SimpleTextViewer] Monaco Editor created:', this.editor);
       console.log('[SimpleTextViewer] Monaco Editor container:', this.editor.getContainerDomNode());
@@ -314,6 +314,16 @@ class SimpleTextViewer extends ViewerBase {
    */
   getDisplayName() {
     return 'Text Viewer';
+  }
+
+  applyEditorPreferences() {
+    if (!this.editor) {
+      return;
+    }
+
+    window.EditorPreferences.applyToMonacoEditor(this.editor, {
+      readOnly: this.isReadOnly
+    });
   }
 
   /**

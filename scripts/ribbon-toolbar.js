@@ -8,13 +8,17 @@ class RibbonToolbar {
     this.fileCounter = 1; // Counter for new file naming
     this.ribbonColorValue = '0xFFFFFF';
     this.ribbonToolbar = null;
+    this.hostedSaveStateIndicator = null;
+    this.hostedSaveStateLabel = null;
     this.init();
   }
   
   init() {
     console.log('[RibbonToolbar] Initializing...');
     this.setupButtons();
+    this.setupFileMenu();
     this.setupColorPicker();
+    this.setupHostedSaveIndicator();
     this.setupResponsiveRibbon();
     
     // Wait for component registry to be available
@@ -35,6 +39,72 @@ class RibbonToolbar {
     } catch (_) {}
     
     console.log('[RibbonToolbar] Initialized');
+  }
+
+  setupHostedSaveIndicator() {
+    this.hostedSaveStateIndicator = document.getElementById('hostedSaveState');
+    this.hostedSaveStateLabel = document.getElementById('hostedSaveStateLabel');
+
+    if (!this.hostedSaveStateIndicator || !this.hostedSaveStateLabel) {
+      return;
+    }
+
+    window.addEventListener('retrowww-hosted-save-state', (event) => {
+      this.renderHostedSaveState(event?.detail || null);
+    });
+
+    const initialState = window.retrowwwHostedStudio?.getSaveState?.() || window.__retrowwwHostedSaveState || null;
+    this.renderHostedSaveState(initialState);
+  }
+
+  renderHostedSaveState(state) {
+    if (!this.hostedSaveStateIndicator || !this.hostedSaveStateLabel) {
+      return;
+    }
+
+    const projectName = String(state?.projectName || '').trim();
+    if (!projectName) {
+      this.hostedSaveStateIndicator.classList.add('is-hidden');
+      this.hostedSaveStateIndicator.removeAttribute('data-state');
+      this.hostedSaveStateIndicator.title = 'Hosted save status';
+      this.hostedSaveStateLabel.textContent = 'Saved';
+      return;
+    }
+
+    const indicatorState = String(state?.status || 'idle');
+    let label = 'No pending changes';
+    let title = 'Hosted save status for ' + projectName;
+
+    if (state?.sharedSession) {
+      label = 'Shared session';
+      title = projectName + ' is a shared session. Changes stay local and cannot be saved back.';
+    } else if (indicatorState === 'saving') {
+      label = 'Saving...';
+      title = 'Saving ' + projectName + ' to Retrowww';
+    } else if (indicatorState === 'pending') {
+      label = 'Unsaved changes';
+      title = projectName + ' has local changes that still need to be saved to Retrowww';
+    } else if (indicatorState === 'failed') {
+      const source = String(state?.saveSource || state?.lastSaveSource || '').trim();
+      label = source === 'autosave' ? 'Autosave failed' : 'Save failed';
+      title = state?.lastError
+        ? 'Failed to save ' + projectName + '\n\n' + state.lastError + '\n\nFix the issue and edit/save again to retry.'
+        : 'Failed to save ' + projectName;
+    } else if (indicatorState === 'saved') {
+      label = state?.lastSavedLabel ? 'Saved ' + state.lastSavedLabel : 'Saved';
+      title = 'Last saved ' + projectName;
+      if (state?.lastSavedLabel) {
+        title += ' at ' + state.lastSavedLabel;
+      }
+      if (Number.isFinite(state?.revisionNumber)) {
+        title += ' (revision ' + state.revisionNumber + ')';
+      }
+    }
+
+    this.hostedSaveStateIndicator.classList.remove('is-hidden');
+    this.hostedSaveStateIndicator.dataset.state = indicatorState;
+    this.hostedSaveStateIndicator.title = title;
+    this.hostedSaveStateLabel.textContent = label;
   }
 
   setupColorPicker() {
@@ -151,9 +221,10 @@ class RibbonToolbar {
     const icon = editorInfo.editorClass.getCreateIcon ? 
                  editorInfo.editorClass.getCreateIcon() : 
                  editorInfo.icon;
-    const label = editorInfo.editorClass.getCreateLabel ? 
+    const rawLabel = editorInfo.editorClass.getCreateLabel ? 
                   editorInfo.editorClass.getCreateLabel() : 
                   editorInfo.displayName;
+    const label = rawLabel;
 
     console.log(`[RibbonToolbar] Button details - Icon: ${icon}, Label: ${label}`);
 
@@ -179,19 +250,48 @@ class RibbonToolbar {
       return;
     }
 
-    this.ensureSectionOverflowMenus();
-
-    window.addEventListener('resize', () => {
-      this.updateRibbonCompactState();
-    });
-
     document.addEventListener('click', (event) => {
       if (!this.ribbonToolbar.contains(event.target)) {
+        this.closeFileMenu();
         this.closeAllCompactMenus();
       }
     });
 
     requestAnimationFrame(() => this.updateRibbonCompactState());
+  }
+
+  setupFileMenu() {
+    this.fileMenuSection = document.querySelector('.ribbon-section[data-ribbon-group="file"]');
+    this.fileMenuToggle = document.getElementById('fileMenuToggle');
+
+    if (!this.fileMenuSection || !this.fileMenuToggle) {
+      return;
+    }
+
+    this.fileMenuToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const shouldOpen = !this.fileMenuSection.classList.contains('file-menu-open');
+      this.closeFileMenu();
+      if (shouldOpen) {
+        this.fileMenuSection.classList.add('file-menu-open');
+        this.fileMenuToggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    this.fileMenuSection.querySelectorAll('.ribbon-buttons .ribbon-btn').forEach((button) => {
+      button.addEventListener('click', () => {
+        this.closeFileMenu();
+      });
+    });
+  }
+
+  closeFileMenu() {
+    if (!this.fileMenuSection || !this.fileMenuToggle) {
+      return;
+    }
+
+    this.fileMenuSection.classList.remove('file-menu-open');
+    this.fileMenuToggle.setAttribute('aria-expanded', 'false');
   }
 
   ensureSectionOverflowMenus() {
@@ -239,16 +339,9 @@ class RibbonToolbar {
       return;
     }
 
-    const sectionTops = Array.from(this.ribbonToolbar.querySelectorAll('.ribbon-section')).map((section) => {
-      return section.getBoundingClientRect().top;
-    });
-    const firstTop = sectionTops.length > 0 ? sectionTops[0] : 0;
-    const isWrapped = sectionTops.some((top) => Math.abs(top - firstTop) > 4);
-
-    this.ribbonToolbar.classList.toggle('ribbon-toolbar-compact', isWrapped);
-    if (!isWrapped) {
-      this.closeAllCompactMenus();
-    }
+    this.ribbonToolbar.classList.remove('ribbon-toolbar-compact');
+    this.closeFileMenu();
+    this.closeAllCompactMenus();
   }
 
   async createNewResourceFromEditor(editorInfo) {
@@ -666,6 +759,24 @@ class RibbonToolbar {
   
   setupButtons() {
   // File operations
+  this.setupButton('welcomeTabBtn', async () => {
+    const tabManager = window.gameEmulator?.tabManager || window.serviceContainer?.get?.('tabManager');
+    if (!tabManager || typeof tabManager.openWelcomeTab !== 'function') {
+      throw new Error('Welcome tab is unavailable.');
+    }
+
+    await tabManager.openWelcomeTab();
+  });
+
+  this.setupButton('examplesTabBtn', async () => {
+    const tabManager = window.gameEmulator?.tabManager || window.serviceContainer?.get?.('tabManager');
+    if (!tabManager || typeof tabManager.openExamplesTab !== 'function') {
+      throw new Error('Examples tab is unavailable.');
+    }
+
+    await tabManager.openExamplesTab();
+  });
+
   this.setupButton('saveBtn', async () => {
     try {
       const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
@@ -673,15 +784,40 @@ class RibbonToolbar {
         throw new Error('No active project selected.');
       }
 
+      // Flush all in-memory editor buffers before hosted project save so
+      // Monaco edits are persisted to storage/package inputs.
+      if (window.gameEmulator?.tabManager?.saveAllOpenTabs) {
+        await window.gameEmulator.tabManager.saveAllOpenTabs({ force: true, reason: 'manual-save' });
+      } else if (window.gameEmulator?.tabManager?.saveActiveTab) {
+        await window.gameEmulator.tabManager.saveActiveTab();
+      }
+
+      // Lua-specific safeguard: explicitly invoke save() on every open Lua editor
+      // in case generic dirty/tab routing misses Monaco-backed Lua tabs.
+      const tabManager = window.gameEmulator?.tabManager;
+      const allTabs = tabManager?.getAllTabs ? tabManager.getAllTabs() : [];
+      let luaSaves = 0;
+      for (const tab of allTabs) {
+        const viewer = tab?.viewer;
+        const fullPath = String(tab?.fullPath || '').toLowerCase();
+        const fileName = String(tab?.fileName || '').toLowerCase();
+        const isLuaPath = fullPath.endsWith('.lua') || fileName.endsWith('.lua');
+        const isLuaEditor = viewer?.constructor?.name === 'LuaEditor';
+        if (!(isLuaEditor || isLuaPath) || typeof viewer.save !== 'function') {
+          continue;
+        }
+        luaSaves++;
+        await viewer.save();
+      }
+      console.log('[RibbonToolbar] Explicit Lua save count', luaSaves);
+
       const hostedStudioApi = window.retrowwwHostedStudio;
       if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
         throw new Error('Retrowww hosted project save service is unavailable.');
       }
 
-      const summary = await hostedStudioApi.saveProject(projectName);
-      const revisionNumber = summary?.currentRevision?.revisionNumber;
-      const revisionSuffix = Number.isFinite(revisionNumber) ? ' revision ' + revisionNumber : '';
-      window.gameEmulator?.updateStatus?.('Saved ' + projectName + revisionSuffix, 'success');
+        await hostedStudioApi.saveProject(projectName, { saveSource: 'save' });
+        window.gameEmulator?.updateStatus?.('Saved ' + projectName, 'success');
     } catch (error) {
       console.error('[RibbonToolbar] Failed to save project:', error);
       window.gameEmulator?.updateStatus?.(
@@ -690,10 +826,73 @@ class RibbonToolbar {
       );
     }
   });
+
+    this.setupButton('saveRevisionBtn', async () => {
+      try {
+        const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+        if (!projectName) {
+          throw new Error('No active project selected.');
+        }
+
+        // Revision snapshots must include latest editor buffers.
+        if (window.gameEmulator?.tabManager?.saveAllOpenTabs) {
+          await window.gameEmulator.tabManager.saveAllOpenTabs({ force: true, reason: 'manual-save-revision' });
+        } else if (window.gameEmulator?.tabManager?.saveActiveTab) {
+          await window.gameEmulator.tabManager.saveActiveTab();
+        }
+
+        const hostedStudioApi = window.retrowwwHostedStudio;
+        if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
+          throw new Error('Retrowww hosted project save service is unavailable.');
+        }
+
+        const revisionPrompt = await window.ModalUtils?.showForm?.('Save Revision', [
+          {
+            type: 'text',
+            name: 'revisionMessage',
+            label: 'Revision Message',
+            defaultValue: '',
+            required: true,
+            placeholder: 'Describe what changed in this revision',
+            hint: 'This message will be stored with the revision history entry.'
+          }
+        ], {
+          okText: 'Save Revision',
+          cancelText: 'Cancel'
+        });
+
+        if (!revisionPrompt || !revisionPrompt.revisionMessage) {
+          return;
+        }
+
+        const revisionMessage = String(revisionPrompt.revisionMessage).trim();
+        if (!revisionMessage) {
+          throw new Error('Revision message is required.');
+        }
+
+        const summary = await hostedStudioApi.saveProject(projectName, {
+          saveSource: 'revision',
+          revisionMessage,
+        });
+        const revisionNumber = summary?.currentRevision?.revisionNumber;
+        const revisionSuffix = Number.isFinite(revisionNumber) ? ' revision ' + revisionNumber : '';
+        window.gameEmulator?.updateStatus?.('Saved revision for ' + projectName + revisionSuffix, 'success');
+      } catch (error) {
+        console.error('[RibbonToolbar] Failed to save revision:', error);
+        window.gameEmulator?.updateStatus?.(
+          'Failed to save revision: ' + (error && error.message ? error.message : String(error)),
+          'error'
+        );
+      }
+    });
     
     // New Project
     this.setupButton('newProjectBtn', async () => {
       await this.createNewProject();
+    });
+
+    this.setupButton('idePreferencesBtn', async () => {
+      await window.EditorPreferences.openPreferencesTab();
     });
 
     // Import/Export RWP
@@ -713,6 +912,9 @@ class RibbonToolbar {
 
     this.setupButton('publishBtn', async () => {
       await this.publishProjectToRetrowww();
+    });
+    this.setupButton('shareBtn', async () => {
+      await this.shareProjectFromStudio();
     });
 
     // Watch operations
@@ -772,36 +974,384 @@ class RibbonToolbar {
       const result = await svc.publishProject(project, {
         shareSource: publishOptions.shareSource === true,
       });
+      if (!result?.buildResult) {
+        throw new Error('Publish completed without a build summary result.');
+      }
+      this.showBuildSummaryPopup(result.buildResult);
       const version = result?.applicationVersion?.versionString || 'draft';
       window.gameEmulator?.updateStatus?.(`Published ${project} as ${version}`, 'success');
       const shareLabel = publishOptions.shareSource === true ? ' Shared source is enabled.' : ' Source remains private.';
       alert(`Published ${project} to Retrowww as draft version ${version}.${shareLabel}`);
     } catch (e) {
       console.error('[RibbonToolbar] Publish failed:', e);
+      await this.handlePublishFailure(e);
       alert('Publish failed: ' + (e?.message || e));
     }
+  }
+
+  async handlePublishFailure(error) {
+    const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+    if (!project) return;
+
+    const errorMessage = String(error?.message || error || '');
+    const fieldName = this.getPackageSettingsFieldFromPublishError(errorMessage);
+    if (!fieldName) return;
+
+    const sourcesRoot = window.ProjectPaths?.getSourcesRootUi?.() || 'Sources';
+    const packagePath = `${project}/${sourcesRoot}/Package/app.package`;
+
+    try {
+      const componentInfo = window.gameEmulator?.projectExplorer?._getComponentForFile?.(packagePath, true) || null;
+      await window.gameEmulator?.tabManager?.openInTab?.(packagePath, componentInfo, { isReadOnly: false });
+
+      const activeEditor = window.gameEmulator?.tabManager?.getActiveTab?.()?.viewer || null;
+      if (activeEditor && typeof activeEditor.focusField === 'function') {
+        activeEditor.focusField(fieldName);
+      }
+    } catch (openError) {
+      console.error('[RibbonToolbar] Failed to focus package settings after publish error:', openError);
+    }
+  }
+
+  getPackageSettingsFieldFromPublishError(errorMessage) {
+    const normalized = String(errorMessage || '').toLowerCase();
+
+    if (normalized.includes('application type is required') || normalized.includes('category is required')) {
+      return 'category';
+    }
+    if (normalized.includes('target device')) {
+      return 'targetDeviceSlug';
+    }
+    if (normalized.includes('short description')) {
+      return 'shortDescription';
+    }
+    if (normalized.includes('package settings: description is required')) {
+      return 'description';
+    }
+    if (normalized.includes('version code')) {
+      return 'versionCode';
+    }
+    if (normalized.includes('package settings: version is required')) {
+      return 'version';
+    }
+    if (normalized.includes('application id') || normalized.includes('unique id')) {
+      return 'uniqueId';
+    }
+    if (normalized.includes('at least one screenshot is required') || normalized.includes('screenshot')) {
+      return 'screenshots';
+    }
+
+    return null;
+  }
+
+  async shareProjectFromStudio() {
+    try {
+      const project = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+      if (!project) return alert('No active project');
+
+      const selection = await (window.ModalUtils?.showSelectionList?.(
+        'Share Project',
+        'Choose how to share the current project.',
+        [
+          {
+            value: 'preview',
+            label: 'Share',
+            description: 'Provide a preview link to friends.',
+          },
+          {
+            value: 'source',
+            label: 'Share with source',
+            description: 'Provide a preview link to friends and give them permission to view the source in Studio.',
+          },
+        ],
+        { confirmText: 'Continue', cancelText: 'Cancel', defaultValue: 'preview' }
+      ) ?? Promise.resolve(null));
+
+      if (!selection) {
+        return;
+      }
+
+      if (selection === 'preview') {
+        await this.createPreviewShareLink(project, { shareSource: false });
+        return;
+      }
+
+      if (selection === 'source') {
+        await this.createPreviewShareLink(project, { shareSource: true });
+        return;
+      }
+
+      throw new Error(`Unsupported share option: ${selection}`);
+    } catch (e) {
+      console.error('[RibbonToolbar] Share failed:', e);
+      alert('Share failed: ' + (e?.message || e));
+    }
+  }
+
+  async createPreviewShareLink(project, options = {}) {
+    if (window.gameEmulator?.tabManager?.saveActiveTab) {
+      await window.gameEmulator.tabManager.saveActiveTab();
+    }
+
+    const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+    if (!svc || typeof svc.publishProject !== 'function') {
+      throw new Error('Project publish service unavailable');
+    }
+
+    window.gameEmulator?.updateStatus?.('Creating preview share link...', 'info');
+    const result = await svc.publishProject(project, {
+      shareSource: options.shareSource === true,
+    });
+    if (!result?.buildResult) {
+      throw new Error('Preview publish completed without a build summary result.');
+    }
+    if (!result?.previewShareUrl) {
+      throw new Error('Preview publish did not return a share URL.');
+    }
+
+    this.showBuildSummaryPopup(result.buildResult);
+    window.gameEmulator?.updateStatus?.(options.shareSource === true ? 'Source share link ready.' : 'Preview share link ready.', 'success');
+    this.showShareLinkDialog(
+      options.shareSource === true ? 'Share with source' : 'Share',
+      result.previewShareUrl,
+      options.shareSource === true
+        ? 'This temporary link opens the application details page and lets any signed-in user start an editable shared session. Changes stay local and are not saved back to the project.'
+        : 'This temporary link opens the application details page without an Edit button.'
+    );
+  }
+
+  async createProjectShareLink(project) {
+    if (window.gameEmulator?.tabManager?.saveActiveTab) {
+      await window.gameEmulator.tabManager.saveActiveTab();
+    }
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
+      throw new Error('Retrowww hosted project save service is unavailable.');
+    }
+
+    window.gameEmulator?.updateStatus?.('Saving project before sharing...', 'info');
+    const summary = await hostedStudioApi.saveProject(project);
+    if (!summary?.project?.uuid) {
+      throw new Error('Project save did not return a project UUID.');
+    }
+
+    const response = await fetch(`/api/projects/${encodeURIComponent(summary.project.uuid)}/share`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    const payload = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      throw new Error(payload?.error || `Project share request failed with status ${response.status}.`);
+    }
+
+    if (!payload?.shareUrl) {
+      throw new Error('Project share request did not return a share URL.');
+    }
+
+    window.gameEmulator?.updateStatus?.('Project share link ready.', 'success');
+    this.showShareLinkDialog(
+      'Share Project',
+      payload.shareUrl,
+      'This temporary link opens RetroStudio with the current project loaded.'
+    );
+  }
+
+  showShareLinkDialog(title, shareUrl, description) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog';
+    dialog.innerHTML = `
+      <div class="modal-header">
+        <h3 class="modal-title">${this.escapeHtml(title)}</h3>
+      </div>
+      <div class="modal-body">
+        <p style="color: #cccccc; margin: 0 0 14px 0; line-height: 1.5;">${this.escapeHtml(description || '')}</p>
+        <label class="modal-label" for="share-link-input">Temporary link</label>
+        <input id="share-link-input" class="modal-input" type="text" readonly value="${this.escapeHtml(shareUrl)}">
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn modal-btn-secondary" id="share-link-close">Close</button>
+        <button class="modal-btn modal-btn-secondary" id="share-link-open">Open</button>
+        <button class="modal-btn modal-btn-primary" id="share-link-copy">Copy</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const input = dialog.querySelector('#share-link-input');
+    const closeBtn = dialog.querySelector('#share-link-close');
+    const openBtn = dialog.querySelector('#share-link-open');
+    const copyBtn = dialog.querySelector('#share-link-copy');
+
+    const cleanup = () => {
+      if (document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+      }
+    };
+
+    setTimeout(() => {
+      input?.focus();
+      input?.select();
+    }, 50);
+
+    closeBtn?.addEventListener('click', cleanup);
+    openBtn?.addEventListener('click', () => {
+      window.open(shareUrl, '_blank', 'noopener');
+    });
+    copyBtn?.addEventListener('click', async () => {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        throw new Error('Clipboard API is unavailable.');
+      }
+
+      await navigator.clipboard.writeText(shareUrl);
+      window.gameEmulator?.updateStatus?.('Share link copied to clipboard.', 'success');
+      cleanup();
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        cleanup();
+      }
+    });
   }
 
   showBuildSummaryPopup(result) {
     const summary = result?.summary || {};
     const ok = result && result.success !== false;
     const title = ok ? 'Build Summary' : 'Build Failed';
-    const lines = [
-      `${title}`,
-      '',
-      `Success: ${ok ? 'yes' : 'no'}`,
-      `Total files: ${summary.total ?? 0}`,
-      `Built: ${summary.success ?? 0}`,
-      `Errors: ${summary.errors ?? 0}`,
-      `Time: ${summary.time != null ? summary.time + ' ms' : 'n/a'}`
-    ];
+    const outputFiles = Array.isArray(summary.outputFiles) ? summary.outputFiles : [];
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
 
-    if (!ok && result?.error) {
-      lines.push('', `Error: ${result.error}`);
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog build-summary-modal';
+
+    dialog.innerHTML = `
+      <div class="modal-header build-summary-header">
+        <h3 class="modal-title">${this.escapeHtml(title)}</h3>
+        <span class="build-summary-status ${ok ? 'success' : 'error'}">${ok ? 'Success' : 'Failed'}</span>
+      </div>
+      <div class="modal-body build-summary-body">
+        ${result?.error ? `<div class="build-summary-error">${this.escapeHtml(result.error)}</div>` : ''}
+        ${this.renderBuildOutputTree(outputFiles)}
+        <div class="build-summary-footer-panel">
+          <div class="build-summary-stat"><span>Total files</span><strong>${summary.total ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Built</span><strong>${summary.success ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Errors</span><strong>${summary.errors ?? 0}</strong></div>
+          <div class="build-summary-stat"><span>Time</span><strong>${summary.time != null ? this.escapeHtml(summary.time + ' ms') : 'n/a'}</strong></div>
+          <div class="build-summary-stat"><span>Output files</span><strong>${outputFiles.length}</strong></div>
+          <div class="build-summary-stat"><span>Output size</span><strong>${this.escapeHtml(summary.outputSize || '0 B')}</strong></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn modal-btn-primary" id="build-summary-ok">OK</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const okBtn = dialog.querySelector('#build-summary-ok');
+    const cleanup = () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (document.body.contains(overlay)) {
+        document.body.removeChild(overlay);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' || event.key === 'Enter') {
+        event.preventDefault();
+        cleanup();
+      }
+    };
+
+    okBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) cleanup();
+    });
+    document.addEventListener('keydown', handleKeyDown);
+    setTimeout(() => okBtn.focus(), 0);
+  }
+
+  renderBuildOutputTree(outputFiles) {
+    if (!outputFiles.length) {
+      return '<div class="build-output-empty">No build outputs were produced.</div>';
     }
 
-    // Intentional popup only for the explicit Build button flow.
-    alert(lines.join('\n'));
+    const tree = this.createBuildOutputTree(outputFiles);
+    return `
+      <details class="build-output-tree">
+        <summary>
+          <span class="build-output-tree-label">Build output</span>
+          <span class="build-output-tree-count">${outputFiles.length} files</span>
+        </summary>
+        ${this.renderBuildOutputTreeNodes(tree.children)}
+      </details>
+    `;
+  }
+
+  createBuildOutputTree(outputFiles) {
+    const root = { children: new Map() };
+    for (const output of outputFiles) {
+      const path = String(output.path || '').replace(/\\/g, '/');
+      const parts = path.split('/').filter(Boolean);
+      let node = root;
+      parts.forEach((part, index) => {
+        if (!node.children.has(part)) {
+          node.children.set(part, { name: part, children: new Map(), output: null });
+        }
+        node = node.children.get(part);
+        if (index === parts.length - 1) {
+          node.output = output;
+        }
+      });
+    }
+    return root;
+  }
+
+  renderBuildOutputTreeNodes(children) {
+    const entries = Array.from(children.values()).sort((a, b) => {
+      const aIsFolder = a.children.size > 0 && !a.output;
+      const bIsFolder = b.children.size > 0 && !b.output;
+      if (aIsFolder !== bIsFolder) return aIsFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    return `<ul class="build-output-tree-list">${entries.map((node) => this.renderBuildOutputTreeNode(node)).join('')}</ul>`;
+  }
+
+  renderBuildOutputTreeNode(node) {
+    if (node.children.size > 0 && !node.output) {
+      return `
+        <li class="build-output-tree-node folder">
+          <details>
+            <summary><span class="build-tree-expand-glyph">+</span><span class="build-tree-icon folder"></span><span class="build-tree-label">${this.escapeHtml(node.name)}</span></summary>
+            ${this.renderBuildOutputTreeNodes(node.children)}
+          </details>
+        </li>
+      `;
+    }
+
+    const outputSize = node.output?.size || `${node.output?.bytes ?? 0} B`;
+    return `
+      <li class="build-output-tree-node file">
+        <span class="build-tree-spacer"></span><span class="build-tree-icon file"></span><span class="build-tree-label">${this.escapeHtml(node.name)}</span><span class="build-tree-size">${this.escapeHtml(outputSize)}</span>
+      </li>
+    `;
+  }
+
+  escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   getPackageAssetFolder(projectName) {
@@ -935,13 +1485,19 @@ class RibbonToolbar {
           await explorer.ensurePackageScaffold(projectName);
         }
 
-        // Create default main.lua with Setup/Update stubs
+        // Ensure default main.lua with Setup/Update stubs when no Lua file exists yet
         const sourcesRoot = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi)
           ? window.ProjectPaths.getSourcesRootUi() : 'Sources';
-        const luaFolder = `${projectName}/${sourcesRoot}/Lua`;
-        const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
-        const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
-        await explorer.addFileToProject(luaFile, luaFolder, true, true);
+        const preferredLuaFolder = explorer.getPreferredManagedFolderForExtension
+          ? explorer.getPreferredManagedFolderForExtension(projectName, '.lua')
+          : `${projectName}/${sourcesRoot}/Lua`;
+        const mainLuaPath = `${preferredLuaFolder}/main.lua`;
+        if (!explorer.getNodeByPath?.(mainLuaPath)) {
+          const luaFolder = preferredLuaFolder;
+          const luaContent = `function Setup()\n\nend\n\nfunction Update(dt)\n\nend\n`;
+          const luaFile = new File([luaContent], 'main.lua', { type: 'text/plain' });
+          await explorer.addFileToProject(luaFile, luaFolder, true, true);
+        }
 
         if (typeof explorer.initializeProjectConfig === 'function') {
           await explorer.initializeProjectConfig();
@@ -999,6 +1555,12 @@ class RibbonToolbar {
 
     window.gameEmulator?.updateStatus?.('Connecting to watch...', 'info');
     const name = await this.watchClient.connect();
+    const unixSeconds = Math.floor(Date.now() / 1000);
+    const tzOffsetMinutesEast = -new Date().getTimezoneOffset();
+    const timeResponse = await this.watchClient.setTimeUnix(unixSeconds, tzOffsetMinutesEast);
+    if (timeResponse.status !== BLE.STATUS.OK) {
+      throw new Error(`SET_TIME failed: ${BLE.getStatusName(timeResponse.status)}`);
+    }
     const fwVersion = await this.watchClient.ping('version-probe');
     this.updateWatchButtonState();
     window.gameEmulator?.updateStatus?.(`Connected to ${name} — fw ${fwVersion}`, 'success');

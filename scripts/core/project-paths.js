@@ -4,12 +4,16 @@
 (function () {
   const DEFAULTS = {
   sourcesLabel: 'Sources',          // UI label for sources root
-  buildLabel: 'Game Objects',       // UI label for build root
+  buildLabel: 'Build Output',       // UI label for build root
     buildStoragePrefix: 'build/',     // Internal storage prefix for build artifacts
   };
 
   function ensureTrailingSlash(s) {
     return s.endsWith('/') ? s : s + '/';
+  }
+
+  function getProjectExplorer() {
+    return window.serviceContainer?.get?.('projectExplorer') || window.projectExplorer || null;
   }
 
   const ProjectPaths = {
@@ -23,9 +27,17 @@
       return DEFAULTS.buildLabel;
     },
 
+    getFocusedProjectName() {
+      return getProjectExplorer()?.getFocusedProjectName?.() || null;
+    },
+
     // Storage mapping
-    getBuildStoragePrefix() {
-      return DEFAULTS.buildStoragePrefix; // always lower-case and slash-terminated
+    getBuildStoragePrefix(projectName = this.getFocusedProjectName()) {
+      if (!projectName) {
+        return DEFAULTS.buildStoragePrefix;
+      }
+
+      return `${projectName}/${DEFAULTS.buildStoragePrefix}`;
     },
 
     // Common subpaths under Sources
@@ -45,6 +57,7 @@
       if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return this.getSourcesSubfolder('Music');
       if (ext === '.wav' || ext === '.sfx') return this.getSourcesSubfolder('SFX');
       if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(ext)) return this.getSourcesSubfolder('Images');
+      if (['.tilemap', '.tmj', '.tmx'].includes(ext)) return this.getSourcesSubfolder('Maps');
       if (['.pal', '.act', '.aco'].includes(ext)) return this.getSourcesSubfolder('Palettes');
       if (ext === '.sprite') return this.getSourcesSubfolder('Sprites');
       return this.getSourcesSubfolder('Binary');
@@ -68,13 +81,24 @@
       const sourcesUi = this.getSourcesRootUi();
       const buildUi = this.getBuildRootUi();
       const buildStorage = this.getBuildStoragePrefix().replace(/\/$/, ''); // e.g. 'build'
+      const sourceFolders = [
+        'Lua',
+        'Music',
+        'SFX',
+        'Images',
+        'Maps',
+        'Palettes',
+        'Sprites',
+        'Binary'
+      ];
       const nonProjectRoots = new Set([
         sourcesUi,
         buildUi,
         buildStorage,
         buildStorage.toUpperCase(), // 'BUILD' safeguard
         'Build',
-        'build'
+        'build',
+        ...sourceFolders
       ]);
 
       if (nonProjectRoots.has(first)) {
@@ -91,38 +115,174 @@
       return `${project}/${cleaned}`;
     },
 
+    isManagedProjectPath(path) {
+      if (!path || typeof path !== 'string') return false;
+
+      const normalized = String(path).replace(/\\/g, '/');
+      const { rest } = this.parseProjectPath(normalized);
+      const candidate = rest || normalized;
+      const firstSegment = candidate.split('/')[0] || '';
+      const buildStorage = DEFAULTS.buildStoragePrefix.replace(/\/$/, '');
+      const sourcesRoot = this.getSourcesRootUi();
+      const buildRoot = this.getBuildRootUi();
+      const sourceFolders = new Set([
+        'Lua',
+        'Music',
+        'SFX',
+        'Images',
+        'Maps',
+        'Palettes',
+        'Sprites',
+        'Binary',
+        'Package'
+      ]);
+
+      return firstSegment === sourcesRoot
+        || firstSegment === buildRoot
+        || firstSegment === 'Build'
+        || firstSegment === buildStorage
+        || sourceFolders.has(firstSegment);
+    },
+
+    scopeToProject(path, projectName = this.getFocusedProjectName()) {
+      if (!path || typeof path !== 'string') return path;
+
+      const normalized = String(path).replace(/\\/g, '/');
+      const parsed = this.parseProjectPath(normalized);
+      if (parsed.project) {
+        return normalized;
+      }
+
+      if (!projectName || !this.isManagedProjectPath(normalized)) {
+        return normalized;
+      }
+
+      return this.withProjectPrefix(projectName, normalized);
+    },
+
+    rebaseManagedPath(path, owningPath) {
+      if (!path || typeof path !== 'string') return path;
+
+      const normalizedPath = String(path).replace(/\\/g, '/');
+      const normalizedOwner = String(owningPath || '').replace(/\\/g, '/');
+      const resourceParsed = this.parseProjectPath(normalizedPath);
+      const ownerParsed = this.parseProjectPath(normalizedOwner);
+      const resourceRest = resourceParsed.rest || normalizedPath;
+
+      if (!ownerParsed.project || !this.isManagedProjectPath(resourceRest)) {
+        return normalizedPath;
+      }
+
+      return this.withProjectPrefix(ownerParsed.project, resourceRest);
+    },
+
+    // Strip a project-name prefix from a managed resource reference, leaving a
+    // project-relative path (e.g. 'MyGame/Sources/Images/x.png' -> 'Sources/Images/x.png').
+    // Paths that are already project-relative, or that are not managed project
+    // paths, are returned unchanged. This keeps asset references portable so a
+    // copied/renamed project resolves them against the currently focused project.
+    toProjectRelative(path) {
+      if (!path || typeof path !== 'string') return path;
+      const normalized = String(path).replace(/\\/g, '/');
+      const parsed = this.parseProjectPath(normalized);
+      if (parsed.project && this.isManagedProjectPath(parsed.rest)) {
+        return parsed.rest;
+      }
+      return normalized;
+    },
+
+    // Known internal reference fields per asset type that may carry a stale
+    // project-name prefix. Used to normalize stored references to project-relative.
+    _assetReferenceFields: {
+      '.frameset': ['imagePath'],
+      '.texture': ['sourceImage', 'sourceImagePath', 'palettePath'],
+      '.sprite': ['imagePath'],
+      '.tilemap': ['sourceTexturePath', 'texturePath', 'runtimeTexturePath', 'imagePath'],
+    },
+
+    // Rewrite an asset's JSON text so all internal resource references are
+    // project-relative. Returns the (possibly rewritten) text. Non-asset or
+    // unparseable content is returned unchanged.
+    rewriteAssetReferencesToProjectRelative(fileName, textContent) {
+      if (typeof textContent !== 'string' || !textContent.trim()) return textContent;
+      const name = String(fileName || '').toLowerCase();
+      const dotIdx = name.lastIndexOf('.');
+      const ext = dotIdx >= 0 ? name.substring(dotIdx) : '';
+      const fields = this._assetReferenceFields[ext];
+      if (!fields) return textContent;
+
+      let data;
+      try {
+        data = JSON.parse(textContent);
+      } catch (_) {
+        return textContent;
+      }
+      if (!data || typeof data !== 'object') return textContent;
+
+      let changed = false;
+      const relabel = (obj, key) => {
+        if (obj && typeof obj === 'object' && typeof obj[key] === 'string' && obj[key]) {
+          const next = this.toProjectRelative(obj[key]);
+          if (next !== obj[key]) {
+            obj[key] = next;
+            changed = true;
+          }
+        }
+      };
+
+      for (const field of fields) {
+        relabel(data, field);
+        if (data.metadata && typeof data.metadata === 'object') {
+          relabel(data.metadata, field);
+        }
+      }
+
+      // Sprites reference their framesets via per-entry paths.
+      if (ext === '.sprite' && Array.isArray(data.framesets)) {
+        for (const fs of data.framesets) {
+          relabel(fs, 'path');
+          relabel(fs, 'imagePath');
+        }
+      }
+
+      if (!changed) return textContent;
+      return JSON.stringify(data, null, 2);
+    },
+
     // Convert any UI-ish path to storage path
     // - Map UI build root to storage build/
     // - Normalize any legacy 'Build/' casing to 'build/'
   normalizeStoragePath(path) {
       if (!path || typeof path !== 'string') return path;
-      const p = String(path).replace(/\\/g, '/');
-      const { /*project,*/ rest } = this.parseProjectPath(p);
+      const p = this.scopeToProject(path);
+      const { project, rest } = this.parseProjectPath(p);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
 
       // Replace UI build root (supports spaces) with storage build prefix
       let out = (rest || '').replace(new RegExp('^' + escapeRegExp(buildUi), 'i'), buildStorage);
       // Also normalize legacy 'Build/' to 'build/'
       out = out.replace(/^Build\//, buildStorage);
-      return out;
+      return project ? this.withProjectPrefix(project, out) : out;
     },
 
     // Map storage build/ to UI build label for display
     mapStorageToUi(path) {
       if (!path || typeof path !== 'string') return path;
-      const { /*project,*/ rest } = this.parseProjectPath(path);
+      const scopedPath = this.scopeToProject(path);
+      const { project, rest } = this.parseProjectPath(scopedPath);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       const mapped = (rest || '').replace(new RegExp('^' + escapeRegExp(buildStorage)), buildUi);
-      return mapped;
+      return project ? this.withProjectPrefix(project, mapped) : mapped;
     },
 
     // Compute output artifact storage path from a source UI path
     toBuildOutputPath(sourceUiPath) {
-      const { /*project,*/ rest } = this.parseProjectPath(sourceUiPath);
+      const scopedPath = this.scopeToProject(sourceUiPath);
+      const { project, rest } = this.parseProjectPath(scopedPath);
       const sourcesUi = ensureTrailingSlash(this.getSourcesRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       let out;
       if (rest && rest.startsWith(sourcesUi)) {
         out = rest.replace(new RegExp('^' + escapeRegExp(sourcesUi)), buildStorage);
@@ -131,8 +291,7 @@
         const trimmed = (rest || '').replace(/^\/?/, '');
         out = buildStorage + trimmed;
       }
-      // Storage paths are not project-prefixed
-      return out;
+      return project ? this.withProjectPrefix(project, out) : out;
     },
 
     // Classification helpers
@@ -140,7 +299,7 @@
       if (!path) return false;
       const { rest } = this.parseProjectPath(path);
       const buildUi = ensureTrailingSlash(this.getBuildRootUi());
-      const buildStorage = this.getBuildStoragePrefix();
+      const buildStorage = DEFAULTS.buildStoragePrefix;
       return (rest || '').startsWith(buildStorage) || (rest || '').startsWith(buildUi) || (rest || '').startsWith('Build/');
     },
 

@@ -203,6 +203,25 @@ function parseRspHeader(payload) {
   return { status, requestId, body };
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 class RetroWatchBleClient {
   constructor(opts = {}) {
     this.serviceUuid = (opts.serviceUuid || SERVICE_UUID).toLowerCase();
@@ -248,14 +267,132 @@ class RetroWatchBleClient {
     }
   }
 
+  async _runBleStep(phaseBase, label, action, timeoutMs = 10000, extra = {}) {
+    this._emitDebug({
+      phase: `${phaseBase}_start`,
+      label,
+      timeoutMs,
+      ...extra,
+    });
+
+    try {
+      const result = await withTimeout(Promise.resolve().then(action), timeoutMs, label);
+      this._emitDebug({
+        phase: `${phaseBase}_ok`,
+        label,
+        timeoutMs,
+        ...extra,
+      });
+      return result;
+    } catch (err) {
+      this._emitDebug({
+        phase: `${phaseBase}_failed`,
+        label,
+        timeoutMs,
+        error: err && err.message ? err.message : String(err),
+        ...extra,
+      });
+      throw err;
+    }
+  }
+
+  async _inspectGattDatabase() {
+    const services = await this._runBleStep(
+      "gatt_service_list",
+      "getPrimaryServices()",
+      () => this.server.getPrimaryServices(),
+      10000
+    );
+
+    const summaries = [];
+    for (const service of services) {
+      const serviceUuid = service && service.uuid ? String(service.uuid).toLowerCase() : "(unknown-service)";
+      let characteristics = [];
+      let error = null;
+
+      try {
+        const chars = await this._runBleStep(
+          "gatt_characteristic_list",
+          `getCharacteristics(${serviceUuid})`,
+          () => service.getCharacteristics(),
+          10000,
+          { serviceUuid }
+        );
+
+        characteristics = chars.map((characteristic) => ({
+          uuid: characteristic && characteristic.uuid ? String(characteristic.uuid).toLowerCase() : "(unknown-characteristic)",
+          properties: characteristic && characteristic.properties
+            ? Object.entries(characteristic.properties)
+                .filter(([, enabled]) => !!enabled)
+                .map(([name]) => name)
+            : [],
+        }));
+      } catch (err) {
+        error = err && err.message ? err.message : String(err);
+      }
+
+      const summary = {
+        serviceUuid,
+        characteristics,
+        error,
+      };
+      summaries.push(summary);
+
+      this._emitDebug({
+        phase: "gatt_service_inventory",
+        serviceUuid,
+        characteristicCount: characteristics.length,
+        error,
+      });
+
+      for (const characteristic of characteristics) {
+        this._emitDebug({
+          phase: "gatt_characteristic_inventory",
+          serviceUuid,
+          characteristicUuid: characteristic.uuid,
+          properties: characteristic.properties,
+        });
+      }
+    }
+
+    return summaries;
+  }
+
+  _formatDiscoveryFailureMessage(err, gattInventory) {
+    const message = err && err.message ? err.message : String(err);
+    const available = Array.isArray(gattInventory)
+      ? gattInventory.map((entry) => entry.serviceUuid).filter(Boolean)
+      : [];
+    const availableText = available.length ? available.join(", ") : "(none discovered)";
+    const timedOut = /timed out/i.test(message);
+
+    if (timedOut) {
+      return `BLE service discovery timed out after GATT connected. This often means another browser tab, webpage, or app is still connected to the watch and is blocking access. Close other BLE pages/apps using the watch, disconnect them, and retry. Expected service: ${this.serviceUuid}. Visible services: ${availableText}. Original error: ${message}`;
+    }
+
+    return `Primary service ${this.serviceUuid} not found or could not be opened. Visible services: ${availableText}. This can happen if another browser tab or app still owns the BLE link. Original error: ${message}. Re-select the device from Connect and retry.`;
+  }
+
   async connect() {
     if (!navigator.bluetooth) {
       throw new Error("Web Bluetooth is not available in this browser");
     }
 
+    this._emitDebug({
+      phase: "request_device_start",
+      serviceUuid: this.serviceUuid,
+      filters: [{ namePrefix: "RetroWatch" }],
+    });
+
     this.device = await navigator.bluetooth.requestDevice({
       filters: [{ namePrefix: "RetroWatch" }],
       optionalServices: [this.serviceUuid],
+    });
+
+    this._emitDebug({
+      phase: "request_device_selected",
+      name: this.device && this.device.name ? this.device.name : "RetroWatch",
+      id: this.device && this.device.id ? this.device.id : null,
     });
 
     this.knownDevice = this.device;
@@ -275,20 +412,45 @@ class RetroWatchBleClient {
 
     this.device = dev;
 
+    this._emitDebug({
+      phase: "reconnect_start",
+      name: dev && dev.name ? dev.name : "RetroWatch",
+      serviceUuid: this.serviceUuid,
+      rxCharacteristicUuid: this.rxCharacteristicUuid,
+      txCharacteristicUuid: this.txCharacteristicUuid,
+    });
+
     this.device.removeEventListener("gattserverdisconnected", this._onDisconnected);
     this.device.addEventListener("gattserverdisconnected", this._onDisconnected);
 
-    this.server = await this.device.gatt.connect();
+    this.server = await this._runBleStep(
+      "gatt_connect",
+      "device.gatt.connect()",
+      () => this.device.gatt.connect(),
+      10000,
+      { name: this.device && this.device.name ? this.device.name : "RetroWatch" }
+    );
+    this._emitDebug({
+      phase: "gatt_connected",
+      name: this.device && this.device.name ? this.device.name : "RetroWatch",
+    });
+    let gattInventory = [];
     try {
-      this.service = await this.server.getPrimaryService(this.serviceUuid);
+      gattInventory = await this._inspectGattDatabase();
+
+      this.service = await this._runBleStep(
+        "service_discovery",
+        `getPrimaryService(${this.serviceUuid})`,
+        () => this.server.getPrimaryService(this.serviceUuid),
+        10000,
+        { serviceUuid: this.serviceUuid }
+      );
+      this._emitDebug({
+        phase: "service_ready",
+        serviceUuid: this.serviceUuid,
+      });
     } catch (err) {
-      let available = [];
-      try {
-        const services = await this.server.getPrimaryServices();
-        available = services.map((s) => (s && s.uuid ? String(s.uuid).toLowerCase() : ""));
-      } catch (listErr) {
-        // Ignore secondary diagnostic errors.
-      }
+      const available = gattInventory.map((entry) => entry.serviceUuid).filter(Boolean);
 
       if (this.server && this.server.connected) {
         this.server.disconnect();
@@ -300,20 +462,54 @@ class RetroWatchBleClient {
       this.notifyCharacteristic = null;
       this.clearKnownDevice();
 
-      const availableText = available.length ? available.join(", ") : "(none discovered)";
-      throw new Error(`Primary service ${this.serviceUuid} not found. Available: ${availableText}. Re-select the device from Connect.`);
+      throw new Error(this._formatDiscoveryFailureMessage(err, gattInventory));
     }
-    this.writeCharacteristic = await this.service.getCharacteristic(this.rxCharacteristicUuid);
+    this.writeCharacteristic = await this._runBleStep(
+      "write_characteristic",
+      `getCharacteristic(${this.rxCharacteristicUuid})`,
+      () => this.service.getCharacteristic(this.rxCharacteristicUuid),
+      10000,
+      { characteristicUuid: this.rxCharacteristicUuid }
+    );
 
-    this.notifyCharacteristic = await this.service.getCharacteristic(this.txCharacteristicUuid);
+    this.notifyCharacteristic = await this._runBleStep(
+      "notify_characteristic",
+      `getCharacteristic(${this.txCharacteristicUuid})`,
+      () => this.service.getCharacteristic(this.txCharacteristicUuid),
+      10000,
+      { characteristicUuid: this.txCharacteristicUuid }
+    );
+
+    this._emitDebug({
+      phase: "characteristics_ready",
+      rxCharacteristicUuid: this.rxCharacteristicUuid,
+      txCharacteristicUuid: this.txCharacteristicUuid,
+    });
 
     this.characteristic = this.writeCharacteristic;
 
-    await this.notifyCharacteristic.startNotifications();
+    await this._runBleStep(
+      "start_notifications",
+      `startNotifications(${this.txCharacteristicUuid})`,
+      () => this.notifyCharacteristic.startNotifications(),
+      10000,
+      { characteristicUuid: this.txCharacteristicUuid }
+    );
     this.notifyCharacteristic.removeEventListener("characteristicvaluechanged", this._onNotification);
     this.notifyCharacteristic.addEventListener("characteristicvaluechanged", this._onNotification);
 
-    await this._refreshTransportInfo();
+    this._emitDebug({
+      phase: "notifications_started",
+      txCharacteristicUuid: this.txCharacteristicUuid,
+    });
+
+    await this._runBleStep(
+      "transport_info_refresh",
+      "_refreshTransportInfo()",
+      () => this._refreshTransportInfo(),
+      10000,
+      { serviceUuid: this.serviceUuid }
+    );
 
     return this.device.name || "RetroWatch";
   }
@@ -391,6 +587,14 @@ class RetroWatchBleClient {
     const packet = encodePacket(type, payload);
     const writeJob = this.txLock.then(async () => {
       this._assertConnected();
+      this._emitDebug({
+        phase: "tx_raw",
+        msgType: type,
+        msgName: msgTypeName(type),
+        packetSize: packet.length,
+        payloadHex: bytesToHex(payload || new Uint8Array(0), 48),
+        packetHex: bytesToHex(packet, 64),
+      });
       await this.writeCharacteristic.writeValueWithoutResponse(packet);
     });
 
@@ -509,6 +713,26 @@ class RetroWatchBleClient {
       requestIdInHeader: false,
     });
     return bytesToText(packet.payload);
+  }
+
+  async pingLegacy(dataText = "hello") {
+    const reqId = this._nextRequestId();
+    const payload = concatBytes([u16LE(reqId), textToBytes(dataText)]);
+    const packet = await this.sendRequest(MSG.PING, payload, {
+      expectType: MSG.PONG,
+      timeoutMs: 2500,
+      requestId: reqId,
+      requestIdInHeader: true,
+    });
+
+    const parsed = parseRspHeader(packet.payload);
+    return {
+      requestId: parsed.requestId,
+      status: parsed.status,
+      text: bytesToText(parsed.body),
+      body: parsed.body,
+      rawPayload: packet.payload,
+    };
   }
 
   async setTimeUnix(unixSeconds, tzOffsetMinutesEast = 0) {
@@ -1307,6 +1531,7 @@ class RetroWatchBleClient {
             msgName: msgTypeName(type),
             requestId: requestId == null ? null : requestId,
             payloadLen: payload ? payload.length : 0,
+            requestIdInHeader,
           });
           await this.sendRaw(type, payload);
         } catch (err) {
@@ -1328,7 +1553,19 @@ class RetroWatchBleClient {
       const dv = event.target.value;
       const bytes = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
       packet = decodePacket(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      this._emitDebug({
+        phase: "rx",
+        msgType: packet.type,
+        msgName: msgTypeName(packet.type),
+        packetSize: packet.size,
+        payloadLen: packet.payload.length,
+        payloadHex: bytesToHex(packet.payload, 64),
+      });
     } catch (err) {
+      this._emitDebug({
+        phase: "rx_decode_error",
+        error: err && err.message ? err.message : String(err),
+      });
       return;
     }
 
@@ -1372,6 +1609,10 @@ class RetroWatchBleClient {
     this.characteristic = null;
     this.writeCharacteristic = null;
     this.notifyCharacteristic = null;
+    this._emitDebug({
+      phase: "device_disconnected",
+      name: this.device && this.device.name ? this.device.name : (this.knownDevice && this.knownDevice.name ? this.knownDevice.name : "RetroWatch"),
+    });
     for (const cb of this.disconnectListeners) {
       try {
         cb();

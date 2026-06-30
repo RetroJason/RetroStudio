@@ -1,7 +1,7 @@
 // font-builder.js
-// Build-time font processor: reads .font metadata and emits the runtime .d2
-// and .fnt assets. If editor-generated sidecars already exist they are copied;
-// otherwise the builder regenerates them directly from the source font.
+// Build-time font processor: reads .font metadata and emits runtime .d2 + .fnt
+// assets by rendering the font atlas and passing it through the shared D2File
+// texture generator.
 
 console.log('[FontBuilder] Class definition loading');
 
@@ -19,13 +19,9 @@ class FontBuilder extends BaseBuilder {
    *   ...
    * }
    *
-  * The FontEditor can create companion files alongside the .font:
-   *   name.d2   — D2TX atlas texture
-   *   name.fnt  — BMFont binary glyph data
-   *   name.png  — source atlas image (not needed in build output)
-   *
-  * This builder prefers those sidecars when present, but it can also
-  * regenerate both outputs directly from the .font metadata + source font.
+  * The FontEditor previews runtime outputs, but the build always regenerates
+  * them from metadata so the D2 header and payload are produced by the
+  * shared D2File generator.
    */
   async build(file) {
     const tag = '[FontBuilder]';
@@ -47,32 +43,11 @@ class FontBuilder extends BaseBuilder {
 
       const basePath = file.path.replace(/\.font$/i, '');
 
-      // ── 2. Load or generate runtime outputs ──────────────────────
-      const sourceD2Path = basePath + '.d2';
-      const sourceD2Content = await this._loadFileContent(sourceD2Path);
-      const sourceFntPath = basePath + '.fnt';
-      const sourceFntContent = await this._loadFileContent(sourceFntPath);
-
-      let d2Bytes = this._toUint8Array(sourceD2Content);
-      let fntBytes = this._toUint8Array(sourceFntContent);
-      let generatedFromSource = false;
-
-      const hasValidD2 = !!(d2Bytes && d2Bytes.length >= 32 &&
-        d2Bytes[0] === 0x44 && d2Bytes[1] === 0x32 &&
-        d2Bytes[2] === 0x54 && d2Bytes[3] === 0x58);
-      const hasValidFnt = !!(fntBytes && fntBytes.length >= 4 &&
-        fntBytes[0] === 0x42 && fntBytes[1] === 0x4D &&
-        fntBytes[2] === 0x46 && fntBytes[3] === 0x03);
-
-      if (hasValidD2 && hasValidFnt) {
-        console.log(`${tag} Loaded source sidecars: ${sourceD2Path}, ${sourceFntPath}`);
-      } else {
-        const generated = await this._generateOutputsFromMetadata(fontJson, basePath);
-        d2Bytes = generated.d2Bytes;
-        fntBytes = generated.fntBytes;
-        generatedFromSource = true;
-        console.log(`${tag} Generated runtime outputs from metadata for ${file.path}`);
-      }
+      // ── 2. Generate runtime outputs through the shared texture path ─
+      const generated = await this._generateOutputsFromMetadata(fontJson, basePath);
+      const d2Bytes = generated.d2Bytes;
+      const fntBytes = generated.fntBytes;
+      console.log(`${tag} Generated runtime outputs from metadata for ${file.path}`);
 
       // Make a mutable copy for header patching
       const output = new Uint8Array(d2Bytes.length);
@@ -83,7 +58,7 @@ class FontBuilder extends BaseBuilder {
       await this._saveFile(d2OutputPath, output);
       console.log(`${tag} ✓ Saved .d2: ${d2OutputPath} (${output.length} bytes)`);
 
-      // ── 4. Copy .fnt to build output ─────────────────────────────
+      // ── 4. Save .fnt to build output ─────────────────────────────
       let fntSaved = false;
       let fntOutputPath = null;
       if (fntBytes) {
@@ -109,7 +84,8 @@ class FontBuilder extends BaseBuilder {
           format: fontJson.outputPixelFormat || 'd2_mode_alpha8',
           binarySize: output.length - 32,
           fntSaved,
-          generatedFromSource
+          generatedFromSource: true,
+          rotation: 0
         }
       };
 

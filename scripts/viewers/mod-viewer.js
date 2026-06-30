@@ -2,21 +2,29 @@
 // Viewer plugin for MOD/XM/S3M/IT files
 
 class ModViewer extends ViewerBase {
-  constructor(path) {
+  constructor(path, options = {}) {
     super(path);
+    this.options = options;
     this.audioResource = null;
+    this.loadedResourceId = null;
+    this.loadedTitle = null;
+    this.loadedFormatName = null;
+    this.ownsLoadedResource = false;
     this.isPlaying = false;
     this.isPaused = false;
+    this.isLoadingResource = false;
+    this.isResourceReady = false;
+    this.currentLoadPromise = null;
     this.duration = 0;
     this.currentTime = 0;
     
     // UI elements
-    this.playPauseButton = null;
-    this.progressBar = null;
-    this.currentTimeSpan = null;
-    this.durationSpan = null;
-    this.volumeSlider = null;
-    this.titleSpan = null;
+    this.playPauseButton = this.playPauseButton || null;
+    this.progressBar = this.progressBar || null;
+    this.currentTimeSpan = this.currentTimeSpan || null;
+    this.durationSpan = this.durationSpan || null;
+    this.volumeSlider = this.volumeSlider || null;
+    this.titleSpan = this.titleSpan || null;
     
     // Progress tracking
     this.progressInterval = null;
@@ -28,8 +36,41 @@ class ModViewer extends ViewerBase {
     this.frequencyData = null;
     this.animationFrame = null;
     this.isVisualizationActive = false;
-    
-  this.loadAudioResource();
+    this.visualizationCanvas = this.visualizationCanvas || null;
+
+    if (this.options.deferLoad) {
+      this.updateStatus(this.options.initialStatus || 'Select a module to preview.');
+      this.updateTitleDisplay();
+      this.updateFormatInfo(this.options.initialFormat || 'MOD File');
+      this.updateTimeDisplay();
+      this.updateProgressBar();
+    } else {
+      this.loadAudioResource();
+    }
+  }
+
+  get audioHost() {
+    return window.serviceContainer?.get?.('studioAudioService') || null;
+  }
+
+  get audioEngine() {
+    return window.serviceContainer?.get?.('audioEngine') || this.audioHost?.audioEngine || null;
+  }
+
+  notifyPlaybackStateChanged() {
+    const callback = this.options && typeof this.options.onPlaybackStateChange === 'function'
+      ? this.options.onPlaybackStateChange
+      : null;
+    if (!callback) {
+      return;
+    }
+
+    callback({
+      isPlaying: this.isPlaying,
+      isPaused: this.isPaused,
+      title: this.loadedTitle,
+      resourceId: this.getActiveResourceId(),
+    });
   }
   
   createActions(actionsContainer) {
@@ -48,7 +89,8 @@ class ModViewer extends ViewerBase {
   }
   
   createBody(bodyContainer) {
-  const displayName = this.getFileName();
+    const viewOptions = this.options || {};
+    const displayName = this.getDisplayTitle();
     bodyContainer.innerHTML = `
       <div class="mod-player">
         <!-- Song Title -->
@@ -96,11 +138,11 @@ class ModViewer extends ViewerBase {
         <div class="song-info">
           <div class="info-item">
             <strong>STATUS:</strong>
-            <span id="loadStatus">Loading...</span>
+            <span id="loadStatus">${this.escapeHtml(viewOptions.initialStatus || 'Loading...')}</span>
           </div>
           <div class="info-item">
             <strong>FORMAT:</strong>
-            <span id="formatInfo">MOD File</span>
+            <span id="formatInfo">${this.escapeHtml(viewOptions.initialFormat || 'MOD File')}</span>
           </div>
         </div>
       </div>
@@ -137,6 +179,7 @@ class ModViewer extends ViewerBase {
     this.updateTimeDisplay();
     this.updateProgressBar();
     this.setupVolumeDisplay();
+    this.updatePlaybackAvailability();
     
     // Setup control event handlers
     this.setupPlayerControls();
@@ -145,8 +188,149 @@ class ModViewer extends ViewerBase {
     this.setupFFTVisualization();
   }
 
+  escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  getDisplayTitle() {
+    const viewOptions = this.options || {};
+    return this.loadedTitle || viewOptions.displayName || this.getFileName();
+  }
+
   getFileName() {
     return this.path ? this.path.split('/').pop() || this.path.split('\\').pop() : 'Unknown';
+  }
+
+  getActiveResourceId() {
+    if (this.loadedResourceId) {
+      return this.loadedResourceId;
+    }
+
+    if (!this.audioHost) {
+      return null;
+    }
+
+    return this.audioHost.getLoadedResourceId(this.path || this.getFileName());
+  }
+
+  ensureModResourceIsReady(resource, resourceId, contextLabel) {
+    if (!resource) {
+      throw new Error(`${contextLabel}: resource ${resourceId} is missing from the audio engine`);
+    }
+
+    if (resource.type === 'mod' && !(resource.duration > 0)) {
+      throw new Error(`${contextLabel}: MOD resource ${resourceId} loaded without a duration`);
+    }
+  }
+
+  updateTitleDisplay() {
+    if (this.titleSpan) {
+      this.titleSpan.textContent = this.getDisplayTitle();
+    }
+  }
+
+  updatePlaybackAvailability() {
+    if (!this.playPauseButton) {
+      return;
+    }
+
+    const isAvailable = !this.isLoadingResource
+      && !!this.audioEngine
+      && !!this.audioHost
+      && !!this.audioResource
+      && !!this.getActiveResourceId();
+
+    this.isResourceReady = isAvailable;
+    this.playPauseButton.disabled = !isAvailable;
+    this.playPauseButton.setAttribute('aria-disabled', String(!isAvailable));
+    this.playPauseButton.title = this.isLoadingResource
+      ? 'Loading audio resource...'
+      : (isAvailable ? 'Play or pause module' : 'Audio resource not ready');
+  }
+
+  updateFormatInfo(formatName = null) {
+    const formatElement = this.element ? this.element.querySelector('#formatInfo') : null;
+    if (!formatElement) {
+      return;
+    }
+
+    const fallbackFormat = this.getFormatName((this.getFileName().match(/\.[^.]+$/) || ['.mod'])[0].toLowerCase());
+    formatElement.textContent = formatName || this.loadedFormatName || fallbackFormat;
+  }
+
+  releaseOwnedResource() {
+    if (!this.ownsLoadedResource || !this.loadedResourceId || !this.audioEngine) {
+      return;
+    }
+
+    this.audioEngine.unloadResource(this.loadedResourceId);
+    this.ownsLoadedResource = false;
+  }
+
+  async setResourceLoader(resourceLoader, options = {}) {
+    if (this.isPlaying) {
+      this.stopPlayback();
+    }
+
+    this.options = this.options || {};
+    this.releaseOwnedResource();
+    this.options.resourceLoader = resourceLoader;
+    this.options.deferLoad = false;
+    this.options.displayName = options.displayName || null;
+    this.options.initialStatus = options.initialStatus || 'Loading preview...';
+    this.loadedResourceId = null;
+    this.loadedTitle = options.displayName || null;
+    this.loadedFormatName = options.formatName || null;
+    this.audioResource = null;
+    this.currentTime = 0;
+    this.duration = 0;
+    this.isResourceReady = false;
+
+    this.updateTitleDisplay();
+    this.updateFormatInfo(options.formatName || null);
+    this.updateTimeDisplay();
+    this.updateProgressBar();
+    this.updateStatus(this.options.initialStatus);
+    this.updatePlaybackAvailability();
+
+    await this.loadAudioResource();
+    this.notifyPlaybackStateChanged();
+  }
+
+  clearLoadedResource(status = 'Select a module to preview.', formatName = 'MOD File') {
+    if (this.isPlaying) {
+      this.stopPlayback();
+    }
+
+    this.options = this.options || {};
+    this.options.resourceLoader = null;
+    this.options.deferLoad = true;
+    this.releaseOwnedResource();
+    this.audioResource = null;
+    this.loadedResourceId = null;
+    this.loadedTitle = null;
+    this.loadedFormatName = null;
+    this.currentTime = 0;
+    this.duration = 0;
+    this.isPlaying = false;
+    this.isPaused = false;
+    this.isLoadingResource = false;
+    this.currentLoadPromise = null;
+    this.isResourceReady = false;
+
+    this.updateTitleDisplay();
+    this.updateFormatInfo(formatName);
+    this.updateStatus(status);
+    this.updatePlayPauseButton();
+    this.updatePlaybackAvailability();
+    this.updateTimeDisplay();
+    this.updateProgressBar();
+    this.notifyPlaybackStateChanged();
   }
   
   setupFFTVisualization() {
@@ -209,14 +393,14 @@ class ModViewer extends ViewerBase {
   }
   
   setupAudioAnalyser() {
-    if (!window.gameEditor || !window.gameEditor.audioEngine || !window.gameEditor.audioEngine.audioContext) {
+    if (!this.audioEngine || !this.audioEngine.audioContext) {
       console.warn('[ModViewer] Audio context not available for FFT analysis');
       return false;
     }
     
     try {
       // Create analyser node
-      this.analyser = window.gameEditor.audioEngine.audioContext.createAnalyser();
+      this.analyser = this.audioEngine.audioContext.createAnalyser();
       this.analyser.fftSize = 128; // 64 frequency bins
       this.analyser.smoothingTimeConstant = 0.8;
       
@@ -226,10 +410,10 @@ class ModViewer extends ViewerBase {
       // Try to connect to the worklet node if available
       // Note: This is a simple connection approach - we may need to enhance the audio engine
       // to provide a proper analysis tap in the future
-      if (window.gameEditor.audioEngine.workletNode) {
+      if (this.audioEngine.workletNode) {
         try {
           // Simple connection to analyser (non-destructive)
-          window.gameEditor.audioEngine.workletNode.connect(this.analyser);
+          this.audioEngine.workletNode.connect(this.analyser);
           console.log('[ModViewer] Audio analyser connected to worklet node');
         } catch (connectError) {
           console.warn('[ModViewer] Could not connect to worklet, using fallback visualization');
@@ -491,10 +675,10 @@ class ModViewer extends ViewerBase {
           volumeDisplay.textContent = e.target.value + '%';
         }
         
-        if (this.audioResource && window.gameEditor) {
-          const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+        if (this.audioResource && this.audioEngine) {
+          const resourceId = this.getActiveResourceId();
           if (resourceId) {
-            window.gameEditor.audioEngine.setSongVolume(resourceId, volume);
+            this.audioEngine.setSongVolume(resourceId, volume);
           }
         }
       });
@@ -545,21 +729,70 @@ class ModViewer extends ViewerBase {
   }
   
   async loadAudioResource() {
-    if (!window.gameEditor) {
+    if (this.isLoadingResource && this.currentLoadPromise) {
+      return this.currentLoadPromise;
+    }
+
+    if (!this.audioHost || !this.audioEngine) {
+      this.isResourceReady = false;
+      this.updatePlaybackAvailability();
       this.updateStatus('Audio engine not available');
       return;
     }
 
-    try {
+    this.isLoadingResource = true;
+    this.isResourceReady = false;
+    this.updatePlaybackAvailability();
+
+    this.currentLoadPromise = (async () => {
+      if (typeof this.options.resourceLoader === 'function') {
+        try {
+          const result = await this.options.resourceLoader();
+          if (!result || !result.resourceId) {
+            throw new Error('Preview loader did not return a resource.');
+          }
+
+          this.loadedResourceId = result.resourceId;
+          this.audioResource = result.resource || this.audioEngine.getResource(result.resourceId);
+          this.ensureModResourceIsReady(this.audioResource, result.resourceId, 'Preview resource load failed');
+
+          this.loadedTitle = result.title || this.loadedTitle;
+          this.loadedFormatName = result.format || this.loadedFormatName;
+          this.ownsLoadedResource = Boolean(result.ownsResource);
+          this.duration = this.audioResource.duration || 0;
+
+          this.updateTitleDisplay();
+          this.updateFormatInfo(result.format || null);
+          this.updateStatus(result.status || 'Loaded');
+          this.updateMetadata();
+          this.updateTimeDisplay();
+          this.updateProgressBar();
+          return;
+        } catch (error) {
+          console.error('[ModViewer] Failed to load injected audio resource:', error);
+          this.updateStatus(`Error: ${error.message}`);
+          throw error;
+        }
+      }
+
       const name = this.getFileName();
+      const audioPath = this.path || name;
       console.log('[ModViewer] Loading audio resource for:', name);
+      if (!this.audioHost || !this.audioEngine) {
+        this.updateStatus('Studio audio service not available');
+        return;
+      }
       
       // First try to get already loaded resource
-      let resourceId = window.gameEditor.getLoadedResourceId(name);
+      let resourceId = this.audioHost.getLoadedResourceId(audioPath);
       
       if (resourceId) {
         // File already loaded
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+        this.loadedResourceId = resourceId;
+        this.ownsLoadedResource = false;
+        this.loadedFormatName = this.getFormatName((name.match(/\.[^.]+$/) || ['.mod'])[0].toLowerCase());
+        this.audioResource = this.audioEngine.getResource(resourceId);
+        this.ensureModResourceIsReady(this.audioResource, resourceId, 'Project MOD load failed');
         console.log(`[ModViewer] File already loaded: ${name}`);
         
         // Get duration from the resource
@@ -569,6 +802,8 @@ class ModViewer extends ViewerBase {
         }
         
         this.updateStatus('Loaded');
+          this.updateTitleDisplay();
+          this.updateFormatInfo();
         this.updateMetadata();
         this.updateTimeDisplay();
         this.updateProgressBar();
@@ -579,32 +814,40 @@ class ModViewer extends ViewerBase {
       console.log('[ModViewer] File not loaded, loading on demand...');
       this.updateStatus('Loading...');
       
-      resourceId = await window.gameEditor.loadAudioFileOnDemand(name);
+      resourceId = await this.audioHost.loadAudioFileOnDemand(audioPath);
       
       if (resourceId) {
-        this.audioResource = window.gameEditor.audioEngine.getResource(resourceId);
+        this.loadedResourceId = resourceId;
+        this.ownsLoadedResource = false;
+        this.loadedFormatName = this.getFormatName((name.match(/\.[^.]+$/) || ['.mod'])[0].toLowerCase());
+        this.audioResource = this.audioEngine.getResource(resourceId);
+        this.ensureModResourceIsReady(this.audioResource, resourceId, 'Project MOD load failed');
         console.log(`[ModViewer] Loaded resource for: ${name}`);
         
         this.updateStatus('Loaded');
+        this.updateTitleDisplay();
+        this.updateFormatInfo();
         this.updateMetadata();
         
-        // Get duration directly from the resource - it should be available immediately after analysis
-        if (this.audioResource && this.audioResource.duration && this.audioResource.duration > 0) {
-          this.duration = this.audioResource.duration;
-          console.log('[ModViewer] Got duration from resource:', this.duration);
-        } else {
-          console.log('[ModViewer] No duration in resource yet, will be updated via notification');
-          this.duration = 0; // Will show "Loading..." until available
-        }
+        this.duration = this.audioResource.duration;
+        console.log('[ModViewer] Got duration from resource:', this.duration);
         
         this.updateTimeDisplay();
         this.updateProgressBar();
       } else {
         this.updateStatus('Failed to load audio resource');
       }
+    })();
+
+    try {
+      await this.currentLoadPromise;
     } catch (error) {
       console.error('[ModViewer] Failed to load audio resource:', error);
       this.updateStatus(`Error: ${error.message}`);
+    } finally {
+      this.isLoadingResource = false;
+      this.currentLoadPromise = null;
+      this.updatePlaybackAvailability();
     }
   }
 
@@ -617,6 +860,7 @@ class ModViewer extends ViewerBase {
       console.log(`[ModViewer] Duration updated to: ${value}`);
       this.updateTimeDisplay();
       this.updateProgressBar();
+      this.updatePlaybackAvailability();
     }
   }
 
@@ -680,12 +924,26 @@ class ModViewer extends ViewerBase {
   }
   
   async togglePlayback() {
-    if (!window.gameEditor || !this.audioResource) {
+    if (!this.audioHost || !this.audioEngine) {
       alert('Audio resource not available');
       return;
     }
 
-  const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+    if (this.isLoadingResource) {
+      return;
+    }
+
+    if (!this.audioResource && this.options && typeof this.options.resourceLoader === 'function') {
+      await this.loadAudioResource();
+    }
+
+    this.updatePlaybackAvailability();
+
+    if (!this.isResourceReady) {
+      return;
+    }
+
+    const resourceId = this.getActiveResourceId();
     if (!resourceId) {
       alert('Resource not loaded in audio engine');
       return;
@@ -694,10 +952,11 @@ class ModViewer extends ViewerBase {
     try {
       if (this.isPlaying) {
         // Stop playback completely (since pause/resume might not work properly)
-        window.gameEditor.audioEngine.stopSong(resourceId);
+        this.audioEngine.stopSong(resourceId);
         this.isPlaying = false;
         this.isPaused = false;
         this.updatePlayPauseButton();
+        this.notifyPlaybackStateChanged();
         this.stopProgressTracking();
         this.stopVisualization(); // Stop FFT visualization
         console.log('[ModViewer] Stopped playback');
@@ -706,16 +965,16 @@ class ModViewer extends ViewerBase {
         console.log('[ModViewer] Starting playback...');
         
         // Ensure clean state
-        window.gameEditor.audioEngine.stopSong(resourceId);
+        this.audioEngine.stopSong(resourceId);
         
         const volume = this.volumeSlider ? this.volumeSlider.value / 100 : 0.7;
         
         // Check if AudioContext is suspended and needs to be resumed
-        if (window.gameEditor.audioEngine.audioContext.state === 'suspended') {
+        if (this.audioEngine.audioContext.state === 'suspended') {
           console.log('[ModViewer] AudioContext suspended, resuming...');
           try {
-            await window.gameEditor.audioEngine.audioContext.resume();
-            console.log('[ModViewer] AudioContext resumed, new state:', window.gameEditor.audioEngine.audioContext.state);
+            await this.audioEngine.audioContext.resume();
+            console.log('[ModViewer] AudioContext resumed, new state:', this.audioEngine.audioContext.state);
           } catch (error) {
             console.warn('[ModViewer] Failed to resume AudioContext:', error);
             return;
@@ -725,7 +984,7 @@ class ModViewer extends ViewerBase {
         // Small delay to ensure clean state
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        const success = await window.gameEditor.audioEngine.startSong(resourceId, volume, true);
+        const success = await this.audioEngine.startSong(resourceId, volume, true);
         console.log('[ModViewer] startSong result:', success);
         
         if (success) {
@@ -733,6 +992,7 @@ class ModViewer extends ViewerBase {
           this.isPaused = false;
           this.currentTime = 0; // Reset to beginning
           this.updatePlayPauseButton();
+          this.notifyPlaybackStateChanged();
           this.startProgressTracking();
           this.startVisualization(); // Start FFT visualization
           
@@ -750,9 +1010,9 @@ class ModViewer extends ViewerBase {
   }
 
   checkForUpdatedDuration(resourceId) {
-    if (!window.gameEditor || !resourceId) return;
+    if (!this.audioEngine || !resourceId) return;
     
-    const resource = window.gameEditor.audioEngine.getResource(resourceId);
+    const resource = this.audioEngine.getResource(resourceId);
     if (resource && resource.duration !== null && resource.duration > 0) {
       if (resource.duration !== this.duration) {
         console.log('[ModViewer] Found updated duration:', resource.duration, 'vs current:', this.duration);
@@ -791,6 +1051,8 @@ class ModViewer extends ViewerBase {
       this.playPauseButton.classList.remove('playing');
       console.log('[ModViewer] Button set to play state');
     }
+
+    this.updatePlaybackAvailability();
   }  startProgressTracking() {
     this.stopProgressTracking(); // Clear any existing interval
     
@@ -807,6 +1069,7 @@ class ModViewer extends ViewerBase {
           this.isPlaying = false;
           this.isPaused = false;
           this.updatePlayPauseButton();
+          this.notifyPlaybackStateChanged();
           this.stopProgressTracking();
           console.log('[ModViewer] Song finished');
         }
@@ -835,10 +1098,11 @@ class ModViewer extends ViewerBase {
       this.currentTimeSpan.textContent = this.formatTime(currentTime);
     }
     if (this.durationSpan) {
-      // Show "Loading..." if we don't have a real duration yet
+      // Only show "Loading..." while the resource itself is still loading.
+      // After load completes, an unresolved duration should not imply the whole file is stuck.
       if (duration === 0 || duration === null || isNaN(duration)) {
-        this.durationSpan.textContent = "Loading...";
-        console.log('[ModViewer] Showing Loading... for duration:', duration);
+        this.durationSpan.textContent = this.isLoadingResource ? 'Loading...' : 'Unknown';
+        console.log('[ModViewer] Showing unresolved duration state:', this.durationSpan.textContent, 'for duration:', duration);
       } else {
         this.durationSpan.textContent = this.formatTime(duration);
         console.log('[ModViewer] Showing formatted time:', this.formatTime(duration));
@@ -919,6 +1183,8 @@ class ModViewer extends ViewerBase {
   destroy() {
     // Call our cleanup method first
     this.cleanup();
+
+    this.releaseOwnedResource();
     
     // Then do any additional cleanup
     // Remove document event listeners to prevent memory leaks
@@ -937,34 +1203,26 @@ class ModViewer extends ViewerBase {
   
   stopPlayback() {
     console.log('[ModViewer] stopPlayback called, isPlaying:', this.isPlaying);
-    
-    if (!this.isPlaying || !window.gameEditor) {
-      console.log('[ModViewer] Not playing or no game editor, but clearing buffers anyway');
-      // Even if not playing, clear buffers to prevent static
-      if (window.gameEditor && window.gameEditor.audioEngine) {
-        try {
-          window.gameEditor.audioEngine.stopAllAudio();
-        } catch (error) {
-          console.error('[ModViewer] Error clearing audio buffers:', error);
-        }
-      }
+
+    if (!this.audioEngine) {
+      console.log('[ModViewer] No audio engine; nothing to stop');
       return;
     }
     
     try {
-  const resourceId = window.gameEditor.getLoadedResourceId(this.getFileName());
+      const resourceId = this.getActiveResourceId();
       if (resourceId) {
         console.log('[ModViewer] Stopping song for resource:', resourceId);
-        window.gameEditor.audioEngine.stopSong(resourceId);
+        this.audioEngine.stopSong(resourceId);
+      } else if (!this.isPlaying) {
+        console.log('[ModViewer] No active resource; nothing to stop');
+        return;
       }
-      
-      // Also perform comprehensive audio cleanup
-      window.gameEditor.audioEngine.stopAllAudio();
     } catch (error) {
       console.error('[ModViewer] Error stopping playback:', error);
       // Try emergency stop as fallback
       try {
-        window.gameEditor.audioEngine.emergencyAudioStop();
+        this.audioEngine.emergencyAudioStop();
       } catch (emergencyError) {
         console.error('[ModViewer] Emergency stop also failed:', emergencyError);
       }
@@ -980,6 +1238,7 @@ class ModViewer extends ViewerBase {
       this.updatePlayPauseButton();
       this.updateTimeDisplay();
       this.updateProgressBar();
+      this.notifyPlaybackStateChanged();
     } catch (error) {
       console.error('[ModViewer] Error updating UI after stop:', error);
     }
@@ -1002,7 +1261,9 @@ class ModViewer extends ViewerBase {
   
   onFocus() {
     // Refresh status when tab becomes active
-    this.loadAudioResource();
+    if (!this.options.deferLoad) {
+      this.loadAudioResource();
+    }
   }
   
   // Remove duplicate destroy; cleanup() already stops audio and super.destroy handles DOM removal

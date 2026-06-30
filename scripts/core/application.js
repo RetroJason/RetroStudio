@@ -123,6 +123,7 @@ class RetroStudioApplication {
     // Register core services
     this.services.registerService('audioEngine', AudioEngine);
     this.services.registerService('resourceManager', ResourceManager, ['audioEngine']);
+    this.services.registerService('studioAudioService', StudioAudioService, ['audioEngine', 'resourceManager']);
     this.services.registerService('buildSystem', BuildSystem);
     this.services.registerService('projectExplorer', ProjectExplorer);
     this.services.registerService('tabManager', TabManager);
@@ -189,6 +190,7 @@ class RetroStudioApplication {
       'scripts/editors/texture-editor.js',
       'scripts/editors/sprite-editor.js',
       'scripts/editors/frameset-editor.js',
+      'scripts/editors/tilemap-editor.js',
       'scripts/editors/package-settings-editor.js',
       'scripts/font/font-atlas-generator.js',
       'scripts/editors/font-editor.js',
@@ -214,7 +216,7 @@ class RetroStudioApplication {
   loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = src + (src.includes('?') ? '&' : '?') + 'v=6';
+      script.src = src + (src.includes('?') ? '&' : '?') + 'v=9';
       script.onload = () => {
         console.log(`[Application] Loaded component script: ${src}`);
         resolve();
@@ -272,7 +274,15 @@ class RetroStudioApplication {
 
     // Create and start main game emulator with content container
     const gameEngineContent = document.getElementById('gameEngineContent');
-    const gameEmulator = new GameEmulator(gameEngineContent);
+    if (!window.RuntimeSimulatorHost || typeof window.RuntimeSimulatorHost.createStudioSimulator !== 'function') {
+      throw new Error('RuntimeSimulatorHost.createStudioSimulator is unavailable.');
+    }
+
+    const simulatorHost = window.RuntimeSimulatorHost.createStudioSimulator({
+      runtimeHostElement: gameEngineContent,
+      hostProfile: 'studio',
+    });
+    const gameEmulator = simulatorHost.gameEmulator;
     this.services.registerSingleton('gameEmulator', gameEmulator);
     
     // Make legacy globals available for backward compatibility

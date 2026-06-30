@@ -66,6 +66,16 @@ class D2Sprite {
     const paletteSlot   = opts.paletteSlot   ?? 0;
     const paletteOffset = opts.paletteOffset ?? 0;
 
+    if (!Number.isInteger(textureIndex) || textureIndex < 0 || textureIndex > 0xFFFF) {
+      throw new Error(`D2F build failed: textureIndex out of range (${textureIndex})`);
+    }
+    if (!Number.isInteger(paletteSlot) || paletteSlot < 0 || paletteSlot > 0xFF) {
+      throw new Error(`D2F build failed: paletteSlot out of range (${paletteSlot})`);
+    }
+    if (!Number.isInteger(paletteOffset) || paletteOffset < 0 || paletteOffset > 0xFF) {
+      throw new Error(`D2F build failed: paletteOffset out of range (${paletteOffset})`);
+    }
+
     const totalSize = D2F_HEADER_SIZE + frameCount * D2F_FRAME_SIZE;
     const buf  = new ArrayBuffer(totalSize);
     const view = new DataView(buf);
@@ -208,7 +218,10 @@ class D2Sprite {
         const frameId = frameIds[s];
 
         // Map frame id → d2f index
-        const d2fIndex = frameIdToIndex.get(frameId) ?? 0;
+        if (!frameIdToIndex.has(frameId)) {
+          throw new Error(`D2S build failed: animation "${anim.name || `anim_${a}`}" references unknown frame "${frameId}"`);
+        }
+        const d2fIndex = frameIdToIndex.get(frameId);
         view.setUint16(off + 0, d2fIndex, true);  // frame_id
 
         // Per-frame overrides (from sprite editor's frameOverrides map)
@@ -366,8 +379,10 @@ class D2Sprite {
       elapsed:         0,         // ms elapsed on current frame
       pingDir:         1,         // +1 forward, -1 reverse (for ping-pong)
       finished:        false,     // true when LOOP_ONCE completed
-      x:               0,         // accumulated position (from dx/dy motion)
+      x:               0,         // current motion offset (including interpolation)
       y:               0,
+      _motionBaseX:    0,         // completed frame motion offset
+      _motionBaseY:    0,
     };
   }
 
@@ -382,12 +397,18 @@ class D2Sprite {
     const idx = state.d2s.animations.findIndex(a => a.name === animName);
     if (idx < 0) return false;
 
+    if (state.animIndex === idx && state.currentAnim === state.d2s.animations[idx]) {
+      return true;
+    }
+
     state.animIndex  = idx;
     state.currentAnim = state.d2s.animations[idx];
     state.frameIndex = 0;
     state.elapsed    = 0;
     state.pingDir    = 1;
     state.finished   = false;
+    state._motionBaseX = Number.isFinite(state.x) ? state.x : 0;
+    state._motionBaseY = Number.isFinite(state.y) ? state.y : 0;
     return true;
   }
 
@@ -401,30 +422,56 @@ class D2Sprite {
    */
   static updateAnimation(state, deltaMs) {
     const anim = state.currentAnim;
-    if (!anim || anim.frameCount === 0 || state.finished) {
+    if (!anim || anim.frameCount === 0) {
+      return D2Sprite.getCurrentFrame(state);
+    }
+
+    let motionBaseX = Number.isFinite(state._motionBaseX) ? state._motionBaseX : (Number.isFinite(state.x) ? state.x : 0);
+    let motionBaseY = Number.isFinite(state._motionBaseY) ? state._motionBaseY : (Number.isFinite(state.y) ? state.y : 0);
+
+    if (state.finished) {
+      state._motionBaseX = motionBaseX;
+      state._motionBaseY = motionBaseY;
+      state.x = motionBaseX;
+      state.y = motionBaseY;
       return D2Sprite.getCurrentFrame(state);
     }
 
     state.elapsed += deltaMs;
 
-    // Get current anim-frame's duration
-    const af = D2Sprite._getAnimFrame(state);
-    const dur = (af && af.duration > 0) ? af.duration : anim.defaultDuration;
+    let af = D2Sprite._getAnimFrame(state);
+    let dur = D2Sprite._getFrameDuration(anim, af);
 
     while (state.elapsed >= dur && dur > 0) {
       state.elapsed -= dur;
 
-      // Apply per-frame motion
-      const dx = (af && af.dx !== DX_DY_DEFAULT) ? af.dx : anim.dx;
-      const dy = (af && af.dy !== DX_DY_DEFAULT) ? af.dy : anim.dy;
-      state.x += dx;
-      state.y += dy;
+      const motion = D2Sprite._getFrameMotion(anim, af);
+      motionBaseX += motion.dx;
+      motionBaseY += motion.dy;
 
       // Advance frame
       D2Sprite._advanceFrame(state);
 
       if (state.finished) break;
+
+      af = D2Sprite._getAnimFrame(state);
+      dur = D2Sprite._getFrameDuration(anim, af);
     }
+
+    state._motionBaseX = motionBaseX;
+    state._motionBaseY = motionBaseY;
+
+    if (state.finished) {
+      state.x = motionBaseX;
+      state.y = motionBaseY;
+      return D2Sprite.getCurrentFrame(state);
+    }
+
+    af = D2Sprite._getAnimFrame(state);
+    const motion = D2Sprite._getFrameMotion(anim, af);
+    const progress = dur > 0 ? Math.max(0, Math.min(1, state.elapsed / dur)) : 0;
+    state.x = motionBaseX + motion.dx * progress;
+    state.y = motionBaseY + motion.dy * progress;
 
     return D2Sprite.getCurrentFrame(state);
   }
@@ -538,6 +585,17 @@ class D2Sprite {
     if (!anim || state.frameIndex < 0 || state.frameIndex >= anim.frameCount) return null;
     const poolIdx = anim.frameStart + state.frameIndex;
     return state.d2s.animFrames[poolIdx] || null;
+  }
+
+  static _getFrameDuration(anim, af) {
+    return (af && af.duration > 0) ? af.duration : anim.defaultDuration;
+  }
+
+  static _getFrameMotion(anim, af) {
+    return {
+      dx: (af && af.dx !== DX_DY_DEFAULT) ? af.dx : anim.dx,
+      dy: (af && af.dy !== DX_DY_DEFAULT) ? af.dy : anim.dy,
+    };
   }
 
   /** Advance frame index according to loop mode */

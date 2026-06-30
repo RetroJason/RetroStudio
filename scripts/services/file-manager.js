@@ -105,9 +105,17 @@ class FileManager {
       const normPath = this._normalizePath(path);
       console.log(`[FileManager] Loading file: ${normPath}`);
       const content = await this.storageService.loadFile(normPath);
-      
-    console.log('[FileManager] Storage service returned:', content);
-      console.log(`[FileManager] Content type:`, typeof content);
+
+      const contentType = content === null ? 'null' : typeof content;
+      const contentSize = (() => {
+        if (!content || contentType !== 'object') return null;
+        const candidate = content.content ?? content.fileContent ?? content.data;
+        if (typeof candidate === 'string') return candidate.length;
+        if (candidate instanceof ArrayBuffer) return candidate.byteLength;
+        if (ArrayBuffer.isView(candidate)) return candidate.byteLength;
+        return null;
+      })();
+      console.log(`[FileManager] Storage service returned type=${contentType}${contentSize !== null ? ` size=${contentSize}` : ''}`);
       
       if (content === null) {
         console.log(`[FileManager] File not found: ${path}`);

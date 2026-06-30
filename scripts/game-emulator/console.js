@@ -1,6 +1,8 @@
 // console.js
 // Modular debug console with filtering, downloading, and real-time output capture
 
+const gameConsoleLogger = window.RetroStudioLogger?.createConsole('GameConsole') ?? window.console;
+
 class GameConsole {
   constructor(options = {}) {
     this.containerId = options.containerId || 'console-container';
@@ -25,7 +27,7 @@ class GameConsole {
   // Render all console UI elements
   renderContent() {
     if (!this.container) {
-      console.error('[GameConsole] No container provided for rendering');
+      gameConsoleLogger.error('[GameConsole] No container provided for rendering');
       return;
     }
 
@@ -343,7 +345,7 @@ class GameConsole {
       
       this.writeToConsole(`Downloaded ${this.rawMessages.length} log entries\n`);
     } catch (error) {
-      console.error('[GameConsole] Error downloading logs:', error);
+      gameConsoleLogger.error('[GameConsole] Error downloading logs:', error);
       alert('Error downloading console logs');
     }
   }
@@ -351,7 +353,7 @@ class GameConsole {
   // Toggle console settings panel
   toggleSettings() {
     // TODO: Implement settings panel for timestamp, line numbers, etc.
-    console.log('[GameConsole] Settings panel not yet implemented');
+    gameConsoleLogger.log('[GameConsole] Settings panel not yet implemented');
   }
 
   // Get current buffer for external access

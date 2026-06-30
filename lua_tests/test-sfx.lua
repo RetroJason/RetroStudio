@@ -1,4 +1,6 @@
 -- Test SFX system with centralized resource management and preloading
+local cool_sfx = nil
+
 function Setup()
     System.LogLua("SFX Test Started - Using Centralized Resource System with Preloading")
     
@@ -9,9 +11,10 @@ function Setup()
     -- Test if we have the COOL sound effect (if built)
     if SFX.COOL then
         System.LogLua("COOL sound effect available: " .. SFX.COOL)
+        cool_sfx = SFX.Create("cool")
         
         -- Try to play it (this will use preloaded resources - no loading delay!)
-        local success = SFX.Play(SFX.COOL, false)
+        local success = SFX.Play(cool_sfx, false)
         if success then
             System.LogLua("Successfully started playing COOL sound effect (preloaded)")
         else
@@ -26,7 +29,7 @@ end
 
 function Update(deltaTime)
     -- Example: Could check if sound is still playing
-    if SFX.COOL and SFX.IsPlaying(SFX.COOL) then
+    if cool_sfx and SFX.IsPlaying(cool_sfx) then
         -- Sound is playing from preloaded resource
     end
 end

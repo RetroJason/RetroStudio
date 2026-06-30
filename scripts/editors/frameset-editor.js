@@ -34,9 +34,14 @@ class FramesetEditorData {
   }
 
   toJSON() {
+    // Store the source image reference project-relative so a copied/renamed
+    // project resolves it against the currently focused project at build time.
+    const imagePath = (window.ProjectPaths && typeof window.ProjectPaths.toProjectRelative === 'function')
+      ? window.ProjectPaths.toProjectRelative(this.imagePath)
+      : this.imagePath;
     return {
       name: this.name,
-      imagePath: this.imagePath,
+      imagePath,
       imageWidth: this.imageWidth,
       imageHeight: this.imageHeight,
       frameWidth: this.frameWidth,

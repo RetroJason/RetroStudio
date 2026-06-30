@@ -17,6 +17,38 @@ class ProjectConfigManager {
     this.loadPromise = null;
   }
 
+  _getSourcesRoot() {
+    return (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+  }
+
+  _getStoragePath(path) {
+    const focusedProject = this._getFocusedProjectName();
+    if (!focusedProject || !window.ProjectPaths?.parseProjectPath) {
+      return path;
+    }
+
+    const parsed = window.ProjectPaths.parseProjectPath(path);
+    if (parsed?.project) {
+      return path;
+    }
+
+    return `${focusedProject}/${parsed?.rest || path}`;
+  }
+
+  _getProjectExplorer() {
+    return window.gameEmulator?.projectExplorer
+      || window.gameEditor?.projectExplorer
+      || window.projectExplorer
+      || null;
+  }
+
+  _getFocusedProjectName() {
+    const projectExplorer = this._getProjectExplorer();
+    return projectExplorer?.getFocusedProjectName?.() || null;
+  }
+
   /**
    * Ensure config is loaded (lazy loading with write-through)
    */
@@ -43,7 +75,7 @@ class ProjectConfigManager {
       if (exists) {
         // Load existing config
         const fileManager = window.serviceContainer.get('fileManager');
-        const configData = await fileManager.loadFile(this.configPath);
+        const configData = await fileManager.loadFile(this._getStoragePath(this.configPath));
         
         if (configData && configData.fileContent) {
           const parsedConfig = JSON.parse(configData.fileContent);
@@ -75,8 +107,9 @@ class ProjectConfigManager {
       const fileIOService = window.fileIOService || window.serviceContainer?.get('fileIOService');
       if (!fileIOService) return false;
       
+      const storagePath = this._getStoragePath(this.configPath);
       const files = await fileIOService.listFiles();
-      return files.some(f => f.path === this.configPath);
+      return files.some(f => f.path === storagePath);
     } catch (error) {
       console.log('[ProjectConfigManager] Error checking config existence:', error);
       return false;
@@ -107,7 +140,7 @@ class ProjectConfigManager {
   async _autoAssignDefaultPalette() {
     try {
       // Get all palette files from project explorer
-      const projectExplorer = window.gameEmulator?.projectExplorer || window.projectExplorer;
+      const projectExplorer = this._getProjectExplorer();
       if (!projectExplorer) {
         console.log('[ProjectConfigManager] ProjectExplorer not available for auto-assignment');
         return;
@@ -119,7 +152,7 @@ class ProjectConfigManager {
       if (paletteFiles.length > 0) {
         // Use the first palette as default
         const firstPalette = paletteFiles[0];
-        const palettePath = `Sources/Palettes/${firstPalette.name}`;
+        const palettePath = `${this._getSourcesRoot()}/Palettes/${firstPalette.name}`;
         this.config.project.defaultPalette = palettePath;
         console.log('[ProjectConfigManager] Auto-assigned default palette:', palettePath);
       } else {
@@ -161,8 +194,9 @@ class ProjectConfigManager {
       // Save the default palette
       const fileIOService = window.fileIOService || window.serviceContainer?.get('fileIOService');
       if (fileIOService) {
-        const palettePath = 'Sources/Palettes/default.act';
-        const storagePath = window.ProjectPaths?.normalizeStoragePath(palettePath) || palettePath;
+        const sourcesRoot = this._getSourcesRoot();
+        const palettePath = `${sourcesRoot}/Palettes/default.act`;
+        const storagePath = this._getStoragePath(palettePath);
         
         await fileIOService.saveFile(storagePath, defaultPaletteData.buffer, { 
           binaryData: true, 
@@ -173,9 +207,13 @@ class ProjectConfigManager {
         console.log('[ProjectConfigManager] Created and assigned default palette:', storagePath);
         
         // Add to project structure
-        const projectExplorer = window.gameEmulator?.projectExplorer || window.projectExplorer;
+        const projectExplorer = this._getProjectExplorer();
         if (projectExplorer && projectExplorer.addFileToStructure) {
-          await projectExplorer.addFileToStructure('default.act', 'test/Sources/Palettes', {
+          const focusedProject = this._getFocusedProjectName();
+          const targetFolder = focusedProject
+            ? `${focusedProject}/${sourcesRoot}/Palettes`
+            : `${sourcesRoot}/Palettes`;
+          await projectExplorer.addFileToStructure('default.act', targetFolder, {
             size: defaultPaletteData.length,
             type: 'file',
             extension: '.act'
@@ -200,7 +238,7 @@ class ProjectConfigManager {
       }
       
       const configJson = JSON.stringify(this.config, null, 2);
-      const storagePath = window.ProjectPaths?.normalizeStoragePath(this.configPath) || this.configPath;
+      const storagePath = this._getStoragePath(this.configPath);
       
       await fileIOService.saveFile(storagePath, configJson, { binaryData: false });
       console.log('[ProjectConfigManager] Saved config to storage:', storagePath);
@@ -215,9 +253,14 @@ class ProjectConfigManager {
    */
   async _addToProjectStructure() {
     try {
-      const projectExplorer = window.gameEmulator?.projectExplorer || window.projectExplorer;
+      const projectExplorer = this._getProjectExplorer();
       if (projectExplorer && projectExplorer.addFileToStructure) {
-        await projectExplorer.addFileToStructure('config.json', 'test/Sources', {
+        const sourcesRoot = this._getSourcesRoot();
+        const focusedProject = this._getFocusedProjectName();
+        const targetFolder = focusedProject
+          ? `${focusedProject}/${sourcesRoot}`
+          : sourcesRoot;
+        await projectExplorer.addFileToStructure('config.json', targetFolder, {
           size: JSON.stringify(this.config, null, 2).length,
           type: 'file',
           extension: '.json'
@@ -277,8 +320,10 @@ class ProjectConfigManager {
     if (!defaultPalette) return null;
     
     // Convert storage path to full project path
-    if (defaultPalette.startsWith('Sources/')) {
-      return `test/${defaultPalette}`;
+    const sourcesRoot = `${this._getSourcesRoot()}/`;
+    if (defaultPalette.startsWith(sourcesRoot)) {
+      const focusedProject = this._getFocusedProjectName();
+      return focusedProject ? `${focusedProject}/${defaultPalette}` : defaultPalette;
     }
     return defaultPalette;
   }
@@ -300,6 +345,14 @@ class ProjectConfigManager {
     }
     
     return this.config;
+  }
+
+  /**
+   * Get the current config as JSON string
+   */
+  async getConfigContent() {
+    await this.ensureLoaded();
+    return JSON.stringify(this.config, null, 2);
   }
 
   /**

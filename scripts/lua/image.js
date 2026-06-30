@@ -1,6 +1,6 @@
 // image.js - Image Lua Extensions for RetroStudio Emulator
 // Provides Sprite-like rendering and transform APIs for static/multi-frame images.
-// Images are sourced from build .d2 textures with optional companion .frameset data.
+// Images are sourced from build .d2 textures with optional companion .d2fs frame data.
 
 class LuaImageExtensions extends BaseLuaExtension {
   constructor(gameEmulator) {
@@ -92,6 +92,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       _frameIndex: 0,
       _posX: 0,
       _posY: 0,
+      _z: null,
       _centerX: 0,
       _centerY: 0,
       _hasCustomCenter: false,
@@ -110,6 +111,7 @@ class LuaImageExtensions extends BaseLuaExtension {
 
     const handle = this._nextHandle++;
     state._handle = handle;
+    state._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? handle;
     this.images.set(handle, state);
 
     console.log(`[LuaImage] Created image "${name}" as handle ${handle} (${asset.frames.length} frame(s))`);
@@ -127,12 +129,12 @@ class LuaImageExtensions extends BaseLuaExtension {
       return;
     }
 
-    const { centerX, centerY } = this._resolveFrameCenter(frame);
+    const { centerX, centerY } = this._resolveFrameCenter(frame, asset);
     state._posX = displayCenterX - centerX;
     state._posY = displayCenterY - centerY;
   }
 
-  _resolveFrameCenter(frame) {
+  _resolveFrameCenter(frame, asset = null) {
     const w = Math.max(0, Number(frame?.w) || 0);
     const h = Math.max(0, Number(frame?.h) || 0);
 
@@ -142,10 +144,17 @@ class LuaImageExtensions extends BaseLuaExtension {
     const rawX = Number(frame?.centerX);
     const rawY = Number(frame?.centerY);
 
-    const centerX = Number.isFinite(rawX) && rawX >= 0 && rawX <= w ? rawX : fallbackX;
-    const centerY = Number.isFinite(rawY) && rawY >= 0 && rawY <= h ? rawY : fallbackY;
+    const hasExplicitCenterX = Number.isFinite(rawX) && rawX >= 0 && rawX <= w;
+    const hasExplicitCenterY = Number.isFinite(rawY) && rawY >= 0 && rawY <= h;
 
-    return { centerX, centerY };
+    if (hasExplicitCenterX || hasExplicitCenterY) {
+      return {
+        centerX: hasExplicitCenterX ? rawX : fallbackX,
+        centerY: hasExplicitCenterY ? rawY : fallbackY,
+      };
+    }
+
+    return { centerX: fallbackX, centerY: fallbackY };
   }
 
   Destroy() {
@@ -159,6 +168,7 @@ class LuaImageExtensions extends BaseLuaExtension {
     const clone = { ...src };
     const handle = this._nextHandle++;
     clone._handle = handle;
+    clone._creationOrder = this.gameEmulator?.allocateRenderOrder?.() ?? handle;
     this.images.set(handle, clone);
     return handle;
   }
@@ -193,6 +203,34 @@ class LuaImageExtensions extends BaseLuaExtension {
   GetXY() {
     const s = this._getImageByHandleArg(2);
     return [s._posX || 0, s._posY || 0];
+  }
+
+  SetZ() {
+    const s = this._getImageByHandleArg(2);
+    const z = Number.parseFloat(this.luaState.raw_tostring(3));
+    if (!Number.isFinite(z)) {
+      throw new Error('Image.SetZ: bad argument #2 (number expected)');
+    }
+    s._z = z;
+  }
+
+  GetZ() {
+    const s = this._getImageByHandleArg(2);
+    return Number.isFinite(s._z) ? s._z : 0;
+  }
+
+  SetXYZ() {
+    const L = this.luaState;
+    const s = this._getImageByHandleArg(2);
+    const x = Number.parseFloat(L.raw_tostring(3));
+    const y = Number.parseFloat(L.raw_tostring(4));
+    const z = Number.parseFloat(L.raw_tostring(5));
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+      throw new Error('Image.SetXYZ: bad arguments #2/#3/#4 (number expected)');
+    }
+    s._posX = x;
+    s._posY = y;
+    s._z = z;
   }
 
   SetCenter() {
@@ -335,55 +373,72 @@ class LuaImageExtensions extends BaseLuaExtension {
     }
   }
 
-  renderFrame(gpu, deltaMs) {
+  renderFrame(gpu, deltaMs, renderOptions = null) {
     for (const [, s] of this.images) {
       if (s._visible === false) continue;
 
-      const asset = this.imageAssets.get(s._assetName);
-      if (!asset) continue;
-
-      const texHandle = this.gpuTextures.get(s._assetName);
-      if (!texHandle) continue;
-
-      const frame = this._getFrameForState(s, asset);
-      if (!frame) continue;
-
-      const paletteIndex = (s._paletteSlot != null && s._paletteSlot > 0)
-        ? s._paletteSlot
-        : (texHandle.paletteIndex || asset.paletteSlot || 1);
-      const paletteOffset = asset.paletteOffset || 0;
-
-      if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
-        this._activatePalette(paletteIndex, paletteOffset);
+      const drawImage = () => this._drawImage(gpu, s);
+      if (typeof renderOptions?.enqueue === 'function') {
+        renderOptions.enqueue({
+          type: 'image',
+          z: Number.isFinite(s._z) ? s._z : null,
+          defaultLayer: 1000,
+          creationOrder: s._creationOrder ?? s._handle ?? 0,
+          draw: drawImage,
+        });
+      } else {
+        drawImage();
       }
-
-      const posX = s._posX || 0;
-      const posY = s._posY || 0;
-      const rotation = s._rotation || 0;
-      const scaleX = s._scaleX ?? 1;
-      const scaleY = s._scaleY ?? 1;
-      const flipX = !!(s._attributes & 0x08);
-      const flipY = !!(s._attributes & 0x04);
-
-      const resolvedCenter = this._resolveFrameCenter(frame);
-      const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
-      const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
-
-      gpu.blit(texHandle, {
-        x: posX,
-        y: posY,
-        srcX: frame.x,
-        srcY: frame.y,
-        srcW: frame.w,
-        srcH: frame.h,
-        scaleX: scaleX * (flipX ? -1 : 1),
-        scaleY: scaleY * (flipY ? -1 : 1),
-        rotation,
-        pivotX: centerX / (frame.w || 1),
-        pivotY: centerY / (frame.h || 1),
-        filter: 'nearest',
-      });
     }
+  }
+
+  _drawImage(gpu, s) {
+    if (s._visible === false) return;
+
+    const asset = this.imageAssets.get(s._assetName);
+    if (!asset) return;
+
+    const texHandle = this.gpuTextures.get(s._assetName);
+    if (!texHandle) return;
+
+    const frame = this._getFrameForState(s, asset);
+    if (!frame) return;
+
+    const paletteIndex = (s._paletteSlot != null && s._paletteSlot > 0)
+      ? s._paletteSlot
+      : (texHandle.paletteIndex || asset.paletteSlot || 1);
+    const paletteOffset = asset.paletteOffset || 0;
+
+    if (paletteIndex !== this._activePaletteIndex || paletteOffset !== this._activePaletteOffset) {
+      this._activatePalette(paletteIndex, paletteOffset);
+    }
+
+    const posX = s._posX || 0;
+    const posY = s._posY || 0;
+    const rotation = s._rotation || 0;
+    const scaleX = s._scaleX ?? 1;
+    const scaleY = s._scaleY ?? 1;
+    const flipX = !!(s._attributes & 0x08);
+    const flipY = !!(s._attributes & 0x04);
+
+    const resolvedCenter = this._resolveFrameCenter(frame, asset);
+    const centerX = s._hasCustomCenter ? s._centerX : resolvedCenter.centerX;
+    const centerY = s._hasCustomCenter ? s._centerY : resolvedCenter.centerY;
+
+    gpu.blit(texHandle, {
+      x: posX,
+      y: posY,
+      srcX: frame.x,
+      srcY: frame.y,
+      srcW: frame.w,
+      srcH: frame.h,
+      scaleX: scaleX * (flipX ? -1 : 1),
+      scaleY: scaleY * (flipY ? -1 : 1),
+      rotation,
+      pivotX: centerX / (frame.w || 1),
+      pivotY: centerY / (frame.h || 1),
+      filter: 'nearest',
+    });
   }
 
   _getFrameForState(state, asset) {
@@ -491,7 +546,7 @@ class LuaImageExtensions extends BaseLuaExtension {
           if (!header) continue;
 
           const imageName = d2Path.split('/').pop().replace(/\.d2$/i, '');
-          const frames = await this._loadFramesForTexture(d2Path, header.width, header.height);
+          const frames = await this._loadFramesForTexture(d2Path, header.width, header.height, header.flags);
 
           this.imageAssets.set(imageName, {
             name: imageName,
@@ -527,11 +582,25 @@ class LuaImageExtensions extends BaseLuaExtension {
       height: view.getUint16(8, true),
       paletteSlot: view.getUint16(10, true),
       paletteOffset: d2Bytes[12] || 0,
+      flags: d2Bytes[13] || 0,
     };
   }
 
-  async _loadFramesForTexture(d2Path, texWidth, texHeight) {
-    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: texWidth, h: texHeight }];
+  async _loadFramesForTexture(d2Path, texWidth, texHeight, flags = 0) {
+    const preRotated = !!(flags & 0x02);
+    const logicalWidth = preRotated ? texHeight : texWidth;
+    const logicalHeight = preRotated ? texWidth : texHeight;
+    const fallback = [{ id: 0, name: 'frame_0', x: 0, y: 0, w: logicalWidth, h: logicalHeight, centerX: Math.round((logicalWidth || 0) / 2), centerY: Math.round((logicalHeight || 0) / 2) }];
+
+    const d2fsPath = d2Path.replace(/\.d2$/i, '.d2fs');
+    const d2fsRaw = await this._loadBinary(d2fsPath);
+    if (d2fsRaw) {
+      const frames = this._parseD2FS(new Uint8Array(d2fsRaw), d2fsPath);
+      if (frames.length === 0) {
+        throw new Error(`D2FS has no frames: ${d2fsPath}`);
+      }
+      return frames;
+    }
 
     const framesetStoragePath = this._toCompanionSourcePath(d2Path, '.frameset');
     if (!framesetStoragePath) return fallback;
@@ -548,6 +617,8 @@ class LuaImageExtensions extends BaseLuaExtension {
       const y = Math.max(0, parseInt(src.y, 10) || 0);
       const w = Math.max(1, parseInt(src.w, 10) || texWidth || 1);
       const h = Math.max(1, parseInt(src.h, 10) || texHeight || 1);
+      const rawCenterX = Number(src.centerX);
+      const rawCenterY = Number(src.centerY);
       out.push({
         id: Number.isFinite(src.id) ? src.id : i,
         name: src.name || `frame_${i}`,
@@ -555,34 +626,80 @@ class LuaImageExtensions extends BaseLuaExtension {
         y,
         w,
         h,
+        centerX: Number.isFinite(rawCenterX) ? rawCenterX : Math.round(w / 2),
+        centerY: Number.isFinite(rawCenterY) ? rawCenterY : Math.round(h / 2),
       });
     }
 
     return out.length > 0 ? out : fallback;
   }
 
+  _parseD2FS(bytes, path) {
+    if (!bytes || bytes.length < 16) {
+      throw new Error(`D2FS too small: ${path}`);
+    }
+
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x46 || bytes[3] !== 0x53) {
+      throw new Error(`Invalid D2FS magic: ${path}`);
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const version = view.getUint8(4);
+    if (version !== 1) {
+      throw new Error(`Unsupported D2FS version ${version}: ${path}`);
+    }
+
+    const frameCount = view.getUint16(6, true);
+    const frameSize = view.getUint16(12, true);
+    if (frameSize !== 16) {
+      throw new Error(`Unsupported D2FS frame size ${frameSize}: ${path}`);
+    }
+
+    const expectedLength = 16 + frameCount * frameSize;
+    if (bytes.length < expectedLength) {
+      throw new Error(`Truncated D2FS ${path}: expected ${expectedLength} bytes, got ${bytes.length}`);
+    }
+
+    const frames = [];
+    for (let index = 0; index < frameCount; index++) {
+      const offset = 16 + index * frameSize;
+      const flags = view.getUint8(offset + 14);
+      const frame = {
+        id: view.getUint16(offset + 0, true),
+        name: `frame_${index}`,
+        x: view.getUint16(offset + 2, true),
+        y: view.getUint16(offset + 4, true),
+        w: view.getUint16(offset + 6, true),
+        h: view.getUint16(offset + 8, true),
+      };
+
+      if (flags & 0x01) {
+        frame.centerX = view.getInt16(offset + 10, true);
+      }
+      if (flags & 0x02) {
+        frame.centerY = view.getInt16(offset + 12, true);
+      }
+
+      frames.push(frame);
+    }
+
+    return frames;
+  }
+
   _toCompanionSourcePath(buildPath, ext) {
     if (!buildPath || !ext) return null;
 
-    const buildPrefix = this._buildPrefix();
-    if (!buildPath.startsWith(buildPrefix)) return null;
-
-    const rel = buildPath.substring(buildPrefix.length).replace(/\.d2$/i, ext);
-    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
-      ? window.ProjectPaths.getSourcesRootUi()
-      : 'Sources';
-
-    return `${sourcesRoot}/${rel}`;
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.resolveCompanionAssetPath?.(buildPath, ext) || null;
   }
 
   _buildPrefix() {
-    return (window.ProjectPaths && typeof window.ProjectPaths.getBuildStoragePrefix === 'function')
-      ? window.ProjectPaths.getBuildStoragePrefix()
-      : 'build/';
+    const pathResolver = this._getService('pathResolver');
+    return pathResolver?.getBuildStoragePrefix?.() || 'build/';
   }
 
   async _listBuildFiles(prefix) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return [];
 
     if (typeof fileManager.listFiles === 'function') {
@@ -590,16 +707,7 @@ class LuaImageExtensions extends BaseLuaExtension {
       return results.map((r) => (typeof r === 'string') ? r : (r.path || r.name || ''));
     }
 
-    const projectExplorer = window.serviceContainer?.get('projectExplorer');
-    if (!projectExplorer) return [];
-
-    const paths = [];
-    const buildRoot = (window.ProjectPaths && typeof window.ProjectPaths.getBuildRootUi === 'function')
-      ? window.ProjectPaths.getBuildRootUi()
-      : 'Game Objects';
-
-    this._collectPaths(projectExplorer.projectData?.structure, '', buildRoot, prefix, paths);
-    return paths;
+    throw new Error('[LuaImage] FileManager.listFiles() is required for image asset discovery');
   }
 
   _collectPaths(node, currentPath, buildRoot, prefix, out) {
@@ -616,12 +724,11 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   async _loadBinary(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;
@@ -644,12 +751,11 @@ class LuaImageExtensions extends BaseLuaExtension {
   }
 
   async _loadJson(path) {
-    const fileManager = window.serviceContainer?.get('fileManager');
+    const fileManager = this._getService('fileManager');
     if (!fileManager) return null;
 
-    const normPath = (window.ProjectPaths && typeof window.ProjectPaths.normalizeStoragePath === 'function')
-      ? window.ProjectPaths.normalizeStoragePath(path)
-      : path;
+    const pathResolver = this._getService('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
 
     const obj = await fileManager.loadFile(normPath);
     if (!obj) return null;

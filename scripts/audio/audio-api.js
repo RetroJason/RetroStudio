@@ -22,8 +22,45 @@ class AudioEngine extends EventTarget {
     this.activeSongs = new Map(); // resourceId -> PlaybackState
     this.activeSounds = new Map(); // instanceId -> PlaybackState
     this.nextInstanceId = 1;
+    this.loadedModResourceId = null;
+    this.lastSongStartError = null;
     
     this.isInitialized = false;
+    this.initializationPromise = null;
+  }
+
+  _setSongStartError(message) {
+    this.lastSongStartError = message;
+    return false;
+  }
+
+  getLastSongStartError() {
+    return this.lastSongStartError;
+  }
+
+  _isOutputMuted(requestedVolume = 1.0) {
+    const volume = Number.isFinite(Number(requestedVolume)) ? Number(requestedVolume) : 1.0;
+    return volume <= 0 || (this.masterVolume.left <= 0 && this.masterVolume.right <= 0);
+  }
+
+  async ensureInitialized() {
+    if (this.isInitialized) {
+      return true;
+    }
+
+    if (this.initializationPromise) {
+      return this.initializationPromise;
+    }
+
+    this.initializationPromise = this.initialize();
+
+    try {
+      return await this.initializationPromise;
+    } finally {
+      if (!this.isInitialized) {
+        this.initializationPromise = null;
+      }
+    }
   }
   
   /**
@@ -46,9 +83,10 @@ class AudioEngine extends EventTarget {
       }
       
       // Load audio worklet
-      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js');
+      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js?v=2');
       this.workletNode = new AudioWorkletNode(this.audioContext, 'mixer-worklet');
       this.workletNode.connect(this.audioContext.destination);
+      this.setMasterVolume(this.masterVolume.left, this.masterVolume.right);
       
       // Handle worklet messages
       this.workletNode.port.onmessage = (e) => {
@@ -75,8 +113,9 @@ class AudioEngine extends EventTarget {
    * @returns {Promise<string>} Resource ID
    */
   async loadResource(data, type, name = null) {
-    if (!this.isInitialized) {
-      throw new Error('AudioEngine not initialized');
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      throw new Error('AudioEngine failed to initialize');
     }
     
     const resourceId = `res_${this.nextResourceId++}`;
@@ -148,49 +187,92 @@ class AudioEngine extends EventTarget {
    * @returns {boolean} Success status
    */
   async startSong(resourceId, volume = 1.0, loop = true) {
+    this.lastSongStartError = null;
+
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      return this._setSongStartError('audio engine initialization failed');
+    }
+
     const resource = this.resources.get(resourceId);
     if (!resource) {
       console.warn(`[AudioEngine] Song resource not found: ${resourceId}`);
-      return false;
+      return this._setSongStartError(`song resource not found: ${resourceId}`);
     }
     
     if (resource.type !== 'mod') {
       console.warn(`[AudioEngine] Resource ${resourceId} is not a song (MOD) type`);
-      return false;
+      return this._setSongStartError(`resource ${resourceId} is not a MOD song (got ${resource.type})`);
     }
     
-    // Check AudioContext state
-    if (this.audioContext.state === 'suspended') {
-      console.warn('[AudioEngine] AudioContext is suspended. Please interact with the page first.');
-      return false;
+    // Resume on-demand so playback does not depend on caller-specific resume logic.
+    if (this.audioContext.state === 'suspended' && this._isOutputMuted(volume)) {
+      console.log('[AudioEngine] AudioContext suspended; starting muted song without requesting browser audio playback');
+    } else if (this.audioContext.state === 'suspended') {
+      console.log('[AudioEngine] AudioContext suspended, resuming before song playback');
+      try {
+        await this.audioContext.resume();
+      } catch (error) {
+        console.error('[AudioEngine] Failed to resume AudioContext before song playback:', error);
+        return this._setSongStartError(`failed to resume AudioContext: ${error.message}`);
+      }
+      if (this.audioContext.state === 'suspended') {
+        console.warn('[AudioEngine] AudioContext remained suspended after resume attempt');
+        return this._setSongStartError('AudioContext remained suspended after resume attempt');
+      }
     }
-    
-    // Stop existing song playback
-    this.stopSong(resourceId);
+
+    const canReuseLoadedMod = this.loadedModResourceId === resourceId;
+
+    // Keep one active MOD stream, while allowing WAV sound effects to mix over it.
+    for (const activeResourceId of this.activeSongs.keys()) {
+      this.stopSong(activeResourceId);
+    }
+
+    this.currentResourceId = null;
+
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ 
+        type: 'stop-stream', 
+        streamId: 'mod-stream' 
+      });
+    }
+
+    if (!canReuseLoadedMod && this.modWorker) {
+      this.modWorker.postMessage({ type: 'stop-all' });
+      this.loadedModResourceId = null;
+    }
     
     try {
       // Track the current resource being played
       this.currentResourceId = resourceId;
-      
-      // Start MOD playback
-      this.modWorker.postMessage({
-        type: 'load-mod',
-        arrayBuffer: resource.data,
-        sampleRate: this.audioContext.sampleRate
-      });
-      
+
       this.activeSongs.set(resourceId, {
         resourceId,
         volume,
         loop,
         isPlaying: true
       });
+
+      if (canReuseLoadedMod) {
+        this.workletNode.port.postMessage({ type: 'start-playing' });
+        this.workletNode.port.postMessage({ type: 'request-pcm' });
+        this.modWorker.postMessage({ type: 'get-pcm', frames: 16384 });
+      } else {
+        this.modWorker.postMessage({
+          type: 'load-mod',
+          arrayBuffer: resource.data,
+          sampleRate: this.audioContext.sampleRate,
+          analysisOnly: false,
+          resourceId
+        });
+      }
       
       console.log(`[AudioEngine] Started song: ${resourceId} (volume: ${volume})`);
       return true;
     } catch (error) {
       console.error(`[AudioEngine] Failed to start song ${resourceId}:`, error);
-      return false;
+      return this._setSongStartError(`failed to start song ${resourceId}: ${error.message}`);
     }
   }
   
@@ -222,7 +304,7 @@ class AudioEngine extends EventTarget {
       this.workletNode.port.postMessage({ type: 'request-pcm' });
       
       // Request initial PCM data from MOD worker to kickstart the cycle
-      this.modWorker.postMessage({ type: 'get-pcm', frames: 2048 });
+      this.modWorker.postMessage({ type: 'get-pcm', frames: 16384 });
     }
     
     console.log(`[AudioEngine] ${pause ? 'Paused' : 'Resumed'} song: ${resourceId}`);
@@ -259,8 +341,18 @@ class AudioEngine extends EventTarget {
    * @param {number} volume - Volume (0.0 to 1.0+)
    * @returns {string|null} Instance ID for the playing sound, or null on failure
    */
-  async startSound(resourceId, volume = 1.0) {
-    const resource = this.resources.get(resourceId);
+  async startSound(resourceOrId, volume = 1.0) {
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      return null;
+    }
+
+    const resource = typeof resourceOrId === 'string'
+      ? this.resources.get(resourceOrId)
+      : resourceOrId;
+    const resourceId = typeof resourceOrId === 'string'
+      ? resourceOrId
+      : (resourceOrId?.id || 'detached_wav_resource');
     if (!resource) {
       console.warn(`[AudioEngine] Sound resource not found: ${resourceId}`);
       return null;
@@ -271,12 +363,23 @@ class AudioEngine extends EventTarget {
       return null;
     }
     
-    // Check AudioContext state
-    if (this.audioContext.state === 'suspended') {
-      console.warn('[AudioEngine] AudioContext is suspended. Please interact with the page first.');
-      return null;
+    // Resume on-demand so playback does not depend on caller-specific resume logic.
+    if (this.audioContext.state === 'suspended' && this._isOutputMuted(volume)) {
+      console.log('[AudioEngine] AudioContext suspended; starting muted sound without requesting browser audio playback');
+    } else if (this.audioContext.state === 'suspended') {
+      console.log('[AudioEngine] AudioContext suspended, resuming before sound playback');
+      try {
+        await this.audioContext.resume();
+      } catch (error) {
+        console.error('[AudioEngine] Failed to resume AudioContext before sound playback:', error);
+        return null;
+      }
+      if (this.audioContext.state === 'suspended') {
+        console.warn('[AudioEngine] AudioContext remained suspended after resume attempt');
+        return null;
+      }
     }
-    
+
     console.log(`[AudioEngine] Starting sound ${resourceId}, channels: ${resource.audioBuffer.numberOfChannels}, duration: ${resource.duration}s`);
     
     try {
@@ -295,9 +398,12 @@ class AudioEngine extends EventTarget {
       
       console.log(`[AudioEngine] Prepared ${channels.length} channels, ${channels[0].length} samples each`);
       
+      this.workletNode.port.postMessage({ type: 'start-playing' });
+
       // Send to mixer as one-shot
       this.workletNode.port.postMessage({
         type: 'play',
+        instanceId,
         channels: channels,
         sampleRate: resource.audioBuffer.sampleRate
       });
@@ -327,6 +433,13 @@ class AudioEngine extends EventTarget {
       return false;
     }
     
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({
+        type: 'stop-sound',
+        instanceId
+      });
+    }
+    
     this.activeSounds.delete(instanceId);
     console.log(`[AudioEngine] Stopped sound instance: ${instanceId}`);
     return true;
@@ -339,9 +452,9 @@ class AudioEngine extends EventTarget {
    */
   stopAllSounds(resourceId) {
     let count = 0;
-    for (const [instanceId, playback] of this.activeSounds) {
+    for (const [instanceId, playback] of Array.from(this.activeSounds.entries())) {
       if (playback.resourceId === resourceId) {
-        this.activeSounds.delete(instanceId);
+        this.stopSound(instanceId);
         count++;
       }
     }
@@ -360,6 +473,10 @@ class AudioEngine extends EventTarget {
   setMasterVolume(left, right = null) {
     this.masterVolume.left = Math.max(0, left);
     this.masterVolume.right = Math.max(0, right !== null ? right : left);
+
+    if (!this.workletNode) {
+      return;
+    }
     
     // Send to worklet
     const avgVolume = (this.masterVolume.left + this.masterVolume.right) / 2;
@@ -401,7 +518,7 @@ class AudioEngine extends EventTarget {
   // Private methods
   
   _createModWorker() {
-    this.modWorker = new Worker('scripts/audio/openmpt-integration.js');
+    this.modWorker = new Worker('scripts/audio/openmpt-integration.js?v=2');
     this.modWorker.onmessage = (e) => {
       this._handleModWorkerMessage(e);
     };
@@ -434,74 +551,50 @@ class AudioEngine extends EventTarget {
       });
     } else if (e.data.type === 'mod-loaded') {
       console.log('[AudioEngine] MOD loaded successfully, title:', e.data.title, 'duration:', e.data.duration);
-      
-      // Check if this is for a currently playing resource first
-      let handledByCurrentResource = false;
-      if (this.currentResourceId && this.resources.has(this.currentResourceId)) {
-        const resource = this.resources.get(this.currentResourceId);
-        if (resource.type === 'mod') {
-          resource.duration = e.data.duration;
-          resource.title = e.data.title;
-          console.log('[AudioEngine] Updated current MOD resource', this.currentResourceId, 'with duration:', e.data.duration);
-          handledByCurrentResource = true;
-        }
+      const messageResourceId = e.data.resourceId || null;
+      if (messageResourceId) {
+        this.loadedModResourceId = messageResourceId;
       }
-      
-      // Only try analysis resource matching if this wasn't handled by current resource
-      if (!handledByCurrentResource && this._loadingPromises.size > 0) {
-        // Find the correct pending analysis resource by iterating through loading promises
-        let matchingResourceId = null;
-        let matchingResource = null;
-        
-        console.log('[AudioEngine] Looking for pending analysis resource, promises count:', this._loadingPromises.size);
-        for (const [resourceId, promiseData] of this._loadingPromises.entries()) {
-          const resource = this.resources.get(resourceId);
-          if (resource && resource.type === 'mod' && !resource.duration) {
-            // This resource doesn't have a duration yet, so it's likely the one we just analyzed
-            console.log(`[AudioEngine] Found likely match: ${resourceId}, checking if it needs duration...`);
-            matchingResourceId = resourceId;
-            matchingResource = resource;
-            break;
-          }
+
+      if (e.data.analysisOnly) {
+        const matchingResource = messageResourceId ? this.resources.get(messageResourceId) : null;
+        if (!matchingResource || matchingResource.type !== 'mod') {
+          console.warn('[AudioEngine] Analysis result did not match a MOD resource:', messageResourceId);
+          return;
         }
-        
-        // If we found a matching resource, update it
-        if (matchingResource && matchingResourceId) {
-          matchingResource.duration = e.data.duration;
-          matchingResource.title = e.data.title;
-          console.log('[AudioEngine] Updated MOD resource', matchingResourceId, 'with duration:', e.data.duration);
-          
-          // Resolve the loading promise
-          const promiseData = this._loadingPromises.get(matchingResourceId);
-          if (promiseData) {
-            console.log('[AudioEngine] Resolving loading promise for:', matchingResourceId);
-            clearTimeout(promiseData.timeoutId);
-            this._loadingPromises.delete(matchingResourceId);
-            promiseData.resolve(); // Analysis complete, resource is ready
-          }
-          
-          // Emit event for duration update
-          console.log('[AudioEngine] Emitting resourceUpdated event for:', matchingResourceId);
-          this.dispatchEvent(new CustomEvent('resourceUpdated', {
-            detail: { resourceId: matchingResourceId, property: 'duration', value: e.data.duration }
-          }));
-        } else if (this._loadingPromises.size > 0) {
-          console.warn('[AudioEngine] Could not find matching resource for MOD analysis result');
-          console.log('[AudioEngine] Available resources:', Array.from(this.resources.keys()));
-          console.log('[AudioEngine] Pending promises:', Array.from(this._loadingPromises.keys()));
-          console.log('[AudioEngine] Message data:', e.data);
+
+        matchingResource.duration = e.data.duration;
+        matchingResource.title = e.data.title;
+        console.log('[AudioEngine] Updated analyzed MOD resource', messageResourceId, 'with duration:', e.data.duration);
+
+        const promiseData = this._loadingPromises.get(messageResourceId);
+        if (promiseData) {
+          console.log('[AudioEngine] Resolving loading promise for:', messageResourceId);
+          clearTimeout(promiseData.timeoutId);
+          this._loadingPromises.delete(messageResourceId);
+          promiseData.resolve();
         }
+
+        this.dispatchEvent(new CustomEvent('resourceUpdated', {
+          detail: { resourceId: messageResourceId, property: 'duration', value: e.data.duration }
+        }));
+        return;
       }
-      
-      // Only start playing if there's a current resource (meaning this was for playback, not analysis)
-      if (this.currentResourceId) {
-        // Signal worklet to start playing
-        this.workletNode.port.postMessage({ type: 'start-playing' });
-        // Start PCM generation
-        this.workletNode.port.postMessage({ type: 'request-pcm' });
-        // Request PCM data from MOD worker only for playback
-        this.modWorker.postMessage({ type: 'get-pcm', frames: 2048 });
+
+      if (!messageResourceId || this.currentResourceId !== messageResourceId || !this.activeSongs.has(messageResourceId)) {
+        console.warn('[AudioEngine] Ignoring stale MOD playback load for resource:', messageResourceId);
+        return;
       }
+
+      const resource = this.resources.get(messageResourceId);
+      if (resource && resource.type === 'mod') {
+        resource.duration = e.data.duration;
+        resource.title = e.data.title;
+      }
+
+      this.workletNode.port.postMessage({ type: 'start-playing' });
+      this.workletNode.port.postMessage({ type: 'request-pcm' });
+      this.modWorker.postMessage({ type: 'get-pcm', frames: 16384 });
     } else if (e.data.type === 'error') {
       console.error('[AudioEngine] MOD Worker Error:', e.data.message);
     }
@@ -511,7 +604,8 @@ class AudioEngine extends EventTarget {
     if (e.data.type === 'request-pcm') {
       // Worklet wants more PCM data
       if (this.modWorker && this.activeSongs.size > 0) {
-        this.modWorker.postMessage({ type: 'get-pcm', frames: e.data.frames });
+        const requestedFrames = Number.isFinite(e.data.frames) ? e.data.frames : 16384;
+        this.modWorker.postMessage({ type: 'get-pcm', frames: Math.max(16384, requestedFrames) });
       }
     }
   }
@@ -596,6 +690,7 @@ class AudioEngine extends EventTarget {
       
       // Clear current resource
       this.currentResourceId = null;
+      this.loadedModResourceId = null;
       
       // Send comprehensive stop message to worklet
       if (this.workletNode) {
@@ -640,6 +735,7 @@ class AudioEngine extends EventTarget {
       this.activeSongs.clear();
       this.activeSounds.clear();
       this.currentResourceId = null;
+      this.loadedModResourceId = null;
       
       return true;
     } catch (error) {

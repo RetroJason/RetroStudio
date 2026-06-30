@@ -1,0 +1,2010 @@
+{
+  "name": "RetroStudio Lua Extensions",
+  "version": "1.0.0",
+  "description": "Lua extension library for RetroStudio game development",
+  "target_platforms": ["javascript", "cpp"],
+  "categories": [
+    {
+      "name": "UI",
+      "description": "User interface and dialog functions",
+      "functions": []
+    },
+    {
+      "name": "Sprite",
+      "description": "Sprite creation, animation, and transform functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a sprite instance by asset name (loads .d2s/.d2f from build)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Sprite asset name (matches d2s_header_t.name)"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque sprite handle"},
+          "example": "local hero = Sprite.Create(\"hero\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove a sprite from the scene",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.Destroy(hero)"
+        },
+        {
+          "name": "Clone",
+          "description": "Deep-clone a sprite instance and return a new handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Source sprite handle"}
+          ],
+          "returns": {"type": "int32", "description": "New cloned sprite handle"},
+          "example": "local hero2 = Sprite.Clone(hero)"
+        },
+        {
+          "name": "SetX",
+          "description": "Set sprite X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "x", "type": "float", "description": "X position"}
+          ],
+          "example": "Sprite.SetX(hero, 100)"
+        },
+        {
+          "name": "GetX",
+          "description": "Get sprite X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = Sprite.GetX(hero)"
+        },
+        {
+          "name": "SetY",
+          "description": "Set sprite Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Sprite.SetY(hero, 200)"
+        },
+        {
+          "name": "GetY",
+          "description": "Get sprite Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = Sprite.GetY(hero)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set sprite X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Sprite.SetXY(hero, 100, 200)"
+        },
+        {
+          "name": "GetXY",
+          "description": "Get sprite X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = Sprite.GetXY(hero)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set sprite Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Sprite.SetZ(hero, 2100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get sprite Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = Sprite.GetZ(hero)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set sprite X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Sprite.SetXYZ(hero, 100, 200, 2100)"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set sprite center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "centerX", "type": "int32", "description": "Center X"},
+            {"name": "centerY", "type": "int32", "description": "Center Y"}
+          ],
+          "example": "Sprite.SetCenter(hero, 8, 16)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get sprite center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Center X and Y"},
+          "example": "local cx, cy = Sprite.GetCenter(hero)"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set sprite display size",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "width", "type": "int32", "description": "Width"},
+            {"name": "height", "type": "int32", "description": "Height"}
+          ],
+          "example": "Sprite.SetSize(hero, 32, 32)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get sprite display size",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height"},
+          "example": "local w, h = Sprite.GetSize(hero)"
+        },
+        {
+          "name": "SetAngle",
+          "description": "Set sprite rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
+          ],
+          "example": "Sprite.SetAngle(hero, 45)"
+        },
+        {
+          "name": "GetAngle",
+          "description": "Get sprite rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = Sprite.GetAngle(hero)"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set sprite scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "Sprite.SetScale(hero, 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get sprite scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = Sprite.GetScale(hero)"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set sprite tint color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "Sprite.SetColor(hero, 0x00FF0000)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get sprite tint color",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = Sprite.GetColor(hero)"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this sprite uses",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "Sprite.SetPaletteSlot(hero, 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get sprite palette slot",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = Sprite.GetPaletteSlot(hero)"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set sprite visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "Sprite.SetVisible(hero, false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get sprite visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = Sprite.GetVisible(hero)"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set sprite attribute flags (mirror, repeat, etc.)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "Sprite.SetAttributes(hero, 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get sprite attribute flags",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = Sprite.GetAttributes(hero)"
+        },
+        {
+          "name": "SetAnimation",
+          "description": "Set the active animation by name (does not auto-play)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "animName", "type": "string", "description": "Animation name (e.g. \"idle\", \"run\")"}
+          ],
+          "example": "Sprite.SetAnimation(hero, \"run\")"
+        },
+        {
+          "name": "Play",
+          "description": "Start native auto-animation (ticked by engine, no Lua calls needed per frame)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "animName", "type": "string", "description": "Animation name (optional, uses current if omitted)"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.Play(hero, \"run\")"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop native auto-animation (freeze on current frame)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.Stop(hero)"
+        },
+        {
+          "name": "UpdateAnimation",
+          "description": "Manual animation tick (for frame-level control from Lua)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sprite handle"},
+            {"name": "deltaTime", "type": "float", "description": "Time elapsed in seconds"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Sprite.UpdateAnimation(hero, dt)"
+        }
+      ]
+    },
+    {
+      "name": "Image",
+      "description": "Image creation, transform, and frame selection functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create an image instance by asset name (loads .d2 from build)",
+          "parameters": [
+            {"name": "name", "type": "string", "description": "Image asset name (without extension)"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque image handle"},
+          "example": "local logo = Image.Create(\"logo\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove an image from the scene",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "Image.Destroy(logo)"
+        },
+        {
+          "name": "Clone",
+          "description": "Clone an image instance and return a new handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Source image handle"}
+          ],
+          "returns": {"type": "int32", "description": "New cloned image handle"},
+          "example": "local logo2 = Image.Clone(logo)"
+        },
+        {
+          "name": "SetX",
+          "description": "Set image X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "float", "description": "X position"}
+          ],
+          "example": "Image.SetX(logo, 100)"
+        },
+        {
+          "name": "GetX",
+          "description": "Get image X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = Image.GetX(logo)"
+        },
+        {
+          "name": "SetY",
+          "description": "Set image Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Image.SetY(logo, 120)"
+        },
+        {
+          "name": "GetY",
+          "description": "Get image Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = Image.GetY(logo)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set image X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "Image.SetXY(logo, 100, 120)"
+        },
+        {
+          "name": "GetXY",
+          "description": "Get image X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = Image.GetXY(logo)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set image Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Image.SetZ(logo, 1100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get image Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = Image.GetZ(logo)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set image X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "Image.SetXYZ(logo, 100, 120, 1100)"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set image center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "centerX", "type": "int32", "description": "Center X"},
+            {"name": "centerY", "type": "int32", "description": "Center Y"}
+          ],
+          "example": "Image.SetCenter(logo, 8, 8)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get image center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Center X and Y"},
+          "example": "local cx, cy = Image.GetCenter(logo)"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set image display size metadata",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "width", "type": "int32", "description": "Width"},
+            {"name": "height", "type": "int32", "description": "Height"}
+          ],
+          "example": "Image.SetSize(logo, 64, 64)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get image display size metadata",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height"},
+          "example": "local w, h = Image.GetSize(logo)"
+        },
+        {
+          "name": "SetAngle",
+          "description": "Set image rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
+          ],
+          "example": "Image.SetAngle(logo, 45)"
+        },
+        {
+          "name": "GetAngle",
+          "description": "Get image rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = Image.GetAngle(logo)"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set image scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "Image.SetScale(logo, 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get image scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = Image.GetScale(logo)"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set image tint color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "Image.SetColor(logo, 0x00FFFFFF)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get image tint color",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = Image.GetColor(logo)"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this image uses",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "Image.SetPaletteSlot(logo, 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get image palette slot",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = Image.GetPaletteSlot(logo)"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set image visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "Image.SetVisible(logo, false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get image visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = Image.GetVisible(logo)"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set image attribute flags (mirror, repeat, etc.)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "Image.SetAttributes(logo, 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get image attribute flags",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = Image.GetAttributes(logo)"
+        },
+        {
+          "name": "SetFrame",
+          "description": "Set active frame index for a multi-frame image",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"},
+            {"name": "frameIndex", "type": "int32", "description": "0-based frame index"}
+          ],
+          "example": "Image.SetFrame(logo, 1)"
+        },
+        {
+          "name": "GetFrame",
+          "description": "Get active frame index",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "0-based frame index"},
+          "example": "local frame = Image.GetFrame(logo)"
+        },
+        {
+          "name": "GetFrameCount",
+          "description": "Get number of frames available on the image",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Image handle"}
+          ],
+          "returns": {"type": "int32", "description": "Frame count"},
+          "example": "local count = Image.GetFrameCount(logo)"
+        }
+      ]
+    },
+    {
+      "name": "TextBox",
+      "description": "Text rendering using BMFont assets",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a textbox instance bound to a font asset",
+          "parameters": [
+            {"name": "fontName", "type": "string", "description": "Font asset name (matches .fnt filename without extension)"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Layer/depth"},
+            {"name": "color", "type": "int32", "description": "Text color (0x00RRGGBB)"},
+            {"name": "text", "type": "string", "description": "Initial text string"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque textbox handle"},
+          "example": "local title = TextBox.Create(\"myfont\", 10, 20, 0, 0x00FFFFFF, \"Hello World\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Remove a textbox from the scene",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "void", "description": "No return value"},
+          "example": "TextBox.Destroy(title)"
+        },
+        {
+          "name": "SetText",
+          "description": "Set the text content of a textbox",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "text", "type": "string", "description": "New text string"}
+          ],
+          "example": "TextBox.SetText(title, \"New Text\")"
+        },
+        {
+          "name": "GetText",
+          "description": "Get the text content of a textbox",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "string", "description": "Current text string"},
+          "example": "local t = TextBox.GetText(title)"
+        },
+        {
+          "name": "SetX",
+          "description": "Set textbox X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "x", "type": "float", "description": "X position"}
+          ],
+          "example": "TextBox.SetX(title, 100)"
+        },
+        {
+          "name": "GetX",
+          "description": "Get textbox X position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "X position"},
+          "example": "local x = TextBox.GetX(title)"
+        },
+        {
+          "name": "SetY",
+          "description": "Set textbox Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "TextBox.SetY(title, 200)"
+        },
+        {
+          "name": "GetY",
+          "description": "Get textbox Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Y position"},
+          "example": "local y = TextBox.GetY(title)"
+        },
+        {
+          "name": "SetXY",
+          "description": "Set textbox X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"}
+          ],
+          "example": "TextBox.SetXY(title, 100, 200)"
+        },
+        {
+          "name": "GetXY",
+          "description": "Get textbox X and Y position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float, float", "description": "X and Y position"},
+          "example": "local x, y = TextBox.GetXY(title)"
+        },
+        {
+          "name": "SetZ",
+          "description": "Set textbox Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "TextBox.SetZ(title, 3100)"
+        },
+        {
+          "name": "GetZ",
+          "description": "Get textbox Z/depth order",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Current depth value"},
+          "example": "local z = TextBox.GetZ(title)"
+        },
+        {
+          "name": "SetXYZ",
+          "description": "Set textbox X, Y, and Z in one call",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "x", "type": "float", "description": "X position"},
+            {"name": "y", "type": "float", "description": "Y position"},
+            {"name": "z", "type": "float", "description": "Depth value used for render ordering"}
+          ],
+          "example": "TextBox.SetXYZ(title, 100, 200, 3100)"
+        },
+        {
+          "name": "SetCenter",
+          "description": "Set textbox center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "centerX", "type": "float", "description": "Center X"},
+            {"name": "centerY", "type": "float", "description": "Center Y"}
+          ],
+          "example": "TextBox.SetCenter(title, 50, 10)"
+        },
+        {
+          "name": "GetCenter",
+          "description": "Get textbox center of rotation",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Center X and Y"},
+          "example": "local cx, cy = TextBox.GetCenter(title)"
+        },
+        {
+          "name": "SetSize",
+          "description": "Set textbox display size",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "width", "type": "float", "description": "Width"},
+            {"name": "height", "type": "float", "description": "Height"}
+          ],
+          "example": "TextBox.SetSize(title, 200, 30)"
+        },
+        {
+          "name": "GetSize",
+          "description": "Get textbox display size",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Width and height"},
+          "example": "local w, h = TextBox.GetSize(title)"
+        },
+        {
+          "name": "SetAngle",
+          "description": "Set textbox rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "angle", "type": "float", "description": "Rotation angle in degrees"}
+          ],
+          "example": "TextBox.SetAngle(title, 45)"
+        },
+        {
+          "name": "GetAngle",
+          "description": "Get textbox rotation in degrees",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float", "description": "Rotation in degrees"},
+          "example": "local angle = TextBox.GetAngle(title)"
+        },
+        {
+          "name": "SetScale",
+          "description": "Set textbox scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "scaleX", "type": "float", "description": "Horizontal scale"},
+            {"name": "scaleY", "type": "float", "description": "Vertical scale"}
+          ],
+          "example": "TextBox.SetScale(title, 2.0, 2.0)"
+        },
+        {
+          "name": "GetScale",
+          "description": "Get textbox scale",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "float, float", "description": "Horizontal and vertical scale"},
+          "example": "local sx, sy = TextBox.GetScale(title)"
+        },
+        {
+          "name": "SetColor",
+          "description": "Set textbox text color (0x00RRGGBB)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "color", "type": "int32", "description": "Color value (0x00RRGGBB)"}
+          ],
+          "example": "TextBox.SetColor(title, 0x00FF0000)"
+        },
+        {
+          "name": "GetColor",
+          "description": "Get textbox text color",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "int32", "description": "Color value"},
+          "example": "local color = TextBox.GetColor(title)"
+        },
+        {
+          "name": "SetPaletteSlot",
+          "description": "Set which palette slot this textbox uses",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "slot", "type": "int32", "description": "Palette slot index (0-7)"}
+          ],
+          "example": "TextBox.SetPaletteSlot(title, 1)"
+        },
+        {
+          "name": "GetPaletteSlot",
+          "description": "Get textbox palette slot",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "int32", "description": "Palette slot index"},
+          "example": "local slot = TextBox.GetPaletteSlot(title)"
+        },
+        {
+          "name": "SetVisible",
+          "description": "Set textbox visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "TextBox.SetVisible(title, false)"
+        },
+        {
+          "name": "GetVisible",
+          "description": "Get textbox visibility",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local vis = TextBox.GetVisible(title)"
+        },
+        {
+          "name": "SetAttributes",
+          "description": "Set textbox attribute flags",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"},
+            {"name": "attributes", "type": "int32", "description": "Attribute flags bitmask"}
+          ],
+          "example": "TextBox.SetAttributes(title, 0x08)"
+        },
+        {
+          "name": "GetAttributes",
+          "description": "Get textbox attribute flags",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "TextBox handle"}
+          ],
+          "returns": {"type": "int32", "description": "Attribute flags bitmask"},
+          "example": "local attr = TextBox.GetAttributes(title)"
+        }
+      ]
+    },
+    {
+      "name": "Music",
+      "description": "Background music playback functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a music handle from a preloaded music asset name",
+          "parameters": [
+            {"name": "resourceName", "type": "string", "description": "Music asset name such as \"star_of_luxury\""}
+          ],
+          "returns": {"type": "int32", "description": "Opaque music handle"},
+          "example": "local song = Music.Create(\"star_of_luxury\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Destroy a music handle and stop it if it is currently playing",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle"}
+          ],
+          "returns": {"type": "boolean", "description": "True if the handle was destroyed successfully"},
+          "example": "Music.Destroy(song)"
+        },
+        {
+          "name": "Play",
+          "description": "Play a music handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle"},
+            {"name": "volume", "type": "float", "description": "Volume level (0.0 to 1.0, optional, default: 1.0)"},
+            {"name": "loop", "type": "boolean", "description": "Whether to loop the music (optional, default: true)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if music started playing successfully"},
+          "example": "Music.Play(song, 0.8, true)"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop a playing music handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle to stop"}
+          ],
+          "returns": {"type": "boolean", "description": "True if music was stopped successfully"},
+          "example": "Music.Stop(song)"
+        },
+        {
+          "name": "IsPlaying",
+          "description": "Check if a music handle is currently playing",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle to check"}
+          ],
+          "returns": {"type": "boolean", "description": "True if music is currently playing"},
+          "example": "Music.IsPlaying(song)"
+        }
+      ]
+    },
+    {
+      "name": "Audio",
+      "description": "Audio playback and sound functions", 
+      "functions": []
+    },
+    {
+      "name": "SFX",
+      "description": "Sound effects playback functions",
+      "functions": [
+        {
+          "name": "Create",
+          "description": "Create a sound effect handle from a preloaded SFX asset name",
+          "parameters": [
+            {"name": "resourceName", "type": "string", "description": "SFX asset name such as \"shoot\""}
+          ],
+          "returns": {"type": "int32", "description": "Opaque sound effect handle"},
+          "example": "local shoot = SFX.Create(\"shoot\")"
+        },
+        {
+          "name": "Destroy",
+          "description": "Destroy a sound effect handle and stop it if it is currently playing",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sound effect handle"}
+          ],
+          "returns": {"type": "boolean", "description": "True if the handle was destroyed successfully"},
+          "example": "SFX.Destroy(shoot)"
+        },
+        {
+          "name": "Play",
+          "description": "Play a sound effect handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sound effect handle"},
+            {"name": "shouldRepeat", "type": "boolean", "description": "Whether to loop the sound (optional)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound started playing successfully"},
+          "example": "SFX.Play(shoot, false)"
+        },
+        {
+          "name": "Stop",
+          "description": "Stop a playing sound effect handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sound effect handle to stop"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound was stopped successfully"},
+          "example": "SFX.Stop(shoot)"
+        },
+        {
+          "name": "IsPlaying",
+          "description": "Check if a sound effect handle is currently playing",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sound effect handle to check"}
+          ],
+          "returns": {"type": "boolean", "description": "True if sound is currently playing"},
+          "example": "SFX.IsPlaying(shoot)"
+        },
+        {
+          "name": "SetVolume",
+          "description": "Set volume for a sound effect handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Sound effect handle"},
+            {"name": "volume", "type": "float", "description": "Volume level (0.0 to 1.0)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if volume was set successfully"},
+          "example": "SFX.SetVolume(shoot, 0.8)"
+        },
+        {
+          "name": "List",
+          "description": "List all available SFX resources (for debugging)",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Number of available resources"},
+          "example": "SFX.List()"
+        }
+      ]
+    },
+    {
+      "name": "Input",
+      "description": "Keyboard and mouse input functions",
+      "functions": [
+        {
+          "name": "GetKeysHeld",
+          "description": "Returns a bit array of keys currently held",
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of currently held keys"},
+          "example": "Input.GetKeysHeld()"
+        },
+        {
+          "name": "GetKeysPressed", 
+          "description": "Returns the keys pressed since last update",
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of keys pressed this frame"},
+          "example": "Input.GetKeysPressed()"
+        },
+        {
+          "name": "GetKeysReleased",
+          "description": "Returns the keys released since last update", 
+          "parameters": [],
+          "returns": {"type": "uint16", "description": "Bit array of keys released this frame"},
+          "example": "Input.GetKeysReleased()"
+        },
+        {
+          "name": "IsKeyHeld",
+          "description": "Returns true if the key is held",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key is currently held"},
+          "example": "Input.IsKeyHeld(Input.Buttons.A)"
+        },
+        {
+          "name": "IsKeyPressed",
+          "description": "Returns true if the key was pressed this frame",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key was pressed this frame"},
+          "example": "Input.IsKeyPressed(Input.Buttons.A)"
+        },
+        {
+          "name": "IsKeyReleased",
+          "description": "Returns true if the key was released this frame",
+          "parameters": [
+            {"name": "key", "type": "uint16", "description": "Button mask (use Input.Buttons.* constants)"}
+          ],
+          "returns": {"type": "boolean", "description": "True if key was released this frame"},
+          "example": "Input.IsKeyReleased(Input.Buttons.A)"
+        }
+      ]
+    },
+    {
+      "name": "Math",
+      "description": "Mathematical utility functions",
+      "functions": [
+        {
+          "name": "Sin",
+          "description": "Sine function",
+          "parameters": [{"name": "x", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Sine of x"},
+          "example": "Math.Sin(1.57)"
+        },
+        {
+          "name": "Cos",
+          "description": "Cosine function",
+          "parameters": [{"name": "x", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Cosine of x"},
+          "example": "Math.Cos(0)"
+        },
+        {
+          "name": "Sqrt",
+          "description": "Square root function",
+          "parameters": [{"name": "x", "type": "float", "description": "Number to take square root of"}],
+          "returns": {"type": "float", "description": "Square root of x"},
+          "example": "Math.Sqrt(16)"
+        },
+        {
+          "name": "Pow",
+          "description": "Power function - raise x to the power of y",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "Base number"},
+            {"name": "y", "type": "float", "description": "Exponent"}
+          ],
+          "returns": {"type": "float", "description": "x raised to the power of y"},
+          "example": "Math.Pow(2, 3)"
+        },
+        {
+          "name": "Atan2",
+          "description": "Two-argument arctangent function",
+          "parameters": [
+            {"name": "y", "type": "float", "description": "Y coordinate"},
+            {"name": "x", "type": "float", "description": "X coordinate"}
+          ],
+          "returns": {"type": "float", "description": "Angle in radians"},
+          "example": "Math.Atan2(1, 1)"
+        },
+        {
+          "name": "Min",
+          "description": "Returns the minimum of two values",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "First value"},
+            {"name": "y", "type": "float", "description": "Second value"}
+          ],
+          "returns": {"type": "float", "description": "Minimum value"},
+          "example": "Math.Min(5, 10)"
+        },
+        {
+          "name": "Max",
+          "description": "Returns the maximum of two values",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "First value"},
+            {"name": "y", "type": "float", "description": "Second value"}
+          ],
+          "returns": {"type": "float", "description": "Maximum value"},
+          "example": "Math.Max(5, 10)"
+        },
+        {
+          "name": "Clamp",
+          "description": "Clamps x to min and max inclusive",
+          "parameters": [
+            {"name": "x", "type": "float", "description": "Value to clamp"},
+            {"name": "min", "type": "float", "description": "Minimum value"},
+            {"name": "max", "type": "float", "description": "Maximum value"}
+          ],
+          "returns": {"type": "float", "description": "Clamped value"},
+          "example": "Math.Clamp(15, 0, 10)"
+        },
+        {
+          "name": "Ceil",
+          "description": "Rounds up to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round up"}],
+          "returns": {"type": "float", "description": "Rounded up value"},
+          "example": "Math.Ceil(3.2)"
+        },
+        {
+          "name": "Floor",
+          "description": "Rounds down to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round down"}],
+          "returns": {"type": "float", "description": "Rounded down value"},
+          "example": "Math.Floor(3.8)"
+        },
+        {
+          "name": "Round",
+          "description": "Rounds to nearest integer",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to round"}],
+          "returns": {"type": "float", "description": "Rounded value"},
+          "example": "Math.Round(3.5)"
+        },
+        {
+          "name": "Abs",
+          "description": "Absolute value",
+          "parameters": [{"name": "x", "type": "float", "description": "Value to get absolute value of"}],
+          "returns": {"type": "float", "description": "Absolute value"},
+          "example": "Math.Abs(-5)"
+        },
+        {
+          "name": "And",
+          "description": "Binary AND operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise AND result"},
+          "example": "Math.And(5, 3)"
+        },
+        {
+          "name": "Not",
+          "description": "Binary NOT operation",
+          "parameters": [{"name": "x", "type": "int32", "description": "Integer to invert"}],
+          "returns": {"type": "int32", "description": "Bitwise NOT result"},
+          "example": "Math.Not(5)"
+        },
+        {
+          "name": "Or",
+          "description": "Binary OR operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise OR result"},
+          "example": "Math.Or(5, 3)"
+        },
+        {
+          "name": "Xor",
+          "description": "Binary XOR operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "First integer"},
+            {"name": "y", "type": "int32", "description": "Second integer"}
+          ],
+          "returns": {"type": "int32", "description": "Bitwise XOR result"},
+          "example": "Math.Xor(5, 3)"
+        },
+        {
+          "name": "LShift",
+          "description": "Left shift operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Value to shift"},
+            {"name": "y", "type": "int32", "description": "Number of bits to shift"}
+          ],
+          "returns": {"type": "int32", "description": "Left shifted result"},
+          "example": "Math.LShift(5, 2)"
+        },
+        {
+          "name": "RShift",
+          "description": "Right shift operation",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Value to shift"},
+            {"name": "y", "type": "int32", "description": "Number of bits to shift"}
+          ],
+          "returns": {"type": "int32", "description": "Right shifted result"},
+          "example": "Math.RShift(20, 2)"
+        },
+        {
+          "name": "Random",
+          "description": "Random integer between x (inclusive) and y (exclusive)",
+          "parameters": [
+            {"name": "x", "type": "int32", "description": "Minimum value (inclusive)"},
+            {"name": "y", "type": "int32", "description": "Maximum value (exclusive)"}
+          ],
+          "returns": {"type": "int32", "description": "Random integer"},
+          "example": "Math.Random(1, 10)"
+        },
+        {
+          "name": "RadiansToDegrees",
+          "description": "Convert radians to degrees",
+          "parameters": [{"name": "radians", "type": "float", "description": "Angle in radians"}],
+          "returns": {"type": "float", "description": "Angle in degrees"},
+          "example": "Math.RadiansToDegrees(3.14159)"
+        },
+        {
+          "name": "DegreesToRadians",
+          "description": "Convert degrees to radians",
+          "parameters": [{"name": "degrees", "type": "float", "description": "Angle in degrees"}],
+          "returns": {"type": "float", "description": "Angle in radians"},
+          "example": "Math.DegreesToRadians(180)"
+        }
+      ]
+    },
+    {
+      "name": "Time",
+      "description": "Time and date functions",
+      "functions": [
+        {
+          "name": "HoursToDegrees",
+          "description": "Returns the angle corresponding to the current time for positioning the hour hand. By default it uses minutes, seconds, and milliseconds for smooth movement.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include smaller time units for smooth motion. When false, use stepped movement."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the hour hand"},
+          "example": "Time.HoursToDegrees()"
+        },
+        {
+          "name": "MinutesToDegrees",
+          "description": "Returns the angle corresponding to the current time for positioning the minute hand. By default it uses seconds and milliseconds for smooth movement.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include smaller time units for smooth motion. When false, use stepped movement."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the minute hand"},
+          "example": "Time.MinutesToDegrees()"
+        },
+        {
+          "name": "SecondsToDegrees",
+          "description": "Returns the angle corresponding to the current time for positioning the second hand. By default it uses milliseconds for smooth sweeping.",
+          "parameters": [
+            {"name": "smooth", "type": "bool", "description": "When true or omitted, include milliseconds for smooth motion. When false, use stepped movement."}
+          ],
+          "returns": {"type": "float", "description": "Angle in degrees for the second hand"},
+          "example": "Time.SecondsToDegrees()"
+        },
+        {
+          "name": "Hours",
+          "description": "Returns the current hour (24-hour format)",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current hour (0-23)"},
+          "example": "Time.Hours()"
+        },
+        {
+          "name": "Minutes",
+          "description": "Returns the current minutes",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current minutes (0-59)"},
+          "example": "Time.Minutes()"
+        },
+        {
+          "name": "Seconds",
+          "description": "Returns the current seconds",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current seconds (0-59)"},
+          "example": "Time.Seconds()"
+        },
+        {
+          "name": "Milliseconds",
+          "description": "Returns the current milliseconds",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current milliseconds (0-999)"},
+          "example": "Time.Milliseconds()"
+        },
+        {
+          "name": "Day",
+          "description": "Returns the day of the month",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Day of month (1-31)"},
+          "example": "Time.Day()"
+        },
+        {
+          "name": "Month",
+          "description": "Returns the month",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Month (1-12)"},
+          "example": "Time.Month()"
+        },
+        {
+          "name": "Year",
+          "description": "Returns the 4-digit year",
+          "parameters": [],
+          "returns": {"type": "int32", "description": "Current year"},
+          "example": "Time.Year()"
+        },
+        {
+          "name": "DayOfWeek",
+          "description": "Gets the string representation of the day of the week",
+          "parameters": [],
+          "returns": {"type": "string", "description": "Day of week name"},
+          "example": "Time.DayOfWeek()"
+        },
+        {
+          "name": "ToString",
+          "description": "Format time using standard C time library format string",
+          "parameters": [{"name": "format", "type": "string", "description": "Format string (see strftime)"}],
+          "returns": {"type": "string", "description": "Formatted time string"},
+          "example": "Time.ToString('%Y-%m-%d %H:%M:%S')"
+        }
+      ]
+    },
+    {
+      "name": "System",
+      "description": "System and debug functions",
+      "functions": [
+        {
+          "name": "LogLua",
+          "description": "Log a message to the console from Lua",
+          "parameters": [
+            {
+              "name": "message",
+              "type": "string",
+              "description": "The message to log"
+            }
+          ],
+          "returns": {
+            "type": "void",
+            "description": "No return value"
+          },
+          "example": "System.LogLua(\"Debug message\")",
+          "js_implementation": "system.LogLua"
+        },
+        {
+          "name": "SetClearColor",
+          "description": "Set the emulator clear color using a 24-bit RGB integer",
+          "parameters": [
+            {
+              "name": "color",
+              "type": "number",
+              "description": "RGB color value like 0x112233"
+            }
+          ],
+          "returns": {
+            "type": "void",
+            "description": "No return value"
+          },
+          "example": "System.SetClearColor(0x000000)",
+          "js_implementation": "system.SetClearColor"
+        }
+      ]
+    },
+    {
+      "name": "TileMap",
+      "description": "Tilemap loading, rendering, and manipulation functions",
+      "functions": [
+        {
+          "name": "Load",
+          "description": "Load a tilemap from a built D2M binary file",
+          "parameters": [
+            {"name": "mapPath", "type": "string", "description": "Path to .d2m file (relative to package build/)"}
+          ],
+          "returns": {"type": "int32", "description": "Opaque tilemap handle"},
+          "example": "local map = TileMap.Load(\"Maps/level-1.d2m\")"
+        },
+        {
+          "name": "GetDimensions",
+          "description": "Get tilemap dimensions in tiles",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Width and height in tiles"},
+          "example": "local w, h = TileMap.GetDimensions(map)"
+        },
+        {
+          "name": "GetTileSize",
+          "description": "Get the size of each tile in pixels",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Tile width and height"},
+          "example": "local tw, th = TileMap.GetTileSize(map)"
+        },
+        {
+          "name": "GetTile",
+          "description": "Get the global tile ID at a specific layer and position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index (0-based)"},
+            {"name": "tx", "type": "int32", "description": "Tile X coordinate"},
+            {"name": "ty", "type": "int32", "description": "Tile Y coordinate"}
+          ],
+          "returns": {"type": "int32", "description": "Global tile ID (0 if out of bounds)"},
+          "example": "local gid = TileMap.GetTile(map, 0, 10, 15)"
+        },
+        {
+          "name": "SetTile",
+          "description": "Set the global tile ID at a specific layer and position",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "tx", "type": "int32", "description": "Tile X coordinate"},
+            {"name": "ty", "type": "int32", "description": "Tile Y coordinate"},
+            {"name": "gid", "type": "int32", "description": "Global tile ID to assign"}
+          ],
+          "example": "TileMap.SetTile(map, 0, 10, 15, 0x00010005)"
+        },
+        {
+          "name": "GetLayerCount",
+          "description": "Get the number of layers in the tilemap",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "int32", "description": "Layer count"},
+          "example": "local layerCount = TileMap.GetLayerCount(map)"
+        },
+        {
+          "name": "GetLayerVisibility",
+          "description": "Check if a layer is marked as visible",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"}
+          ],
+          "returns": {"type": "boolean", "description": "Visibility state"},
+          "example": "local visible = TileMap.GetLayerVisibility(map, 0)"
+        },
+        {
+          "name": "SetLayerVisibility",
+          "description": "Set layer visibility at runtime",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "visible", "type": "boolean", "description": "Visibility state"}
+          ],
+          "example": "TileMap.SetLayerVisibility(map, 0, false)"
+        },
+        {
+          "name": "DrawLayer",
+          "description": "Render a layer at the given screen offset (camera position)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"},
+            {"name": "layer", "type": "int32", "description": "Layer index"},
+            {"name": "offsetX", "type": "int32", "description": "Camera X offset (typically negative)"},
+            {"name": "offsetY", "type": "int32", "description": "Camera Y offset (typically negative)"},
+            {"name": "z", "type": "float", "description": "Optional explicit depth override for this DrawLayer call"}
+          ],
+          "example": "TileMap.DrawLayer(map, 0, -scrollX, -scrollY, 100)"
+        },
+        {
+          "name": "GetWangData",
+          "description": "Get optional Wang terrain metadata (if present in D2M)",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "returns": {"type": "string or nil", "description": "JSON string of Wang data, or nil"},
+          "example": "local wangJson = TileMap.GetWangData(map)"
+        },
+        {
+          "name": "ScreenClamp",
+          "description": "Clamp camera coordinates to prevent scrolling past map boundaries",
+          "parameters": [
+            {"name": "cameraX", "type": "int32", "description": "Camera X position"},
+            {"name": "cameraY", "type": "int32", "description": "Camera Y position"},
+            {"name": "mapWidth", "type": "int32", "description": "Map pixel width (mapW * tileW)"},
+            {"name": "mapHeight", "type": "int32", "description": "Map pixel height (mapH * tileH)"},
+            {"name": "screenWidth", "type": "int32", "description": "Screen width (default 368)"},
+            {"name": "screenHeight", "type": "int32", "description": "Screen height (default 448)"}
+          ],
+          "returns": {"type": "int32, int32", "description": "Clamped camera X and Y"},
+          "example": "local clampedX, clampedY = TileMap.ScreenClamp(camX, camY, mapW*tileW, mapH*tileH, 368, 448)"
+        },
+        {
+          "name": "Unload",
+          "description": "Release tilemap resources",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Tilemap handle"}
+          ],
+          "example": "TileMap.Unload(map)"
+        }
+      ]
+    },
+    {
+      "name": "Battery",
+      "description": "Battery charge-state functions",
+      "functions": [
+        {
+          "name": "GetChargeState",
+          "description": "Returns the current battery and charger state as a table with power, voltage, percentage, and charger status fields.",
+          "parameters": [],
+          "returns": {
+            "type": "table",
+            "description": "Table fields: plugged_in (boolean), battery_voltage_mv (int32), charger_state (string: off|precharge|normal_charge|finishing_charge), battery_percent (int32), charger_main_fsm (string), charger_main_fsm_raw (int32), charger_jeita_region (string), charger_die_temp_limit_exceeded (boolean), charger_ok_irq_status (int32), charger_nok_irq_status (int32)"
+          },
+          "example": "local state = Battery.GetChargeState()\nprint(string.format('%d%% %dmV', state.battery_percent, state.battery_voltage_mv))\nif state.charger_state ~= 'off' then\n  print('charger: ' .. state.charger_state)\nend",
+          "js_implementation": "battery.GetChargeState"
+        }
+      ]
+    },
+    {
+      "name": "Pico8",
+      "description": "Pico-8 API compatibility layer - enables pico-8 style Lua game development",
+      "functions": [
+        {
+          "name": "pset",
+          "description": "Set pixel color at (x, y) to c",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "pset(10, 20, 7)"
+        },
+        {
+          "name": "pget",
+          "description": "Get pixel color at (x, y)",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local c = pget(10, 20)"
+        },
+        {
+          "name": "color",
+          "description": "Set pen color",
+          "parameters": [{"name": "c", "type": "number"}],
+          "example": "color(3)"
+        },
+        {
+          "name": "line",
+          "description": "Draw line from (x0,y0) to (x1,y1)",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "line(0, 0, 128, 128, 7)"
+        },
+        {
+          "name": "rect",
+          "description": "Draw rectangle outline",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "rect(10, 10, 50, 50, 2)"
+        },
+        {
+          "name": "rectfill",
+          "description": "Draw filled rectangle",
+          "parameters": [
+            {"name": "x0", "type": "number"},
+            {"name": "y0", "type": "number"},
+            {"name": "x1", "type": "number"},
+            {"name": "y1", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "rectfill(10, 10, 50, 50, 3)"
+        },
+        {
+          "name": "circ",
+          "description": "Draw circle outline",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "r", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "circ(64, 64, 10, 4)"
+        },
+        {
+          "name": "circfill",
+          "description": "Draw filled circle",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "r", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "circfill(64, 64, 10, 5)"
+        },
+        {
+          "name": "cls",
+          "description": "Clear screen",
+          "parameters": [{"name": "c", "type": "number", "optional": true}],
+          "example": "cls(0)"
+        },
+        {
+          "name": "pico_mode",
+          "description": "Set Pico framebuffer presentation scale (0 or omitted = full canvas, >0 = fixed scale centered)",
+          "parameters": [{"name": "scale", "type": "number", "optional": true}],
+          "returns": {"type": "number"},
+          "example": "pico_mode(2)"
+        },
+        {
+          "name": "spr",
+          "description": "Draw sprite",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "w", "type": "number", "optional": true},
+            {"name": "h", "type": "number", "optional": true},
+            {"name": "fx", "type": "number", "optional": true},
+            {"name": "fy", "type": "number", "optional": true}
+          ],
+          "example": "spr(1, 10, 20)"
+        },
+        {
+          "name": "sin",
+          "description": "Sine function (takes 0.0-1.0, not radians)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local y = sin(0.25)"
+        },
+        {
+          "name": "cos",
+          "description": "Cosine function (takes 0.0-1.0, not radians)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local x = cos(0.25)"
+        },
+        {
+          "name": "atan2",
+          "description": "Arc tangent 2",
+          "parameters": [
+            {"name": "y", "type": "number"},
+            {"name": "x", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local angle = atan2(10, 10)"
+        },
+        {
+          "name": "sqrt",
+          "description": "Square root",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local root = sqrt(16)"
+        },
+        {
+          "name": "abs",
+          "description": "Absolute value",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local positive = abs(-5)"
+        },
+        {
+          "name": "sgn",
+          "description": "Sign function (-1, 0, or 1)",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local sign = sgn(-5)"
+        },
+        {
+          "name": "flr",
+          "description": "Floor function",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local floored = flr(3.7)"
+        },
+        {
+          "name": "ceil",
+          "description": "Ceiling function",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local ceiled = ceil(3.2)"
+        },
+        {
+          "name": "min",
+          "description": "Minimum of two values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local smallest = min(5, 3)"
+        },
+        {
+          "name": "max",
+          "description": "Maximum of two values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local largest = max(5, 3)"
+        },
+        {
+          "name": "mid",
+          "description": "Median/clamp of three values",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"},
+            {"name": "c", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local middle = mid(1, 5, 3)"
+        },
+        {
+          "name": "rnd",
+          "description": "Random number (0 to x)",
+          "parameters": [{"name": "x", "type": "number", "optional": true}],
+          "returns": {"type": "number"},
+          "example": "local rand = rnd(10)"
+        },
+        {
+          "name": "srand",
+          "description": "Seed random",
+          "parameters": [{"name": "x", "type": "number"}],
+          "example": "srand(12345)"
+        },
+        {
+          "name": "band",
+          "description": "Bitwise AND",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = band(12, 10)"
+        },
+        {
+          "name": "bor",
+          "description": "Bitwise OR",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = bor(12, 10)"
+        },
+        {
+          "name": "bxor",
+          "description": "Bitwise XOR",
+          "parameters": [
+            {"name": "a", "type": "number"},
+            {"name": "b", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = bxor(12, 10)"
+        },
+        {
+          "name": "bnot",
+          "description": "Bitwise NOT",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local result = bnot(5)"
+        },
+        {
+          "name": "shl",
+          "description": "Shift left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = shl(8, 2)"
+        },
+        {
+          "name": "shr",
+          "description": "Shift right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = shr(32, 2)"
+        },
+        {
+          "name": "lshl",
+          "description": "Logical shift left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = lshl(8, 2)"
+        },
+        {
+          "name": "lshr",
+          "description": "Logical shift right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = lshr(32, 2)"
+        },
+        {
+          "name": "rotl",
+          "description": "Rotate left",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = rotl(8, 2)"
+        },
+        {
+          "name": "rotr",
+          "description": "Rotate right",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "n", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local result = rotr(32, 2)"
+        },
+        {
+          "name": "sub",
+          "description": "Substring function",
+          "parameters": [
+            {"name": "s", "type": "string"},
+            {"name": "i", "type": "number"},
+            {"name": "j", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "string"},
+          "example": "local part = sub('hello', 2, 4)"
+        },
+        {
+          "name": "tostr",
+          "description": "Convert value to string",
+          "parameters": [
+            {"name": "x", "type": "any"},
+            {"name": "show_decimal", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "string"},
+          "example": "local str = tostr(42)"
+        },
+        {
+          "name": "tonum",
+          "description": "Convert string to number",
+          "parameters": [{"name": "s", "type": "string"}],
+          "returns": {"type": "number"},
+          "example": "local num = tonum('42')"
+        },
+        {
+          "name": "add",
+          "description": "Add value to table",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "v", "type": "any"},
+            {"name": "i", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "any"},
+          "example": "add(items, 42)"
+        },
+        {
+          "name": "del",
+          "description": "Delete first matching value from table",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "v", "type": "any"}
+          ],
+          "returns": {"type": "any"},
+          "example": "del(items, 42)"
+        },
+        {
+          "name": "count",
+          "description": "Count table elements",
+          "parameters": [
+            {"name": "t", "type": "table"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local n = count(items)"
+        },
+        {
+          "name": "all",
+          "description": "Return iterator over table elements",
+          "parameters": [
+            {"name": "t", "type": "table"}
+          ],
+          "returns": {"type": "function"},
+          "example": "for v in all(items) do print(v) end"
+        },
+        {
+          "name": "foreach",
+          "description": "Apply callback function to each table element",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "f", "type": "function"}
+          ],
+          "example": "foreach(items, function(v) print(v) end)"
+        },
+        {
+          "name": "print",
+          "description": "Print text at position",
+          "parameters": [
+            {"name": "text", "type": "string"},
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "color", "type": "number", "optional": true}
+          ],
+          "example": "print('hello', 10, 20, 7)"
+        },
+        {
+          "name": "camera",
+          "description": "Set camera position",
+          "parameters": [
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true}
+          ],
+          "example": "camera(0, 0)"
+        },
+        {
+          "name": "clip",
+          "description": "Set clipping region",
+          "parameters": [
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true},
+            {"name": "w", "type": "number", "optional": true},
+            {"name": "h", "type": "number", "optional": true}
+          ],
+          "example": "clip(10, 10, 100, 100)"
+        },
+        {
+          "name": "pal",
+          "description": "Set palette mapping",
+          "parameters": [
+            {"name": "c0", "type": "number", "optional": true},
+            {"name": "c1", "type": "number", "optional": true}
+          ],
+          "example": "pal(1, 2)"
+        },
+        {
+          "name": "palt",
+          "description": "Set transparent color",
+          "parameters": [
+            {"name": "c", "type": "number", "optional": true},
+            {"name": "t", "type": "number", "optional": true}
+          ],
+          "example": "palt(0, true)"
+        },
+        {
+          "name": "music",
+          "description": "Play music track",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "fade", "type": "number", "optional": true},
+            {"name": "mask", "type": "number", "optional": true}
+          ],
+          "example": "music(1)"
+        },
+        {
+          "name": "sfx",
+          "description": "Play sound effect",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "channel", "type": "number", "optional": true},
+            {"name": "offset", "type": "number", "optional": true},
+            {"name": "length", "type": "number", "optional": true}
+          ],
+          "example": "sfx(10)"
+        },
+        {
+          "name": "stat",
+          "description": "Get statistics",
+          "parameters": [{"name": "x", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local fps = stat(4)"
+        },
+        {
+          "name": "printh",
+          "description": "Print to console (debug)",
+          "parameters": [{"name": "text", "type": "string"}],
+          "example": "printh('debug message')"
+        }
+      ]
+    }
+  ]
+}

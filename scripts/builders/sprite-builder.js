@@ -35,15 +35,16 @@ class SpriteBuilder extends BaseBuilder {
         throw new Error('Sprite has no frames — open in Sprite Editor and slice frames first');
       }
 
-      // ── 2. Resolve texture index ──────────────────────────────────
-      // Current sprite pipeline is single-texture; use index 0.
-      let textureIndex = 0;
+      // ── 2. Resolve texture metadata ───────────────────────────────
+      const textureOutputPath = this._resolveSpriteTextureOutputPath(spriteData);
+      const textureIndex = this._resolveTextureIndex(textureOutputPath);
+      const textureHeader = await this._loadD2TextureHeader(textureOutputPath);
 
       // ── 3. Build .d2f (frame atlas) ───────────────────────────────
       const d2fBytes = D2Sprite.buildD2F(spriteData, {
         textureIndex,
-        paletteSlot: 0,
-        paletteOffset: 0,
+        paletteSlot: textureHeader.paletteIndex,
+        paletteOffset: textureHeader.paletteOffset,
       });
       console.log(`${tag} Built .d2f: ${d2fBytes.length} bytes (${spriteData.frames.length} frames)`);
 
@@ -145,32 +146,51 @@ class SpriteBuilder extends BaseBuilder {
       }
 
       const fsImagePath = typeof fsData.imagePath === 'string' ? fsData.imagePath : '';
+      if (!fsImagePath) {
+        throw new Error(`Frameset is missing imagePath: ${fsPath}`);
+      }
+      const resolvedFsImagePath = this._resolveResourcePath(fsPath, fsImagePath);
       if (firstFramesetImagePath === null) {
-        firstFramesetImagePath = fsImagePath;
-      } else if (firstFramesetImagePath && fsImagePath && fsImagePath !== firstFramesetImagePath) {
+        firstFramesetImagePath = resolvedFsImagePath;
+      } else if (resolvedFsImagePath !== firstFramesetImagePath) {
         throw new Error('Sprite uses framesets from different source images, which is not supported by current D2 sprite build');
       }
 
       for (const f of fsFrames) {
         const localId = f?.id;
+        if (localId === undefined || localId === null || localId === '') {
+          throw new Error(`Frameset frame is missing id in ${fsPath}`);
+        }
         const mergedId = `${fsIdx}:${localId}`;
+        const w = Number(f?.w) || 0;
+        const h = Number(f?.h) || 0;
+        if (w <= 0 || h <= 0) {
+          throw new Error(`Frameset frame ${mergedId} in ${fsPath} has invalid size ${w}x${h}`);
+        }
         mergedFrames.push({
           id: mergedId,
           name: f?.name || `frame_${mergedId}`,
           x: Number(f?.x) || 0,
           y: Number(f?.y) || 0,
-          w: Number(f?.w) || 0,
-          h: Number(f?.h) || 0,
+          w,
+          h,
         });
       }
     }
+
+    normalized.sourceImagePath = firstFramesetImagePath;
+
+    const validFrameIds = new Set(mergedFrames.map(frame => frame.id));
 
     // Frame IDs must already be frameset keys in the format "fsIdx:localId".
     normalized.animations = (Array.isArray(normalized.animations) ? normalized.animations : []).map(anim => {
       const frameIds = Array.isArray(anim?.frameIds) ? anim.frameIds : [];
       for (const fid of frameIds) {
         if (typeof fid !== 'string' || !fid.includes(':')) {
-          throw new Error('Sprite animation contains non-frameset frame ID; regenerate animation frames in Sprite Editor');
+          throw new Error(`Sprite animation "${anim?.name || '(unnamed)'}" contains non-frameset frame ID "${fid}"; regenerate animation frames in Sprite Editor`);
+        }
+        if (!validFrameIds.has(fid)) {
+          throw new Error(`Sprite animation "${anim?.name || '(unnamed)'}" references unknown frame "${fid}"`);
         }
       }
       return {
@@ -208,10 +228,170 @@ class SpriteBuilder extends BaseBuilder {
     return parsed;
   }
 
+  async _loadBinaryFile(path) {
+    const fileManager = window.serviceContainer?.get('fileManager');
+    const storagePath = window.ProjectPaths?.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(path)
+      : path;
+
+    let raw = null;
+    if (fileManager) {
+      raw = await fileManager.loadFile(storagePath);
+      raw = raw?.content ?? raw?.fileContent ?? raw?.data ?? raw;
+    } else if (window.fileIOService) {
+      raw = await window.fileIOService.loadFile(storagePath);
+      raw = raw?.content ?? raw?.fileContent ?? raw?.data ?? raw;
+    } else {
+      throw new Error('No file service available to load built texture data');
+    }
+
+    if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) {
+      return raw;
+    }
+
+    if (typeof raw === 'string') {
+      const bin = atob(raw);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) {
+        bytes[i] = bin.charCodeAt(i);
+      }
+      return bytes;
+    }
+
+    return null;
+  }
+
   _baseName(path) {
     const name = (path || '').split('/').pop() || 'sprite';
     const dot = name.lastIndexOf('.');
     return dot > 0 ? name.substring(0, dot) : name;
+  }
+
+  _resolveTextureIndex(textureOutputPath) {
+    const d2OutputPaths = this._collectBuildD2OutputPaths();
+    const textureIndex = d2OutputPaths.indexOf(textureOutputPath);
+    if (textureIndex < 0) {
+      throw new Error(`Sprite source texture output was not found in build texture list: ${textureOutputPath}. Available textures: ${d2OutputPaths.join(', ') || '(none)'}`);
+    }
+    return textureIndex;
+  }
+
+  async _loadD2TextureHeader(textureOutputPath) {
+    const raw = await this._loadBinaryFile(textureOutputPath);
+    if (!raw) {
+      throw new Error(`Sprite source texture was not built before sprite atlas generation: ${textureOutputPath}`);
+    }
+
+    const bytes = raw instanceof Uint8Array
+      ? raw
+      : (raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength));
+    if (bytes.length < 32 || bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x54 || bytes[3] !== 0x58) {
+      throw new Error(`Sprite source texture is not a valid D2TX file: ${textureOutputPath}`);
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return {
+      paletteIndex: view.getUint16(10, true),
+      paletteOffset: view.getUint8(12),
+      flags: view.getUint8(13),
+      colorKeyRgb565: view.getUint16(14, true),
+    };
+  }
+
+  _resolveSpriteTextureOutputPath(spriteData) {
+    const imagePath = spriteData.sourceImagePath;
+    if (!imagePath || typeof imagePath !== 'string') {
+      throw new Error('Sprite framesets did not resolve a source image path');
+    }
+    const canonicalImagePath = this._canonicalizeSourcePath(imagePath);
+    const textureUiPath = canonicalImagePath.replace(/\.(png|jpg|jpeg|bmp|gif|webp|texture|d2)$/i, '.d2');
+    if (textureUiPath === canonicalImagePath) {
+      throw new Error(`Unsupported sprite source image extension: ${imagePath}`);
+    }
+    return this._toBuildPath(textureUiPath);
+  }
+
+  _resolveResourcePath(fromPath, resourcePath) {
+    if (!resourcePath) return '';
+    const normalizedResource = String(resourcePath).replace(/\\/g, '/');
+    if (normalizedResource.includes('/Sources/') || normalizedResource.startsWith('Sources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, fromPath);
+      }
+      return normalizedResource;
+    }
+    if (normalizedResource.includes('/Resources/') || normalizedResource.startsWith('Resources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, fromPath);
+      }
+      return normalizedResource;
+    }
+
+    const normalizedFrom = String(fromPath || '').replace(/\\/g, '/');
+    const slash = normalizedFrom.lastIndexOf('/');
+    return slash >= 0 ? `${normalizedFrom.substring(0, slash + 1)}${normalizedResource}` : normalizedResource;
+  }
+
+  _canonicalizeSourcePath(path) {
+    const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
+      ? window.ProjectPaths.getSourcesRootUi()
+      : 'Sources';
+    const normalized = String(path || '').replace(/\\/g, '/');
+    const parsed = (window.ProjectPaths && typeof window.ProjectPaths.parseProjectPath === 'function')
+      ? window.ProjectPaths.parseProjectPath(normalized)
+      : { project: null, rest: normalized };
+    const rest = parsed.rest || normalized;
+
+    if (rest === 'Resources') {
+      return parsed.project ? `${parsed.project}/${sourcesRoot}` : sourcesRoot;
+    }
+
+    if (rest.startsWith('Resources/')) {
+      const canonicalRest = `${sourcesRoot}/${rest.substring('Resources/'.length)}`;
+      return parsed.project ? `${parsed.project}/${canonicalRest}` : canonicalRest;
+    }
+
+    return parsed.project ? `${parsed.project}/${rest}` : rest;
+  }
+
+  _collectBuildD2OutputPaths() {
+    const buildSystem = window.serviceContainer?.get('buildSystem');
+    if (!buildSystem || typeof buildSystem.getAllResourceFilePaths !== 'function') {
+      throw new Error('BuildSystem is not available for sprite texture indexing');
+    }
+
+    const resourceFilePaths = buildSystem.getAllResourceFilePaths();
+    const textureBaseNames = new Set();
+    const fontBaseNames = new Set();
+    for (const filePath of resourceFilePaths) {
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith('.texture')) {
+        textureBaseNames.add(filePath.substring(0, filePath.length - '.texture'.length).toLowerCase());
+      } else if (lower.endsWith('.font')) {
+        fontBaseNames.add(filePath.substring(0, filePath.length - '.font'.length).toLowerCase());
+      }
+    }
+
+    const d2Paths = [];
+    for (const filePath of resourceFilePaths) {
+      const lower = filePath.toLowerCase();
+      if (lower.endsWith('.texture')) {
+        d2Paths.push(this._toBuildPath(filePath.replace(/\.texture$/i, '.d2')));
+        continue;
+      }
+      if (lower.endsWith('.font')) {
+        d2Paths.push(this._toBuildPath(filePath.replace(/\.font$/i, '.d2')));
+        continue;
+      }
+      if (lower.endsWith('.d2')) {
+        const baseName = filePath.substring(0, filePath.length - '.d2'.length).toLowerCase();
+        if (!textureBaseNames.has(baseName) && !fontBaseNames.has(baseName)) {
+          d2Paths.push(this._toBuildPath(filePath));
+        }
+      }
+    }
+
+    return Array.from(new Set(d2Paths)).sort((left, right) => left.localeCompare(right));
   }
 
   _toBuildPath(uiPath) {

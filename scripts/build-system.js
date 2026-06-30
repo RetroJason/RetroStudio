@@ -5,6 +5,7 @@ class BuildSystem {
   constructor() {
     this.builders = new Map();
     this.isBuilding = false;
+    this.currentBuildPromise = null;
   this.builderById = new Map();
     
     // Register default builders
@@ -61,25 +62,212 @@ class BuildSystem {
         return 'font';
       case '.sprite':
         return 'sprite';
+      case '.frameset':
+        return 'frameset';
+      case '.tilemap':
+      case '.tmj':
+        return 'tilemap';
       default: return 'copy';
     }
   }
+
+  async saveOpenTextureEditors(tabManager) {
+    if (!tabManager) {
+      return;
+    }
+
+    const textureEditors = [];
+    const collectTextureEditor = (viewer) => {
+      if (viewer && viewer.constructor?.name === 'TextureEditor' && typeof viewer.save === 'function') {
+        textureEditors.push(viewer);
+      }
+    };
+
+    collectTextureEditor(tabManager.previewViewer);
+
+    if (tabManager.dedicatedTabs instanceof Map) {
+      for (const tabInfo of tabManager.dedicatedTabs.values()) {
+        collectTextureEditor(tabInfo?.viewer);
+      }
+    }
+
+    if (textureEditors.length === 0) {
+      return;
+    }
+
+    console.log(`[BuildSystem] Saving ${textureEditors.length} open texture editor(s) before build...`);
+    for (const editor of textureEditors) {
+      await editor.save();
+    }
+  }
+
+  getAvailableTabManagers() {
+    const managers = [];
+    const addManager = (manager) => {
+      if (manager && !managers.includes(manager)) {
+        managers.push(manager);
+      }
+    };
+
+    addManager(window.gameEditor?.tabManager);
+    addManager(window.gameEmulator?.tabManager);
+    addManager(window.tabManager);
+
+    try {
+      if (window.serviceContainer?.has?.('tabManager')) {
+        addManager(window.serviceContainer.get('tabManager'));
+      }
+    } catch (error) {
+      throw new Error(`Unable to resolve tab manager before build: ${error.message}`);
+    }
+
+    return managers;
+  }
+
+  formatByteSize(bytes) {
+    if (!Number.isFinite(bytes)) {
+      throw new Error(`Invalid byte size for build summary: ${bytes}`);
+    }
+
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    }
+
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  getResultOutputPaths(buildResults) {
+    const paths = [];
+    const addPath = (path) => {
+      if (typeof path === 'string' && path && !paths.includes(path)) {
+        paths.push(path);
+      }
+    };
+
+    for (const result of buildResults) {
+      if (!result || result.success !== true || result.skipped) {
+        continue;
+      }
+
+      addPath(result.outputPath);
+
+      if (Array.isArray(result.outputs)) {
+        for (const outputPath of result.outputs) {
+          addPath(outputPath);
+        }
+      }
+
+      if (Array.isArray(result.additionalOutputPaths)) {
+        for (const outputPath of result.additionalOutputPaths) {
+          addPath(outputPath);
+        }
+      }
+    }
+
+    return paths;
+  }
+
+  formatBuildFailures(buildResults) {
+    const failures = (Array.isArray(buildResults) ? buildResults : [])
+      .filter(result => result && result.success !== true && !result.skipped)
+      .map(result => {
+        const inputPath = result.inputPath || 'unknown file';
+        const message = result.error || 'Unknown build error';
+        return `${inputPath}: ${message}`;
+      });
+
+    return failures.join('; ');
+  }
+
+  getRecordByteLength(record) {
+    const content = record?.content !== undefined ? record.content : record?.fileContent;
+
+    if (content instanceof ArrayBuffer) {
+      return content.byteLength;
+    }
+
+    if (content instanceof Uint8Array) {
+      return content.byteLength;
+    }
+
+    if (ArrayBuffer.isView(content)) {
+      return content.byteLength;
+    }
+
+    if (typeof content === 'string') {
+      if (record?.binaryData) {
+        return atob(content).length;
+      }
+
+      return new TextEncoder().encode(content).byteLength;
+    }
+
+    throw new Error(`Unsupported build output record content for ${record?.path || 'unknown path'}`);
+  }
+
+  async summarizeBuildOutputs(outputPaths) {
+    const fileManager = window.serviceContainer?.get('fileManager');
+    if (!fileManager || typeof fileManager.loadFile !== 'function') {
+      throw new Error('FileManager unavailable while summarizing build outputs');
+    }
+
+    const outputs = [];
+    let totalBytes = 0;
+
+    for (const outputPath of outputPaths) {
+      const record = await fileManager.loadFile(outputPath);
+      if (!record) {
+        throw new Error(`Build output missing while summarizing: ${outputPath}`);
+      }
+
+      const bytes = this.getRecordByteLength(record);
+      totalBytes += bytes;
+      outputs.push({
+        path: outputPath,
+        bytes,
+        size: this.formatByteSize(bytes)
+      });
+    }
+
+    outputs.sort((left, right) => left.path.localeCompare(right.path));
+
+    return {
+      files: outputs,
+      totalBytes,
+      totalSize: this.formatByteSize(totalBytes)
+    };
+  }
   
   async buildProject() {
-    if (this.isBuilding) {
-      console.log('[BuildSystem] Build already in progress');
-      return { success: false, error: 'Build already in progress' };
+    if (this.currentBuildPromise) {
+      console.log('[BuildSystem] Awaiting in-progress build...');
+      return await this.currentBuildPromise;
     }
-    
-    try {
-      this.isBuilding = true;
+
+    this.currentBuildPromise = (async () => {
+      if (this.isBuilding) {
+        console.log('[BuildSystem] Build already in progress without tracked promise');
+        return { success: false, error: 'Build already in progress' };
+      }
+
+      try {
+        this.isBuilding = true;
   const startTime = Date.now();
       console.log('[BuildSystem] Starting project build...');
       
-      // Save all dirty files before building to ensure we get updated parameters
-      if (window.gameEditor && window.gameEditor.tabManager) {
-        console.log('[BuildSystem] Saving all dirty files before build...');
-        await window.gameEditor.tabManager.saveAllOpenTabs();
+      const tabManagers = this.getAvailableTabManagers();
+      if (tabManagers.length > 0) {
+        console.log('[BuildSystem] Saving open files before build...');
+        for (const tabManager of tabManagers) {
+          if (typeof tabManager.saveAllOpenTabs === 'function') {
+            await tabManager.saveAllOpenTabs();
+          }
+          await this.saveOpenTextureEditors(tabManager);
+        }
       }
       
       // Clear the build folder before starting.
@@ -114,6 +302,7 @@ class BuildSystem {
       }
       
       const buildResults = [];
+      const explicitOutputPaths = [];
       let successCount = 0;
       let errorCount = 0;
       
@@ -208,6 +397,7 @@ class BuildSystem {
               : 'build/palette_map.pmap';
 
             const pmapData = new Uint8Array(pmap.buffer);
+            explicitOutputPaths.push(pmapPath);
             const fileManager = window.serviceContainer?.get('fileManager');
             if (fileManager) {
               await fileManager.saveFile(pmapPath, pmapData, { binaryData: true });
@@ -228,6 +418,19 @@ class BuildSystem {
       } catch (pmapError) {
         console.error('[BuildSystem] Palette map generation failed (non-fatal):', pmapError);
       }
+
+      const outputPaths = this.getResultOutputPaths(buildResults);
+      for (const outputPath of explicitOutputPaths) {
+        if (!outputPaths.includes(outputPath)) {
+          outputPaths.push(outputPath);
+        }
+      }
+
+      const outputSummary = await this.summarizeBuildOutputs(outputPaths);
+      console.log(`[BuildSystem] Build output: ${outputSummary.files.length} files, ${outputSummary.totalSize}`);
+      for (const output of outputSummary.files) {
+        console.log(`[BuildSystem]   ${output.path} (${output.size})`);
+      }
       
       // Invalidate ALL cached resources after any build operation
       const gameEmulator = window.serviceContainer?.get('gameEmulator') || window.gameEmulator;
@@ -241,26 +444,35 @@ class BuildSystem {
       // Note: Build files are added to the project explorer as they are built
       // No need to refresh from localStorage here
       
-      return {
-        success: errorCount === 0,
-        results: buildResults,
-        summary: {
-          total: resourceFilePaths.length,
-          success: successCount,
-          errors: errorCount,
-          time: totalTime
-        }
-      };
+      const buildError = this.formatBuildFailures(buildResults);
+        return {
+          success: errorCount === 0,
+          error: buildError || undefined,
+          results: buildResults,
+          summary: {
+            total: resourceFilePaths.length,
+            success: successCount,
+            errors: errorCount,
+            time: totalTime,
+            outputFiles: outputSummary.files,
+            outputBytes: outputSummary.totalBytes,
+            outputSize: outputSummary.totalSize
+          }
+        };
       
-    } catch (error) {
-      console.error('[BuildSystem] Build failed:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    } finally {
-      this.isBuilding = false;
-    }
+      } catch (error) {
+        console.error('[BuildSystem] Build failed:', error);
+        return {
+          success: false,
+          error: error.message
+        };
+      } finally {
+        this.isBuilding = false;
+        this.currentBuildPromise = null;
+      }
+    })();
+
+    return await this.currentBuildPromise;
   }
   
   async addBuiltFileToExplorer(outputPath, originalFilePath) {
@@ -404,7 +616,11 @@ class BuildSystem {
     const sourcesRoot = (window.ProjectPaths && typeof window.ProjectPaths.getSourcesRootUi === 'function')
       ? window.ProjectPaths.getSourcesRootUi()
       : 'Sources';
-    return rest === `${sourcesRoot}/Package` || rest.startsWith(`${sourcesRoot}/Package/`);
+    
+    // Exclude Package folder (managed separately) and config.json (project metadata)
+    return rest === `${sourcesRoot}/Package` 
+      || rest.startsWith(`${sourcesRoot}/Package/`)
+      || rest === `${sourcesRoot}/config.json`;
   }
 
   isSourceFontsFolderPath(filePath) {

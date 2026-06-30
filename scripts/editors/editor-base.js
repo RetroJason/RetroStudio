@@ -1,21 +1,16 @@
 // editor-base.js
 // Base class for all resource editors (extends ViewerBase and implements Registerable)
 
-console.log('[EditorBase] Class definition loading - NEW CONSTRUCTOR SIGNATURE VERSION');
-
 class EditorBase extends ViewerBase {
   constructor(fileObject = null, readOnly = false) {
     // Extract path from file object or use null for new files
     const path = fileObject?.path || null;
-    console.log(`[EditorBase] Constructor called with NEW SIGNATURE - fileObject:`, fileObject, `readOnly:`, readOnly);
-    console.log(`[EditorBase] fileObject is null:`, fileObject === null, `fileObject is undefined:`, fileObject === undefined);
     super(path);
     
     this.file = fileObject;
     this.isNewResource = !fileObject; // New file if no file object provided
     this.readOnly = readOnly;
 
-    console.log(`[EditorBase] Set this.isNewResource to: ${this.isNewResource}`);
     this.isDirty = false;
     this.hasUnsavedChanges = false;
     
@@ -23,7 +18,6 @@ class EditorBase extends ViewerBase {
     if (this.isNewResource) {
       this.isDirty = true;
       this.hasUnsavedChanges = true;
-      console.log(`[EditorBase] New file created - marked as dirty`);
     }
     
     this._readonlyGuardsInstalled = false;
@@ -75,6 +69,9 @@ class EditorBase extends ViewerBase {
       const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
     };
     const onDrop = (e) => {
+      // Allow OS file drops to bubble to ProjectExplorer global handlers.
+      const hasFiles = !!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0);
+      if (hasFiles) return;
       const t = e.target; if (this._isEditableTarget(t)) { e.preventDefault(); e.stopPropagation(); }
     };
     const onClick = (e) => {
@@ -149,10 +146,22 @@ class EditorBase extends ViewerBase {
   
   setupSaveHandlers() {
     // Ctrl+S to save
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', async (e) => {
       if (e.ctrlKey && e.key === 's' && this.isActiveEditor()) {
         e.preventDefault();
-        this.save();
+        try {
+          await this.save();
+
+          // In hosted mode, manual file save should also persist the project
+          // remotely right away to survive full app restarts.
+          const hostedStudioApi = window.retrowwwHostedStudio;
+          const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
+          if (hostedStudioApi && typeof hostedStudioApi.saveProject === 'function' && projectName) {
+            await hostedStudioApi.saveProject(projectName, { saveSource: 'save' });
+          }
+        } catch (error) {
+          console.error('[EditorBase] Ctrl+S save failed:', error);
+        }
       }
     });
   }
@@ -180,24 +189,26 @@ class EditorBase extends ViewerBase {
   
   // Mark editor as having unsaved changes
   markDirty() {
-    if (!this.isDirty) {
+    const wasDirty = this.isDirty;
+    if (!wasDirty) {
       this.isDirty = true;
       this.hasUnsavedChanges = true;
       console.log(`[EditorBase] Editor marked as dirty`);
-      
-      // Emit event for TabManager to listen to
-      if (window.eventBus) {
-        window.eventBus.emit('editor.content.changed', { editor: this });
-      }
-      
-      // Fallback: directly notify TabManager if eventBus not available
-      if (window.tabManager) {
-        window.tabManager.notifyContentChanged(this);
-      } else if (window.gameEditor?.tabManager) {
-        window.gameEditor.tabManager.notifyContentChanged(this);
-      }
-      
+
       this.updateTabTitle();
+    }
+
+    // Always emit content-changed signals so autosave listeners can re-queue
+    // even when the editor is already dirty (for example new unsaved resources).
+    if (window.eventBus) {
+      window.eventBus.emit('editor.content.changed', { editor: this });
+    }
+
+    // Fallback: directly notify TabManager if eventBus not available
+    if (window.tabManager) {
+      window.tabManager.notifyContentChanged(this);
+    } else if (window.gameEditor?.tabManager) {
+      window.gameEditor.tabManager.notifyContentChanged(this);
     }
   }
   
@@ -261,6 +272,7 @@ class EditorBase extends ViewerBase {
       console.error('[EditorBase] Save failed:', error);
       // Keep the tab dirty since save failed
       alert(`Failed to save: ${error.message}`);
+      throw error;
     }
   }
   
@@ -338,9 +350,17 @@ class EditorBase extends ViewerBase {
       // Check if the editor's class provides a default folder (e.g. 'Sprites')
       const editorDefaultFolder = this.constructor.getDefaultFolder ? this.constructor.getDefaultFolder() : null;
       if (editorDefaultFolder) {
-        targetPath = `${sourcesRoot}/${editorDefaultFolder}`;
+        const normalizedDefaultFolder = String(editorDefaultFolder).replace(/^\/+|\/+$/g, '');
+        const isRootedFolder = normalizedDefaultFolder.startsWith(`${sourcesRoot}/`)
+          || normalizedDefaultFolder === sourcesRoot
+          || normalizedDefaultFolder.startsWith('Sources/')
+          || normalizedDefaultFolder.startsWith('Resources/');
+        targetPath = isRootedFolder ? normalizedDefaultFolder : `${sourcesRoot}/${normalizedDefaultFolder}`;
       } else if (extension === '.lua') {
-        targetPath = `${sourcesRoot}/Lua`;
+        const preferredLuaFolder = gameEngine?.projectExplorer?.getPreferredManagedFolderForExtension
+          ? gameEngine.projectExplorer.getPreferredManagedFolderForExtension(project, extension)
+          : null;
+        targetPath = preferredLuaFolder || `${sourcesRoot}/Lua`;
       } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
         targetPath = `${sourcesRoot}/Music`;
       } else if (extension === '.wav' || extension === '.sfx') {
@@ -471,8 +491,8 @@ class EditorBase extends ViewerBase {
         console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       }
     } catch (error) {
-      console.warn(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
-      // Continue with in-memory storage as fallback
+      console.error(`[EditorBase] Failed to save to persistent storage: ${error.message}`);
+      throw error;
     }
     
     console.log(`[EditorBase] About to add file to project explorer - checking conditions...`);
@@ -528,7 +548,10 @@ class EditorBase extends ViewerBase {
     let targetPath = `${sourcesRoot}/Binary`; // Default fallback
     
     if (extension === '.lua') {
-      targetPath = `${sourcesRoot}/Lua`;
+      const preferredLuaFolder = gameEngine?.projectExplorer?.getPreferredManagedFolderForExtension
+        ? gameEngine.projectExplorer.getPreferredManagedFolderForExtension(project, extension)
+        : null;
+      targetPath = preferredLuaFolder || `${sourcesRoot}/Lua`;
     } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
       targetPath = `${sourcesRoot}/Music`;
     } else if (extension === '.wav' || extension === '.sfx') {
@@ -589,22 +612,32 @@ class EditorBase extends ViewerBase {
   async saveExistingResource(content) {
     try {
       // Use FileManager to save content
-      const fileManager = window.serviceContainer.get('fileManager');
+      let fileManager = null;
+      try { fileManager = window.serviceContainer?.get?.('fileManager'); } catch (_) { /* service not ready */ }
+      fileManager = fileManager || window.fileManager || window.FileManager || null;
       const storagePath = window.ProjectPaths?.normalizeStoragePath ? window.ProjectPaths.normalizeStoragePath(this.path) : this.path;
       if (fileManager && this.path) {
-        await fileManager.saveFile(storagePath, content, {
+        const saved = await fileManager.saveFile(storagePath, content, {
           type: this.getFileExtension(this.path),
           editor: this.constructor.name
         });
+        if (!saved) {
+          throw new Error(`Failed to persist file via FileManager: ${storagePath}`);
+        }
         console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
       } else {
         // Fallback to direct fileIOService
         if (window.fileIOService && this.path) {
-          await window.fileIOService.saveFile(storagePath, content, {
+          const saved = await window.fileIOService.saveFile(storagePath, content, {
             type: this.getFileExtension(this.path),
             editor: this.constructor.name
           });
+          if (!saved) {
+            throw new Error(`Failed to persist file via FileIOService: ${storagePath}`);
+          }
           console.log(`[EditorBase] Saved to persistent storage: ${storagePath}`);
+        } else {
+          throw new Error('No storage service available for saving existing resource.');
         }
       }
     } catch (error) {

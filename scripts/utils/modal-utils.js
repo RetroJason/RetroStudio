@@ -45,11 +45,17 @@ class ModalUtils {
 
       // Build options HTML
       let optionsHtml = '';
-      options.forEach((option, index) => {
-        const isChecked = index === 0 || option.value === config.defaultValue;
+      const defaultOption = options.find(option => option.value === config.defaultValue && !option.disabled)
+        || options.find(option => !option.disabled)
+        || null;
+      options.forEach((option) => {
+        const isDisabled = option.disabled === true;
+        const isChecked = !isDisabled && defaultOption && option.value === defaultOption.value;
+        const optionOpacity = isDisabled ? '0.52' : '1';
+        const optionCursor = isDisabled ? 'not-allowed' : 'pointer';
         optionsHtml += `
-          <label style="display: block; margin-bottom: 15px; cursor: pointer; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s;">
-            <input type="radio" name="selection" value="${option.value}" ${isChecked ? 'checked' : ''} style="margin-right: 10px;">
+          <label data-disabled="${isDisabled ? 'true' : 'false'}" style="display: block; margin-bottom: 15px; cursor: ${optionCursor}; padding: 10px; border: 2px solid #444; border-radius: 5px; transition: all 0.2s; opacity: ${optionOpacity};">
+            <input type="radio" name="selection" value="${option.value}" ${isChecked ? 'checked' : ''} ${isDisabled ? 'disabled' : ''} style="margin-right: 10px;">
             <strong>${option.label}</strong><br>
             <small style="color: #aaa; margin-left: 20px;">${option.description}</small>
           </label>
@@ -78,10 +84,12 @@ class ModalUtils {
       const labels = dialog.querySelectorAll('label');
       labels.forEach(label => {
         label.addEventListener('mouseenter', () => {
+          if (label.dataset.disabled === 'true') return;
           label.style.borderColor = '#4CAF50';
           label.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
         });
         label.addEventListener('mouseleave', () => {
+          if (label.dataset.disabled === 'true') return;
           label.style.borderColor = '#444';
           label.style.backgroundColor = 'transparent';
         });
@@ -198,8 +206,15 @@ class ModalUtils {
       let fieldsHtml = '';
       fields.forEach((field, index) => {
         const fieldId = `modal-field-${index}`;
-        
-        if (field.type === 'text' || field.type === 'number') {
+
+        if (field.type === 'section') {
+          fieldsHtml += `
+            <div class="modal-form-section" aria-hidden="true">
+              <div class="modal-form-section-title">${field.label}</div>
+              ${field.hint ? `<div class="modal-form-section-hint">${field.hint}</div>` : ''}
+            </div>
+          `;
+        } else if (field.type === 'text' || field.type === 'number') {
           fieldsHtml += `
             <div class="modal-field">
               <label class="modal-label" for="${fieldId}">${field.label}</label>
@@ -278,6 +293,39 @@ class ModalUtils {
       const okBtn = dialog.querySelector('#modal-ok');
       const cancelBtn = dialog.querySelector('#modal-cancel');
       const inputs = form.querySelectorAll('input, select, textarea');
+
+      if (!document.querySelector('style[data-modal-form-sections]')) {
+        const style = document.createElement('style');
+        style.setAttribute('data-modal-form-sections', 'true');
+        style.textContent = `
+          .modal-form-section {
+            margin: 18px 0 10px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+          }
+
+          .modal-form-section:first-child {
+            margin-top: 0;
+            padding-top: 0;
+            border-top: 0;
+          }
+
+          .modal-form-section-title {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #9ec5ff;
+          }
+
+          .modal-form-section-hint {
+            margin-top: 4px;
+            font-size: 12px;
+            color: #aab3be;
+          }
+        `;
+        document.head.appendChild(style);
+      }
       
       // Focus first input
       setTimeout(() => {
@@ -295,6 +343,10 @@ class ModalUtils {
         const formData = {};
         
         fields.forEach((field, index) => {
+          if (field.type === 'section') {
+            return;
+          }
+
           const fieldId = `modal-field-${index}`;
           const input = form.querySelector(`#${fieldId}`);
           let value;
@@ -330,6 +382,10 @@ class ModalUtils {
       // Handle input changes
       inputs.forEach((input, index) => {
         const field = fields[index];
+
+        if (!field || field.type === 'section') {
+          return;
+        }
         
         input.addEventListener('input', () => {
           validateForm();

@@ -8,7 +8,8 @@ class MixerWorklet extends AudioWorkletProcessor {
     this.continuousStreams = new Map(); // For ongoing streams like MOD
     this.modWorker = null; // Reference to communicate back
     this.isPlaying = false;
-    this.bufferSize = 2048; // Buffer size threshold for requesting more data
+    this.bufferSize = 16384;
+    this.targetBufferFrames = 65536;
     this.volume = 0.7; // Default volume (0.0 to 1.0+)
     this.requestInFlight = false; // Prevent multiple simultaneous requests
     
@@ -65,6 +66,7 @@ class MixerWorklet extends AudioWorkletProcessor {
         } else {
           // One-shot buffer (WAV) - no logging for routine playback
           this.buffers.push({
+            instanceId: e.data.instanceId || null,
             channels: e.data.channels.map(arr => new Float32Array(arr)),
             pos: 0,
             sampleRate: e.data.sampleRate
@@ -75,7 +77,10 @@ class MixerWorklet extends AudioWorkletProcessor {
           console.log(`[MixerWorklet] Stopped stream: ${e.data.streamId}`);
         }
         this.continuousStreams.delete(e.data.streamId);
-        this.isPlaying = false;
+        this.isPlaying = this.buffers.length > 0 || this.continuousStreams.size > 0;
+      } else if (e.data.type === 'stop-sound') {
+        this.buffers = this.buffers.filter(buffer => buffer.instanceId !== e.data.instanceId);
+        this.isPlaying = this.buffers.length > 0 || this.continuousStreams.size > 0;
       } else if (e.data.type === 'stop-all-audio') {
         // Clear all audio streams and buffers
         console.log('[MixerWorklet] Stopped all audio');
@@ -162,13 +167,13 @@ class MixerWorklet extends AudioWorkletProcessor {
         
         // Check if we need more data (request early to avoid gaps)
         const remainingFrames = stream.channels[0].length - stream.pos;
-        if (this.isPlaying && !this.requestInFlight && remainingFrames < this.bufferSize * 3 && streamId === 'mod-stream') {
+        if (this.isPlaying && !this.requestInFlight && remainingFrames < this.targetBufferFrames && streamId === 'mod-stream') {
           // Request more PCM data well before we run out
           this.requestInFlight = true; // Prevent multiple requests
           this.port.postMessage({
             type: 'request-pcm',
             streamId: streamId,
-            frames: 2048
+            frames: this.bufferSize
           });
         }
         
@@ -182,7 +187,7 @@ class MixerWorklet extends AudioWorkletProcessor {
               this.port.postMessage({
                 type: 'request-pcm',
                 streamId: streamId,
-                frames: 1024
+                frames: this.bufferSize
               });
             }
             // Stay at the end but don't go past it

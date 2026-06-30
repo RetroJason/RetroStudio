@@ -52,23 +52,27 @@
 
 /* Build/Game Objects folder styling (read-only outputs) */
 .tree-item[data-path="Build"],
-.tree-item[data-path="Game Objects"] {
+.tree-item[data-path="Game Objects"],
+.tree-item[data-path="Build Output"] {
   color: #ff9800; /* Orange for build outputs */
 }
 
 .tree-item[data-path="Build"] .tree-icon,
-.tree-item[data-path="Game Objects"] .tree-icon {
+.tree-item[data-path="Game Objects"] .tree-icon,
+.tree-item[data-path="Build Output"] .tree-icon {
   color: #ff9800;
 }
 
 /* Build/Game Objects folder children inherit orange color */
 .tree-item[data-path^="Build/"],
-.tree-item[data-path^="Game Objects/"] {
+.tree-item[data-path^="Game Objects/"],
+.tree-item[data-path^="Build Output/"] {
   color: #ffb74d; /* Lighter orange for build folder contents */
 }
 
 .tree-item[data-path^="Build/"] .tree-icon,
-.tree-item[data-path^="Game Objects/"] .tree-icon {
+.tree-item[data-path^="Game Objects/"] .tree-icon,
+.tree-item[data-path^="Build Output/"] .tree-icon {
   color: #ffb74d;
 }
 
@@ -462,6 +466,37 @@
   transition: opacity 0.2s;
 }
 
+.tab-share-nopaste {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+  opacity: 0.68;
+  transition: opacity 0.2s, color 0.2s;
+}
+
+.tab-share-nopaste svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tab-share-nopaste:hover {
+  opacity: 1;
+  color: #ffcb68;
+}
+
 .tab-close:hover {
   opacity: 1;
   color: #f44336;
@@ -543,6 +578,14 @@
   gap: 12px;
 }
 
+.welcome-recent-projects-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .welcome-recent-projects-header h4 {
   margin: 0;
   font-size: 14px;
@@ -564,6 +607,26 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
   gap: 14px;
+}
+
+.welcome-deleted-projects-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 203, 104, 0.28);
+  border-radius: 8px;
+  background: rgba(74, 42, 14, 0.54);
+  color: #ffe4ad;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.welcome-recent-project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 220px;
 }
 
 .welcome-recent-project-button {
@@ -590,6 +653,103 @@
 }
 
 .welcome-recent-project-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-delete-button {
+  border: 1px solid rgba(255, 110, 92, 0.34);
+  border-radius: 10px;
+  background: rgba(68, 18, 18, 0.72);
+  color: #ffd8d2;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-copy-button {
+  border: 1px solid rgba(255, 181, 92, 0.34);
+  border-radius: 10px;
+  background: rgba(68, 42, 18, 0.72);
+  color: #ffe7c8;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-copy-button:hover {
+  border-color: rgba(255, 211, 132, 0.78);
+  background: rgba(118, 74, 30, 0.82);
+}
+
+.welcome-project-copy-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-delete-button:hover {
+  border-color: rgba(255, 150, 132, 0.78);
+  background: rgba(118, 30, 24, 0.82);
+}
+
+.welcome-project-delete-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-card-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.welcome-project-card-actions--active {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.welcome-project-card-actions--deleted {
+  grid-template-columns: 1fr;
+}
+
+.welcome-project-restore-button {
+  border: 1px solid rgba(126, 222, 160, 0.34);
+  border-radius: 10px;
+  background: rgba(24, 68, 40, 0.72);
+  color: #d8ffe5;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.welcome-project-restore-button:hover {
+  border-color: rgba(154, 242, 183, 0.78);
+  background: rgba(34, 108, 58, 0.82);
+}
+
+.welcome-project-restore-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.welcome-project-permanent-delete-button {
+  border: 1px solid rgba(255, 92, 92, 0.44);
+  border-radius: 10px;
+  background: rgba(86, 16, 16, 0.82);
+  color: #ffe0dc;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.welcome-project-permanent-delete-button:hover {
+  border-color: rgba(255, 132, 116, 0.88);
+  background: rgba(135, 24, 20, 0.9);
+}
+
+.welcome-project-permanent-delete-button:disabled {
   opacity: 0.65;
   cursor: wait;
 }

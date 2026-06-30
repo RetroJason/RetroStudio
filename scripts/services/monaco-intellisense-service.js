@@ -13,21 +13,17 @@ class MonacoIntelliSenseService {
 
     /**
      * Load and process extension definitions from JSON
-     * @param {string} extensionFilePath - Path to the extensions.json file
+    * @param {string} extensionFilePath - Path to the canonical Lua API JSON file
      */
-    async loadExtensions(extensionFilePath = 'scripts/lua/extensions.json') {
+    async loadExtensions(extensionFilePath = 'scripts/lua/api.json') {
         try {
-            console.log('[MonacoIntelliSenseService] Loading extensions from:', extensionFilePath);
-            
-            const response = await fetch(extensionFilePath);
-            if (!response.ok) {
-                throw new Error(`Failed to load extensions: ${response.status}`);
+            console.log('[MonacoIntelliSenseService] Loading extensions from simulator component:', extensionFilePath);
+
+            if (!window.EmbeddedRuntimePlayer || typeof window.EmbeddedRuntimePlayer.getExtensionDefinitions !== 'function') {
+                throw new Error('Simulator component extension provider is unavailable.');
             }
-            
-            const text = await response.text();
-            // Remove JSON comments for parsing
-            const cleanJson = text.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
-            this.extensionData = JSON.parse(cleanJson);
+
+            this.extensionData = await window.EmbeddedRuntimePlayer.getExtensionDefinitions(extensionFilePath);
             
             console.log('[MonacoIntelliSenseService] Loaded extension data:', this.extensionData.name, 'v' + this.extensionData.version);
             
@@ -68,7 +64,7 @@ class MonacoIntelliSenseService {
 
     /**
      * Process a single category of functions
-     * @param {Object} category - Category object from extensions.json
+    * @param {Object} category - Category object from the canonical Lua API contract
      */
     processCategory(category) {
         if (!category.functions || category.functions.length === 0) {
@@ -83,7 +79,7 @@ class MonacoIntelliSenseService {
     /**
      * Process a single function definition into Monaco formats
      * @param {Object} category - The category this function belongs to
-     * @param {Object} func - Function definition from extensions.json
+    * @param {Object} func - Function definition from the canonical Lua API contract
      */
     processFunctionDefinition(category, func) {
         const fullName = `${category.name}.${func.name}`;
@@ -120,7 +116,6 @@ class MonacoIntelliSenseService {
             snippetParams = paramSnippets.join(', ');
         }
 
-        const insertText = `${fullName}(${snippetParams})`; // Use fullName instead of func.name
         const paramStrings = parameters.map(param => `${param.name}: ${param.type}`);
         const signature = `${fullName}(${paramStrings.join(', ')})`;
         
@@ -145,21 +140,173 @@ class MonacoIntelliSenseService {
         }
 
         return {
-            label: fullName,
-            kind: monaco?.languages?.CompletionItemKind?.Function || 2, // Function kind
+            categoryName: category.name,
+            categoryDescription: category.description,
+            functionName: func.name,
+            fullName: fullName,
+            snippetParams: snippetParams,
+            documentation: documentation,
+            signature: signature,
+            parameters: parameters,
+            returns: func.returns || null
+        };
+    }
+
+    createFunctionSuggestion(item, options = {}) {
+        const useMemberInsertText = options.useMemberInsertText === true;
+        const label = useMemberInsertText ? item.functionName : item.fullName;
+        const insertTextBase = useMemberInsertText ? item.functionName : item.fullName;
+        const insertText = item.snippetParams
+            ? `${insertTextBase}(${item.snippetParams})`
+            : `${insertTextBase}()`;
+
+        return {
+            label: label,
+            kind: monaco?.languages?.CompletionItemKind?.Function || 2,
             insertText: insertText,
             insertTextRules: monaco?.languages?.CompletionItemInsertTextRule?.InsertAsSnippet || 4,
             documentation: {
-                value: documentation,
+                value: item.documentation,
                 isTrusted: true
             },
-            detail: signature,
-            sortText: `${category.name}_${func.name}`,
-            filterText: `${category.name}.${func.name} ${func.name}`,
+            detail: item.signature,
+            sortText: `${item.categoryName}_${item.functionName}`,
+            filterText: `${item.fullName} ${item.functionName} ${item.categoryName}`,
             additionalTextEdits: [],
             commitCharacters: ['('],
             preselect: false,
             tags: []
+        };
+    }
+
+    createCategorySuggestion(category) {
+        return {
+            label: category.name,
+            kind: monaco?.languages?.CompletionItemKind?.Module || 8,
+            insertText: category.name,
+            documentation: {
+                value: category.description,
+                isTrusted: true
+            },
+            detail: `${category.name} module`,
+            sortText: `0_${category.name}`,
+            filterText: `${category.name} ${category.description}`,
+            additionalTextEdits: [],
+            preselect: false,
+            tags: []
+        };
+    }
+
+    scoreCompletionItem(item, currentWord, categoryName) {
+        const normalizedWord = String(currentWord || '').trim().toLowerCase();
+        const fullName = item.fullName.toLowerCase();
+        const functionName = item.functionName.toLowerCase();
+        const normalizedCategory = String(categoryName || '').trim().toLowerCase();
+
+        if (!normalizedWord) {
+            return 0;
+        }
+
+        if (normalizedCategory && functionName === normalizedWord) {
+            return 0;
+        }
+
+        if (!normalizedCategory && fullName === normalizedWord) {
+            return 0;
+        }
+
+        if (normalizedCategory && functionName.startsWith(normalizedWord)) {
+            return 1;
+        }
+
+        if (!normalizedCategory && fullName.startsWith(normalizedWord)) {
+            return 1;
+        }
+
+        if (!normalizedCategory && item.categoryName.toLowerCase().startsWith(normalizedWord)) {
+            return 2;
+        }
+
+        if (functionName.includes(normalizedWord)) {
+            return 3;
+        }
+
+        if (fullName.includes(normalizedWord)) {
+            return 4;
+        }
+
+        return 5;
+    }
+
+    getCompletionItemsForContext(options = {}) {
+        const currentWord = String(options.currentWord || '').trim();
+        const categoryName = String(options.categoryName || '').trim();
+        const useMemberInsertText = categoryName.length > 0;
+        const normalizedWord = currentWord.toLowerCase();
+
+        const suggestions = this.completionItems
+            .filter((item) => {
+                if (useMemberInsertText && item.categoryName !== categoryName) {
+                    return false;
+                }
+
+                if (!normalizedWord) {
+                    return true;
+                }
+
+                if (useMemberInsertText) {
+                    return item.functionName.toLowerCase().includes(normalizedWord);
+                }
+
+                return item.fullName.toLowerCase().includes(normalizedWord)
+                    || item.functionName.toLowerCase().includes(normalizedWord)
+                    || item.categoryName.toLowerCase().includes(normalizedWord);
+            })
+            .sort((left, right) => {
+                const scoreDiff = this.scoreCompletionItem(left, currentWord, categoryName)
+                    - this.scoreCompletionItem(right, currentWord, categoryName);
+                if (scoreDiff !== 0) {
+                    return scoreDiff;
+                }
+
+                return left.signature.localeCompare(right.signature);
+            })
+            .map((item) => this.createFunctionSuggestion(item, { useMemberInsertText }));
+
+        if (!useMemberInsertText && this.extensionData && Array.isArray(this.extensionData.categories)) {
+            const categorySuggestions = this.extensionData.categories
+                .filter((category) => {
+                    if (!normalizedWord) {
+                        return true;
+                    }
+
+                    return String(category.name || '').toLowerCase().includes(normalizedWord);
+                })
+                .map((category) => this.createCategorySuggestion(category));
+
+            return [...categorySuggestions, ...suggestions];
+        }
+
+        return suggestions;
+    }
+
+    getCallContext(textBeforeCursor) {
+        const match = String(textBeforeCursor || '').match(/([A-Za-z_]\w*)\.([A-Za-z_]\w*)\(([^()]*)$/);
+        if (!match) {
+            return null;
+        }
+
+        const argumentsText = match[3].trim();
+        let activeParameter = 0;
+        if (argumentsText.length > 0) {
+            activeParameter = argumentsText.split(',').length - 1;
+        }
+
+        return {
+            categoryName: match[1],
+            functionName: match[2],
+            fullName: `${match[1]}.${match[2]}`,
+            activeParameter: activeParameter
         };
     }
 
@@ -258,7 +405,7 @@ class MonacoIntelliSenseService {
      * @returns {Array} Array of Monaco completion items
      */
     getCompletionItems() {
-        return this.completionItems;
+        return this.getCompletionItemsForContext();
     }
 
     /**
@@ -336,7 +483,6 @@ class MonacoIntelliSenseService {
                 console.log('[MonacoIntelliSenseService] Extensions loaded successfully');
             } catch (error) {
                 console.error('[MonacoIntelliSenseService] Failed to load extensions:', error);
-                // Continue without extensions - better than failing completely
             }
         } else {
             console.log('[MonacoIntelliSenseService] Extensions already loaded');

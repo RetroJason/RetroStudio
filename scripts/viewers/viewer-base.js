@@ -6,7 +6,7 @@ class ViewerBase {
     this.path = path;
     this.element = null;
     this.isDestroyed = false;
-    
+
     this.createElement();
   }
   

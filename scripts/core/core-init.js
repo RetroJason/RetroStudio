@@ -32,10 +32,25 @@
     type: 'object',
     properties: {
       fontSize: { type: 'number', default: 14 },
-      wordWrap: { type: 'boolean', default: true },
-      showLineNumbers: { type: 'boolean', default: true },
+      tabSize: { type: 'number', default: 2 },
       indentSize: { type: 'number', default: 2 },
-      highlightCurrentLine: { type: 'boolean', default: true }
+      insertSpaces: { type: 'boolean', default: true },
+      wordWrap: { type: 'boolean', default: true },
+      renderWhitespace: { type: 'string', default: 'selection' },
+      showLineNumbers: { type: 'boolean', default: true },
+      highlightCurrentLine: { type: 'boolean', default: true },
+      minimapEnabled: { type: 'boolean', default: true },
+      quickSuggestions: { type: 'boolean', default: true },
+      quickSuggestionsDelay: { type: 'number', default: 10 },
+      suggestOnTriggerCharacters: { type: 'boolean', default: false },
+      acceptSuggestionOnEnter: { type: 'boolean', default: false },
+      acceptSuggestionOnCommitCharacter: { type: 'boolean', default: false },
+      snippetSuggestions: { type: 'string', default: 'inline' },
+      tabCompletion: { type: 'string', default: 'off' },
+      wordBasedSuggestions: { type: 'string', default: 'matchingDocuments' },
+      suggestSelection: { type: 'string', default: 'recentlyUsedByPrefix' },
+      parameterHintsEnabled: { type: 'boolean', default: true },
+      inlineSuggestEnabled: { type: 'boolean', default: true }
     }
   });
 
@@ -77,6 +92,25 @@
   window.configManager.set('application.theme', 'dark');
   window.configManager.set('application.debugMode', false);
   window.configManager.set('editor.fontSize', 14);
+  window.configManager.set('editor.tabSize', 2);
+  window.configManager.set('editor.indentSize', 2);
+  window.configManager.set('editor.insertSpaces', true);
+  window.configManager.set('editor.wordWrap', true);
+  window.configManager.set('editor.renderWhitespace', 'selection');
+  window.configManager.set('editor.showLineNumbers', true);
+  window.configManager.set('editor.highlightCurrentLine', true);
+  window.configManager.set('editor.minimapEnabled', true);
+  window.configManager.set('editor.quickSuggestions', true);
+  window.configManager.set('editor.quickSuggestionsDelay', 10);
+  window.configManager.set('editor.suggestOnTriggerCharacters', false);
+  window.configManager.set('editor.acceptSuggestionOnEnter', false);
+  window.configManager.set('editor.acceptSuggestionOnCommitCharacter', false);
+  window.configManager.set('editor.snippetSuggestions', 'inline');
+  window.configManager.set('editor.tabCompletion', 'off');
+  window.configManager.set('editor.wordBasedSuggestions', 'matchingDocuments');
+  window.configManager.set('editor.suggestSelection', 'recentlyUsedByPrefix');
+  window.configManager.set('editor.parameterHintsEnabled', true);
+  window.configManager.set('editor.inlineSuggestEnabled', true);
   window.configManager.set('build.outputFormat', 'pico8');
 
   console.log('✅ [Core] Core systems ready');

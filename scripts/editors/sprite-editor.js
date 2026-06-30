@@ -2465,15 +2465,24 @@ class SpriteEditor extends EditorBase {
 
     ctx.clearRect(0, 0, cw, ch);
 
+    const overrides = anim.frameOverrides || {};
+
     // Scrolling checkerboard
-    const checkerScrollX = (this._checkerOffsetX || 0) * pixScale;
-    const checkerScrollY = (this._checkerOffsetY || 0) * pixScale;
+    const curOv = overrides[this._animFrame] || {};
+    const frameDx = (curOv.dx !== undefined) ? curOv.dx : (anim.dx || 0);
+    const frameDy = (curOv.dy !== undefined) ? curOv.dy : (anim.dy || 0);
+    const ovForInterval = overrides[this._animFrame];
+    const interval = (ovForInterval && ovForInterval.duration > 0) ? ovForInterval.duration : (anim.frameDuration || 100);
+    const progress = this._animPlaying && interval > 0
+      ? Math.max(0, Math.min(1, (performance.now() - this._lastAnimTime) / interval))
+      : 0;
+    const checkerScrollX = ((this._checkerOffsetX || 0) + frameDx * progress) * pixScale;
+    const checkerScrollY = ((this._checkerOffsetY || 0) + frameDy * progress) * pixScale;
     this._drawCheckerboard(ctx, cw, ch, checkerScrollX, checkerScrollY, 32);
 
     ctx.imageSmoothingEnabled = false;
 
     // Per-frame offset (for uneven frame sizes)
-    const overrides = anim.frameOverrides || {};
     const frameOv = overrides[this._animFrame] || {};
     const offX = (frameOv.offsetX || 0) * pixScale;
     const offY = (frameOv.offsetY || 0) * pixScale;

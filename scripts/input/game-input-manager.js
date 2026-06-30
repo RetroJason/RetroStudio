@@ -32,9 +32,25 @@ class GameInputManager {
       
       // System buttons
       'Enter': 0x0008,      // Start (bit 3)
+      'NumpadEnter': 0x0008, // Start (bit 3)
       'Space': 0x0004,      // Select (bit 2)
       'ShiftLeft': 0x0400,  // L shoulder (bit 10)
       'ShiftRight': 0x0800  // R shoulder (bit 11)
+    };
+
+    this.virtualButtonMap = {
+      b: 0x0001,
+      y: 0x0002,
+      select: 0x0004,
+      start: 0x0008,
+      up: 0x0010,
+      down: 0x0020,
+      left: 0x0040,
+      right: 0x0080,
+      a: 0x0100,
+      x: 0x0200,
+      l: 0x0400,
+      r: 0x0800
     };
     
     // Reverse mapping for debugging
@@ -105,25 +121,7 @@ class GameInputManager {
         }
         
         #game-canvas:focus {
-          box-shadow: 0 0 0 2px #0078d4; /* Custom focus indicator */
-        }
-        
-        #game-canvas.input-active {
-          box-shadow: 0 0 0 2px #0078d4;
-        }
-        
-        .game-input-indicator {
-          position: absolute;
-          top: 5px;
-          left: 5px;
-          background: rgba(0, 120, 212, 0.8);
-          color: white;
-          padding: 2px 8px;
-          border-radius: 3px;
-          font-size: 12px;
-          font-family: 'Segoe UI', sans-serif;
-          pointer-events: none;
-          z-index: 10;
+          box-shadow: none;
         }
       `;
       document.head.appendChild(style);
@@ -141,9 +139,12 @@ class GameInputManager {
     this.gameCanvas.addEventListener('blur', this.boundBlur);
     this.gameCanvas.addEventListener('click', this.boundClick);
     
-    // Key events on window (since keydown/keyup bubble up)
-    window.addEventListener('keydown', this.boundKeyDown);
-    window.addEventListener('keyup', this.boundKeyUp);
+    // Key events on window in the capture phase so editor/UI handlers do not
+    // consume game input before the emulator sees it.
+    window.addEventListener('keydown', this.boundKeyDown, true);
+    window.addEventListener('keyup', this.boundKeyUp, true);
+
+    this.setCaptureActive(this.isCanvasFocused());
     
     console.log('[GameInputManager] Event listeners added');
   }
@@ -158,10 +159,34 @@ class GameInputManager {
       this.gameCanvas.removeEventListener('click', this.boundClick);
     }
     
-    window.removeEventListener('keydown', this.boundKeyDown);
-    window.removeEventListener('keyup', this.boundKeyUp);
+    window.removeEventListener('keydown', this.boundKeyDown, true);
+    window.removeEventListener('keyup', this.boundKeyUp, true);
     
     console.log('[GameInputManager] Event listeners removed');
+  }
+
+  isCanvasFocused() {
+    return !!this.gameCanvas && document.activeElement === this.gameCanvas;
+  }
+
+  setCaptureActive(isActive, options = {}) {
+    const clearKeys = options.clearKeys === true;
+
+    this.isActive = isActive;
+    if (!this.gameCanvas) {
+      return;
+    }
+
+    if (isActive) {
+      this.updateInputStatus(true);
+      return;
+    }
+
+    this.updateInputStatus(false);
+
+    if (clearKeys) {
+      this.clearKeyStates();
+    }
   }
   
   /**
@@ -169,10 +194,7 @@ class GameInputManager {
    */
   handleFocus(event) {
     console.log('[GameInputManager] Canvas gained focus - input capture active');
-    this.isActive = true;
-    this.gameCanvas.classList.add('input-active');
-    this.showInputIndicator();
-    this.updateInputStatus(true);
+    this.setCaptureActive(true);
   }
   
   /**
@@ -180,13 +202,7 @@ class GameInputManager {
    */
   handleBlur(event) {
     console.log('[GameInputManager] Canvas lost focus - input capture inactive');
-    this.isActive = false;
-    this.gameCanvas.classList.remove('input-active');
-    this.hideInputIndicator();
-    this.updateInputStatus(false);
-    
-    // Clear all key states when losing focus
-    this.clearKeyStates();
+    this.setCaptureActive(false, { clearKeys: true });
   }
   
   /**
@@ -194,7 +210,7 @@ class GameInputManager {
    */
   handleClick(event) {
     // Ensure canvas gets focus when clicked
-    if (!this.isActive) {
+    if (!this.isCanvasFocused()) {
       console.log('[GameInputManager] Canvas clicked - requesting focus');
       this.gameCanvas.focus();
     }
@@ -204,8 +220,16 @@ class GameInputManager {
    * Handle keydown events
    */
   handleKeyDown(event) {
-    // Only process if we're active and this is a mapped key
-    if (!this.isActive || !this.buttonMap.hasOwnProperty(event.code)) {
+    if (!this.buttonMap.hasOwnProperty(event.code)) {
+      return;
+    }
+
+    const isFocused = this.isCanvasFocused();
+    if (this.isActive !== isFocused) {
+      this.setCaptureActive(isFocused, { clearKeys: !isFocused });
+    }
+
+    if (!isFocused) {
       return;
     }
     
@@ -231,8 +255,16 @@ class GameInputManager {
    * Handle keyup events
    */
   handleKeyUp(event) {
-    // Only process if we're active and this is a mapped key
-    if (!this.isActive || !this.buttonMap.hasOwnProperty(event.code)) {
+    if (!this.buttonMap.hasOwnProperty(event.code)) {
+      return;
+    }
+
+    const isFocused = this.isCanvasFocused();
+    if (this.isActive !== isFocused) {
+      this.setCaptureActive(isFocused, { clearKeys: !isFocused });
+    }
+
+    if (!isFocused) {
       return;
     }
     
@@ -259,13 +291,8 @@ class GameInputManager {
   updateInputStatus(isActive) {
     const statusElement = document.querySelector('.input-status');
     if (statusElement) {
-      if (isActive) {
-        statusElement.innerHTML = '<strong>🎮 Input Active - Press keys to test!</strong>';
-        statusElement.classList.add('active');
-      } else {
-        statusElement.innerHTML = '<strong>Click the canvas above to activate input capture</strong>';
-        statusElement.classList.remove('active');
-      }
+      // Keep status rendering static to avoid class-based layout side effects.
+      statusElement.className = 'input-status';
     }
   }
   
@@ -280,27 +307,41 @@ class GameInputManager {
     this.previousKeys = 0;
     console.log('[GameInputManager] Cleared all key states');
   }
+
+  setVirtualButton(buttonName, isPressed) {
+    if (typeof buttonName !== 'string') {
+      throw new Error('Virtual button name must be a string.');
+    }
+
+    const normalizedButtonName = buttonName.trim().toLowerCase();
+    const button = this.virtualButtonMap[normalizedButtonName];
+    if (!button) {
+      throw new Error(`Unknown virtual game button: ${buttonName}`);
+    }
+
+    const virtualKey = `Virtual:${normalizedButtonName}`;
+    if (isPressed) {
+      if (!this.keyStates.has(virtualKey)) {
+        this.keyStates.set(virtualKey, true);
+        this.frameKeys.held |= button;
+        this.frameKeys.pressed |= button;
+      }
+      this.setCaptureActive(true);
+      return;
+    }
+
+    if (this.keyStates.has(virtualKey)) {
+      this.keyStates.delete(virtualKey);
+      this.frameKeys.held &= ~button;
+      this.frameKeys.released |= button;
+    }
+  }
   
   /**
    * Show input indicator on canvas
    */
   showInputIndicator() {
-    this.hideInputIndicator(); // Remove any existing indicator
-    
-    const container = this.gameCanvas.parentElement;
-    if (container) {
-      const indicator = document.createElement('div');
-      indicator.className = 'game-input-indicator';
-      indicator.textContent = '🎮 Input Active';
-      indicator.id = 'game-input-indicator';
-      
-      // Position relative to canvas container
-      if (getComputedStyle(container).position === 'static') {
-        container.style.position = 'relative';
-      }
-      
-      container.appendChild(indicator);
-    }
+    // Input active feedback is now represented only by frame border color.
   }
   
   /**
@@ -314,16 +355,20 @@ class GameInputManager {
   }
   
   /**
-   * Update input state - called once per frame by the game loop
-   * This processes frame-based input events and resets pressed/released states
+   * Mark the start of a frame.
+   * Pressed/released edges stay available until the end of the frame so Lua
+   * code can observe one-frame transitions via Input.IsKeyPressed/Released.
    */
   updateFrame() {
-    // Reset pressed and released states for next frame
+    this.previousKeys = this.frameKeys.held;
+  }
+
+  /**
+   * Finalize a frame after the game update has consumed edge-triggered input.
+   */
+  endFrame() {
     this.frameKeys.pressed = 0;
     this.frameKeys.released = 0;
-    
-    // Store current held state for next frame calculations
-    this.previousKeys = this.frameKeys.held;
   }
   
   // === PUBLIC API FOR LUA INTERFACE ===

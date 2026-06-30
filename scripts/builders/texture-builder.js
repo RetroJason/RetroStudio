@@ -32,13 +32,24 @@ class TextureBuilder extends BaseBuilder {
       // ── 1. Parse the .texture JSON ────────────────────────────────
       const textureJson = this.parseTextureJson(file.content);
       const meta = textureJson.metadata || {};
-      const format = meta.outputPixelFormat || 'd2_mode_i8';
+      const format = meta.outputPixelFormat;
+      if (!format || typeof format !== 'string') {
+        throw new Error(`Texture metadata is missing outputPixelFormat: ${file.path}`);
+      }
       const paletteOffset = meta.paletteOffset ?? 0;
       const palettePath = meta.palettePath || '';
       const sourceImagePath = meta.sourceImagePath || textureJson.sourceImagePath || textureJson.sourceImage || '';
       const resolvedImagePath = this.resolveResourcePath(file.path, sourceImagePath);
       const resolvedPalettePath = this.resolveResourcePath(file.path, palettePath);
-      const fmtEnum = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.I8;
+      const fmtEnum = FORMAT_STRING_TO_ENUM[format];
+      if (fmtEnum === undefined) {
+        throw new Error(`Unsupported texture outputPixelFormat "${format}" in ${file.path}`);
+      }
+
+      const expectedColorDepth = this.getColorDepthForFormat(format);
+      if (textureJson.colorDepth !== undefined && Number(textureJson.colorDepth) !== expectedColorDepth) {
+        throw new Error(`Texture colorDepth (${textureJson.colorDepth}) does not match outputPixelFormat ${format} (${expectedColorDepth}-bit) in ${file.path}`);
+      }
 
       // ── 2. Load the source image and rebuild the D2 payload ───────
       if (!resolvedImagePath) {
@@ -75,33 +86,35 @@ class TextureBuilder extends BaseBuilder {
 
       let d2Bytes;
 
-      // ── 3. Resolve palette index from the build-time palette registry ──
+      // ── 3. Resolve palette data and palette-map registration key ──
       let paletteIndex = 0;
       let palette = null;
-      if (palettePath) {
-        const embeddedPalette = textureJson.palette;
-        if (Array.isArray(embeddedPalette) && embeddedPalette.length > 0) {
-          palette = embeddedPalette.map(c => {
-            if (typeof c === 'string') return c;
-            if (c && typeof c === 'object' && c.r !== undefined) {
-              const toHex = v => v.toString(16).padStart(2, '0');
-              return `#${toHex(c.r)}${toHex(c.g)}${toHex(c.b)}`;
-            }
-            return '#000000';
-          });
-        } else {
-          // Load from palette file
-          const paletteContent = await this.loadFileContent(resolvedPalettePath);
-          if (!paletteContent) throw new Error(`Palette not found: ${resolvedPalettePath}`);
-          const PaletteClass = window.Palette;
-          if (!PaletteClass) throw new Error('Palette class not available');
-          const paletteObj = new PaletteClass();
-          await paletteObj.loadFromContent(paletteContent, resolvedPalettePath);
-          palette = paletteObj.colors.map(c => typeof c === 'string' ? c : '#000000');
-        }
+      const embeddedPalette = textureJson.palette;
 
-        paletteIndex = TextureBuilder.getPaletteIndex(resolvedPalettePath, palette);
-        console.log(`${tag} Palette index ${paletteIndex} for ${resolvedPalettePath} (${palette.length} colors)`);
+      if (Array.isArray(embeddedPalette) && embeddedPalette.length > 0) {
+        palette = embeddedPalette.map(c => {
+          if (typeof c === 'string') return c;
+          if (c && typeof c === 'object' && c.r !== undefined) {
+            const toHex = v => v.toString(16).padStart(2, '0');
+            return `#${toHex(c.r)}${toHex(c.g)}${toHex(c.b)}`;
+          }
+          return '#000000';
+        });
+      } else if (palettePath) {
+        // Load from palette file when no embedded palette was persisted
+        const paletteContent = await this.loadFileContent(resolvedPalettePath);
+        if (!paletteContent) throw new Error(`Palette not found: ${resolvedPalettePath}`);
+        const PaletteClass = window.Palette;
+        if (!PaletteClass) throw new Error('Palette class not available');
+        const paletteObj = new PaletteClass();
+        await paletteObj.loadFromContent(paletteContent, resolvedPalettePath);
+        palette = paletteObj.colors.map(c => typeof c === 'string' ? c : '#000000');
+      }
+
+      if (palette && palette.length > 0) {
+        const paletteRegistryKey = resolvedPalettePath || `${file.path}#embedded-palette`;
+        paletteIndex = TextureBuilder.getPaletteIndex(paletteRegistryKey, palette);
+        console.log(`${tag} Palette index ${paletteIndex} for ${paletteRegistryKey} (${palette.length} colors)`);
       }
 
       const D2FileClass = window.D2File;
@@ -111,7 +124,21 @@ class TextureBuilder extends BaseBuilder {
 
       if (this.isIndexedFormatEnum(fmtEnum)) {
         if (!palette || palette.length === 0) {
-          throw new Error(`Indexed texture requires a palette: ${file.path}`);
+          const hasEmbeddedPalette = Array.isArray(textureJson.palette);
+          const embeddedPaletteLength = hasEmbeddedPalette ? textureJson.palette.length : 0;
+          console.error(`${tag} FATAL indexed palette missing`, {
+            texturePath: file.path,
+            outputPixelFormat: format,
+            palettePath,
+            hasEmbeddedPalette,
+            embeddedPaletteLength,
+            metadataKeys: Object.keys(meta || {}),
+          });
+          throw new Error(
+            `Indexed texture requires a palette: ${file.path} ` +
+            `(format=${format}, palettePath=${palettePath || '(empty)'}, ` +
+            `embeddedPalette=${hasEmbeddedPalette ? embeddedPaletteLength : 0})`
+          );
         }
 
         const chunkSize = this.getIndexedPaletteColorCount(fmtEnum);
@@ -257,16 +284,19 @@ class TextureBuilder extends BaseBuilder {
 
   resolveResourcePath(texturePath, resourcePath) {
     if (!resourcePath) return '';
-    if (resourcePath.includes('/Sources/')) return resourcePath;
-    if (resourcePath.startsWith('Sources/')) {
-      const marker = texturePath.lastIndexOf('/Sources/');
-      if (marker >= 0) {
-        return texturePath.substring(0, marker + 1) + resourcePath;
+    const normalizedResource = String(resourcePath).replace(/\\/g, '/');
+    if (normalizedResource.includes('/Sources/')
+      || normalizedResource.startsWith('Sources/')
+      || normalizedResource.includes('/Resources/')
+      || normalizedResource.startsWith('Resources/')) {
+      if (window.ProjectPaths && typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        return window.ProjectPaths.rebaseManagedPath(normalizedResource, texturePath);
       }
+      return normalizedResource;
     }
 
     const slash = texturePath.lastIndexOf('/');
-    return slash >= 0 ? `${texturePath.substring(0, slash + 1)}${resourcePath}` : resourcePath;
+    return slash >= 0 ? `${texturePath.substring(0, slash + 1)}${normalizedResource}` : normalizedResource;
   }
 
   isIndexedFormatEnum(fmtEnum) {
@@ -355,7 +385,38 @@ class TextureBuilder extends BaseBuilder {
       'd2_mode_rgb444':   0x41,
       'd2_mode_rgb555':   0x42,
     };
-    return map[format] || 0x09; // default to i8
+    if (map[format] === undefined) {
+      throw new Error(`Unsupported texture format: ${format}`);
+    }
+    return map[format];
+  }
+
+  getColorDepthForFormat(format) {
+    const map = {
+      'd2_mode_alpha8': 8,
+      'd2_mode_rgb565': 16,
+      'd2_mode_argb8888': 32,
+      'd2_mode_argb4444': 16,
+      'd2_mode_argb1555': 16,
+      'd2_mode_ai44': 8,
+      'd2_mode_rgba8888': 32,
+      'd2_mode_rgba4444': 16,
+      'd2_mode_rgba5551': 16,
+      'd2_mode_i8': 8,
+      'd2_mode_i4': 4,
+      'd2_mode_i2': 2,
+      'd2_mode_i1': 1,
+      'd2_mode_alpha4': 4,
+      'd2_mode_alpha2': 2,
+      'd2_mode_alpha1': 1,
+      'd2_mode_rgb888': 24,
+      'd2_mode_rgb444': 12,
+      'd2_mode_rgb555': 15,
+    };
+    if (map[format] === undefined) {
+      throw new Error(`Unsupported texture format: ${format}`);
+    }
+    return map[format];
   }
 
   getBaseName(path) {
