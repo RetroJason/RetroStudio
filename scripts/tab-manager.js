@@ -2158,8 +2158,11 @@ class TabManager {
       if (response.ok) {
         const payload = await response.json();
         const applications = Array.isArray(payload?.applications) ? payload.applications : [];
-        const recommended = applications.filter((application) => application?.recommended === true);
-        const approvedPublished = recommended.length > 0 ? recommended : applications;
+        const approvedPublished = applications.filter((application) => {
+          const category = String(application?.category || '').trim();
+          const isLuaApp = category === 'lua_game' || category === 'lua_app';
+          return isLuaApp && application?.isExample === true;
+        });
 
         for (const application of approvedPublished) {
           const title = String(application?.title || '').trim();
@@ -2180,7 +2183,6 @@ class TabManager {
             previewUrl: typeof application?.previewImageUrl === 'string' ? application.previewImageUrl : null,
             appSlug: slug,
             versionUuid: parsedRuntime.versionUuid,
-            recommended: application?.recommended === true,
           });
         }
       }
@@ -2210,7 +2212,7 @@ class TabManager {
         const versionUuid = this._escapeHtml(example.versionUuid || '');
         const typeLabel = example.kind === 'project'
           ? 'Your Example Project'
-          : (example.recommended ? 'Approved Published Example' : 'Published Example');
+          : 'Published Example';
 
         return `
           <div class="welcome-recent-project-card">
