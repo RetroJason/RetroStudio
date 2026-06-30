@@ -121,25 +121,7 @@ class GameInputManager {
         }
         
         #game-canvas:focus {
-          box-shadow: 0 0 0 2px #0078d4; /* Custom focus indicator */
-        }
-        
-        #game-canvas.input-active {
-          box-shadow: 0 0 0 2px #0078d4;
-        }
-        
-        .game-input-indicator {
-          position: absolute;
-          top: 5px;
-          left: 5px;
-          background: rgba(0, 120, 212, 0.8);
-          color: white;
-          padding: 2px 8px;
-          border-radius: 3px;
-          font-size: 12px;
-          font-family: 'Segoe UI', sans-serif;
-          pointer-events: none;
-          z-index: 10;
+          box-shadow: none;
         }
       `;
       document.head.appendChild(style);
@@ -195,15 +177,16 @@ class GameInputManager {
       return;
     }
 
-    this.gameCanvas.classList.toggle('input-active', isActive);
+    const gameFrame = this.gameCanvas.closest('.game-screen-frame');
+    if (gameFrame) {
+      gameFrame.style.borderColor = isActive ? '#3fb0ff' : '#c7662a';
+    }
 
     if (isActive) {
-      this.showInputIndicator();
       this.updateInputStatus(true);
       return;
     }
 
-    this.hideInputIndicator();
     this.updateInputStatus(false);
 
     if (clearKeys) {
@@ -313,13 +296,8 @@ class GameInputManager {
   updateInputStatus(isActive) {
     const statusElement = document.querySelector('.input-status');
     if (statusElement) {
-      if (isActive) {
-        statusElement.innerHTML = '<strong>🎮 Input Active - Press keys to test!</strong>';
-        statusElement.classList.add('active');
-      } else {
-        statusElement.innerHTML = '<strong>Click the canvas above to activate input capture</strong>';
-        statusElement.classList.remove('active');
-      }
+      // Keep status rendering static to avoid class-based layout side effects.
+      statusElement.className = 'input-status';
     }
   }
   
@@ -368,22 +346,7 @@ class GameInputManager {
    * Show input indicator on canvas
    */
   showInputIndicator() {
-    this.hideInputIndicator(); // Remove any existing indicator
-    
-    const container = this.gameCanvas.parentElement;
-    if (container) {
-      const indicator = document.createElement('div');
-      indicator.className = 'game-input-indicator';
-      indicator.textContent = '🎮 Input Active';
-      indicator.id = 'game-input-indicator';
-      
-      // Position relative to canvas container
-      if (getComputedStyle(container).position === 'static') {
-        container.style.position = 'relative';
-      }
-      
-      container.appendChild(indicator);
-    }
+    // Input active feedback is now represented only by frame border color.
   }
   
   /**

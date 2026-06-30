@@ -104,11 +104,76 @@ class BaseLuaExtension {
     };
 
    
+    const isPico8TableHelper = className === 'Pico8' && ['add', 'del', 'count', 'all', 'foreach'].includes(luaFunctionName);
+
+    if (isPico8TableHelper) {
+      const luaHelperImplementations = {
+      add: `
+    function Pico8.add(t, v, i)
+      if i ~= nil then
+        table.insert(t, i, v)
+      else
+        table.insert(t, v)
+      end
+      return v
+    end
+    add = Pico8.add
+      `,
+      del: `
+    function Pico8.del(t, v)
+      for i = 1, #t do
+        if t[i] == v then
+          table.remove(t, i)
+          return v
+        end
+      end
+      return nil
+    end
+    del = Pico8.del
+      `,
+      count: `
+    function Pico8.count(t)
+      return #t
+    end
+    count = Pico8.count
+      `,
+      all: `
+    function Pico8.all(t)
+      local i = 0
+      return function()
+        i = i + 1
+        return t[i]
+      end
+    end
+    all = Pico8.all
+      `,
+      foreach: `
+    function Pico8.foreach(t, f)
+      for i = 1, #t do
+        f(t[i])
+      end
+    end
+    foreach = Pico8.foreach
+      `,
+      };
+
+      this.luaState.execute(`
+    if not Pico8 then
+      Pico8 = {}
+    end
+    ${luaHelperImplementations[luaFunctionName]}
+      `);
+      return;
+    }
+
     const registerGlobalAlias = className === 'Pico8'
       ? `
     -- Pico-8 compatibility: expose function as a Lua global
+    -- NOTE: js.global.fn(a, b, ...) consumes the first argument as the JS
+    -- "this" receiver, so we pass js.null as a dummy receiver to forward all
+    -- real arguments intact.
     function ${luaFunctionName}(...)
-        return js.global.${globalFunctionName}(unpack({...}))
+        return js.global.${globalFunctionName}(js.null, unpack({...}))
     end
     `
       : '';
@@ -121,11 +186,12 @@ class BaseLuaExtension {
     end
     
     -- Register function that reads parameters from stack and calls JS implementation
+    -- NOTE: js.global.fn(a, b, ...) consumes the first argument as the JS "this"
+    -- receiver, so we pass js.null as a dummy receiver to forward all real
+    -- arguments intact.
     function ${className}.${luaFunctionName}(...)
         local args = {...}
-        -- Debug: print the arguments being passed
-        --print("Lua calling ${className}.${luaFunctionName} with args:", unpack(args))
-        return js.global.${globalFunctionName}(unpack(args))
+        return js.global.${globalFunctionName}(js.null, unpack(args))
     end
     ${registerGlobalAlias}
     `);

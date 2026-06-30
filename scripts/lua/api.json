@@ -1867,6 +1867,54 @@
           "example": "local num = tonum('42')"
         },
         {
+          "name": "add",
+          "description": "Add value to table",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "v", "type": "any"},
+            {"name": "i", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "any"},
+          "example": "add(items, 42)"
+        },
+        {
+          "name": "del",
+          "description": "Delete first matching value from table",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "v", "type": "any"}
+          ],
+          "returns": {"type": "any"},
+          "example": "del(items, 42)"
+        },
+        {
+          "name": "count",
+          "description": "Count table elements",
+          "parameters": [
+            {"name": "t", "type": "table"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local n = count(items)"
+        },
+        {
+          "name": "all",
+          "description": "Return iterator over table elements",
+          "parameters": [
+            {"name": "t", "type": "table"}
+          ],
+          "returns": {"type": "function"},
+          "example": "for v in all(items) do print(v) end"
+        },
+        {
+          "name": "foreach",
+          "description": "Apply callback function to each table element",
+          "parameters": [
+            {"name": "t", "type": "table"},
+            {"name": "f", "type": "function"}
+          ],
+          "example": "foreach(items, function(v) print(v) end)"
+        },
+        {
           "name": "print",
           "description": "Print text at position",
           "parameters": [

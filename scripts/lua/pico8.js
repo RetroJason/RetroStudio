@@ -9,14 +9,317 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentPalette = new Map();
     this.randomSeed = 0;
     this.spriteFlags = new Map();
+
+    // Pico-8 fallback framebuffer (used when no spriteEngine is available).
+    this._fbWidth = 128;
+    this._fbHeight = 128;
+    this._framebuffer = new Uint8Array(this._fbWidth * this._fbHeight);
+    this._clipRect = { x: 0, y: 0, w: this._fbWidth, h: this._fbHeight };
+    this._cameraX = 0;
+    this._cameraY = 0;
+    this._dirty = true;
+    this._gpu = null;
+    this._fbTexture = null;
+    this._paletteRGBA = this._buildPicoPaletteRGBA();
+  }
+
+  initGpu(gpu) {
+    this._gpu = gpu;
+    this._fbTexture = null;
+    this._dirty = true;
+    this.resetRuntimeState();
+  }
+
+  resetRuntimeState() {
+    this.currentColor = 0;
+    this._cameraX = 0;
+    this._cameraY = 0;
+    this._clipRect = { x: 0, y: 0, w: this._fbWidth, h: this._fbHeight };
+    this._clearFb(0);
+  }
+
+  _buildPicoPaletteRGBA() {
+    const palette = new Uint8Array(1024);
+    const pico16 = [
+      [0, 0, 0],
+      [29, 43, 83],
+      [126, 37, 83],
+      [0, 135, 81],
+      [171, 82, 54],
+      [95, 87, 79],
+      [194, 195, 199],
+      [255, 241, 232],
+      [255, 0, 77],
+      [255, 163, 0],
+      [255, 236, 39],
+      [0, 228, 54],
+      [41, 173, 255],
+      [131, 118, 156],
+      [255, 119, 168],
+      [255, 204, 170],
+    ];
+
+    for (let i = 0; i < 256; i += 1) {
+      const p = pico16[i & 0x0f];
+      const o = i * 4;
+      palette[o] = p[0];
+      palette[o + 1] = p[1];
+      palette[o + 2] = p[2];
+      palette[o + 3] = 255;
+    }
+    return palette;
+  }
+
+  _getFallbackEngine() {
+    return {
+      setPixel: (x, y, c) => {
+        this._plot(x, y, c, false);
+      },
+      getPixel: (x, y) => this._readPixel(x, y),
+      line: (x0, y0, x1, y1, c) => this._lineToFb(x0, y0, x1, y1, c),
+      rect: (x0, y0, x1, y1, c) => this._rectToFb(x0, y0, x1, y1, c),
+      rectfill: (x0, y0, x1, y1, c) => this._rectFillToFb(x0, y0, x1, y1, c),
+      circ: (x, y, r, c) => this._circToFb(x, y, r, c),
+      circfill: (x, y, r, c) => this._circFillToFb(x, y, r, c),
+      clear: (c) => this._clearFb(c),
+      setCamera: (x, y) => {
+        this._cameraX = x | 0;
+        this._cameraY = y | 0;
+      },
+      setClip: (x, y, w, h) => {
+        this._clipRect = {
+          x: x | 0,
+          y: y | 0,
+          w: Math.max(0, w | 0),
+          h: Math.max(0, h | 0),
+        };
+      },
+    };
+  }
+
+  _getEngine() {
+    // Use Pico framebuffer primitives consistently to match Pico-8 coordinates.
+    // Sprite engine integration remains available for non-primitive APIs.
+    return this._getFallbackEngine();
+  }
+
+  _markDirty() {
+    this._dirty = true;
+  }
+
+  _inClip(x, y) {
+    return x >= this._clipRect.x
+      && y >= this._clipRect.y
+      && x < (this._clipRect.x + this._clipRect.w)
+      && y < (this._clipRect.y + this._clipRect.h);
+  }
+
+  _inBounds(x, y) {
+    return x >= 0 && y >= 0 && x < this._fbWidth && y < this._fbHeight;
+  }
+
+  _plot(x, y, c, useCamera = true) {
+    const drawX = (x | 0) - (useCamera ? this._cameraX : 0);
+    const drawY = (y | 0) - (useCamera ? this._cameraY : 0);
+    if (!this._inBounds(drawX, drawY) || !this._inClip(drawX, drawY)) {
+      return;
+    }
+    this._framebuffer[drawY * this._fbWidth + drawX] = c & 0xff;
+    this._markDirty();
+  }
+
+  _readPixel(x, y) {
+    const px = x | 0;
+    const py = y | 0;
+    if (!this._inBounds(px, py)) {
+      return 0;
+    }
+    return this._framebuffer[py * this._fbWidth + px] || 0;
+  }
+
+  _lineToFb(x0, y0, x1, y1, c) {
+    let ax = (x0 | 0) - this._cameraX;
+    let ay = (y0 | 0) - this._cameraY;
+    const bx = (x1 | 0) - this._cameraX;
+    const by = (y1 | 0) - this._cameraY;
+
+    const dx = Math.abs(bx - ax);
+    const sx = ax < bx ? 1 : -1;
+    const dy = -Math.abs(by - ay);
+    const sy = ay < by ? 1 : -1;
+    let err = dx + dy;
+
+    while (true) {
+      this._plot(ax, ay, c, false);
+      if (ax === bx && ay === by) {
+        break;
+      }
+      const e2 = 2 * err;
+      if (e2 >= dy) {
+        err += dy;
+        ax += sx;
+      }
+      if (e2 <= dx) {
+        err += dx;
+        ay += sy;
+      }
+    }
+  }
+
+  _rectToFb(x0, y0, x1, y1, c) {
+    const ax = Math.min(x0, x1) | 0;
+    const ay = Math.min(y0, y1) | 0;
+    const bx = Math.max(x0, x1) | 0;
+    const by = Math.max(y0, y1) | 0;
+    this._lineToFb(ax, ay, bx, ay, c);
+    this._lineToFb(ax, by, bx, by, c);
+    this._lineToFb(ax, ay, ax, by, c);
+    this._lineToFb(bx, ay, bx, by, c);
+  }
+
+  _rectFillToFb(x0, y0, x1, y1, c) {
+    const ax = Math.min(x0, x1) | 0;
+    const ay = Math.min(y0, y1) | 0;
+    const bx = Math.max(x0, x1) | 0;
+    const by = Math.max(y0, y1) | 0;
+    for (let y = ay; y <= by; y += 1) {
+      this._lineToFb(ax, y, bx, y, c);
+    }
+  }
+
+  _circToFb(x, y, r, c) {
+    const cx = (x | 0) - this._cameraX;
+    const cy = (y | 0) - this._cameraY;
+    let dx = Math.max(0, r | 0);
+    let dy = 0;
+    let err = 1 - dx;
+
+    while (dx >= dy) {
+      this._plot(cx + dx, cy + dy, c, false);
+      this._plot(cx + dy, cy + dx, c, false);
+      this._plot(cx - dy, cy + dx, c, false);
+      this._plot(cx - dx, cy + dy, c, false);
+      this._plot(cx - dx, cy - dy, c, false);
+      this._plot(cx - dy, cy - dx, c, false);
+      this._plot(cx + dy, cy - dx, c, false);
+      this._plot(cx + dx, cy - dy, c, false);
+      dy += 1;
+      if (err < 0) {
+        err += 2 * dy + 1;
+      } else {
+        dx -= 1;
+        err += 2 * (dy - dx) + 1;
+      }
+    }
+  }
+
+  _circFillToFb(x, y, r, c) {
+    const cx = (x | 0) - this._cameraX;
+    const cy = (y | 0) - this._cameraY;
+    let dx = Math.max(0, r | 0);
+    let dy = 0;
+    let err = 1 - dx;
+
+    while (dx >= dy) {
+      this._lineToFb(cx - dx, cy + dy, cx + dx, cy + dy, c);
+      this._lineToFb(cx - dx, cy - dy, cx + dx, cy - dy, c);
+      this._lineToFb(cx - dy, cy + dx, cx + dy, cy + dx, c);
+      this._lineToFb(cx - dy, cy - dx, cx + dy, cy - dx, c);
+      dy += 1;
+      if (err < 0) {
+        err += 2 * dy + 1;
+      } else {
+        dx -= 1;
+        err += 2 * (dy - dx) + 1;
+      }
+    }
+  }
+
+  _clearFb(color) {
+    this._framebuffer.fill(color & 0xff);
+    this._markDirty();
+  }
+
+  _ensureFramebufferTexture(gpu) {
+    if (!gpu) {
+      return;
+    }
+    if (this._fbTexture && this._dirty) {
+      gpu.deleteTexture(this._fbTexture);
+      this._fbTexture = null;
+    }
+    if (!this._fbTexture) {
+      this._fbTexture = gpu.createTextureRaw(this._framebuffer, this._fbWidth, this._fbHeight, 0x09);
+      this._dirty = false;
+    }
+  }
+
+  renderFrame(gpu, deltaMs, renderOptions = null) {
+    const activeGpu = gpu || this._gpu;
+    if (!activeGpu) {
+      return;
+    }
+
+    const drawFramebuffer = () => {
+      this._ensureFramebufferTexture(activeGpu);
+      if (!this._fbTexture) {
+        return;
+      }
+      activeGpu.setPalette(this._paletteRGBA);
+      activeGpu.setPaletteOffset(0);
+      const canvasWidth = activeGpu?.canvas?.width || 448;
+      const canvasHeight = activeGpu?.canvas?.height || 368;
+      const scale = Math.min(canvasWidth / this._fbWidth, canvasHeight / this._fbHeight);
+      const drawW = this._fbWidth * scale;
+      const drawH = this._fbHeight * scale;
+      const drawX = Math.floor((canvasWidth - drawW) * 0.5);
+      const drawY = Math.floor((canvasHeight - drawH) * 0.5);
+      activeGpu.blit(this._fbTexture, {
+        x: drawX,
+        y: drawY,
+        srcX: 0,
+        srcY: 0,
+        srcW: this._fbWidth,
+        srcH: this._fbHeight,
+        scaleX: scale,
+        scaleY: scale,
+        filter: 'nearest',
+      });
+    };
+
+    if (typeof renderOptions?.enqueue === 'function') {
+      renderOptions.enqueue({
+        type: 'pico8',
+        z: null,
+        defaultLayer: 1500,
+        creationOrder: 0,
+        draw: drawFramebuffer,
+      });
+    } else {
+      drawFramebuffer();
+    }
   }
 
   // ============================================================
   // Helper Methods for Argument Processing
   // ============================================================
 
+  _readArg(args, index, allowStackFallback = true) {
+    if (args && index < args.length) {
+      return args[index];
+    }
+    if (!allowStackFallback) {
+      return undefined;
+    }
+    return this.luaState?.raw_tostring?.(index + 2);
+  }
+
   _optionalNumberArg(args, index, defaultValue, methodName, argName) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    const hasExplicitArgs = !!args && args.length > 0;
+    if (!hasExplicitArgs) {
+      return defaultValue;
+    }
+    const raw = this._readArg(args, index, false);
     if (raw === undefined || raw === null || raw === '') {
       return defaultValue;
     }
@@ -28,7 +331,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _requireNumberArg(args, index, methodName, argName) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    const hasExplicitArgs = !!args && args.length > 0;
+    const raw = this._readArg(args, index, !hasExplicitArgs);
     if (raw === undefined || raw === null || raw === '') {
       throw new Error(`[Pico8] ${methodName} missing required argument: ${argName}`);
     }
@@ -40,7 +344,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _requireIntegerArg(args, index, methodName, argName) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    const hasExplicitArgs = !!args && args.length > 0;
+    const raw = this._readArg(args, index, !hasExplicitArgs);
     if (raw === undefined || raw === null || raw === '') {
       throw new Error(`[Pico8] ${methodName} missing required argument: ${argName}`);
     }
@@ -52,7 +357,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _optionalIntegerArg(args, index, defaultValue, methodName, argName) {
-    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    const hasExplicitArgs = !!args && args.length > 0;
+    if (!hasExplicitArgs) {
+      return defaultValue;
+    }
+    const raw = this._readArg(args, index, false);
     if (raw === undefined || raw === null || raw === '') {
       return defaultValue;
     }
@@ -76,9 +385,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y = this._requireNumberArg(args, 1, 'pset', 'y');
     const c = this._optionalNumberArg(args, 2, this.currentColor, 'pset', 'c');
     
-    // Call sprite engine to set pixel
-    if (this.gameEmulator?.spriteEngine?.setPixel) {
-      this.gameEmulator.spriteEngine.setPixel(Math.floor(x), Math.floor(y), Math.floor(c) & 0xFF);
+    const engine = this._getEngine();
+    if (engine?.setPixel) {
+      engine.setPixel(Math.floor(x), Math.floor(y), Math.floor(c) & 0xFF);
     }
   }
 
@@ -90,8 +399,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const x = this._requireNumberArg(args, 0, 'pget', 'x');
     const y = this._requireNumberArg(args, 1, 'pget', 'y');
     
-    if (this.gameEmulator?.spriteEngine?.getPixel) {
-      return this.gameEmulator.spriteEngine.getPixel(Math.floor(x), Math.floor(y)) || 0;
+    const engine = this._getEngine();
+    if (engine?.getPixel) {
+      return engine.getPixel(Math.floor(x), Math.floor(y)) || 0;
     }
     return 0;
   }
@@ -116,8 +426,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y1 = this._requireNumberArg(args, 3, 'line', 'y1');
     const c = this._optionalNumberArg(args, 4, this.currentColor, 'line', 'c');
     
-    if (this.gameEmulator?.spriteEngine?.line) {
-      this.gameEmulator.spriteEngine.line(
+    const engine = this._getEngine();
+    if (engine?.line) {
+      engine.line(
         Math.floor(x0), Math.floor(y0),
         Math.floor(x1), Math.floor(y1),
         Math.floor(c) & 0xFF
@@ -136,8 +447,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y1 = this._requireNumberArg(args, 3, 'rect', 'y1');
     const c = this._optionalNumberArg(args, 4, this.currentColor, 'rect', 'c');
     
-    if (this.gameEmulator?.spriteEngine?.rect) {
-      this.gameEmulator.spriteEngine.rect(
+    const engine = this._getEngine();
+    if (engine?.rect) {
+      engine.rect(
         Math.floor(x0), Math.floor(y0),
         Math.floor(x1), Math.floor(y1),
         Math.floor(c) & 0xFF
@@ -156,8 +468,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y1 = this._requireNumberArg(args, 3, 'rectfill', 'y1');
     const c = this._optionalNumberArg(args, 4, this.currentColor, 'rectfill', 'c');
     
-    if (this.gameEmulator?.spriteEngine?.rectfill) {
-      this.gameEmulator.spriteEngine.rectfill(
+    const engine = this._getEngine();
+    if (engine?.rectfill) {
+      engine.rectfill(
         Math.floor(x0), Math.floor(y0),
         Math.floor(x1), Math.floor(y1),
         Math.floor(c) & 0xFF
@@ -175,8 +488,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const r = this._requireNumberArg(args, 2, 'circ', 'r');
     const c = this._optionalNumberArg(args, 3, this.currentColor, 'circ', 'c');
     
-    if (this.gameEmulator?.spriteEngine?.circ) {
-      this.gameEmulator.spriteEngine.circ(
+    const engine = this._getEngine();
+    if (engine?.circ) {
+      engine.circ(
         Math.floor(x), Math.floor(y),
         Math.floor(r),
         Math.floor(c) & 0xFF
@@ -193,9 +507,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y = this._requireNumberArg(args, 1, 'circfill', 'y');
     const r = this._requireNumberArg(args, 2, 'circfill', 'r');
     const c = this._optionalNumberArg(args, 3, this.currentColor, 'circfill', 'c');
-    
-    if (this.gameEmulator?.spriteEngine?.circfill) {
-      this.gameEmulator.spriteEngine.circfill(
+    const engine = this._getEngine();
+    if (engine?.circfill) {
+      engine.circfill(
         Math.floor(x), Math.floor(y),
         Math.floor(r),
         Math.floor(c) & 0xFF
@@ -209,9 +523,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    */
   cls(...args) {
     const c = this._optionalNumberArg(args, 0, 0, 'cls', 'c');
-    
-    if (this.gameEmulator?.spriteEngine?.clear) {
-      this.gameEmulator.spriteEngine.clear(Math.floor(c) & 0xFF);
+    const engine = this._getEngine();
+    if (engine?.clear) {
+      engine.clear(Math.floor(c) & 0xFF);
     }
   }
 
@@ -334,8 +648,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const x = this._optionalNumberArg(args, 0, 0, 'camera', 'x');
     const y = this._optionalNumberArg(args, 1, 0, 'camera', 'y');
     
-    if (this.gameEmulator?.spriteEngine?.setCamera) {
-      this.gameEmulator.spriteEngine.setCamera(Math.floor(x), Math.floor(y));
+    const engine = this._getEngine();
+    if (engine?.setCamera) {
+      engine.setCamera(Math.floor(x), Math.floor(y));
     }
   }
 
@@ -349,8 +664,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const w = this._optionalNumberArg(args, 2, 128, 'clip', 'w');
     const h = this._optionalNumberArg(args, 3, 128, 'clip', 'h');
     
-    if (this.gameEmulator?.spriteEngine?.setClip) {
-      this.gameEmulator.spriteEngine.setClip(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
+    const engine = this._getEngine();
+    if (engine?.setClip) {
+      engine.setClip(Math.floor(x), Math.floor(y), Math.floor(w), Math.floor(h));
     }
   }
 
@@ -360,13 +676,27 @@ class LuaPico8Extensions extends BaseLuaExtension {
    */
   print(...args) {
     const text = args[0]?.toString() ?? '';
-    const x = this._requireNumberArg(args, 1, 'print', 'x');
-    const y = this._requireNumberArg(args, 2, 'print', 'y');
+    const x = this._optionalNumberArg(args, 1, undefined, 'print', 'x');
+    const y = this._optionalNumberArg(args, 2, undefined, 'print', 'y');
     const color = this._optionalNumberArg(args, 3, this.currentColor, 'print', 'color');
+
+    if (this.gameEmulator?.gameConsole?.writeToConsole) {
+      this.gameEmulator.gameConsole.writeToConsole(`${text}\n`, true);
+    }
+
+    // If no coordinates were provided, treat this like debug output.
+    if (x === undefined || y === undefined) {
+      console.log(text);
+      return;
+    }
     
     if (this.gameEmulator?.spriteEngine?.drawText) {
       this.gameEmulator.spriteEngine.drawText(text, Math.floor(x), Math.floor(y), Math.floor(color) & 0xFF);
+      return;
     }
+
+    // Local test harnesses may not have drawText; fall back to console.
+    console.log(text);
   }
 
   // ============================================================
@@ -652,6 +982,25 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return Number.isFinite(value) ? value : 0;
   }
 
+  _isTableLike(value) {
+    return Array.isArray(value) || (value !== null && typeof value === 'object');
+  }
+
+  _getNumericKeys(tableValue) {
+    return Object.keys(tableValue)
+      .map((key) => Number.parseInt(key, 10))
+      .filter((key) => Number.isInteger(key) && key >= 1)
+      .sort((a, b) => a - b);
+  }
+
+  _tableLength(tableValue) {
+    if (Array.isArray(tableValue)) {
+      return tableValue.length;
+    }
+    const keys = this._getNumericKeys(tableValue);
+    return keys.length > 0 ? keys[keys.length - 1] : 0;
+  }
+
   // ============================================================
   // Table Functions (Pico-8 style)
   // ============================================================
@@ -665,16 +1014,29 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const v = args[1];
     const i = args.length > 2 ? this._optionalIntegerArg(args, 2, undefined, 'add', 'i') : undefined;
 
-    if (!Array.isArray(t)) {
-      throw new Error('[Pico8] add() currently expects an array-like table');
+    if (!this._isTableLike(t)) {
+      throw new Error('[Pico8] add() requires first argument to be a table');
     }
 
-    if (i === undefined) {
+    if (Array.isArray(t) && i === undefined) {
       t.push(v);
-    } else {
+      return v;
+    }
+
+    if (Array.isArray(t)) {
       const insertAt = Math.max(0, i - 1); // Lua indices are 1-based
       t.splice(insertAt, 0, v);
+      return v;
     }
+
+    const tableLength = this._tableLength(t);
+    const insertAt = i === undefined ? tableLength + 1 : Math.max(1, i);
+    if (insertAt <= tableLength) {
+      for (let idx = tableLength; idx >= insertAt; idx -= 1) {
+        t[idx + 1] = t[idx];
+      }
+    }
+    t[insertAt] = v;
 
     return v;
   }
@@ -687,16 +1049,32 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const t = args[0];
     const v = args[1];
 
-    if (!Array.isArray(t)) {
-      throw new Error('[Pico8] del() currently expects an array-like table');
+    if (!this._isTableLike(t)) {
+      throw new Error('[Pico8] del() requires first argument to be a table');
     }
 
-    const index = t.indexOf(v);
-    if (index === -1) {
+    if (Array.isArray(t)) {
+      const index = t.indexOf(v);
+      if (index === -1) {
+        return undefined;
+      }
+
+      t.splice(index, 1);
+      return v;
+    }
+
+    const keys = this._getNumericKeys(t);
+    const matchKey = keys.find((key) => t[key] === v);
+    if (matchKey === undefined) {
       return undefined;
     }
 
-    t.splice(index, 1);
+    const tableLength = this._tableLength(t);
+    for (let idx = matchKey; idx < tableLength; idx += 1) {
+      t[idx] = t[idx + 1];
+    }
+    delete t[tableLength];
+
     return v;
   }
 
@@ -707,15 +1085,15 @@ class LuaPico8Extensions extends BaseLuaExtension {
   count(...args) {
     const t = args[0];
 
+    if (!this._isTableLike(t)) {
+      return 0;
+    }
+
     if (Array.isArray(t)) {
       return t.length;
     }
 
-    if (t && typeof t === 'object') {
-      return Object.keys(t).length;
-    }
-
-    return 0;
+    return this._getNumericKeys(t).length;
   }
 
   /**
@@ -725,16 +1103,20 @@ class LuaPico8Extensions extends BaseLuaExtension {
   all(...args) {
     const t = args[0];
 
-    if (!Array.isArray(t)) {
-      throw new Error('[Pico8] all() currently expects an array-like table');
+    if (!this._isTableLike(t)) {
+      throw new Error('[Pico8] all() requires first argument to be a table');
     }
+
+    const values = Array.isArray(t)
+      ? t
+      : this._getNumericKeys(t).map((key) => t[key]);
 
     let index = 0;
     return () => {
-      if (index >= t.length) {
+      if (index >= values.length) {
         return undefined;
       }
-      const value = t[index];
+      const value = values[index];
       index += 1;
       return value;
     };
@@ -748,15 +1130,19 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const t = args[0];
     const f = args[1];
 
-    if (!Array.isArray(t)) {
-      throw new Error('[Pico8] foreach() currently expects an array-like table');
+    if (!this._isTableLike(t)) {
+      throw new Error('[Pico8] foreach() requires first argument to be a table');
     }
 
     if (typeof f !== 'function') {
       throw new Error('[Pico8] foreach() requires a callback function');
     }
 
-    for (const item of t) {
+    const values = Array.isArray(t)
+      ? t
+      : this._getNumericKeys(t).map((key) => t[key]);
+
+    for (const item of values) {
       f(item);
     }
   }

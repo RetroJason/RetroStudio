@@ -78,6 +78,10 @@ function makeMockEmulator() {
       setClip(x, y, w, h) { this._flags.clip = { x, y, w, h }; },
       drawText(text, x, y, color) { this._lastText = { text, x, y, color }; },
     },
+    gameConsole: {
+      _lines: [],
+      writeToConsole(text) { this._lines.push(String(text)); },
+    },
     audioEngine: {
       playMusic(n, fade, mask) { this._lastMusic = { n, fade, mask }; },
       playSfx(n, channel, offset, length) { this._lastSfx = { n, channel, offset, length }; },
@@ -153,10 +157,80 @@ const tests = [
       assert.doesNotThrow(() => pico8.camera(11, 22));
       assert.doesNotThrow(() => pico8.clip(1, 2, 3, 4));
       assert.doesNotThrow(() => pico8.print('hi', 8, 9, 6));
-      assert.strictEqual(emulator.spriteEngine._lastClear, 2);
-      assert.deepStrictEqual(emulator.spriteEngine._flags.camera, { x: 11, y: 22 });
-      assert.deepStrictEqual(emulator.spriteEngine._flags.clip, { x: 1, y: 2, w: 3, h: 4 });
+      assert.strictEqual(pico8._framebuffer[0], 2);
+      assert.strictEqual(pico8._cameraX, 11);
+      assert.strictEqual(pico8._cameraY, 22);
+      assert.deepStrictEqual(pico8._clipRect, { x: 1, y: 2, w: 3, h: 4 });
       assert.deepStrictEqual(emulator.spriteEngine._lastText, { text: 'hi', x: 8, y: 9, color: 6 });
+      assert.strictEqual(emulator.gameConsole._lines[0], 'hi\n');
+    },
+  },
+  {
+    name: 'clip with partial args keeps default width/height (no stack bleed)',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.luaState = {
+        raw_tostring() {
+          return '7';
+        },
+      };
+
+      pico8.clip(4, 5);
+      assert.deepStrictEqual(pico8._clipRect, { x: 4, y: 5, w: 128, h: 128 });
+    },
+  },
+  {
+    name: 'circfill draws in lower half when unclipped',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+      pico8.circfill(6, 121, 2, 12);
+
+      const hit = pico8._framebuffer[(121 * 128) + 6];
+      assert.strictEqual(hit, 12);
+    },
+  },
+  {
+    name: 'Fallback renderer uploads and blits framebuffer without spriteEngine',
+    fn: () => {
+      const pico8 = new LuaPico8Extensions({});
+      const fakeGpu = {
+        createTextureRaw(pixels, width, height, format) {
+          this.created = {
+            width,
+            height,
+            format,
+            pixel0: pixels[0],
+            pixel65: pixels[(2 * width) + 1],
+          };
+          return { id: 'fbtex' };
+        },
+        deleteTexture() {},
+        setPalette() {},
+        setPaletteOffset(offset) {
+          this.paletteOffset = offset;
+        },
+        blit(tex, opts) {
+          this.blitCall = { tex, opts };
+        },
+      };
+
+      pico8.initGpu(fakeGpu);
+      pico8.pset(1, 2, 5);
+
+      const queue = [];
+      pico8.renderFrame(fakeGpu, 16, { enqueue: (item) => queue.push(item) });
+      assert.strictEqual(queue.length, 1);
+      queue[0].draw();
+
+      assert.strictEqual(fakeGpu.created.width, 128);
+      assert.strictEqual(fakeGpu.created.height, 128);
+      assert.strictEqual(fakeGpu.created.format, 0x09);
+      assert.strictEqual(fakeGpu.created.pixel65, 5);
+      assert.strictEqual(fakeGpu.paletteOffset, 0);
+      assert.ok(fakeGpu.blitCall);
+      assert.strictEqual(fakeGpu.blitCall.opts.srcW, 128);
+      assert.strictEqual(fakeGpu.blitCall.opts.srcH, 128);
     },
   },
   {
@@ -269,6 +343,18 @@ const tests = [
       const out = pico8.add(t, 3);
       assert.strictEqual(out, 3);
       assert.deepStrictEqual(t, [1, 2, 3]);
+    },
+  },
+  {
+    name: 'add supports Lua-style table object',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const t = { 1: 'a', 2: 'b' };
+      const out = pico8.add(t, 'c');
+      assert.strictEqual(out, 'c');
+      assert.strictEqual(t[1], 'a');
+      assert.strictEqual(t[2], 'b');
+      assert.strictEqual(t[3], 'c');
     },
   },
   {

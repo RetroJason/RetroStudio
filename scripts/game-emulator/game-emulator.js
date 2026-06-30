@@ -50,6 +50,7 @@ class GameEmulator {
     this.frameCount = 0;
     this.lastFrameTime = 0;
     this.compileOverlayHidden = true;
+    this.compileOverlayShownAt = 0;
     this.extensionLoader = null; // Lua extension loader
     this.clearColor = { r: 0, g: 0, b: 0, a: 1 };
     this._renderOrderCounter = 1;
@@ -155,6 +156,31 @@ class GameEmulator {
             return `${sourcesRoot}/${rel}`;
           },
     };
+  }
+
+  getLuaExtension(categoryName) {
+    if (!this.extensionLoader || typeof this.extensionLoader.getExtension !== 'function') {
+      return null;
+    }
+
+    const direct = this.extensionLoader.getExtension(categoryName);
+    if (direct) {
+      return direct;
+    }
+
+    const extensions = this.extensionLoader.extensions;
+    if (!(extensions instanceof Map)) {
+      return null;
+    }
+
+    const target = String(categoryName || '').toLowerCase();
+    for (const [name, extension] of extensions.entries()) {
+      if (String(name).toLowerCase() === target) {
+        return extension;
+      }
+    }
+
+    return null;
   }
 
   getSourcesRootUi() {
@@ -1959,33 +1985,8 @@ class GameEmulator {
       this.luaState = L;
       logRunPhase('createLuaState');
       
-      // Initialize print output capture
-      // GameConsole will handle all output display
-      
-      // Simple approach: Override print function in Lua to accumulate output
-      // We'll capture it differently by checking Lua's output after each execution
-      L.execute(`
-        -- Create a global output buffer
-        _print_buffer = {}
-        
-        -- Override print to capture output in buffer
-        local original_print = print
-        function print(...)
-          local args = {...}
-          local parts = {}
-          for i = 1, select('#', ...) do
-            local v = select(i, ...)
-            table.insert(parts, tostring(v))
-          end
-          local output = table.concat(parts, "\\t")
-          
-          -- Add to buffer
-          table.insert(_print_buffer, output)
-          
-          -- Also call original print for console output (this ensures it shows in VS Code console)
-          original_print(...)
-        end
-      `);
+      // Initialize print output capture.
+      this.installLuaPrintCapture(L);
       
       // Initialize centralized resource mappings
       await this.initializeResourceMappings();
@@ -1995,6 +1996,9 @@ class GameEmulator {
       console.log('[GameEmulator] Loading Lua extensions...');
       try {
         await this.loadLuaExtensions(L);
+        // Extensions (especially Pico8 global aliases) can replace print.
+        // Reapply capture so all print calls continue flowing to the game console.
+        this.installLuaPrintCapture(L);
         await this.verifyLuaApiContract(L);
         console.log('[GameEmulator] Lua extensions loaded successfully');
         logRunPhase('loadLuaExtensions');
@@ -2028,6 +2032,11 @@ class GameEmulator {
 
       await this.initializeInputManager();
       logRunPhase('initializeInputManager');
+
+      const pico8Ext = this.getLuaExtension('Pico8');
+      if (pico8Ext && typeof pico8Ext.resetRuntimeState === 'function') {
+        pico8Ext.resetRuntimeState();
+      }
       
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
@@ -2165,6 +2174,10 @@ class GameEmulator {
           const textboxExt = this.extensionLoader?.getExtension('TextBox');
           if (textboxExt) {
             await textboxExt.initGpu(this._gpu);
+          }
+          const pico8Ext = this.getLuaExtension('Pico8');
+          if (pico8Ext && typeof pico8Ext.initGpu === 'function') {
+            pico8Ext.initGpu(this._gpu);
           }
           logRunPhase('gpuInit');
         } else {
@@ -2317,6 +2330,10 @@ class GameEmulator {
           if (textboxExt) {
             textboxExt.renderFrame(this._gpu, deltaTime, renderOptions);
           }
+          const pico8Ext = this.getLuaExtension('Pico8');
+          if (pico8Ext && typeof pico8Ext.renderFrame === 'function') {
+            pico8Ext.renderFrame(this._gpu, deltaTime, renderOptions);
+          }
 
           if (renderQueue.length > 0) {
             renderQueue.sort((a, b) => {
@@ -2388,7 +2405,13 @@ class GameEmulator {
   }
 
   updateCompileOverlay(didDrawFrame) {
-    if (!didDrawFrame || this.compileOverlayHidden) {
+    if (this.compileOverlayHidden) {
+      return;
+    }
+
+    const elapsedSinceOverlayShown = performance.now() - (this.compileOverlayShownAt || 0);
+    const shouldHideOverlay = didDrawFrame || elapsedSinceOverlayShown > 800;
+    if (!shouldHideOverlay) {
       return;
     }
 
@@ -2407,6 +2430,7 @@ class GameEmulator {
 
     overlay.classList.remove('hidden');
     this.compileOverlayHidden = false;
+    this.compileOverlayShownAt = performance.now();
   }
 
   hideCompileOverlay() {
@@ -2417,6 +2441,7 @@ class GameEmulator {
 
     overlay.classList.add('hidden');
     this.compileOverlayHidden = true;
+    this.compileOverlayShownAt = 0;
   }
 
   /**
@@ -2854,7 +2879,10 @@ class GameEmulator {
       throw new Error('Lua state is not initialized.');
     }
 
-    const bufferSize = this.luaState.execute('return #_print_buffer');
+    const rawBufferSize = this.luaState.execute('return #_print_buffer');
+    const bufferSize = Array.isArray(rawBufferSize)
+      ? Number(rawBufferSize[0] || 0)
+      : Number(rawBufferSize || 0);
     if (bufferSize <= 0) {
       return;
     }
@@ -2868,11 +2896,39 @@ class GameEmulator {
     }
 
     for (let i = 1; i <= bufferSize; i++) {
-      const output = this.luaState.execute(`return _print_buffer[${i}]`);
-      this.gameConsole.writeToConsole(output, true);
+      const rawOutput = this.luaState.execute(`return _print_buffer[${i}]`);
+      const output = Array.isArray(rawOutput) ? rawOutput[0] : rawOutput;
+      this.gameConsole.writeToConsole(output ?? '', true);
     }
 
     this.luaState.execute('_print_buffer = {}');
+  }
+
+  installLuaPrintCapture(luaState) {
+    if (!luaState) {
+      throw new Error('Lua state is required to install print capture.');
+    }
+
+    luaState.execute(`
+      _print_buffer = _print_buffer or {}
+
+      if _retrostudio_original_print == nil then
+        _retrostudio_original_print = print
+      end
+
+      function print(...)
+        local parts = {}
+        for i = 1, select('#', ...) do
+          local v = select(i, ...)
+          table.insert(parts, tostring(v))
+        end
+        table.insert(_print_buffer, table.concat(parts, "\\t"))
+
+        if _retrostudio_original_print then
+          _retrostudio_original_print(...)
+        end
+      end
+    `);
   }
 
   showGameEngine(scriptData) {

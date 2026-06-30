@@ -1,6 +1,14 @@
 (function () {
   const nativeConsole = window.console || {};
-  let enabled = false;
+  let enabled = (function () {
+    try {
+      const stored = window.localStorage && window.localStorage.getItem('retrostudio.logging');
+      if (stored === 'true') { return true; }
+      if (stored === 'false') { return false; }
+    } catch (_) {}
+    const host = (window.location && window.location.hostname) || '';
+    return host === 'localhost' || host === '127.0.0.1' || host === '';
+  })();
 
   function emit(level, args) {
     if (!enabled) {
@@ -37,6 +45,9 @@
     },
     setEnabled: function (value) {
       enabled = Boolean(value);
+      try {
+        window.localStorage && window.localStorage.setItem('retrostudio.logging', String(enabled));
+      } catch (_) {}
       return enabled;
     },
     createConsole: createConsole,

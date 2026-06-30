@@ -257,6 +257,25 @@ class LuaEditor extends EditorBase {
   }
 
   /**
+   * Normalize RetroStudio Lua extensions to plain Lua for syntax-only checks.
+   * Runtime still executes the original source unchanged.
+   */
+  normalizeExtendedLuaForSyntaxCheck(code) {
+    if (!code || typeof code !== 'string') {
+      return code;
+    }
+
+    // Convert compound assignments on simple l-values:
+    //   x += y   -> x = x + y
+    //   obj.x *= y -> obj.x = obj.x * y
+    //   arr[i] -= y -> arr[i] = arr[i] - y
+    return code.replace(
+      /^(\s*)([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*|\[[^\]\n]+\])*)\s*([+\-*/%])=\s*(.+)$/gm,
+      (match, indent, lhs, op, rhs) => `${indent}${lhs} = ${lhs} ${op} ${rhs}`
+    );
+  }
+
+  /**
    * Set error markers in the Monaco editor
    * @param {Array} errors - Array of error objects with {line, column, message, severity}
    */
@@ -329,6 +348,10 @@ class LuaEditor extends EditorBase {
                 if (!code.trim()) {
                     return; // No code to test
                 }
+
+                // Parser used for editor diagnostics is strict Lua.
+                // Normalize RetroStudio extensions (like +=) before syntax check.
+                const syntaxCheckCode = this.normalizeExtendedLuaForSyntaxCheck(code);
                 
                 // Ensure Lua engine is loaded
                 await this.ensureLuaEngine();
@@ -343,7 +366,7 @@ class LuaEditor extends EditorBase {
                 const L = new window.Lua.State();
                 
                 try {
-                    const compiledChunk = L.load(code, 'editor-check', 't');
+                    const compiledChunk = L.load(syntaxCheckCode, 'editor-check', 't');
                     compiledChunk.free();
                     console.log('[LuaEditor] Code syntax check passed');
                 } catch (error) {
