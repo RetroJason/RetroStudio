@@ -143,6 +143,18 @@ class LuaSFXExtensions extends BaseLuaExtension {
     return sfx;
   }
 
+  _normalizeLuaArgs(argsLike) {
+    const args = Array.from(argsLike || []);
+    const hasBridgeReceiver = args.length > 1
+      && (args[0] === null
+      || args[0] === undefined
+      || (typeof args[0] === 'object' && args[0] !== null));
+    if (hasBridgeReceiver) {
+      return args.slice(1);
+    }
+    return args;
+  }
+
   /**
    * Initialize the SFX extension using centralized resource system
    * @param {Object} luaState - The Lua execution state
@@ -165,8 +177,9 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Create a sound effect handle from a preloaded SFX asset name.
    * Lua usage: local handle = SFX.Create("shoot")
    */
-  Create() {
-    const resourceName = this._requireStackStringArg(2, 'Create', 'resourceName');
+  Create(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const resourceName = this._requireStringArg(args, 0, 'Create', 'resourceName');
     const resource = this._requireResourceByName(resourceName, 'Create');
     const { loadedResource } = this._requirePlayableResource(resource, 'Create', resourceName);
 
@@ -188,8 +201,9 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Destroy a sound effect handle.
    * Lua usage: SFX.Destroy(handle)
    */
-  Destroy() {
-    const sfx = this._requireHandleStateByStack(2, 'Destroy');
+  Destroy(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const sfx = this._requireHandleState(args, 0, 'Destroy');
     const audioEngine = this._requireAudioEngine('Destroy');
     if (typeof audioEngine.stopSound === 'function' && sfx.instanceId) {
       audioEngine.stopSound(sfx.instanceId);
@@ -203,9 +217,10 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Play a sound effect handle using preloaded resources.
    * Lua usage: SFX.Play(handle, shouldRepeat)
    */
-  Play() {
-    const sfx = this._requireHandleStateByStack(2, 'Play');
-    const shouldRepeat = this._optionalBooleanArg([], 1, false, '[SFX] Play', 'shouldRepeat');
+  Play(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const sfx = this._requireHandleState(args, 0, 'Play');
+    const shouldRepeat = this._optionalBooleanArg(args, 1, false, '[SFX] Play', 'shouldRepeat');
     const audioEngine = this._requireAudioEngine('Play');
     const loadedResourceIds = audioEngine?.resources instanceof Map
       ? Array.from(audioEngine.resources.keys())
@@ -259,8 +274,9 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Stop a playing sound effect handle.
    * Lua usage: SFX.Stop(handle)
    */
-  Stop() {
-    const sfx = this._requireHandleStateByStack(2, 'Stop');
+  Stop(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const sfx = this._requireHandleState(args, 0, 'Stop');
     const audioEngine = this._requireAudioEngine('Stop');
     if (typeof audioEngine.stopSound !== 'function') {
       throw new Error('[SFX] Stop requires audioEngine.stopSound');
@@ -277,8 +293,9 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Check if a sound effect handle is currently playing.
    * Lua usage: SFX.IsPlaying(handle)
    */
-  IsPlaying() {
-    const sfx = this._requireHandleStateByStack(2, 'IsPlaying');
+  IsPlaying(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const sfx = this._requireHandleState(args, 0, 'IsPlaying');
     const audioEngine = this._requireAudioEngine('IsPlaying');
     if (!sfx.instanceId) {
       return false;
@@ -290,9 +307,10 @@ class LuaSFXExtensions extends BaseLuaExtension {
    * Set volume for a sound effect handle.
    * Lua usage: SFX.SetVolume(handle, volume)
    */
-  SetVolume() {
-    const sfx = this._requireHandleStateByStack(2, 'SetVolume');
-    const volume = this._optionalNumberArg([], 1, 1.0, 'SetVolume', 'volume');
+  SetVolume(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const sfx = this._requireHandleState(args, 0, 'SetVolume');
+    const volume = this._optionalNumberArg(args, 1, 1.0, 'SetVolume', 'volume');
     const volumeLevel = Math.max(0.0, Math.min(1.0, volume));
 
     sfx.volume = volumeLevel;

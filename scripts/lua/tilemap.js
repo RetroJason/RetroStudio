@@ -78,6 +78,46 @@ class LuaTileMapExtensions extends BaseLuaExtension {
     console.log('[LuaTileMap] GPU reference set');
   }
 
+  _normalizeLuaArgs(argsLike) {
+    const args = Array.from(argsLike || []);
+    const hasBridgeReceiver = args.length > 1
+      && (args[0] === null
+      || args[0] === undefined
+      || (typeof args[0] === 'object' && args[0] !== null));
+    if (hasBridgeReceiver) {
+      return args.slice(1);
+    }
+    return args;
+  }
+
+  _toInteger(value, defaultValue = 0) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
+  }
+
+  _toFloat(value, defaultValue = 0) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : defaultValue;
+  }
+
+  _toBoolean(value, defaultValue = false) {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (value === undefined || value === null || value === '') {
+      return defaultValue;
+    }
+    if (typeof value === 'number') {
+      return value !== 0;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.toLowerCase();
+      if (normalized === 'true' || normalized === '1') return true;
+      if (normalized === 'false' || normalized === '0') return false;
+    }
+    return defaultValue;
+  }
+
   /* ════════════════════════════════════════════════════════════════════
      D2M Binary Format Parsing
      ════════════════════════════════════════════════════════════════════ */
@@ -292,8 +332,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * 
    * Lua usage: local map = TileMap.Load("Maps/level-1.d2m")
    */
-  Load() {
-    const mapPath = this.luaState?.raw_tostring?.(2);
+  Load(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const mapPath = args[0];
     if (!mapPath) {
       throw new Error('[TileMap] Load: missing required argument (mapPath)');
     }
@@ -371,8 +412,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get tilemap dimensions in tiles.
    * Lua usage: local width, height = TileMap.GetDimensions(map)
    */
-  GetDimensions() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
+  GetDimensions(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
     const map = this.tilemaps.get(handle);
     if (!map) {
       throw new Error(`[TileMap] GetDimensions: invalid tilemap handle ${handle}`);
@@ -384,8 +426,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get tile size in pixels.
    * Lua usage: local tileWidth, tileHeight = TileMap.GetTileSize(map)
    */
-  GetTileSize() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
+  GetTileSize(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
     const map = this.tilemaps.get(handle);
     if (!map) {
       throw new Error(`[TileMap] GetTileSize: invalid tilemap handle ${handle}`);
@@ -397,11 +440,12 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get tile GID at a specific layer and position.
    * Lua usage: local gid = TileMap.GetTile(map, layer, tx, ty)
    */
-  GetTile() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const layer = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
-    const tx = parseInt(this.luaState?.raw_tostring?.(4) || '0', 10);
-    const ty = parseInt(this.luaState?.raw_tostring?.(5) || '0', 10);
+  GetTile(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
+    const layer = this._toInteger(args[1], 0);
+    const tx = this._toInteger(args[2], 0);
+    const ty = this._toInteger(args[3], 0);
 
     const map = this.tilemaps.get(handle);
     if (!map) {
@@ -426,12 +470,13 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Set tile GID at a specific layer and position.
    * Lua usage: TileMap.SetTile(map, layer, tx, ty, gid)
    */
-  SetTile() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const layer = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
-    const tx = parseInt(this.luaState?.raw_tostring?.(4) || '0', 10);
-    const ty = parseInt(this.luaState?.raw_tostring?.(5) || '0', 10);
-    const gid = parseInt(this.luaState?.raw_tostring?.(6) || '0', 10);
+  SetTile(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
+    const layer = this._toInteger(args[1], 0);
+    const tx = this._toInteger(args[2], 0);
+    const ty = this._toInteger(args[3], 0);
+    const gid = this._toInteger(args[4], 0);
 
     const map = this.tilemaps.get(handle);
     if (!map) {
@@ -454,9 +499,10 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get layer visibility.
    * Lua usage: local visible = TileMap.GetLayerVisibility(map, layer)
    */
-  GetLayerVisibility() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const layer = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
+  GetLayerVisibility(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
+    const layer = this._toInteger(args[1], 0);
 
     const map = this.tilemaps.get(handle);
     if (!map) {
@@ -475,10 +521,11 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Set layer visibility.
    * Lua usage: TileMap.SetLayerVisibility(map, layer, visible)
    */
-  SetLayerVisibility() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const layer = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
-    const visible = this.luaState?.toboolean?.(4) !== 0;
+  SetLayerVisibility(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
+    const layer = this._toInteger(args[1], 0);
+    const visible = this._toBoolean(args[2], false);
 
     const map = this.tilemaps.get(handle);
     if (!map) {
@@ -499,8 +546,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get number of layers.
    * Lua usage: local layerCount = TileMap.GetLayerCount(map)
    */
-  GetLayerCount() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
+  GetLayerCount(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
     const map = this.tilemaps.get(handle);
     if (!map) {
       throw new Error(`[TileMap] GetLayerCount: invalid tilemap handle ${handle}`);
@@ -512,8 +560,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Get optional Wang terrain metadata.
    * Lua usage: local wangData = TileMap.GetWangData(map)
    */
-  GetWangData() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
+  GetWangData(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
     const map = this.tilemaps.get(handle);
     if (!map) {
       throw new Error(`[TileMap] GetWangData: invalid tilemap handle ${handle}`);
@@ -530,13 +579,13 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Draw a layer at screen offset.
     * Lua usage: TileMap.DrawLayer(map, layerIndex, cameraX, cameraY, z)
    */
-  DrawLayer() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const layerIndex = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
-    const cameraX = parseInt(this.luaState?.raw_tostring?.(4) || '0', 10);
-    const cameraY = parseInt(this.luaState?.raw_tostring?.(5) || '0', 10);
-    const zRaw = this.luaState?.raw_tostring?.(6);
-    const parsedZ = Number.parseFloat(zRaw);
+  DrawLayer(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
+    const layerIndex = this._toInteger(args[1], 0);
+    const cameraX = this._toInteger(args[2], 0);
+    const cameraY = this._toInteger(args[3], 0);
+    const parsedZ = Number.parseFloat(args[4]);
     const z = Number.isFinite(parsedZ) ? parsedZ : null;
 
     const map = this.tilemaps.get(handle);
@@ -664,8 +713,9 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Unload tilemap and free resources.
    * Lua usage: TileMap.Unload(map)
    */
-  Unload() {
-    const handle = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
+  Unload(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const handle = this._toInteger(args[0], 0);
     if (this.tilemaps.has(handle)) {
       this.tilemaps.delete(handle);
       console.log(`[LuaTileMap] Unloaded tilemap handle ${handle}`);
@@ -676,13 +726,14 @@ class LuaTileMapExtensions extends BaseLuaExtension {
    * Clamp camera coordinates to prevent scrolling past map boundaries.
    * Lua usage: local clampedX, clampedY = TileMap.ScreenClamp(cameraX, cameraY, mapW, mapH, screenW, screenH)
    */
-  ScreenClamp() {
-    const cameraX = parseInt(this.luaState?.raw_tostring?.(2) || '0', 10);
-    const cameraY = parseInt(this.luaState?.raw_tostring?.(3) || '0', 10);
-    const mapWidth = parseInt(this.luaState?.raw_tostring?.(4) || '0', 10);
-    const mapHeight = parseInt(this.luaState?.raw_tostring?.(5) || '0', 10);
-    const screenWidth = parseInt(this.luaState?.raw_tostring?.(6) || '368', 10);
-    const screenHeight = parseInt(this.luaState?.raw_tostring?.(7) || '448', 10);
+  ScreenClamp(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const cameraX = this._toInteger(args[0], 0);
+    const cameraY = this._toInteger(args[1], 0);
+    const mapWidth = this._toInteger(args[2], 0);
+    const mapHeight = this._toInteger(args[3], 0);
+    const screenWidth = this._toInteger(args[4], 368);
+    const screenHeight = this._toInteger(args[5], 448);
 
     const clampedX = Math.max(0, Math.min(cameraX, mapWidth - screenWidth));
     const clampedY = Math.max(0, Math.min(cameraY, mapHeight - screenHeight));

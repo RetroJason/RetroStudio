@@ -83,24 +83,61 @@ class LuaSpriteExtensions extends BaseLuaExtension {
      Lua API — Lifecycle
      ════════════════════════════════════════════════════════════════════ */
 
-  /** Parse an integer sprite handle from a Lua argument. */
-  _getHandleArg(argIndex = 2) {
-    const raw = this.luaState.raw_tostring(argIndex);
-    if (raw === undefined || raw === null || raw === '') return null;
-    const handle = parseInt(raw, 10);
+  _normalizeLuaArgs(argsLike) {
+    const args = Array.from(argsLike || []);
+    const hasBridgeReceiver = args.length > 1
+      && (args[0] === null
+      || args[0] === undefined
+      || (typeof args[0] === 'object' && args[0] !== null));
+    if (hasBridgeReceiver) {
+      return args.slice(1);
+    }
+    return args;
+  }
+
+  _requireStringArg(args, index, methodName, argName) {
+    const raw = args[index];
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return raw;
+  }
+
+  _requireNumberArg(args, index, methodName, argName) {
+    const value = Number.parseFloat(args[index]);
+    if (!Number.isFinite(value)) {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return value;
+  }
+
+  _requireIntegerArg(args, index, methodName, argName) {
+    const value = Number.parseInt(args[index], 10);
+    if (!Number.isFinite(value)) {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return value;
+  }
+
+  _requireBooleanArg(args, index, methodName, argName) {
+    return this._coerceBooleanArg(args[index], methodName, argName);
+  }
+
+  _requireHandleArg(args, index = 0) {
+    const handle = Number.parseInt(args[index], 10);
     return Number.isFinite(handle) ? handle : null;
   }
 
   /** Resolve sprite state from a handle argument. */
-  _getSpriteByHandleArg(argIndex = 2) {
-    const handle = this._getHandleArg(argIndex);
+  _getSpriteByHandleArg(args, index = 0) {
+    const handle = this._requireHandleArg(args, index);
     if (handle === null) {
-      throw new Error(`Sprite: bad argument #${argIndex - 1} (valid sprite handle expected)`);
+      throw new Error(`Sprite: bad argument #${index + 1} (valid sprite handle expected)`);
     }
 
     const sprite = this.sprites.get(handle) || null;
     if (!sprite) {
-      throw new Error(`Sprite: bad argument #${argIndex - 1} (unknown sprite handle ${handle})`);
+      throw new Error(`Sprite: bad argument #${index + 1} (unknown sprite handle ${handle})`);
     }
 
     return sprite;
@@ -111,12 +148,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
     * Loads a sprite by asset name (matches d2s_header_t.name).
     * Returns an opaque handle used by all Sprite.* instance calls.
    */
-  Create() {
-    const L = this.luaState;
-    const name = L.raw_tostring(2);
-    if (!name) {
-      throw new Error('Sprite.Create: bad argument #1 (string expected)');
-    }
+  Create(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const name = this._requireStringArg(args, 0, 'Sprite.Create', 'string');
 
     // Find the pre-loaded asset
     const asset = this.spriteAssets.get(name);
@@ -196,8 +230,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Sprite.Destroy(handle)
    * Remove the sprite from the scene.
    */
-  Destroy() {
-    const s = this._getSpriteByHandleArg(2);
+  Destroy(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     this.sprites.delete(s._handle);
     this.animating.delete(s._handle);
   }
@@ -206,8 +241,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Sprite.Clone(handle)
    * Deep-clone a sprite instance and return a new handle.
    */
-  Clone() {
-    const src = this._getSpriteByHandleArg(2);
+  Clone(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const src = this._getSpriteByHandleArg(args, 0);
 
     // Shallow-clone state (d2s/d2f are shared read-only data)
     const clone = { ...src };
@@ -231,47 +267,44 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /**
    * Sprite.SetXY(handle, x, y)
    */
-  SetXY() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    s._posX = parseFloat(L.raw_tostring(3)) || 0;
-    s._posY = parseFloat(L.raw_tostring(4)) || 0;
+  SetXY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._posX = Number.parseFloat(args[1]) || 0;
+    s._posY = Number.parseFloat(args[2]) || 0;
   }
 
   /**
    * x, y = Sprite.GetXY(handle)
    */
-  GetXY() {
-    const s = this._getSpriteByHandleArg(2);
+  GetXY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return [s._posX || 0, s._posY || 0];
   }
 
   /** Sprite.SetZ(handle, z) */
-  SetZ() {
-    const s = this._getSpriteByHandleArg(2);
-    const z = Number.parseFloat(this.luaState.raw_tostring(3));
-    if (!Number.isFinite(z)) {
-      throw new Error('Sprite.SetZ: bad argument #2 (number expected)');
-    }
+  SetZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const z = this._requireNumberArg(args, 1, 'Sprite.SetZ', 'number');
     s._z = z;
   }
 
   /** float = Sprite.GetZ(handle) */
-  GetZ() {
-    const s = this._getSpriteByHandleArg(2);
+  GetZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return Number.isFinite(s._z) ? s._z : 0;
   }
 
   /** Sprite.SetXYZ(handle, x, y, z) */
-  SetXYZ() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    const x = Number.parseFloat(L.raw_tostring(3));
-    const y = Number.parseFloat(L.raw_tostring(4));
-    const z = Number.parseFloat(L.raw_tostring(5));
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-      throw new Error('Sprite.SetXYZ: bad arguments #2/#3/#4 (number expected)');
-    }
+  SetXYZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const x = this._requireNumberArg(args, 1, 'Sprite.SetXYZ', 'number');
+    const y = this._requireNumberArg(args, 2, 'Sprite.SetXYZ', 'number');
+    const z = this._requireNumberArg(args, 3, 'Sprite.SetXYZ', 'number');
     s._posX = x;
     s._posY = y;
     s._z = z;
@@ -280,137 +313,148 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   /**
    * Sprite.SetX(handle, x)
    */
-  SetX() {
-    const s = this._getSpriteByHandleArg(2);
-    s._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetX(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._posX = Number.parseFloat(args[1]) || 0;
   }
 
   /** float = Sprite.GetX(handle) */
-  GetX() {
-    const s = this._getSpriteByHandleArg(2);
+  GetX(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._posX) || 0;
   }
 
   /** Sprite.SetY(handle, y) */
-  SetY() {
-    const s = this._getSpriteByHandleArg(2);
-    s._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._posY = Number.parseFloat(args[1]) || 0;
   }
 
   /** float = Sprite.GetY(handle) */
-  GetY() {
-    const s = this._getSpriteByHandleArg(2);
+  GetY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._posY) || 0;
   }
 
   /** Sprite.SetCenter(handle, cx, cy) */
-  SetCenter() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    s._centerX = parseFloat(L.raw_tostring(3)) || 0;
-    s._centerY = parseFloat(L.raw_tostring(4)) || 0;
+  SetCenter(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._centerX = Number.parseFloat(args[1]) || 0;
+    s._centerY = Number.parseFloat(args[2]) || 0;
   }
 
   /** cx, cy = Sprite.GetCenter(handle) */
-  GetCenter() {
-    const s = this._getSpriteByHandleArg(2);
+  GetCenter(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return [(s && s._centerX) || 0, (s && s._centerY) || 0];
   }
 
   /** Sprite.SetSize(handle, w, h) */
-  SetSize() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    s._width = parseFloat(L.raw_tostring(3)) || 0;
-    s._height = parseFloat(L.raw_tostring(4)) || 0;
+  SetSize(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._width = Number.parseFloat(args[1]) || 0;
+    s._height = Number.parseFloat(args[2]) || 0;
   }
 
   /** w, h = Sprite.GetSize(handle) */
-  GetSize() {
-    const s = this._getSpriteByHandleArg(2);
+  GetSize(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return [(s && s._width) || 0, (s && s._height) || 0];
   }
 
   /** Sprite.SetAngle(handle, angle) — degrees */
-  SetAngle() {
-    const s = this._getSpriteByHandleArg(2);
-    s._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetAngle(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._rotation = Number.parseFloat(args[1]) || 0;
   }
 
   /** float = Sprite.GetAngle(handle) */
-  GetAngle() {
-    const s = this._getSpriteByHandleArg(2);
+  GetAngle(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._rotation) || 0;
   }
 
   /** Sprite.SetScale(handle, sx, sy) */
-  SetScale() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    const scaleX = Number.parseFloat(L.raw_tostring(3));
-    const scaleY = Number.parseFloat(L.raw_tostring(4));
-    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
-      throw new Error('Sprite.SetScale: bad arguments #2/#3 (number expected)');
-    }
+  SetScale(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const scaleX = this._requireNumberArg(args, 1, 'Sprite.SetScale', 'number');
+    const scaleY = this._requireNumberArg(args, 2, 'Sprite.SetScale', 'number');
     s._scaleX = scaleX;
     s._scaleY = scaleY;
   }
 
   /** sx, sy = Sprite.GetScale(handle) */
-  GetScale() {
-    const s = this._getSpriteByHandleArg(2);
+  GetScale(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return [(s && s._scaleX) ?? 1, (s && s._scaleY) ?? 1];
   }
 
   /** Sprite.SetColor(handle, 0x00FFFFFF) */
-  SetColor() {
-    const s = this._getSpriteByHandleArg(2);
-    const color = Number(this.luaState.raw_tostring(3));
-    if (!Number.isInteger(color)) {
-      throw new Error('Sprite.SetColor: bad argument #2 (integer expected)');
-    }
+  SetColor(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const color = this._requireIntegerArg(args, 1, 'Sprite.SetColor', 'integer');
     s._color = color;
   }
 
   /** int = Sprite.GetColor(handle) */
-  GetColor() {
-    const s = this._getSpriteByHandleArg(2);
+  GetColor(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._color) ?? 0x00FFFFFF;
   }
 
   /** Sprite.SetPaletteSlot(handle, 2) */
-  SetPaletteSlot() {
-    const s = this._getSpriteByHandleArg(2);
-    s._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
+  SetPaletteSlot(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._paletteSlot = Number.parseInt(args[1], 10) || 0;
   }
 
   /** int = Sprite.GetPaletteSlot(handle) */
-  GetPaletteSlot() {
-    const s = this._getSpriteByHandleArg(2);
+  GetPaletteSlot(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._paletteSlot) || 0;
   }
 
   /** Sprite.SetVisible(handle, true) */
-  SetVisible() {
-    const s = this._getSpriteByHandleArg(2);
-    s._visible = this._requireBooleanStackArg(3, 'Sprite.SetVisible', 'visible');
+  SetVisible(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._visible = this._requireBooleanArg(args, 1, 'Sprite.SetVisible', 'visible');
   }
 
   /** bool = Sprite.GetVisible(handle) */
-  GetVisible() {
-    const s = this._getSpriteByHandleArg(2);
+  GetVisible(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return s ? (s._visible !== false) : false;
   }
 
   /** Sprite.SetAttributes(handle, flags) */
-  SetAttributes() {
-    const s = this._getSpriteByHandleArg(2);
-    s._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+  SetAttributes(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    s._attributes = Number.parseInt(args[1], 10) || 0;
   }
 
   /** int = Sprite.GetAttributes(handle) */
-  GetAttributes() {
-    const s = this._getSpriteByHandleArg(2);
+  GetAttributes(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     return (s && s._attributes) || 0;
   }
 
@@ -422,10 +466,10 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Sprite.SetAnimation(handle, "run")
    * Set the active animation by name. Does NOT auto-play.
    */
-  SetAnimation() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    const animName = L.raw_tostring(3);
+  SetAnimation(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const animName = args[1];
     D2Sprite.setAnimation(s, animName);
   }
 
@@ -434,10 +478,10 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Set animation and start native auto-tick (animation runs without Lua calls).
    * If animName is omitted, plays the current animation.
    */
-  Play() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    const animName = L.raw_tostring(3);
+  Play(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const animName = args[1];
     if (animName) {
       D2Sprite.setAnimation(s, animName);
     }
@@ -448,8 +492,9 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Sprite.Stop(handle)
    * Stop native animation (freeze on current frame).
    */
-  Stop() {
-    const s = this._getSpriteByHandleArg(2);
+  Stop(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
     this.animating.delete(s._handle);
   }
 
@@ -458,10 +503,10 @@ class LuaSpriteExtensions extends BaseLuaExtension {
    * Manual animation tick (for scripts that want frame-level control).
    * Equivalent to firmware's Sprite.UpdateAnimation.
    */
-  UpdateAnimation() {
-    const L = this.luaState;
-    const s = this._getSpriteByHandleArg(2);
-    const dt = parseFloat(L.raw_tostring(3)) || 0;
+  UpdateAnimation(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const s = this._getSpriteByHandleArg(args, 0);
+    const dt = Number.parseFloat(args[1]) || 0;
     D2Sprite.updateAnimation(s, dt * 1000); // Lua passes seconds, D2Sprite expects ms
   }
 

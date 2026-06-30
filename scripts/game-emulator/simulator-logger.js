@@ -6,8 +6,7 @@
       if (stored === 'true') { return true; }
       if (stored === 'false') { return false; }
     } catch (_) {}
-    // Debug logging is DISABLED by default to prevent console spam
-    // To enable debug logging during development, set in localStorage:
+    // Debug logging is guarded by default; opt in with:
     // window.localStorage.setItem('retrostudio.logging', 'true');
     return false;
   })();

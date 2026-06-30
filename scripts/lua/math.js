@@ -243,9 +243,9 @@ class LuaMathExtensions extends BaseLuaExtension {
    * Random integer function
    * Lua usage: Math.Random(x, y)
    */
-  Random() {
-    const min = this._requireIntegerStackArg(2, 'Random', 'min');
-    const max = this._requireIntegerStackArg(3, 'Random', 'max');
+  Random(...args) {
+    const min = this._requireIntegerArg(args, 0, 'Random', 'min');
+    const max = this._requireIntegerArg(args, 1, 'Random', 'max');
     if (max <= min) {
       throw new Error(`[Math] Random requires max > min (min=${min}, max=${max})`);
     }

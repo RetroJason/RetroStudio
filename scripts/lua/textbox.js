@@ -55,23 +55,59 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     console.log('[LuaTextBox] TextBox system reset');
   }
 
-  // ── Helper: get textbox by handle from Lua stack ─────────────────
+  _normalizeLuaArgs(argsLike) {
+    const args = Array.from(argsLike || []);
+    const hasBridgeReceiver = args.length > 1
+      && (args[0] === null
+      || args[0] === undefined
+      || (typeof args[0] === 'object' && args[0] !== null));
+    if (hasBridgeReceiver) {
+      return args.slice(1);
+    }
+    return args;
+  }
 
-  _getHandleArg(argIndex = 2) {
-    const raw = this.luaState.raw_tostring(argIndex);
-    if (raw === undefined || raw === null || raw === '') return null;
-    const handle = parseInt(raw, 10);
+  _requireStringArg(args, index, methodName, argName) {
+    const raw = args[index];
+    if (typeof raw !== 'string' || raw.trim() === '') {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return raw;
+  }
+
+  _requireNumberArg(args, index, methodName, argName) {
+    const value = Number.parseFloat(args[index]);
+    if (!Number.isFinite(value)) {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return value;
+  }
+
+  _requireIntegerArg(args, index, methodName, argName) {
+    const value = Number.parseInt(args[index], 10);
+    if (!Number.isFinite(value)) {
+      throw new Error(`${methodName}: bad argument #${index + 1} (${argName} expected)`);
+    }
+    return value;
+  }
+
+  _requireBooleanArg(args, index, methodName, argName) {
+    return this._coerceBooleanArg(args[index], methodName, argName);
+  }
+
+  _requireHandleArg(args, index = 0) {
+    const handle = Number.parseInt(args[index], 10);
     return Number.isFinite(handle) ? handle : null;
   }
 
-  _getTextBoxByHandleArg(argIndex = 2) {
-    const handle = this._getHandleArg(argIndex);
+  _getTextBoxByHandleArg(args, index = 0) {
+    const handle = this._requireHandleArg(args, index);
     if (handle === null) {
-      throw new Error(`TextBox: bad argument #${argIndex - 1} (valid textbox handle expected)`);
+      throw new Error(`TextBox: bad argument #${index + 1} (valid textbox handle expected)`);
     }
     const tb = this.textboxes.get(handle);
     if (!tb) {
-      throw new Error(`TextBox: bad argument #${argIndex - 1} (unknown textbox handle ${handle})`);
+      throw new Error(`TextBox: bad argument #${index + 1} (unknown textbox handle ${handle})`);
     }
     return tb;
   }
@@ -167,18 +203,16 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
 
   // ── Lua API: TextBox.Create(fontName, x, y, z, color, text) ───────
 
-  Create() {
-    const L = this.luaState;
-    const fontName = L.raw_tostring(2);
-    const x          = parseFloat(L.raw_tostring(3)) || 0;
-    const y          = parseFloat(L.raw_tostring(4)) || 0;
-    const zValue     = Number.parseFloat(L.raw_tostring(5));
-    const colorValue = Number.parseInt(L.raw_tostring(6), 10);
+  Create(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const fontName = this._requireStringArg(args, 0, 'TextBox.Create', 'string font name');
+    const x = Number.parseFloat(args[1]) || 0;
+    const y = Number.parseFloat(args[2]) || 0;
+    const zValue = Number.parseFloat(args[3]);
+    const colorValue = Number.parseInt(args[4], 10);
     const z          = Number.isNaN(zValue) ? null : zValue;
     const color      = Number.isNaN(colorValue) ? 0x00FFFFFF : colorValue;
-    const text     = L.raw_tostring(7) || '';
-
-    if (!fontName) throw new Error('TextBox.Create: bad argument #1 (string font name expected)');
+    const text = typeof args[5] === 'string' ? args[5] : '';
 
     const fontAsset = this.fontAssets.get(fontName);
     if (!fontAsset) throw new Error(`TextBox.Create: font asset not found: "${fontName}"`);
@@ -213,178 +247,194 @@ class LuaTextBoxExtensions extends BaseLuaExtension {
     return handle;
   }
 
-  Destroy() {
-    const tb = this._getTextBoxByHandleArg(2);
+  Destroy(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     this.textboxes.delete(tb._handle);
   }
 
   // ── TextBox-specific: SetText / GetText ──────────────────────────
 
-  SetText() {
-    const tb  = this._getTextBoxByHandleArg(2);
-    const txt = this.luaState.raw_tostring(3);
-    if (txt === undefined || txt === null) {
+  SetText(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    const txt = args[1];
+    if (typeof txt !== 'string') {
       throw new Error('TextBox.SetText: bad argument #2 (string expected)');
     }
     tb._text = txt;
   }
 
-  GetText() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetText(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._text || '';
   }
 
   // ── Renderable API (firmware parity, handle as first arg) ────────
 
-  SetX() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetX(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._posX = Number.parseFloat(args[1]) || 0;
   }
 
-  GetX() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetX(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._posX || 0;
   }
 
-  SetY() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._posY = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._posY = Number.parseFloat(args[1]) || 0;
   }
 
-  GetY() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._posY || 0;
   }
 
-  SetXY() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._posX = parseFloat(this.luaState.raw_tostring(3)) || 0;
-    tb._posY = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  SetXY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._posX = Number.parseFloat(args[1]) || 0;
+    tb._posY = Number.parseFloat(args[2]) || 0;
   }
 
-  GetXY() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetXY(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return [tb._posX || 0, tb._posY || 0];
   }
 
-  SetZ() {
-    const tb = this._getTextBoxByHandleArg(2);
-    const z = Number.parseFloat(this.luaState.raw_tostring(3));
-    if (!Number.isFinite(z)) {
-      throw new Error('TextBox.SetZ: bad argument #2 (number expected)');
-    }
+  SetZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    const z = this._requireNumberArg(args, 1, 'TextBox.SetZ', 'number');
     tb._z = z;
     tb._layer = z;
   }
 
-  GetZ() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return Number.isFinite(tb._z) ? tb._z : 0;
   }
 
-  SetXYZ() {
-    const tb = this._getTextBoxByHandleArg(2);
-    const x = Number.parseFloat(this.luaState.raw_tostring(3));
-    const y = Number.parseFloat(this.luaState.raw_tostring(4));
-    const z = Number.parseFloat(this.luaState.raw_tostring(5));
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-      throw new Error('TextBox.SetXYZ: bad arguments #2/#3/#4 (number expected)');
-    }
+  SetXYZ(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    const x = this._requireNumberArg(args, 1, 'TextBox.SetXYZ', 'number');
+    const y = this._requireNumberArg(args, 2, 'TextBox.SetXYZ', 'number');
+    const z = this._requireNumberArg(args, 3, 'TextBox.SetXYZ', 'number');
     tb._posX = x;
     tb._posY = y;
     tb._z = z;
     tb._layer = z;
   }
 
-  SetCenter() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._centerX = parseFloat(this.luaState.raw_tostring(3)) || 0;
-    tb._centerY = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  SetCenter(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._centerX = Number.parseFloat(args[1]) || 0;
+    tb._centerY = Number.parseFloat(args[2]) || 0;
   }
 
-  GetCenter() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetCenter(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return [tb._centerX || 0, tb._centerY || 0];
   }
 
-  SetSize() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._width = parseFloat(this.luaState.raw_tostring(3)) || 0;
-    tb._height = parseFloat(this.luaState.raw_tostring(4)) || 0;
+  SetSize(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._width = Number.parseFloat(args[1]) || 0;
+    tb._height = Number.parseFloat(args[2]) || 0;
   }
 
-  GetSize() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetSize(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return [tb._width || 0, tb._height || 0];
   }
 
-  SetAngle() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._rotation = parseFloat(this.luaState.raw_tostring(3)) || 0;
+  SetAngle(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._rotation = Number.parseFloat(args[1]) || 0;
   }
 
-  GetAngle() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetAngle(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._rotation || 0;
   }
 
-  SetScale() {
-    const tb = this._getTextBoxByHandleArg(2);
-    const scaleX = Number.parseFloat(this.luaState.raw_tostring(3));
-    const scaleY = Number.parseFloat(this.luaState.raw_tostring(4));
-    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY)) {
-      throw new Error('TextBox.SetScale: bad arguments #2/#3 (number expected)');
-    }
+  SetScale(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    const scaleX = this._requireNumberArg(args, 1, 'TextBox.SetScale', 'number');
+    const scaleY = this._requireNumberArg(args, 2, 'TextBox.SetScale', 'number');
     tb._scaleX = scaleX;
     tb._scaleY = scaleY;
   }
 
-  GetScale() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetScale(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return [tb._scaleX ?? 1, tb._scaleY ?? 1];
   }
 
-  SetColor() {
-    const tb = this._getTextBoxByHandleArg(2);
-    const color = Number(this.luaState.raw_tostring(3));
-    if (!Number.isInteger(color)) {
-      throw new Error('TextBox.SetColor: bad argument #2 (integer expected)');
-    }
+  SetColor(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    const color = this._requireIntegerArg(args, 1, 'TextBox.SetColor', 'integer');
     tb._color = color;
   }
 
-  GetColor() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetColor(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._color ?? 0x00FFFFFF;
   }
 
-  SetPaletteSlot() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._paletteSlot = parseInt(this.luaState.raw_tostring(3)) || 0;
+  SetPaletteSlot(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._paletteSlot = Number.parseInt(args[1], 10) || 0;
   }
 
-  GetPaletteSlot() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetPaletteSlot(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._paletteSlot || 0;
   }
 
-  SetVisible() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._visible = this._requireBooleanStackArg(3, 'TextBox.SetVisible', 'visible');
+  SetVisible(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._visible = this._requireBooleanArg(args, 1, 'TextBox.SetVisible', 'visible');
   }
 
-  GetVisible() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetVisible(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._visible !== false;
   }
 
-  SetAttributes() {
-    const tb = this._getTextBoxByHandleArg(2);
-    tb._attributes = parseInt(this.luaState.raw_tostring(3)) || 0;
+  SetAttributes(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
+    tb._attributes = Number.parseInt(args[1], 10) || 0;
   }
 
-  GetAttributes() {
-    const tb = this._getTextBoxByHandleArg(2);
+  GetAttributes(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const tb = this._getTextBoxByHandleArg(args, 0);
     return tb._attributes || 0;
   }
 

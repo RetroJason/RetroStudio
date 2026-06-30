@@ -92,6 +92,18 @@ class BaseLuaExtension {
     // Create a global JavaScript function that can be called from Lua
     window[globalFunctionName] = function() {
       try {
+        const enableLuaBridgeLogs = window.__RETRO_LUA_BRIDGE_LOGS__ !== false;
+        if (enableLuaBridgeLogs) {
+          const argPreview = Array.from(arguments).map((arg) => {
+            if (arg === null) return 'null';
+            if (arg === undefined) return 'undefined';
+            if (typeof arg === 'string') return `"${arg}"`;
+            if (typeof arg === 'object') return `[object ${arg?.constructor?.name || 'Object'}]`;
+            return String(arg);
+          }).join(', ');
+          console.log(`[LuaBridge] ${className}.${luaFunctionName}(${argPreview})`);
+        }
+
         // Get the arguments passed from Lua and call the JavaScript method
         const result = jsMethod.apply(self, arguments);
         

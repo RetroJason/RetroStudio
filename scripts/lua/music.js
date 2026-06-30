@@ -147,6 +147,18 @@ class LuaMusicExtensions extends BaseLuaExtension {
     return { resource: playableResource, loadedResource, audioEngine };
   }
 
+  _normalizeLuaArgs(argsLike) {
+    const args = Array.from(argsLike || []);
+    const hasBridgeReceiver = args.length > 1
+      && (args[0] === null
+      || args[0] === undefined
+      || (typeof args[0] === 'object' && args[0] !== null));
+    if (hasBridgeReceiver) {
+      return args.slice(1);
+    }
+    return args;
+  }
+
   _reportPlaybackFailure(music, error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorDetails = error instanceof Error && error.stack
@@ -188,8 +200,9 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Create a music handle from a preloaded music asset name.
    * Lua usage: local handle = Music.Create("song_name")
    */
-  Create() {
-    const resourceName = this._requireStackStringArg(2, 'Create', 'resourceName');
+  Create(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const resourceName = this._requireStringArg(args, 0, 'Create', 'resourceName');
     const resource = this._requireResourceByName(resourceName, 'Create');
     this._requirePlayableResource(resource, 'Create', resourceName);
 
@@ -210,8 +223,9 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Destroy a music handle.
    * Lua usage: Music.Destroy(handle)
    */
-  Destroy() {
-    const music = this._requireHandleStateByStack(2, 'Destroy');
+  Destroy(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'Destroy');
     const audioEngine = this._requireAudioEngine('Destroy');
     audioEngine.stopSong(music.resourceId);
     if (this._activeHandle === music.handle) {
@@ -225,10 +239,11 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Play a music handle using preloaded resources.
    * Lua usage: Music.Play(handle, volume, loop)
    */
-  Play() {
-    const music = this._requireHandleStateByStack(2, 'Play');
-    const volume = this._optionalNumberArg([], 1, 1.0, 'Play', 'volume');
-    const loop = this._optionalBooleanArg([], 2, true, 'Play', 'loop');
+  Play(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'Play');
+    const volume = this._optionalNumberArg(args, 1, 1.0, 'Play', 'volume');
+    const loop = this._optionalBooleanArg(args, 2, true, 'Play', 'loop');
     const { audioEngine } = this._resolveHandlePlaybackState(music, 'Play');
 
     if (this._activeHandle !== null && this._activeHandle !== music.handle) {
@@ -272,8 +287,9 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Stop a playing music handle.
    * Lua usage: Music.Stop(handle)
    */
-  Stop() {
-    const music = this._requireHandleStateByStack(2, 'Stop');
+  Stop(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'Stop');
     const { audioEngine } = this._resolveHandlePlaybackState(music, 'Stop');
     audioEngine.stopSong(music.resourceId);
     music.isPlaying = false;
@@ -287,8 +303,9 @@ class LuaMusicExtensions extends BaseLuaExtension {
    * Check if a music handle is currently playing.
    * Lua usage: Music.IsPlaying(handle)
    */
-  IsPlaying() {
-    const music = this._requireHandleStateByStack(2, 'IsPlaying');
+  IsPlaying(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'IsPlaying');
     const { audioEngine } = this._resolveHandlePlaybackState(music, 'IsPlaying');
     return audioEngine.activeSongs instanceof Map && audioEngine.activeSongs.has(music.resourceId);
   }

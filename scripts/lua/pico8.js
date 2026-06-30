@@ -23,6 +23,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._dirty = true;
     this._gpu = null;
     this._fbTexture = null;
+    this._renderEnabled = false;
     // 0 means stretch Pico framebuffer to full output canvas.
     // >0 means fixed pixel scale (for classic Pico-8 style presentation).
     this._picoRenderScale = 0;
@@ -41,7 +42,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._cameraX = 0;
     this._cameraY = 0;
     this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
-    this._clearFb(0);
+    this._clearFb(0, false);
   }
 
   _setFramebufferSize(width, height) {
@@ -163,6 +164,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   _markDirty() {
     this._dirty = true;
+    this._renderEnabled = true;
   }
 
   _inClip(x, y) {
@@ -376,9 +378,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
   }
 
-  _clearFb(color) {
+  _clearFb(color, enableRender = true) {
     this._framebuffer.fill(color & 0xff);
-    this._markDirty();
+    this._dirty = true;
+    if (enableRender) {
+      this._renderEnabled = true;
+    }
   }
 
   _ensureFramebufferTexture(gpu) {
@@ -396,6 +401,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   renderFrame(gpu, deltaMs, renderOptions = null) {
+    if (!this._renderEnabled) {
+      return;
+    }
+
     const activeGpu = gpu || this._gpu;
     if (!activeGpu) {
       return;
