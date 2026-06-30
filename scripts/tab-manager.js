@@ -2159,9 +2159,11 @@ class TabManager {
         const payload = await response.json();
         const applications = Array.isArray(payload?.applications) ? payload.applications : [];
         const approvedPublished = applications.filter((application) => {
-          const category = String(application?.category || '').trim();
-          const isLuaApp = category === 'lua_game' || category === 'lua_app';
-          return isLuaApp && application?.isExample === true;
+          const sourceFileKind = String(application?.sourceFileKind || '').trim();
+          const runtimePackageKind = String(application?.runtimePackageKind || '').trim();
+          const isIdeCloneableSource = sourceFileKind === 'rws' || sourceFileKind === 'lua';
+          const isLuaRuntime = runtimePackageKind === 'lua';
+          return application?.isExample === true && isIdeCloneableSource && isLuaRuntime;
         });
 
         for (const application of approvedPublished) {
