@@ -277,6 +277,7 @@ class RwpService {
     const sourceRevision = String(settings.sourceRevision || '').trim();
     const buildId = String(settings.buildId || '').trim();
     const authorLabel = String(settings.author || '').trim();
+    const isExample = settings.isExample === true;
 
     const toManifestArchivePath = (assetPath) => {
       const trimmed = String(assetPath || '').trim();
@@ -303,6 +304,7 @@ class RwpService {
       `title=${String(settings.title || projectName).trim()}`,
       `category=${category}`,
       `target_device_slug=${targetDeviceSlug}`,
+      `example=${isExample ? 'true' : 'false'}`,
       '',
       '[release]',
       `version_string=${versionString}`,

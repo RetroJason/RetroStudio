@@ -6,12 +6,16 @@
       if (stored === 'true') { return true; }
       if (stored === 'false') { return false; }
     } catch (_) {}
-    const host = (window.location && window.location.hostname) || '';
-    return host === 'localhost' || host === '127.0.0.1' || host === '';
+    // Debug logging is DISABLED by default to prevent console spam
+    // To enable debug logging during development, set in localStorage:
+    // window.localStorage.setItem('retrostudio.logging', 'true');
+    return false;
   })();
 
-  function emit(level, args) {
-    if (!enabled) {
+  function emit(level, args, alwaysShow = false) {
+    // Errors and warnings always show, regardless of debug logging setting
+    const shouldShow = alwaysShow || enabled;
+    if (!shouldShow) {
       return;
     }
 
@@ -31,11 +35,11 @@
 
   function createConsole(scope) {
     return {
-      log: function () { emit('log', prefixedArgs(scope, arguments)); },
-      info: function () { emit('info', prefixedArgs(scope, arguments)); },
-      debug: function () { emit('debug', prefixedArgs(scope, arguments)); },
-      warn: function () { emit('warn', prefixedArgs(scope, arguments)); },
-      error: function () { emit('error', prefixedArgs(scope, arguments)); },
+      log: function () { emit('log', prefixedArgs(scope, arguments), false); },
+      info: function () { emit('info', prefixedArgs(scope, arguments), false); },
+      debug: function () { emit('debug', prefixedArgs(scope, arguments), false); },
+      warn: function () { emit('warn', prefixedArgs(scope, arguments), true); },
+      error: function () { emit('error', prefixedArgs(scope, arguments), true); },
     };
   }
 

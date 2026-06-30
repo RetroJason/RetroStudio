@@ -747,7 +747,23 @@
 
 /* Tab title modifications for dirty state */
 .tab-title {
+  position: relative;
+  padding-right: 12px;
   transition: color 0.2s ease;
+}
+
+.tab-title::after {
+  content: "●";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-48%);
+  font-size: 10px;
+  line-height: 1;
+  color: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 0.2s ease, opacity 0.2s ease;
 }
 
 .tab.dirty {
@@ -756,14 +772,11 @@
 
 .tab.dirty .tab-title {
   color: #ffb74d;
-  font-weight: 600;
 }
 
 .tab.dirty .tab-title::after {
-  content: " ●";
   color: #ff6b6b;
-  font-weight: bold;
-  font-size: 16px;
+  opacity: 1;
 }
 
 .tab.dirty.active {
@@ -772,11 +785,11 @@
 
 .tab.dirty.active .tab-title {
   color: #ffffff;
-  font-weight: 600;
 }
 
 .tab.dirty.active .tab-title::after {
   color: #ffcccb;
+  opacity: 1;
 }
 
 /* Loading states */

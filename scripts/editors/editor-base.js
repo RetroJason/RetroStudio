@@ -257,18 +257,6 @@ class EditorBase extends ViewerBase {
     try {
       const content = this.getContent();
       console.log(`[EditorBase] Saving ${this.path}, content length: ${content.length}, isNewResource: ${this.isNewResource}`);
-
-      // Temporary Lua save diagnostics: dump full buffer to console so we can
-      // verify exact editor content that enters the persistence pipeline.
-      const resolvedExtension = (this.path && this.getFileExtension(this.path))
-        || (this.constructor?.getFileExtension ? this.constructor.getFileExtension() : '')
-        || '';
-      const isLuaSave = resolvedExtension.toLowerCase() === '.lua' || this.constructor?.name === 'LuaEditor';
-      if (isLuaSave) {
-        console.error('[EditorBase][LuaSaveDebug] ---- BEGIN LUA CONTENT ----');
-        console.error(typeof content === 'string' ? content : String(content));
-        console.error('[EditorBase][LuaSaveDebug] ---- END LUA CONTENT ----');
-      }
       
       if (this.isNewResource) {
         // New resource - need to save to project

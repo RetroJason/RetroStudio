@@ -14,6 +14,9 @@ class TabManager {
     this.previewFileName = null;
     this.previewViewer = null;
     this.previewReadOnly = false;
+    this.welcomeViewMode = 'recent';
+    this.showDeletedWelcomeProjects = false;
+    this.examplesSearchQuery = '';
     
     // Event system
     this.eventListeners = {
@@ -315,6 +318,31 @@ class TabManager {
         return;
       }
 
+      if (action === 'show-recent-projects') {
+        e.preventDefault();
+        this.welcomeViewMode = 'recent';
+        this._showWelcomePreview();
+        return;
+      }
+
+      if (action === 'show-examples') {
+        e.preventDefault();
+        await this.openExamplesTab();
+        return;
+      }
+
+      if (action === 'refresh-examples') {
+        e.preventDefault();
+        await this.refreshExamplesPreviewProjects();
+        return;
+      }
+
+      if (action === 'clone-example') {
+        e.preventDefault();
+        await this._handleWelcomeExampleClone(actionTarget);
+        return;
+      }
+
       if (action === 'open-project') {
         e.preventDefault();
         await this._handleWelcomeProjectOpen(actionTarget);
@@ -337,6 +365,16 @@ class TabManager {
         e.preventDefault();
         await this._handleWelcomeProjectRestore(actionTarget);
       }
+    });
+
+    this.tabContentArea.addEventListener('input', (e) => {
+      const searchInput = e.target.closest('input[data-welcome-examples-search]');
+      if (!searchInput) return;
+
+      this.examplesSearchQuery = String(searchInput.value || '').trim();
+      this.refreshExamplesPreviewProjects().catch((error) => {
+        console.error('[TabManager] Failed to refresh examples after search:', error);
+      });
     });
     
     // Keyboard navigation
@@ -1540,10 +1578,6 @@ class TabManager {
       previewPane.style.display = 'block';
       previewPane.innerHTML = `
         <div class="preview-pane">
-          <div class="preview-header">
-            <h3>Welcome to Game Engine Editor</h3>
-            <p>Open a recent project or select a resource from the Project Explorer to preview it here.</p>
-          </div>
           <div class="welcome-recent-projects">
             <div class="welcome-recent-projects-header">
               <h4>Recent Projects</h4>
@@ -1564,12 +1598,84 @@ class TabManager {
     this.previewPath = null;
     this.previewFileName = null;
     this.previewViewer = null;
-    
+
+    if (this.welcomeViewMode === 'examples') {
+      this._showExamplesPreview();
+      return;
+    }
+
     this.refreshWelcomePreviewProjects().catch((error) => {
       console.error('[TabManager] Failed to refresh welcome projects:', error);
     });
 
     console.log('[TabManager] Welcome preview tab shown');
+  }
+
+  _showExamplesPreview() {
+    this.welcomeViewMode = 'examples';
+    this._ensurePreviewTabExists();
+
+    const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
+    const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
+
+    if (previewTab) {
+      previewTab.style.display = 'flex';
+      previewTab.querySelector('.tab-title').textContent = 'Examples';
+    }
+
+    if (previewPane) {
+      previewPane.style.display = 'block';
+      previewPane.innerHTML = `
+        <div class="preview-pane">
+          <div class="preview-header">
+            <h3>Example Apps</h3>
+            <p>Search examples and clone one into your own project workspace.</p>
+            <div class="welcome-recent-projects-actions" style="margin-top:8px;">
+              <button type="button" data-welcome-action="show-recent-projects">Recent</button>
+              <button type="button" data-welcome-action="show-examples">Examples</button>
+            </div>
+          </div>
+          <div class="welcome-recent-projects">
+            <div class="welcome-recent-projects-header">
+              <h4>Examples</h4>
+              <div class="welcome-recent-projects-actions">
+                <input
+                  type="search"
+                  data-welcome-examples-search
+                  placeholder="Search by title or description"
+                  value="${this._escapeHtml(this.examplesSearchQuery || '')}"
+                  style="padding:6px 8px; border-radius:4px; border:1px solid #4b5368; background:#0f131b; color:#d7dbe4; min-width:220px;"
+                />
+                <button type="button" data-welcome-action="refresh-examples">Refresh</button>
+              </div>
+            </div>
+            <div class="welcome-recent-projects-list" data-welcome-examples-list>
+              <p>Loading examples...</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    this.previewPath = null;
+    this.previewFileName = null;
+    this.previewViewer = null;
+    this.switchToTab('preview');
+
+    this.refreshExamplesPreviewProjects().catch((error) => {
+      console.error('[TabManager] Failed to refresh examples:', error);
+    });
+  }
+
+  async openWelcomeTab() {
+    this.welcomeViewMode = 'recent';
+    this._showWelcomePreview();
+    this.switchToTab('preview');
+    await this.refreshWelcomePreviewProjects();
+  }
+
+  async openExamplesTab() {
+    this._showExamplesPreview();
   }
 
   _escapeHtml(value) {
@@ -1591,6 +1697,52 @@ class TabManager {
       : [];
   }
 
+  _asBoolean(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return null;
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+    return null;
+  }
+
+  _isProjectMarkedExample(summary) {
+    const metadata = this._asRecord(summary?.currentRevision?.metadata) || {};
+    const manifest = this._asRecord(metadata.manifest) || {};
+    const packageSection = this._asRecord(manifest.package) || {};
+    const releaseSection = this._asRecord(manifest.release) || {};
+    const packageMetadata = this._asRecord(metadata.package) || {};
+
+    const candidates = [
+      packageSection.example,
+      packageSection.is_example,
+      packageSection.isExample,
+      releaseSection.example,
+      releaseSection.is_example,
+      packageMetadata.example,
+      packageMetadata.is_example,
+      packageMetadata.isExample,
+    ];
+
+    for (const candidate of candidates) {
+      const resolved = this._asBoolean(candidate);
+      if (resolved != null) return resolved;
+    }
+
+    return false;
+  }
+
+  _extractVersionUuidFromRuntimeUrl(runtimeUrl) {
+    if (typeof runtimeUrl !== 'string') return null;
+    const match = runtimeUrl.match(/\/api\/apps\/([^/]+)\/versions\/([^/]+)\/runtime/);
+    if (!match) return null;
+    return {
+      slug: decodeURIComponent(match[1]),
+      versionUuid: decodeURIComponent(match[2]),
+    };
+  }
+
   _getWelcomeProjectPreviewUrl(summary, options = {}) {
     const project = this._asRecord(summary?.project) || {};
     const revision = this._asRecord(summary?.currentRevision) || {};
@@ -1600,18 +1752,21 @@ class TabManager {
     }
 
     const metadata = this._asRecord(revision.metadata) || {};
-    const manifest = this._asRecord(metadata.manifest) || {};
-    const display = this._asRecord(manifest.display) || {};
     const packageMetadata = this._asRecord(metadata.package) || {};
-    const screenshotPaths = this._asCsvList(display.screenshots);
+    const mediaMetadata = this._asRecord(metadata.media) || {};
+    
+    // Check for screenshot paths from metadata.media.screenshots (processed paths from package ingest)
+    const mediaScreenshots = Array.isArray(mediaMetadata.screenshots) ? mediaMetadata.screenshots : [];
+    const packageScreenshots = Array.isArray(packageMetadata.screenshots) ? packageMetadata.screenshots : [];
+    const hasScreenshots = mediaScreenshots.length > 0 || packageScreenshots.length > 0;
 
-    if (screenshotPaths.length > 0) {
+    if (hasScreenshots) {
       return '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=screenshot&index=0' + (options.deleted === true ? '&deleted=true' : '');
     }
 
     const iconPath = typeof packageMetadata.iconPath === 'string'
       ? packageMetadata.iconPath.trim()
-      : (typeof display.icon_path === 'string' ? display.icon_path.trim() : '');
+      : null;
 
     return iconPath
       ? '/api/projects/' + encodeURIComponent(projectUuid) + '/preview?kind=icon' + (options.deleted === true ? '&deleted=true' : '')
@@ -1857,6 +2012,254 @@ class TabManager {
     }
   }
 
+  async _handleWelcomeExampleClone(actionTarget) {
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi) {
+      throw new Error('Retrowww hosted services are unavailable.');
+    }
+
+    const exampleKind = String(actionTarget.dataset.exampleKind || '').trim();
+    const exampleName = actionTarget.dataset.exampleNameEncoded
+      ? decodeURIComponent(actionTarget.dataset.exampleNameEncoded)
+      : (actionTarget.dataset.exampleName || 'Example');
+    const suggestedName = `${exampleName} Copy`;
+    const requestedName = window.prompt('Clone example as project name:', suggestedName);
+    if (requestedName == null) {
+      return;
+    }
+
+    const cloneName = String(requestedName || '').trim();
+    if (!cloneName) {
+      window.gameEmulator?.updateStatus?.('Clone canceled: project name is required.', 'warning');
+      return;
+    }
+
+    actionTarget.disabled = true;
+
+    try {
+      if (exampleKind === 'project') {
+        const projectUuid = String(actionTarget.dataset.projectUuid || '').trim();
+        if (!projectUuid) {
+          throw new Error('Example project UUID is missing.');
+        }
+
+        if (typeof hostedStudioApi.copyProject !== 'function') {
+          throw new Error('Retrowww project copy service is unavailable.');
+        }
+
+        window.gameEmulator?.updateStatus?.('Cloning example project...', 'info');
+        const clonedSummary = await hostedStudioApi.copyProject(projectUuid, cloneName);
+        const clonedUuid = String(clonedSummary?.project?.uuid || clonedSummary?.uuid || '').trim();
+
+        if (clonedUuid && typeof hostedStudioApi.openProject === 'function') {
+          await hostedStudioApi.openProject(clonedUuid, cloneName);
+        } else if (typeof hostedStudioApi.focusProject === 'function') {
+          hostedStudioApi.focusProject(cloneName);
+        }
+
+        window.gameEmulator?.updateStatus?.(`Cloned example into ${cloneName}.`, 'success');
+        return;
+      }
+
+      if (exampleKind === 'published') {
+        const slug = String(actionTarget.dataset.appSlug || '').trim();
+        const versionUuid = String(actionTarget.dataset.versionUuid || '').trim();
+        if (!slug || !versionUuid) {
+          throw new Error('Published example package information is incomplete.');
+        }
+
+        const importProjectUrl = `/api/apps/${encodeURIComponent(slug)}/versions/${encodeURIComponent(versionUuid)}/package`;
+        window.gameEmulator?.updateStatus?.('Importing published example source...', 'info');
+
+        if (typeof hostedStudioApi.importSharedProject !== 'function') {
+          throw new Error('Retrowww shared import service is unavailable.');
+        }
+
+        await hostedStudioApi.importSharedProject(importProjectUrl, cloneName, undefined, { sharedSession: false });
+
+        // Persist the imported source as a normal user-owned project clone.
+        if (typeof hostedStudioApi.saveProject === 'function') {
+          await hostedStudioApi.saveProject(cloneName, { saveSource: 'manual' });
+        }
+
+        if (typeof hostedStudioApi.focusProject === 'function') {
+          hostedStudioApi.focusProject(cloneName);
+        }
+
+        window.gameEmulator?.updateStatus?.(`Cloned example into ${cloneName}.`, 'success');
+        return;
+      }
+
+      throw new Error('Unsupported example type.');
+    } catch (error) {
+      console.error('[TabManager] Failed to clone example:', error);
+      window.gameEmulator?.updateStatus?.(
+        'Failed to clone example: ' + (error && error.message ? error.message : String(error)),
+        'error'
+      );
+      throw error;
+    } finally {
+      actionTarget.disabled = false;
+    }
+  }
+
+  async refreshExamplesPreviewProjects() {
+    const previewPane = this.tabContentArea?.querySelector('[data-tab-id="preview"]');
+    const examplesContainer = previewPane?.querySelector('[data-welcome-examples-list]');
+    if (!examplesContainer) {
+      return;
+    }
+
+    examplesContainer.innerHTML = '<p>Loading examples...</p>';
+
+    const hostedStudioApi = window.retrowwwHostedStudio;
+    if (!hostedStudioApi) {
+      examplesContainer.innerHTML = '<p>Examples are only available in hosted RetroStudio.</p>';
+      return;
+    }
+
+    const examples = [];
+
+    if (typeof hostedStudioApi.listProjects === 'function') {
+      try {
+        const projects = await hostedStudioApi.listProjects();
+        for (const summary of Array.isArray(projects) ? projects : []) {
+          if (!this._isProjectMarkedExample(summary)) continue;
+
+          const project = this._asRecord(summary?.project) || {};
+          const metadata = this._asRecord(summary?.currentRevision?.metadata) || {};
+          const manifest = this._asRecord(metadata.manifest) || {};
+          const display = this._asRecord(manifest.display) || {};
+          const packageMetadata = this._asRecord(metadata.package) || {};
+          const previewUrl = this._getWelcomeProjectPreviewUrl(summary, { deleted: false });
+
+          examples.push({
+            kind: 'project',
+            id: String(project.uuid || '').trim(),
+            title: String(project.displayName || project.slug || 'Example Project').trim(),
+            description: String(display.short_description || packageMetadata.shortDescription || '').trim(),
+            version: String(metadata?.package?.versionString || '').trim(),
+            previewUrl,
+            projectUuid: String(project.uuid || '').trim(),
+          });
+        }
+      } catch (error) {
+        console.error('[TabManager] Failed loading user example projects:', error);
+      }
+    }
+
+    try {
+      const response = await fetch('/api/applications/device-catalog', {
+        method: 'GET',
+        credentials: 'same-origin',
+        cache: 'no-store',
+      });
+
+      if (response.ok) {
+        const payload = await response.json();
+        const applications = Array.isArray(payload?.applications) ? payload.applications : [];
+        const recommended = applications.filter((application) => application?.recommended === true);
+        const approvedPublished = recommended.length > 0 ? recommended : applications;
+
+        for (const application of approvedPublished) {
+          const title = String(application?.title || '').trim();
+          const slug = String(application?.slug || '').trim();
+          const runtimeUrl = String(application?.runtimeUrl || '').trim();
+          const parsedRuntime = this._extractVersionUuidFromRuntimeUrl(runtimeUrl);
+
+          if (!title || !slug || !parsedRuntime?.versionUuid) {
+            continue;
+          }
+
+          examples.push({
+            kind: 'published',
+            id: `published:${slug}:${parsedRuntime.versionUuid}`,
+            title,
+            description: String(application?.shortDescription || '').trim(),
+            version: String(application?.versionString || '').trim(),
+            previewUrl: typeof application?.previewImageUrl === 'string' ? application.previewImageUrl : null,
+            appSlug: slug,
+            versionUuid: parsedRuntime.versionUuid,
+            recommended: application?.recommended === true,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[TabManager] Failed loading published examples:', error);
+    }
+
+    const query = String(this.examplesSearchQuery || '').trim().toLowerCase();
+    const filteredExamples = query.length > 0
+      ? examples.filter((example) => {
+          const searchable = `${example.title || ''}\n${example.description || ''}`.toLowerCase();
+          return searchable.includes(query);
+        })
+      : examples;
+
+    if (filteredExamples.length === 0) {
+      examplesContainer.innerHTML = '<p>No examples matched your search.</p>';
+      return;
+    }
+
+    const examplesMarkup = filteredExamples
+      .slice(0, 60)
+      .map((example) => {
+        const encodedName = this._escapeHtml(encodeURIComponent(example.title));
+        const projectUuid = this._escapeHtml(example.projectUuid || '');
+        const appSlug = this._escapeHtml(example.appSlug || '');
+        const versionUuid = this._escapeHtml(example.versionUuid || '');
+        const typeLabel = example.kind === 'project'
+          ? 'Your Example Project'
+          : (example.recommended ? 'Approved Published Example' : 'Published Example');
+
+        return `
+          <div class="welcome-recent-project-card">
+            <button
+              type="button"
+              class="welcome-recent-project-button"
+              data-welcome-action="clone-example"
+              data-example-kind="${this._escapeHtml(example.kind)}"
+              data-example-name-encoded="${encodedName}"
+              data-project-uuid="${projectUuid}"
+              data-app-slug="${appSlug}"
+              data-version-uuid="${versionUuid}"
+            >
+              <span class="welcome-project-preview" aria-hidden="true">
+                <span class="welcome-project-preview-frame">
+                  ${example.previewUrl
+                    ? `<img src="${this._escapeHtml(example.previewUrl)}" alt="" class="welcome-project-preview-image" />`
+                    : `<img src="/retro-watch-co-logo.png" alt="" class="welcome-project-preview-logo" />`}
+                </span>
+              </span>
+              <span class="welcome-project-body">
+                <span class="welcome-project-type">${this._escapeHtml(typeLabel)}</span>
+                <span class="welcome-project-title">${this._escapeHtml(example.title)}</span>
+                <span class="welcome-project-meta">${this._escapeHtml(example.description || 'No description')}</span>
+                <span class="welcome-project-meta">${this._escapeHtml(example.version ? `Version ${example.version}` : 'Version unknown')}</span>
+              </span>
+            </button>
+            <div class="welcome-project-card-actions welcome-project-card-actions--active">
+              <button
+                type="button"
+                class="welcome-project-copy-button"
+                data-welcome-action="clone-example"
+                data-example-kind="${this._escapeHtml(example.kind)}"
+                data-example-name-encoded="${encodedName}"
+                data-project-uuid="${projectUuid}"
+                data-app-slug="${appSlug}"
+                data-version-uuid="${versionUuid}"
+              >
+                Clone Into My Projects
+              </button>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    examplesContainer.innerHTML = examplesMarkup;
+  }
+
   async refreshWelcomePreviewProjects() {
     const previewPane = this.tabContentArea?.querySelector('[data-tab-id="preview"]');
     const projectsContainer = previewPane?.querySelector('[data-welcome-recent-projects]');
@@ -1919,7 +2322,50 @@ class TabManager {
         .map((summary) => {
           const project = summary.project || {};
           const revision = summary.currentRevision || {};
-          const projectNameValue = String(summary.localProjectName || project.displayName || project.slug || 'Project');
+          let projectNameValue = String(summary.localProjectName || project.displayName || project.slug || 'Project');
+          
+          // For LOCAL projects, prefer to show the app title from package settings
+          // This ensures the tile always shows the current title, even if not yet saved to backend
+          if (summary.localOnly || summary.isLoadedLocally) {
+            let foundTitle = false;
+            
+            // First, check if there's an open package editor for ANY local project
+            try {
+              if (this.tabs && this.tabs.length > 0) {
+                for (const tab of this.tabs) {
+                  if (tab?.viewer && typeof tab.viewer.getSettings === 'function') {
+                    const settings = tab.viewer.getSettings?.();
+                    if (settings?.title && String(settings.title).trim()) {
+                      projectNameValue = String(settings.title).trim();
+                      foundTitle = true;
+                      break;
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              // Silently ignore
+            }
+            
+            // If we didn't find an open editor, fall back to explorer structure name
+            if (!foundTitle) {
+              try {
+                const projectExplorer = window.serviceContainer?.get?.('projectExplorer') ||
+                                        window.gameEmulator?.projectExplorer;
+                
+                if (projectExplorer?.projectData?.structure) {
+                  const explorerNames = Object.keys(projectExplorer.projectData.structure);
+                  // Use the explorer name (which reflects any renames done this session)
+                  if (explorerNames.length === 1) {
+                    projectNameValue = explorerNames[0];
+                  }
+                }
+              } catch (e) {
+                // Fall back to API name
+              }
+            }
+          }
+          
           const projectName = this._escapeHtml(projectNameValue);
           const projectUuid = this._escapeHtml(project.uuid || '');
           const projectTypeLabel = summary.localOnly
@@ -2313,10 +2759,6 @@ class TabManager {
     if (previewPane) {
       previewPane.innerHTML = `
         <div class="preview-pane">
-          <div class="preview-header">
-            <h3>Welcome to Game Engine Editor</h3>
-            <p>Select a resource from the Project Explorer to preview it here, or double-click to open in a new tab.</p>
-          </div>
         </div>
       `;
     }
@@ -2766,7 +3208,6 @@ class TabManager {
 
   async saveAllOpenTabs(options = {}) {
     console.log('[TabManager] Saving all open tabs...');
-    console.error('[SaveDebug] TabManager.saveAllOpenTabs called', options || {});
     const savePromises = [];
     let savedCount = 0;
     const force = options && options.force === true;
@@ -2775,12 +3216,6 @@ class TabManager {
     if (this.previewViewer && typeof this.previewViewer.save === 'function') {
       const previewModified = typeof this.previewViewer.isModified === 'function' ? this.previewViewer.isModified() : true;
       if (force || previewModified) {
-        console.error('[SaveDebug] Saving preview tab', {
-          modified: previewModified,
-          force,
-          viewerType: this.previewViewer?.constructor?.name || 'unknown',
-          path: this.previewPath || null,
-        });
         console.log('[TabManager] Saving preview tab...');
         savePromises.push(
           this.previewViewer.save().then(() => {
@@ -2800,13 +3235,6 @@ class TabManager {
       if (tabInfo.viewer && typeof tabInfo.viewer.save === 'function') {
         const modified = typeof tabInfo.viewer.isModified === 'function' ? tabInfo.viewer.isModified() : true;
         if (force || modified) {
-          console.error('[SaveDebug] Saving dedicated tab', {
-            tabId,
-            modified,
-            force,
-            viewerType: tabInfo.viewer?.constructor?.name || 'unknown',
-            path: tabInfo.fullPath || null,
-          });
           console.log(`[TabManager] Saving tab ${tabId}...`);
           savePromises.push(
             tabInfo.viewer.save().then(() => {

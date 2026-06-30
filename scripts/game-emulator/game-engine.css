@@ -338,10 +338,6 @@
   box-sizing: border-box;
 }
 
-.game-screen-frame.input-active {
-  border-color: #3fb0ff;
-}
-
 #game-canvas {
   display: block;
   width: 100%;

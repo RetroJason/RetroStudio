@@ -759,12 +759,26 @@ class RibbonToolbar {
   
   setupButtons() {
   // File operations
+  this.setupButton('welcomeTabBtn', async () => {
+    const tabManager = window.gameEmulator?.tabManager || window.serviceContainer?.get?.('tabManager');
+    if (!tabManager || typeof tabManager.openWelcomeTab !== 'function') {
+      throw new Error('Welcome tab is unavailable.');
+    }
+
+    await tabManager.openWelcomeTab();
+  });
+
+  this.setupButton('examplesTabBtn', async () => {
+    const tabManager = window.gameEmulator?.tabManager || window.serviceContainer?.get?.('tabManager');
+    if (!tabManager || typeof tabManager.openExamplesTab !== 'function') {
+      throw new Error('Examples tab is unavailable.');
+    }
+
+    await tabManager.openExamplesTab();
+  });
+
   this.setupButton('saveBtn', async () => {
     try {
-      console.error('[SaveDebug] File->Save clicked');
-      try {
-        window.gameEmulator?.updateStatus?.('SaveDebug: File->Save click reached', 'info');
-      } catch (_) {}
       const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.();
       if (!projectName) {
         throw new Error('No active project selected.');
@@ -773,10 +787,8 @@ class RibbonToolbar {
       // Flush all in-memory editor buffers before hosted project save so
       // Monaco edits are persisted to storage/package inputs.
       if (window.gameEmulator?.tabManager?.saveAllOpenTabs) {
-        console.error('[SaveDebug] Invoking tabManager.saveAllOpenTabs(force=true)');
         await window.gameEmulator.tabManager.saveAllOpenTabs({ force: true, reason: 'manual-save' });
       } else if (window.gameEmulator?.tabManager?.saveActiveTab) {
-        console.error('[SaveDebug] Invoking tabManager.saveActiveTab()');
         await window.gameEmulator.tabManager.saveActiveTab();
       }
 
@@ -795,19 +807,16 @@ class RibbonToolbar {
           continue;
         }
         luaSaves++;
-        console.error('[SaveDebug] Explicit Lua save invoke', { tabId: tab?.tabId || null, path: tab?.fullPath || null });
         await viewer.save();
       }
-      console.error('[SaveDebug] Explicit Lua save count', luaSaves);
+      console.log('[RibbonToolbar] Explicit Lua save count', luaSaves);
 
       const hostedStudioApi = window.retrowwwHostedStudio;
       if (!hostedStudioApi || typeof hostedStudioApi.saveProject !== 'function') {
         throw new Error('Retrowww hosted project save service is unavailable.');
       }
 
-        console.error('[SaveDebug] Invoking hostedStudioApi.saveProject(save)');
         await hostedStudioApi.saveProject(projectName, { saveSource: 'save' });
-        console.error('[SaveDebug] hostedStudioApi.saveProject(save) complete');
         window.gameEmulator?.updateStatus?.('Saved ' + projectName, 'success');
     } catch (error) {
       console.error('[RibbonToolbar] Failed to save project:', error);

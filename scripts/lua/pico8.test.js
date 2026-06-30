@@ -34,7 +34,7 @@ if (!LuaPico8Extensions) {
 
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
-  'pset', 'pget', 'color', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'spr',
+  'pset', 'pget', 'color', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'pico_mode', 'spr',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print',
   // Math
   'sin', 'cos', 'atan2', 'sqrt', 'abs', 'sgn', 'flr', 'ceil', 'min', 'max', 'mid', 'rnd', 'srand',
@@ -113,7 +113,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 54);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 55);
     },
   },
   {
@@ -162,7 +162,7 @@ const tests = [
       assert.strictEqual(pico8._cameraY, 22);
       assert.deepStrictEqual(pico8._clipRect, { x: 1, y: 2, w: 3, h: 4 });
       assert.deepStrictEqual(emulator.spriteEngine._lastText, { text: 'hi', x: 8, y: 9, color: 6 });
-      assert.strictEqual(emulator.gameConsole._lines[0], 'hi\n');
+      assert.strictEqual(emulator.gameConsole._lines.length, 0);
     },
   },
   {
@@ -196,12 +196,14 @@ const tests = [
       const pico8 = new LuaPico8Extensions({});
       const fakeGpu = {
         createTextureRaw(pixels, width, height, format) {
+          const probeX = Math.floor(((1 + 0.5) * width) / 128);
+          const probeY = Math.floor(((2 + 0.5) * height) / 128);
           this.created = {
             width,
             height,
             format,
             pixel0: pixels[0],
-            pixel65: pixels[(2 * width) + 1],
+            probePixel: pixels[(probeY * width) + probeX],
           };
           return { id: 'fbtex' };
         },
@@ -223,14 +225,49 @@ const tests = [
       assert.strictEqual(queue.length, 1);
       queue[0].draw();
 
-      assert.strictEqual(fakeGpu.created.width, 128);
-      assert.strictEqual(fakeGpu.created.height, 128);
+      assert.strictEqual(fakeGpu.created.width, 448);
+      assert.strictEqual(fakeGpu.created.height, 368);
       assert.strictEqual(fakeGpu.created.format, 0x09);
-      assert.strictEqual(fakeGpu.created.pixel65, 5);
+      assert.strictEqual(fakeGpu.created.probePixel, 5);
       assert.strictEqual(fakeGpu.paletteOffset, 0);
       assert.ok(fakeGpu.blitCall);
-      assert.strictEqual(fakeGpu.blitCall.opts.srcW, 128);
-      assert.strictEqual(fakeGpu.blitCall.opts.srcH, 128);
+      assert.strictEqual(fakeGpu.blitCall.opts.srcW, 448);
+      assert.strictEqual(fakeGpu.blitCall.opts.srcH, 368);
+      assert.strictEqual(fakeGpu.blitCall.opts.x, 0);
+      assert.strictEqual(fakeGpu.blitCall.opts.y, 0);
+      assert.strictEqual(fakeGpu.blitCall.opts.scaleX, 1);
+      assert.strictEqual(fakeGpu.blitCall.opts.scaleY, 1);
+    },
+  },
+  {
+    name: 'pico_mode supports fixed scale and querying current mode',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const fakeGpu = {
+        canvas: { width: 448, height: 368 },
+        createTextureRaw() { return { id: 'fbtex' }; },
+        deleteTexture() {},
+        setPalette() {},
+        setPaletteOffset() {},
+        blit(tex, opts) {
+          this.blitCall = { tex, opts };
+        },
+      };
+
+      pico8.initGpu(fakeGpu);
+      pico8.cls(0);
+      assert.strictEqual(pico8.pico_mode(), 0);
+
+      pico8.pico_mode(2);
+      assert.strictEqual(pico8.pico_mode(), 2);
+
+      pico8.renderFrame(fakeGpu, 16);
+
+      assert.ok(fakeGpu.blitCall);
+      assert.strictEqual(fakeGpu.blitCall.opts.x, 96);
+      assert.strictEqual(fakeGpu.blitCall.opts.y, 56);
+      assert.strictEqual(fakeGpu.blitCall.opts.scaleX, 2);
+      assert.strictEqual(fakeGpu.blitCall.opts.scaleY, 2);
     },
   },
   {

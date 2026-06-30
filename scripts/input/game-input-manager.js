@@ -177,11 +177,6 @@ class GameInputManager {
       return;
     }
 
-    const gameFrame = this.gameCanvas.closest('.game-screen-frame');
-    if (gameFrame) {
-      gameFrame.style.borderColor = isActive ? '#3fb0ff' : '#c7662a';
-    }
-
     if (isActive) {
       this.updateInputStatus(true);
       return;

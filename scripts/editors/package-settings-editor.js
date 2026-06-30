@@ -99,6 +99,7 @@ class PackageSettingsEditor extends EditorBase {
     this._ui.targetDeviceSlug = this.makeSelectRow(form, 'Target Device', this.getFallbackTargetDeviceOptions());
     this._ui.shortDescription = this.makeTextAreaRow(form, 'Short Description', 2);
     this._ui.description = this.makeTextAreaRow(form, 'Description', 3);
+    this._ui.isExample = this.makeCheckboxRow(form, 'Mark as Example');
     this._ui.packageKind = this.makeSelectRow(form, 'Package Type', [
       { value: 'rwa', label: 'App / Watch Face (.rwa)' }
     ]);
@@ -245,6 +246,28 @@ class PackageSettingsEditor extends EditorBase {
     return area;
   }
 
+  makeCheckboxRow(container, labelText) {
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    label.style.cssText = 'color:#d7dbe4;';
+
+    const wrap = document.createElement('label');
+    wrap.style.cssText = 'display:flex; align-items:center; gap:8px; color:#c7d0e3; font-size:13px;';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.style.cssText = 'width:16px; height:16px;';
+
+    const help = document.createElement('span');
+    help.textContent = 'Include this app in RetroStudio Examples lists.';
+
+    wrap.appendChild(checkbox);
+    wrap.appendChild(help);
+    container.appendChild(label);
+    container.appendChild(wrap);
+    return checkbox;
+  }
+
   makeStatusRow(container) {
     const spacer = document.createElement('div');
     spacer.setAttribute('aria-hidden', 'true');
@@ -340,6 +363,17 @@ class PackageSettingsEditor extends EditorBase {
       this._ui.author.style.opacity = '0.8';
       this._ui.author.title = 'Managed by the saved Retrowww project authors.';
     }
+
+    if (this._ui.title) {
+      this._ui.title.readOnly = true;
+      this._ui.title.style.opacity = '0.8';
+      this._ui.title.title = 'Project rename is disabled. Use Copy Project to create a project with a new name.';
+    }
+    this.setStatusMessage(
+      this._ui.titleStatus,
+      'warning',
+      'Rename is disabled. Use Copy Project to create a new project name.',
+    );
 
     if (this._ui.iconSection) {
       this._ui.iconSection.style.display = 'none';
@@ -483,7 +517,23 @@ class PackageSettingsEditor extends EditorBase {
     }
 
     this.settings.author = String(hostedDefaults.defaults?.author || this.settings.author || '').trim();
-    this.settings.uniqueId = String(hostedDefaults.defaults?.uniqueId || this.settings.uniqueId || '').trim();
+
+    // Keep package uniqueId stable for existing projects. The backend validates
+    // that uploaded package unique_id matches the project's immutable slug.
+    const currentUniqueId = String(this.settings.uniqueId || '').trim();
+    const hostedUniqueId = String(hostedDefaults.defaults?.uniqueId || '').trim();
+    const hostedStudio = window.retrowwwHostedStudio;
+    const openedProject = (hostedStudio && typeof hostedStudio.getOpenedProject === 'function')
+      ? hostedStudio.getOpenedProject(projectName)
+      : null;
+    const boundProjectSlug = String(openedProject?.slug || '').trim();
+
+    if (boundProjectSlug) {
+      this.settings.uniqueId = boundProjectSlug;
+    } else if (!currentUniqueId) {
+      this.settings.uniqueId = hostedUniqueId;
+    }
+
     this.settings.targetDeviceSlug = String(hostedDefaults.defaults?.targetDeviceSlug || this.settings.targetDeviceSlug || '').trim();
     this.settings.packageKind = String(hostedDefaults.defaults?.packageKind || this.settings.packageKind || 'rwa').trim();
     this.settings.versionCode = Number.parseInt(String(hostedDefaults.defaults?.versionCode ?? this.settings.versionCode ?? 1), 10) || 1;
@@ -544,6 +594,7 @@ class PackageSettingsEditor extends EditorBase {
       targetDeviceSlug: '',
       shortDescription: '',
       description: '',
+      isExample: false,
       releaseChannel: '',
       minFirmwareVersion: '',
       sourceRevision: '',
@@ -615,6 +666,7 @@ class PackageSettingsEditor extends EditorBase {
       this._ui.targetDeviceSlug,
       this._ui.shortDescription,
       this._ui.description,
+      this._ui.isExample,
       this._ui.packageKind,
       this._ui.releaseChannel,
       this._ui.minFirmwareVersion,
@@ -627,6 +679,7 @@ class PackageSettingsEditor extends EditorBase {
         this.syncSettingsFromUi();
         if (el === this._ui.title) {
           this.scheduleHostedDefaultsRefresh();
+          this.scheduleTitleToProjectNameSync();
         }
         if (el === this._ui.version) {
           this.updateHostedValidationMessages();
@@ -636,6 +689,7 @@ class PackageSettingsEditor extends EditorBase {
         this.syncSettingsFromUi();
         if (el === this._ui.title) {
           this.scheduleHostedDefaultsRefresh();
+          this.scheduleTitleToProjectNameSync();
         }
         if (el === this._ui.version) {
           this.updateHostedValidationMessages();
@@ -696,6 +750,7 @@ class PackageSettingsEditor extends EditorBase {
     this._ui.targetDeviceSlug.value = this.settings.targetDeviceSlug || '';
     this._ui.shortDescription.value = this.settings.shortDescription || '';
     this._ui.description.value = this.settings.description || '';
+    this._ui.isExample.checked = this.settings.isExample === true;
     this._ui.packageKind.value = (String(this.settings.packageKind || 'rwa').toLowerCase() === 'rwg') ? 'rwg' : 'rwa';
     this._ui.releaseChannel.value = this.settings.releaseChannel || '';
     this._ui.minFirmwareVersion.value = this.settings.minFirmwareVersion || '';
@@ -981,6 +1036,147 @@ class PackageSettingsEditor extends EditorBase {
     }
   }
 
+  scheduleTitleToProjectNameSync() {
+    // Project rename is applied only on explicit save.
+  }
+
+  async _applyTitleToProjectName() {
+    const newTitle = String(this.settings.title || '').trim();
+    const oldProjectName = this.getProjectNameFromPath(this.path || this.file?.path);
+    if (!newTitle || !oldProjectName) {
+      return;
+    }
+
+    // Don't rename if title hasn't actually changed
+    if (newTitle === oldProjectName) {
+      return;
+    }
+
+    const projectExplorer = window.serviceContainer?.get?.('projectExplorer') ||
+                           window.gameEmulator?.projectExplorer;
+    if (!projectExplorer) return;
+
+    try {
+      const structure = projectExplorer.projectData?.structure;
+      if (!structure) return;
+
+      // Check if new name already exists
+      if (structure[newTitle]) {
+        console.warn('[PackageSettingsEditor] Project name already exists:', newTitle);
+        return;
+      }
+
+      // Rename the project in the explorer structure
+      const oldProjectNode = structure[oldProjectName];
+      if (oldProjectNode) {
+        // First migrate persisted files so storage stays in sync with path rewrite.
+        await this._renameProjectFilesInStorage(oldProjectName, newTitle);
+
+        // Move project to new name
+        structure[newTitle] = oldProjectNode;
+        delete structure[oldProjectName];
+
+        // Update all file paths in the renamed project to use the new project name
+        const updatePathsInNode = (node) => {
+          if (node.path && node.path.startsWith(oldProjectName + '/')) {
+            node.path = newTitle + node.path.substring(oldProjectName.length);
+          }
+          if (node.originalPath && node.originalPath.startsWith(oldProjectName + '/')) {
+            node.originalPath = newTitle + node.originalPath.substring(oldProjectName.length);
+          }
+          if (node.children) {
+            Object.values(node.children).forEach(updatePathsInNode);
+          }
+        };
+        updatePathsInNode(oldProjectNode);
+
+        // Update focused project if this was the active one
+        if (projectExplorer.focusedProjectName === oldProjectName) {
+          projectExplorer.focusedProjectName = newTitle;
+        }
+
+        // Update the file path to reflect the new project name
+        const oldPath = this.path || this.file?.path || '';
+        if (oldPath.startsWith(oldProjectName)) {
+          const newPath = newTitle + oldPath.substring(oldProjectName.length);
+          this.path = newPath;
+          if (this.file) {
+            this.file.path = newPath;
+          }
+        }
+
+        // Refresh the explorer tree to reflect changes
+        if (typeof projectExplorer.renderTree === 'function') {
+          projectExplorer.renderTree();
+        }
+
+        console.log('[PackageSettingsEditor] Renamed project:', {
+          oldName: oldProjectName,
+          newName: newTitle,
+        });
+      }
+    } catch (error) {
+      console.warn('[PackageSettingsEditor] Failed to rename project:', error);
+    }
+  }
+
+  async _renameProjectFilesInStorage(oldProjectName, newProjectName) {
+    const fileManager = window.serviceContainer?.get?.('fileManager') ||
+                       window.gameEmulator?.fileManager;
+    if (!fileManager || oldProjectName === newProjectName) return 0;
+
+    const oldProjectPrefix = oldProjectName + '/';
+    const newProjectPrefix = newProjectName + '/';
+    const listed = await fileManager.listFiles(oldProjectName);
+    const candidatePaths = Array.isArray(listed)
+      ? listed
+          .map((entry) => {
+            if (typeof entry === 'string') return entry;
+            return entry && typeof entry.path === 'string' ? entry.path : null;
+          })
+          .filter((p) => typeof p === 'string' && p.startsWith(oldProjectPrefix))
+      : [];
+
+    let movedCount = 0;
+    const migratedOldPaths = [];
+
+    if (candidatePaths.length === 0) {
+      throw new Error(`No files found under ${oldProjectPrefix} to migrate.`);
+    }
+
+    for (const oldPath of candidatePaths) {
+      const newPath = newProjectPrefix + oldPath.substring(oldProjectPrefix.length);
+      const record = await fileManager.loadFile(oldPath);
+
+      if (!record) {
+        throw new Error(`Source file is missing from storage during rename: ${oldPath}`);
+      }
+
+      const content = record.content !== undefined ? record.content : record.fileContent;
+      const metadata = {
+        builderId: record.builderId,
+        binaryData: record.binaryData === true,
+      };
+
+      const saved = await fileManager.saveFile(newPath, content, metadata);
+      if (!saved) {
+        throw new Error(`Failed to write renamed storage file: ${newPath}`);
+      }
+
+      movedCount += 1;
+      migratedOldPaths.push(oldPath);
+    }
+
+    for (const oldPath of migratedOldPaths) {
+      const deleted = await fileManager.deleteFile(oldPath);
+      if (!deleted) {
+        console.warn('[PackageSettingsEditor] Failed to delete old storage file after rename:', oldPath);
+      }
+    }
+
+    return movedCount;
+  }
+
   syncSettingsFromUi(markDirty = true) {
     this.settings.title = this._ui.title.value || '';
     this.settings.author = this._ui.author.value || '';
@@ -991,6 +1187,7 @@ class PackageSettingsEditor extends EditorBase {
     this.settings.targetDeviceSlug = this._ui.targetDeviceSlug.value || '';
     this.settings.shortDescription = this._ui.shortDescription.value || '';
     this.settings.description = this._ui.description.value || '';
+    this.settings.isExample = this._ui.isExample.checked === true;
     this.settings.packageKind = (String(this._ui.packageKind.value || 'rwa').toLowerCase() === 'rwg') ? 'rwg' : 'rwa';
     this.settings.releaseChannel = this._ui.releaseChannel.value || '';
     this.settings.minFirmwareVersion = this._ui.minFirmwareVersion.value || '';
@@ -1353,6 +1550,21 @@ class PackageSettingsEditor extends EditorBase {
       this.markClean();
     } catch (_) {
       // Keep previous settings on parse errors.
+    }
+  }
+
+  async save() {
+    // Call parent save first
+    await super.save();
+    
+    // Refresh the recent projects preview to show updated title
+    try {
+      const tabManager = window.serviceContainer?.get?.('tabManager') || window.gameEmulator?.tabManager;
+      if (tabManager && typeof tabManager.refreshWelcomePreviewProjects === 'function') {
+        await tabManager.refreshWelcomePreviewProjects();
+      }
+    } catch (e) {
+      // Silently ignore errors refreshing preview
     }
   }
 

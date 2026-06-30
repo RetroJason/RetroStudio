@@ -10,16 +10,22 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.randomSeed = 0;
     this.spriteFlags = new Map();
 
+    this._logicalWidth = 128;
+    this._logicalHeight = 128;
+
     // Pico-8 fallback framebuffer (used when no spriteEngine is available).
-    this._fbWidth = 128;
-    this._fbHeight = 128;
+    this._fbWidth = this._logicalWidth;
+    this._fbHeight = this._logicalHeight;
     this._framebuffer = new Uint8Array(this._fbWidth * this._fbHeight);
-    this._clipRect = { x: 0, y: 0, w: this._fbWidth, h: this._fbHeight };
+    this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
     this._cameraX = 0;
     this._cameraY = 0;
     this._dirty = true;
     this._gpu = null;
     this._fbTexture = null;
+    // 0 means stretch Pico framebuffer to full output canvas.
+    // >0 means fixed pixel scale (for classic Pico-8 style presentation).
+    this._picoRenderScale = 0;
     this._paletteRGBA = this._buildPicoPaletteRGBA();
   }
 
@@ -34,8 +40,60 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentColor = 0;
     this._cameraX = 0;
     this._cameraY = 0;
-    this._clipRect = { x: 0, y: 0, w: this._fbWidth, h: this._fbHeight };
+    this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
     this._clearFb(0);
+  }
+
+  _setFramebufferSize(width, height) {
+    const w = Math.max(1, width | 0);
+    const h = Math.max(1, height | 0);
+    if (this._fbWidth === w && this._fbHeight === h) {
+      return;
+    }
+
+    const oldWidth = this._fbWidth;
+    const oldHeight = this._fbHeight;
+    const oldBuffer = this._framebuffer;
+
+    this._fbWidth = w;
+    this._fbHeight = h;
+    this._framebuffer = new Uint8Array(this._fbWidth * this._fbHeight);
+
+    // Keep existing frame data when mode switches between logical and full-res.
+    if (oldBuffer && oldWidth > 0 && oldHeight > 0) {
+      for (let py = 0; py < this._fbHeight; py += 1) {
+        const srcY = Math.min(oldHeight - 1, Math.floor((py * oldHeight) / this._fbHeight));
+        const dstRow = py * this._fbWidth;
+        const srcRow = srcY * oldWidth;
+        for (let px = 0; px < this._fbWidth; px += 1) {
+          const srcX = Math.min(oldWidth - 1, Math.floor((px * oldWidth) / this._fbWidth));
+          this._framebuffer[dstRow + px] = oldBuffer[srcRow + srcX];
+        }
+      }
+    }
+
+    this._fbTexture = null;
+    this._dirty = true;
+  }
+
+  _isFullResolutionMode() {
+    return this._picoRenderScale <= 0;
+  }
+
+  _logicalToRenderX(x) {
+    return Math.floor((x * this._fbWidth) / this._logicalWidth);
+  }
+
+  _logicalToRenderY(y) {
+    return Math.floor((y * this._fbHeight) / this._logicalHeight);
+  }
+
+  _logicalCellBounds(x, y) {
+    const x0 = Math.floor((x * this._fbWidth) / this._logicalWidth);
+    const x1 = Math.ceil(((x + 1) * this._fbWidth) / this._logicalWidth) - 1;
+    const y0 = Math.floor((y * this._fbHeight) / this._logicalHeight);
+    const y1 = Math.ceil(((y + 1) * this._fbHeight) / this._logicalHeight) - 1;
+    return { x0, x1, y0, y1 };
   }
 
   _buildPicoPaletteRGBA() {
@@ -121,20 +179,93 @@ class LuaPico8Extensions extends BaseLuaExtension {
   _plot(x, y, c, useCamera = true) {
     const drawX = (x | 0) - (useCamera ? this._cameraX : 0);
     const drawY = (y | 0) - (useCamera ? this._cameraY : 0);
-    if (!this._inBounds(drawX, drawY) || !this._inClip(drawX, drawY)) {
+    if (!this._inClip(drawX, drawY)) {
       return;
     }
-    this._framebuffer[drawY * this._fbWidth + drawX] = c & 0xff;
+
+    if (!this._isFullResolutionMode()) {
+      if (!this._inBounds(drawX, drawY)) {
+        return;
+      }
+      this._framebuffer[drawY * this._fbWidth + drawX] = c & 0xff;
+      this._markDirty();
+      return;
+    }
+
+    const { x0, x1, y0, y1 } = this._logicalCellBounds(drawX, drawY);
+    const minX = Math.max(0, x0);
+    const maxX = Math.min(this._fbWidth - 1, x1);
+    const minY = Math.max(0, y0);
+    const maxY = Math.min(this._fbHeight - 1, y1);
+    if (minX > maxX || minY > maxY) {
+      return;
+    }
+
+    for (let py = minY; py <= maxY; py += 1) {
+      const row = py * this._fbWidth;
+      for (let px = minX; px <= maxX; px += 1) {
+        this._framebuffer[row + px] = c & 0xff;
+      }
+    }
     this._markDirty();
   }
 
   _readPixel(x, y) {
     const px = x | 0;
     const py = y | 0;
-    if (!this._inBounds(px, py)) {
+    if (px < 0 || py < 0 || px >= this._logicalWidth || py >= this._logicalHeight) {
       return 0;
     }
-    return this._framebuffer[py * this._fbWidth + px] || 0;
+
+    if (!this._isFullResolutionMode()) {
+      return this._framebuffer[py * this._fbWidth + px] || 0;
+    }
+
+    const sampleX = Math.min(this._fbWidth - 1, Math.max(0, this._logicalToRenderX(px)));
+    const sampleY = Math.min(this._fbHeight - 1, Math.max(0, this._logicalToRenderY(py)));
+    return this._framebuffer[sampleY * this._fbWidth + sampleX] || 0;
+  }
+
+  _drawCircleHighRes(x, y, r, c, filled) {
+    const logicalCx = (x | 0) - this._cameraX;
+    const logicalCy = (y | 0) - this._cameraY;
+    const logicalR = Math.max(0, r | 0);
+
+    const sx = this._fbWidth / this._logicalWidth;
+    const sy = this._fbHeight / this._logicalHeight;
+    const cx = (logicalCx + 0.5) * sx;
+    const cy = (logicalCy + 0.5) * sy;
+    const rx = Math.max(0.5, logicalR * sx);
+    const ry = Math.max(0.5, logicalR * sy);
+    const rxSq = rx * rx;
+    const rySq = ry * ry;
+
+    const minX = Math.max(0, Math.floor(cx - rx - 1));
+    const maxX = Math.min(this._fbWidth - 1, Math.ceil(cx + rx + 1));
+    const minY = Math.max(0, Math.floor(cy - ry - 1));
+    const maxY = Math.min(this._fbHeight - 1, Math.ceil(cy + ry + 1));
+    const edge = 1 / Math.max(1, Math.min(rx, ry));
+
+    for (let py = minY; py <= maxY; py += 1) {
+      const row = py * this._fbWidth;
+      const logicalY = Math.floor((py * this._logicalHeight) / this._fbHeight);
+      for (let px = minX; px <= maxX; px += 1) {
+        const logicalX = Math.floor((px * this._logicalWidth) / this._fbWidth);
+        if (!this._inClip(logicalX, logicalY)) {
+          continue;
+        }
+
+        const dx = (px + 0.5) - cx;
+        const dy = (py + 0.5) - cy;
+        const metric = (dx * dx) / rxSq + (dy * dy) / rySq;
+
+        if (filled ? metric <= 1 : Math.abs(metric - 1) <= edge) {
+          this._framebuffer[row + px] = c & 0xff;
+        }
+      }
+    }
+
+    this._markDirty();
   }
 
   _lineToFb(x0, y0, x1, y1, c) {
@@ -188,6 +319,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _circToFb(x, y, r, c) {
+    if (this._isFullResolutionMode()) {
+      this._drawCircleHighRes(x, y, r, c, false);
+      return;
+    }
+
     const cx = (x | 0) - this._cameraX;
     const cy = (y | 0) - this._cameraY;
     let dx = Math.max(0, r | 0);
@@ -214,6 +350,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _circFillToFb(x, y, r, c) {
+    if (this._isFullResolutionMode()) {
+      this._drawCircleHighRes(x, y, r, c, true);
+      return;
+    }
+
     const cx = (x | 0) - this._cameraX;
     const cy = (y | 0) - this._cameraY;
     let dx = Math.max(0, r | 0);
@@ -261,19 +402,35 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
 
     const drawFramebuffer = () => {
+      const canvasWidth = activeGpu?.canvas?.width || 448;
+      const canvasHeight = activeGpu?.canvas?.height || 368;
+
+      if (this._isFullResolutionMode()) {
+        this._setFramebufferSize(canvasWidth, canvasHeight);
+      } else {
+        this._setFramebufferSize(this._logicalWidth, this._logicalHeight);
+      }
+
       this._ensureFramebufferTexture(activeGpu);
       if (!this._fbTexture) {
         return;
       }
       activeGpu.setPalette(this._paletteRGBA);
       activeGpu.setPaletteOffset(0);
-      const canvasWidth = activeGpu?.canvas?.width || 448;
-      const canvasHeight = activeGpu?.canvas?.height || 368;
-      const scale = Math.min(canvasWidth / this._fbWidth, canvasHeight / this._fbHeight);
-      const drawW = this._fbWidth * scale;
-      const drawH = this._fbHeight * scale;
-      const drawX = Math.floor((canvasWidth - drawW) * 0.5);
-      const drawY = Math.floor((canvasHeight - drawH) * 0.5);
+      let drawX = 0;
+      let drawY = 0;
+      let scaleX = 1;
+      let scaleY = 1;
+
+      if (this._picoRenderScale > 0) {
+        const drawW = this._fbWidth * this._picoRenderScale;
+        const drawH = this._fbHeight * this._picoRenderScale;
+        drawX = Math.floor((canvasWidth - drawW) * 0.5);
+        drawY = Math.floor((canvasHeight - drawH) * 0.5);
+        scaleX = this._picoRenderScale;
+        scaleY = this._picoRenderScale;
+      }
+
       activeGpu.blit(this._fbTexture, {
         x: drawX,
         y: drawY,
@@ -281,8 +438,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
         srcY: 0,
         srcW: this._fbWidth,
         srcH: this._fbHeight,
-        scaleX: scale,
-        scaleY: scale,
+        scaleX,
+        scaleY,
         filter: 'nearest',
       });
     };
@@ -530,6 +687,25 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
+   * Set Pico framebuffer presentation scale.
+   * Lua: pico_mode([scale]) -> number
+   * scale <= 0: stretch to full output canvas (default)
+   * scale > 0: use fixed scale and center in output canvas
+   */
+  pico_mode(...args) {
+    if (!args || args.length === 0) {
+      return this._picoRenderScale;
+    }
+
+    const scale = this._optionalNumberArg(args, 0, 0, 'pico_mode', 'scale');
+    this._picoRenderScale = scale > 0 ? scale : 0;
+    if (this._picoRenderScale > 0) {
+      this._setFramebufferSize(this._logicalWidth, this._logicalHeight);
+    }
+    return this._picoRenderScale;
+  }
+
+  /**
    * Draw sprite n at (x,y) with optional width/height/flip flags
    * Lua: spr(n, x, y, [w, h, fx, fy])
    */
@@ -680,12 +856,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y = this._optionalNumberArg(args, 2, undefined, 'print', 'y');
     const color = this._optionalNumberArg(args, 3, this.currentColor, 'print', 'color');
 
-    if (this.gameEmulator?.gameConsole?.writeToConsole) {
-      this.gameEmulator.gameConsole.writeToConsole(`${text}\n`, true);
-    }
-
     // If no coordinates were provided, treat this like debug output.
     if (x === undefined || y === undefined) {
+      if (this.gameEmulator?.gameConsole?.writeToConsole) {
+        this.gameEmulator.gameConsole.writeToConsole(`${text}\n`, true);
+      }
       console.log(text);
       return;
     }

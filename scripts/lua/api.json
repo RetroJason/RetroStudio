@@ -1625,6 +1625,13 @@
           "example": "cls(0)"
         },
         {
+          "name": "pico_mode",
+          "description": "Set Pico framebuffer presentation scale (0 or omitted = full canvas, >0 = fixed scale centered)",
+          "parameters": [{"name": "scale", "type": "number", "optional": true}],
+          "returns": {"type": "number"},
+          "example": "pico_mode(2)"
+        },
+        {
           "name": "spr",
           "description": "Draw sprite",
           "parameters": [

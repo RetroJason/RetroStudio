@@ -889,30 +889,13 @@ class GameEmulator {
       const runtimeArchiveBlob = await this.buildRuntimeArchiveForPlayback();
       logPhase('buildRuntimeArchiveForPlayback');
 
-      await this.destroyEmbeddedRuntimePlayer();
+      const runtimePackage = await this.extractRuntimePackageFromBlob(runtimeArchiveBlob);
+      logPhase('extractRuntimePackageFromBlob');
 
-      if (typeof window.EmbeddedRuntimePlayer !== 'function') {
-        throw new Error('EmbeddedRuntimePlayer is not available.');
-      }
-
-      this.embeddedRuntimePlayer = new window.EmbeddedRuntimePlayer(this.getEmbeddedRuntimeMountContainer(), {
-        hostProfile: 'embedded',
-        showPlaybackControls: false,
-        showConsole: false,
-        showReload: false,
-        showVolumeControls: false,
-        showKeyBindings: false,
-        overlayImagePath: this.options.overlayImagePath,
-        autoFocusCanvas: this.options.autoFocusCanvas,
-        initialVolume: this.currentVolume,
-        startMuted: this.isMuted,
-      });
-
-      await this.embeddedRuntimePlayer.loadRwaFromBlob(runtimeArchiveBlob);
-      this.syncPlaybackStateFromHost();
+      await this.playRuntimePackage(runtimePackage);
       this.updatePlayPauseButton();
       this.updatePlayButton();
-      logPhase('embeddedRuntimePlayer.loadRwaFromBlob');
+      logPhase('playRuntimePackage');
 
       console.log(`[Timing][Play] COMPLETE: ${(performance.now() - playStart).toFixed(1)}ms`);
       
