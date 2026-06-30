@@ -183,20 +183,30 @@ class GameEmulator {
     return null;
   }
 
+  getActivePathResolver() {
+    // During runtime-archive playback, installRuntimeFileServices() swaps the
+    // 'pathResolver' host service to the runtime resolver. Honor that instead of
+    // the fixed studio resolver captured at construction, otherwise runtime
+    // archive paths (e.g. 'Music/file.mod') get scoped to the active project
+    // name and no longer resolve.
+    const hostResolver = this.hostServices && this.hostServices.get('pathResolver');
+    return hostResolver || this.pathResolver;
+  }
+
   getSourcesRootUi() {
-    return this.pathResolver.getSourcesRootUi();
+    return this.getActivePathResolver().getSourcesRootUi();
   }
 
   getBuildRootUi() {
-    return this.pathResolver.getBuildRootUi();
+    return this.getActivePathResolver().getBuildRootUi();
   }
 
   getBuildStoragePrefix() {
-    return this.pathResolver.getBuildStoragePrefix();
+    return this.getActivePathResolver().getBuildStoragePrefix();
   }
 
   normalizeStoragePath(path) {
-    return this.pathResolver.normalizeStoragePath(path);
+    return this.getActivePathResolver().normalizeStoragePath(path);
   }
 
   allocateRenderOrder() {
@@ -1075,15 +1085,30 @@ class GameEmulator {
       .trim()
       .toLowerCase();
 
-    if (this.options.runtimeOnly && pathSegments.length >= 2) {
+    // When files come from a runtime archive (runtimeFileManager set), the zip strips
+    // the build/ prefix so paths are like 'Music/file.mod'. Treat the first segment as
+    // the folder type directly. Otherwise look for a known root segment (build root or
+    // sources root) and use the segment after it.
+    if (this.runtimeFileManager && pathSegments.length >= 1) {
       folderMatch = resourceFolderAliases[pathSegments[0].toLowerCase()] || null;
     }
 
-    if (pathSegments.length >= 2) {
-      const rootSegment = pathSegments[0].toLowerCase();
-      if (rootSegment === buildRootUi || rootSegment === buildStorageRoot || rootSegment === 'game objects') {
-        folderMatch = resourceFolderAliases[pathSegments[1].toLowerCase()] || pathSegments[1].toUpperCase();
+    if (!folderMatch && pathSegments.length >= 2) {
+      const resourceRootIndex = pathSegments.findIndex((segment) => {
+        const normalized = segment.toLowerCase();
+        return normalized === buildRootUi
+          || normalized === buildStorageRoot
+          || normalized === 'game objects';
+      });
+
+      if (resourceRootIndex >= 0 && pathSegments.length > resourceRootIndex + 1) {
+        const folderSegment = pathSegments[resourceRootIndex + 1];
+        folderMatch = resourceFolderAliases[folderSegment.toLowerCase()] || folderSegment.toUpperCase();
       }
+    }
+
+    if (!folderMatch && this.options.runtimeOnly && pathSegments.length >= 2) {
+      folderMatch = resourceFolderAliases[pathSegments[0].toLowerCase()] || null;
     }
 
     if (!folderMatch) {

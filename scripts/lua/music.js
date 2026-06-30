@@ -45,6 +45,24 @@ class LuaMusicExtensions extends BaseLuaExtension {
     return value;
   }
 
+  _optionalBooleanArg(args, index, defaultValue, methodName, argName) {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    if (raw === undefined || raw === null || raw === '') {
+      return defaultValue;
+    }
+    if (typeof raw === 'boolean') {
+      return raw;
+    }
+    const normalized = String(raw).trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'nil') {
+      return false;
+    }
+    return defaultValue;
+  }
+
   _requireAudioEngine(methodName) {
     this.audioEngine = this._getService('audioEngine') || window.audioEngine || this.audioEngine;
     if (!this.audioEngine) {
@@ -115,6 +133,24 @@ class LuaMusicExtensions extends BaseLuaExtension {
 
   _requireHandleStateByStack(stackIndex, methodName) {
     const handle = this._requireStackHandleArg(stackIndex, methodName);
+    const music = this.musicHandles.get(handle);
+    if (!music) {
+      throw new Error(`[Music] ${methodName} unknown handle: ${handle}`);
+    }
+    return music;
+  }
+
+  _requireHandleArg(args, index, methodName, argName = 'handle') {
+    const raw = args[index] ?? this.luaState?.raw_tostring?.(index + 2);
+    const handle = Number.parseInt(raw, 10);
+    if (!Number.isFinite(handle)) {
+      throw new Error(`[Music] ${methodName} missing or invalid ${argName}: ${raw}`);
+    }
+    return handle;
+  }
+
+  _requireHandleState(args, index, methodName) {
+    const handle = this._requireHandleArg(args, index, methodName);
     const music = this.musicHandles.get(handle);
     if (!music) {
       throw new Error(`[Music] ${methodName} unknown handle: ${handle}`);
