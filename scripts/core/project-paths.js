@@ -198,6 +198,7 @@
       '.texture': ['sourceImage', 'sourceImagePath', 'palettePath'],
       '.sprite': ['imagePath'],
       '.tilemap': ['sourceTexturePath', 'texturePath', 'runtimeTexturePath', 'imagePath'],
+      '.package': ['iconPath', 'runtimePath', 'mainScriptPath', 'entryScriptPath'],
     },
 
     // Rewrite an asset's JSON text so all internal resource references are
@@ -243,6 +244,30 @@
           relabel(fs, 'path');
           relabel(fs, 'imagePath');
         }
+      }
+
+      // Package settings store media references under nested keys.
+      if (ext === '.package') {
+        if (data.icons && typeof data.icons === 'object') {
+          relabel(data.icons, 'icon32');
+          relabel(data.icons, 'icon128');
+        }
+
+        const normalizePathArray = (key) => {
+          if (!Array.isArray(data[key])) return;
+          const next = data[key].map((entry) => {
+            if (typeof entry !== 'string' || !entry) return entry;
+            return this.toProjectRelative(entry);
+          });
+          const changedArray = next.some((entry, index) => entry !== data[key][index]);
+          if (changedArray) {
+            data[key] = next;
+            changed = true;
+          }
+        };
+
+        normalizePathArray('screenshots');
+        normalizePathArray('videos');
       }
 
       if (!changed) return textContent;
