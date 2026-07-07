@@ -137,6 +137,34 @@ class FontBuilder extends BaseBuilder {
     return null;
   }
 
+  _candidateSourceFontPaths(sourceFontPath, owningBasePath) {
+    const normalized = String(sourceFontPath || '').replace(/\\/g, '/');
+    const candidates = [];
+    const seen = new Set();
+    const add = (p) => {
+      if (!p || typeof p !== 'string') return;
+      const key = p.replace(/\\/g, '/');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      candidates.push(key);
+    };
+
+    add(normalized);
+
+    if (window.ProjectPaths) {
+      if (typeof window.ProjectPaths.toProjectRelative === 'function') {
+        add(window.ProjectPaths.toProjectRelative(normalized));
+      }
+
+      if (typeof window.ProjectPaths.rebaseManagedPath === 'function') {
+        const owningPath = `${owningBasePath}.font`;
+        add(window.ProjectPaths.rebaseManagedPath(normalized, owningPath));
+      }
+    }
+
+    return candidates;
+  }
+
   async _generateOutputsFromMetadata(fontJson, basePath) {
     if (typeof FontAtlasGenerator === 'undefined') {
       throw new Error('FontAtlasGenerator is not available; cannot generate font atlas during build');
@@ -157,8 +185,16 @@ class FontBuilder extends BaseBuilder {
       throw new Error(`.font metadata is missing characters: ${basePath}.font`);
     }
 
-    const sourceFontContent = await this._loadFileContent(fontJson.sourceFontPath);
-    const sourceFontBytes = this._toUint8Array(sourceFontContent);
+    let sourceFontBytes = null;
+    const candidatePaths = this._candidateSourceFontPaths(fontJson.sourceFontPath, basePath);
+    for (const candidatePath of candidatePaths) {
+      const sourceFontContent = await this._loadFileContent(candidatePath);
+      sourceFontBytes = this._toUint8Array(sourceFontContent);
+      if (sourceFontBytes && sourceFontBytes.length > 0) {
+        break;
+      }
+    }
+
     if (!sourceFontBytes || sourceFontBytes.length === 0) {
       throw new Error(`Source font not found: ${fontJson.sourceFontPath}`);
     }

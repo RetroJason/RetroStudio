@@ -191,14 +191,46 @@
       return normalized;
     },
 
-    // Known internal reference fields per asset type that may carry a stale
-    // project-name prefix. Used to normalize stored references to project-relative.
-    _assetReferenceFields: {
-      '.frameset': ['imagePath'],
-      '.texture': ['sourceImage', 'sourceImagePath', 'palettePath'],
-      '.sprite': ['imagePath'],
-      '.tilemap': ['sourceTexturePath', 'texturePath', 'runtimeTexturePath', 'imagePath'],
-      '.package': ['iconPath', 'runtimePath', 'mainScriptPath', 'entryScriptPath'],
+    _isLikelyResourcePath(value) {
+      if (typeof value !== 'string') return false;
+      const raw = value.trim();
+      if (!raw) return false;
+      if (/^(https?:|data:|blob:|javascript:|mailto:|#)/i.test(raw)) return false;
+      if (/^[A-Za-z]:\//.test(raw)) return false;
+      if (raw.includes('\\')) return false;
+      // Require slash-delimited paths so plain tokens are not touched.
+      if (!raw.includes('/')) return false;
+      return this.isManagedProjectPath(raw);
+    },
+
+    _normalizeJsonResourcePaths(value, state) {
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) {
+          const next = this._normalizeJsonResourcePaths(value[i], state);
+          if (next !== value[i]) {
+            value[i] = next;
+            state.changed = true;
+          }
+        }
+        return value;
+      }
+
+      if (value && typeof value === 'object') {
+        for (const key of Object.keys(value)) {
+          const next = this._normalizeJsonResourcePaths(value[key], state);
+          if (next !== value[key]) {
+            value[key] = next;
+            state.changed = true;
+          }
+        }
+        return value;
+      }
+
+      if (typeof value === 'string' && this._isLikelyResourcePath(value)) {
+        return this.toProjectRelative(value);
+      }
+
+      return value;
     },
 
     // Rewrite an asset's JSON text so all internal resource references are
@@ -206,11 +238,6 @@
     // unparseable content is returned unchanged.
     rewriteAssetReferencesToProjectRelative(fileName, textContent) {
       if (typeof textContent !== 'string' || !textContent.trim()) return textContent;
-      const name = String(fileName || '').toLowerCase();
-      const dotIdx = name.lastIndexOf('.');
-      const ext = dotIdx >= 0 ? name.substring(dotIdx) : '';
-      const fields = this._assetReferenceFields[ext];
-      if (!fields) return textContent;
 
       let data;
       try {
@@ -220,57 +247,10 @@
       }
       if (!data || typeof data !== 'object') return textContent;
 
-      let changed = false;
-      const relabel = (obj, key) => {
-        if (obj && typeof obj === 'object' && typeof obj[key] === 'string' && obj[key]) {
-          const next = this.toProjectRelative(obj[key]);
-          if (next !== obj[key]) {
-            obj[key] = next;
-            changed = true;
-          }
-        }
-      };
+      const state = { changed: false };
+      this._normalizeJsonResourcePaths(data, state);
 
-      for (const field of fields) {
-        relabel(data, field);
-        if (data.metadata && typeof data.metadata === 'object') {
-          relabel(data.metadata, field);
-        }
-      }
-
-      // Sprites reference their framesets via per-entry paths.
-      if (ext === '.sprite' && Array.isArray(data.framesets)) {
-        for (const fs of data.framesets) {
-          relabel(fs, 'path');
-          relabel(fs, 'imagePath');
-        }
-      }
-
-      // Package settings store media references under nested keys.
-      if (ext === '.package') {
-        if (data.icons && typeof data.icons === 'object') {
-          relabel(data.icons, 'icon32');
-          relabel(data.icons, 'icon128');
-        }
-
-        const normalizePathArray = (key) => {
-          if (!Array.isArray(data[key])) return;
-          const next = data[key].map((entry) => {
-            if (typeof entry !== 'string' || !entry) return entry;
-            return this.toProjectRelative(entry);
-          });
-          const changedArray = next.some((entry, index) => entry !== data[key][index]);
-          if (changedArray) {
-            data[key] = next;
-            changed = true;
-          }
-        };
-
-        normalizePathArray('screenshots');
-        normalizePathArray('videos');
-      }
-
-      if (!changed) return textContent;
+      if (!state.changed) return textContent;
       return JSON.stringify(data, null, 2);
     },
 
