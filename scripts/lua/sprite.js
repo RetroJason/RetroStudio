@@ -367,7 +367,16 @@ class LuaSpriteExtensions extends BaseLuaExtension {
   GetSize(...rawArgs) {
     const args = this._normalizeLuaArgs(rawArgs);
     const s = this._getSpriteByHandleArg(args, 0);
-    return [(s && s._width) || 0, (s && s._height) || 0];
+    if (!s) return [0, 0];
+
+    // Create() never sets an explicit size, so report the current animation
+    // frame's real dimensions rather than 0, 0 until SetSize overrides it.
+    if (!s._width && !s._height) {
+      const frame = D2Sprite.getCurrentFrame(s);
+      if (frame) return [Number(frame.w) || 0, Number(frame.h) || 0];
+    }
+
+    return [s._width || 0, s._height || 0];
   }
 
   /** Sprite.SetAngle(handle, angle) — degrees */

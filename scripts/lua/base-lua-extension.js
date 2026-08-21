@@ -185,13 +185,29 @@ class BaseLuaExtension {
     -- "this" receiver, so we pass js.null as a dummy receiver to forward all
     -- real arguments intact.
     function ${luaFunctionName}(...)
-        return js.global.${globalFunctionName}(js.null, unpack({...}))
+        return __retroExpandJsResult(js.global.${globalFunctionName}(js.null, unpack({...})))
     end
     `
       : '';
 
     // Register as part of a class/namespace using Lua script
     this.luaState.execute(`
+    -- A JS function can only return one value, so multi-return API functions
+    -- (Image.GetSize, Sprite.GetXY, ...) hand back a JS array. That arrives in
+    -- Lua as a single 0-indexed userdata proxy, so "local w, h = ..." used to
+    -- put the proxy in w and nil in h. Expand array-like results back into
+    -- real Lua multiple returns.
+    if not __retroExpandJsResult then
+        function __retroExpandJsResult(result)
+            if type(result) ~= 'userdata' then return result end
+            local length = result.length
+            if type(length) ~= 'number' then return result end
+            local values = {}
+            for i = 1, length do values[i] = result[i - 1] end
+            return unpack(values, 1, length)
+        end
+    end
+
     -- Ensure class table exists
     if not ${className} then
         ${className} = {}
@@ -203,7 +219,7 @@ class BaseLuaExtension {
     -- arguments intact.
     function ${className}.${luaFunctionName}(...)
         local args = {...}
-        return js.global.${globalFunctionName}(js.null, unpack(args))
+        return __retroExpandJsResult(js.global.${globalFunctionName}(js.null, unpack(args)))
     end
     ${registerGlobalAlias}
     `);

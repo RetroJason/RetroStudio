@@ -661,17 +661,20 @@ class RwpService {
     let projectZip = zip;
     let manifestFile = zip.file('rwp.json');
 
-    if (!manifestFile && String(file?.name || '').toLowerCase().endsWith('.rws')) {
+    // An .rws workspace package wraps exactly one .rwp. Detect that by content
+    // rather than by file name: shared downloads do not always arrive with the
+    // right extension, and treating an .rws as an .rwp imports an empty project.
+    if (!manifestFile) {
       const embeddedProjectPackages = Object.values(zip.files).filter((entry) =>
         !entry.dir && entry.name.toLowerCase().endsWith('.rwp')
       );
 
-      if (embeddedProjectPackages.length !== 1) {
-        console.warn('[RwpService] Invalid RWS: expected exactly one embedded .rwp package. Continuing with empty manifest.');
-      } else {
+      if (embeddedProjectPackages.length === 1) {
         const embeddedBuffer = await embeddedProjectPackages[0].async('nodebuffer');
         projectZip = await JSZip.loadAsync(embeddedBuffer);
         manifestFile = projectZip.file('rwp.json');
+      } else if (String(file?.name || '').toLowerCase().endsWith('.rws')) {
+        console.warn('[RwpService] Invalid RWS: expected exactly one embedded .rwp package. Continuing with empty manifest.');
       }
     }
 

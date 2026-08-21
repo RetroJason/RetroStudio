@@ -3,6 +3,11 @@
 
 console.log('[SoundFXEditor] Class definition loading - NEW CONSTRUCTOR VERSION 2.1');
 
+// PICO-8 speed 8 is the nominal "100% tempo" reference; lower speed = faster playback.
+const PICO_SPEED_NOMINAL = 8;
+const PICO_SPEED_SLIDER_MAX = 1000;
+const PICO_NOTE_NAMES = ['C-', 'C#', 'D-', 'D#', 'E-', 'F-', 'F#', 'G-', 'G#', 'A-', 'A#', 'B-'];
+
 class SoundFXEditor extends CompoundEditor {
   constructor(fileObject = null, readOnly = false) {
     super(fileObject, readOnly);
@@ -43,6 +48,20 @@ class SoundFXEditor extends CompoundEditor {
     };
     
     this.parameters = { ...this.defaultParameters };
+    this.generationMode = 'jsfxr';
+    this.picoSpec = this.createDefaultPicoSpec();
+    this.picoBrush = {
+      waveform: 0,
+      volume: 5,
+      effect: 0,
+    };
+    this.picoGrid = null;
+    this.picoHover = { step: -1, pitch: -1 };
+    this.picoIsDrawing = false;
+    this.picoIsErasing = false;
+    this.picoLoopDrag = null;
+    this.picoPlayhead = null;
+    this.picoPlayheadRaf = 0;
     this.isInitializing = true; // Flag to prevent operations during setup
     
     // Load file data if we have a file object
@@ -92,10 +111,16 @@ class SoundFXEditor extends CompoundEditor {
         data = content;
       }
       
-      // Extract parameters from the file data
-      if (data && data.parameters) {
+      // Extract generation mode and params from the file data
+      if (data && data.type === 'pico_sfx') {
+        this.generationMode = 'pico';
+        this.picoSpec = this.normalizePicoSpec(data.pico || data);
+        this.parameters = { ...this.defaultParameters };
+      } else if (data && data.parameters) {
+        this.generationMode = 'jsfxr';
         this.parameters = { ...this.defaultParameters, ...data.parameters };
       } else {
+        this.generationMode = 'jsfxr';
         this.parameters = { ...this.defaultParameters };
       }
     } catch (error) {
@@ -194,7 +219,7 @@ class SoundFXEditor extends CompoundEditor {
           padding: 10px;
           border-radius: 5px;
           margin-bottom: 10px;
-          max-height: 100px; /* Limit the height of the entire controls area */
+          max-height: none;
         }
         
         .control-group, .preset-group {
@@ -202,8 +227,146 @@ class SoundFXEditor extends CompoundEditor {
           gap: 10px;
           align-items: center;
           margin-bottom: 10px;
-          max-height: 40px; /* Limit height of control groups */
-          flex-wrap: nowrap;
+          max-height: none;
+          flex-wrap: wrap;
+        }
+
+        .mode-select {
+          height: 30px;
+          border: 1px solid #555;
+          border-radius: 4px;
+          background: #2f2f2f;
+          color: #fff;
+          padding: 0 8px;
+          font-size: 12px;
+        }
+
+        .pico-panel {
+          margin: 10px;
+          padding: 14px 16px 16px;
+          border: 1px solid #444;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.02);
+        }
+
+        .pico-grid {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: flex-start;
+          gap: 14px 28px;
+        }
+
+        .pico-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          font-size: 12px;
+          color: #c9d4ec;
+        }
+
+        .pico-field-wide {
+          flex: 1 1 220px;
+          max-width: 340px;
+        }
+
+        .pico-field input,
+        .pico-field select {
+          height: 28px;
+          border: 1px solid #555;
+          border-radius: 4px;
+          background: #2f2f2f;
+          color: #fff;
+          padding: 0 8px;
+        }
+
+        .pico-field select {
+          width: auto;
+          max-width: 100%;
+          align-self: flex-start;
+        }
+
+        .pico-field input[type="range"] {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 18px;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          cursor: pointer;
+        }
+
+        .pico-field input[type="range"]::-webkit-slider-runnable-track {
+          height: 6px;
+          border-radius: 3px;
+          background: #26334d;
+          border: 1px solid #1b2a48;
+        }
+
+        .pico-field input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          margin-top: -5px;
+          border-radius: 50%;
+          background: #6ea8ff;
+          border: 1px solid #0b152c;
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+        }
+
+        .pico-field input[type="range"]::-moz-range-track {
+          height: 6px;
+          border-radius: 3px;
+          background: #26334d;
+          border: 1px solid #1b2a48;
+        }
+
+        .pico-field input[type="range"]::-moz-range-thumb {
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #6ea8ff;
+          border: 1px solid #0b152c;
+        }
+
+        .pico-readout {
+          font-size: 11px;
+          color: #9fb1dc;
+          font-variant-numeric: tabular-nums;
+        }
+
+        .pico-actions {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          margin-top: 14px;
+        }
+
+        .pico-grid-wrap {
+          margin-top: 12px;
+          border: 1px solid #444;
+          border-radius: 6px;
+          background: #121212;
+          padding: 10px;
+          overflow: hidden;
+        }
+
+        .pico-grid-canvas {
+          display: block;
+          width: 100%;
+          height: 340px;
+          border: 1px solid #333;
+          border-radius: 4px;
+          background: #0f1a30;
+          cursor: crosshair;
+        }
+
+        .pico-status {
+          margin-top: 10px;
+          font-size: 11px;
+          color: #9fb1dc;
+          font-variant-numeric: tabular-nums;
         }
         
         .control-group > * {
@@ -279,6 +442,11 @@ class SoundFXEditor extends CompoundEditor {
         <!-- Fixed Controls -->
         <div class="fixed-controls">
           <div class="control-group">
+            <label style="font-size:12px;">Mode:</label>
+            <select id="generation-mode" class="mode-select">
+              <option value="jsfxr">Jsfxr</option>
+              <option value="pico">PICO SFX</option>
+            </select>
             <button id="mutate-btn" class="control-btn">🎲 Mutate</button>
             <button id="randomize-btn" class="control-btn">🎯 Randomize</button>
             <div class="waveform-display compact-waveform-unique" id="compact-waveform-${Date.now()}">
@@ -300,6 +468,50 @@ class SoundFXEditor extends CompoundEditor {
             <button class="preset-btn" data-preset="jump">🦘 Jump</button>
             <button class="preset-btn" data-preset="blipSelect">🎵 Blip</button>
             <button class="preset-btn" data-preset="synth">🎹 Synth</button>
+          </div>
+
+          <div id="pico-generator-panel" class="pico-panel" style="display:none;">
+            <div class="pico-grid">
+              <label class="pico-field">Waveform
+                <select id="pico-waveform">
+                  <option value="0">0 Triangle</option>
+                  <option value="1">1 Tilted Saw</option>
+                  <option value="2">2 Saw</option>
+                  <option value="3">3 Square</option>
+                  <option value="4">4 Pulse</option>
+                  <option value="5">5 Organ</option>
+                  <option value="6">6 Noise</option>
+                  <option value="7">7 Phaser</option>
+                </select>
+              </label>
+              <label class="pico-field">Effect
+                <select id="pico-effect">
+                  <option value="0">0 None</option>
+                  <option value="1">1 Slide</option>
+                  <option value="2">2 Vibrato</option>
+                  <option value="3">3 Drop</option>
+                  <option value="4">4 Fade In</option>
+                  <option value="5">5 Fade Out</option>
+                  <option value="6">6 Arp Fast</option>
+                  <option value="7">7 Arp Slow</option>
+                </select>
+              </label>
+              <label class="pico-field pico-field-wide">Volume
+                <input id="pico-volume" type="range" min="0" max="100" step="1" value="71" />
+                <span class="pico-readout" id="pico-volume-readout"></span>
+              </label>
+              <label class="pico-field pico-field-wide">Speed
+                <input id="pico-speed" type="range" min="0" max="1000" step="1" value="500" />
+                <span class="pico-readout" id="pico-speed-readout"></span>
+              </label>
+            </div>
+            <div class="pico-actions">
+              <button id="pico-clear-steps" class="control-btn" type="button">Clear Steps</button>
+            </div>
+            <div class="pico-grid-wrap">
+              <canvas id="pico-step-grid" class="pico-grid-canvas" width="768" height="340"></canvas>
+              <div id="pico-grid-status" class="pico-status"></div>
+            </div>
           </div>
         </div>
 
@@ -547,6 +759,18 @@ class SoundFXEditor extends CompoundEditor {
     const loopCheckbox = this.controlsContainer.querySelector('#loop-checkbox');
     const waveformContainer = this.controlsContainer.querySelector('.compact-waveform-unique');
     const waveformCanvas = waveformContainer ? waveformContainer.querySelector('#waveform-display') : null;
+    const modeSelect = this.controlsContainer.querySelector('#generation-mode');
+    if (modeSelect) {
+      modeSelect.addEventListener('change', (e) => {
+        this.generationMode = e.target.value === 'pico' ? 'pico' : 'jsfxr';
+        this.markDirty();
+        this.updateModeUI();
+        this.updateWaveformPreview();
+      });
+    }
+
+    this.setupPicoEventListeners();
+
 
     if (createNewBtn) {
       createNewBtn.addEventListener('click', () => this.createNewSoundFX());
@@ -633,6 +857,65 @@ class SoundFXEditor extends CompoundEditor {
         // this.playPreview(); // Auto-play on change
       });
     });
+
+    this.updateModeUI();
+  }
+
+  setupPicoEventListeners() {
+    if (!this.controlsContainer) return;
+    // Waveform/volume/effect are global: they retune every note already drawn.
+    const globalIds = ['pico-waveform', 'pico-volume', 'pico-effect'];
+    const ids = [
+      ...globalIds,
+      'pico-speed'
+    ];
+
+    ids.forEach((id) => {
+      const el = this.controlsContainer.querySelector(`#${id}`);
+      if (!el) return;
+      const handler = () => {
+        this.readPicoUiIntoSpec();
+        if (globalIds.includes(id)) this.applyBrushToActiveSteps();
+        this.markDirty();
+        this.renderPicoGrid();
+        this.updatePicoGridStatus();
+        this.updateWaveformPreview();
+      };
+      el.addEventListener('input', handler);
+      el.addEventListener('change', handler);
+    });
+
+    const clearBtn = this.controlsContainer.querySelector('#pico-clear-steps');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        this.clearPicoSteps();
+      });
+    }
+
+    this.initializePicoGrid();
+  }
+
+  updateModeUI() {
+    if (!this.controlsContainer) return;
+    const modeSelect = this.controlsContainer.querySelector('#generation-mode');
+    const picoPanel = this.controlsContainer.querySelector('#pico-generator-panel');
+    const paramsScroll = this.controlsContainer.querySelector('.parameters-scroll');
+    const presetGroup = this.controlsContainer.querySelector('.preset-group');
+    const mutateBtn = this.controlsContainer.querySelector('#mutate-btn');
+    const randomizeBtn = this.controlsContainer.querySelector('#randomize-btn');
+
+    if (modeSelect) modeSelect.value = this.generationMode;
+
+    const picoMode = this.generationMode === 'pico';
+    if (picoPanel) picoPanel.style.display = picoMode ? 'block' : 'none';
+    if (paramsScroll) paramsScroll.style.display = picoMode ? 'none' : 'block';
+    if (presetGroup) presetGroup.style.display = picoMode ? 'none' : 'flex';
+    if (mutateBtn) mutateBtn.style.display = picoMode ? 'none' : '';
+    if (randomizeBtn) randomizeBtn.style.display = picoMode ? 'none' : '';
+    if (picoMode) {
+      this.renderPicoGrid();
+      this.updatePicoGridStatus();
+    }
   }
 
   loadParametersIntoUI() {
@@ -654,6 +937,8 @@ class SoundFXEditor extends CompoundEditor {
     }
 
     console.log('[SoundFXEditor] Loading parameters into UI');
+
+    this.updateModeUI();
 
     // Update wave type dropdown
     waveTypeSelect.value = this.parameters.wave_type || 0;
@@ -679,9 +964,14 @@ class SoundFXEditor extends CompoundEditor {
     });
 
     console.log('[SoundFXEditor] UI updated with parameters:', this.parameters);
+    this.writePicoSpecToUi();
   }
 
   async synthesizeAudio() {
+    if (this.generationMode === 'pico') {
+      return this.synthesizePicoAudio();
+    }
+
     try {
       // Initialize audio context if needed
       if (!this.audioContext) {
@@ -717,6 +1007,21 @@ class SoundFXEditor extends CompoundEditor {
       console.error('[SoundFXEditor] Error during audio synthesis:', error);
       throw error;
     }
+  }
+
+  synthesizePicoAudio() {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    const sampleRate = this.audioContext.sampleRate || 44100;
+    const samples = this.renderPicoSamples(this.picoSpec, sampleRate, 120);
+    const audioBuffer = this.audioContext.createBuffer(1, Math.max(1, samples.length), sampleRate);
+    if (samples.length > 0) {
+      audioBuffer.copyToChannel(samples, 0, 0);
+    }
+    this.audioBuffer = audioBuffer;
+    return audioBuffer;
   }
 
   drawInitialWaveform() {
@@ -824,6 +1129,7 @@ class SoundFXEditor extends CompoundEditor {
         this.previewSource.start();
         this.isPlaying = true;
         this.updatePlayPauseButton();
+        this.startPicoPlayhead();
         console.log('[SoundFXEditor] Audio preview started');
       }
     } catch (error) {
@@ -843,6 +1149,47 @@ class SoundFXEditor extends CompoundEditor {
     }
     this.isPlaying = false;
     this.updatePlayPauseButton();
+    this.stopPicoPlayhead();
+  }
+
+  // Animates a vertical line across the loop span while the preview plays.
+  startPicoPlayhead() {
+    this.stopPicoPlayhead();
+    if (this.generationMode !== 'pico' || !this.picoGrid || !this.audioBuffer) return;
+
+    const duration = this.audioBuffer.duration;
+    if (!(duration > 0)) return;
+    const startedAt = this.audioContext.currentTime;
+
+    const tick = () => {
+      if (!this.isPlaying) {
+        this.stopPicoPlayhead();
+        return;
+      }
+      let elapsed = this.audioContext.currentTime - startedAt;
+      if (this.isLooping) {
+        elapsed %= duration;
+      } else if (elapsed >= duration) {
+        this.stopPicoPlayhead();
+        return;
+      }
+      this.picoPlayhead = Math.max(0, Math.min(1, elapsed / duration));
+      this.renderPicoGrid();
+      this.picoPlayheadRaf = requestAnimationFrame(tick);
+    };
+
+    this.picoPlayheadRaf = requestAnimationFrame(tick);
+  }
+
+  stopPicoPlayhead() {
+    if (this.picoPlayheadRaf) {
+      cancelAnimationFrame(this.picoPlayheadRaf);
+      this.picoPlayheadRaf = 0;
+    }
+    if (this.picoPlayhead !== null) {
+      this.picoPlayhead = null;
+      this.renderPicoGrid();
+    }
   }
 
           updatePlayPauseButton() {
@@ -1058,7 +1405,15 @@ class SoundFXEditor extends CompoundEditor {
       }
       
       if (typeof content === 'string') {
-        this.parameters = this.jsonToParameters(content);
+        const parsed = JSON.parse(content);
+        if (parsed && parsed.type === 'pico_sfx') {
+          this.generationMode = 'pico';
+          this.picoSpec = this.normalizePicoSpec(parsed.pico || parsed);
+          this.parameters = { ...this.defaultParameters };
+        } else {
+          this.generationMode = 'jsfxr';
+          this.parameters = this.jsonToParameters(content);
+        }
       } else {
         console.warn('[SoundFXEditor] Unexpected content type:', typeof content);
         this.parameters = { ...this.defaultParameters };
@@ -1128,6 +1483,14 @@ class SoundFXEditor extends CompoundEditor {
   }
 
   parametersToJson(params) {
+    if (this.generationMode === 'pico') {
+      return JSON.stringify({
+        type: 'pico_sfx',
+        version: '1.0',
+        pico: this.normalizePicoSpec(this.picoSpec)
+      }, null, 2);
+    }
+
     const saveData = {
       type: "sound_fx",
       version: "1.0",
@@ -1153,6 +1516,533 @@ class SoundFXEditor extends CompoundEditor {
       console.error('[SoundFXEditor] Error parsing JSON:', error);
       return { ...this.defaultParameters };
     }
+  }
+
+  clampInt(value, min, max) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return min;
+    return Math.max(min, Math.min(max, Math.round(n)));
+  }
+
+  createDefaultPicoSpec() {
+    const steps = [];
+    for (let i = 0; i < 32; i += 1) {
+      steps.push({
+        pitch: 24,
+        waveform: 0,
+        volume: i < 16 ? 5 : 0,
+        effect: 0,
+      });
+    }
+    return {
+      speed: 8,
+      loopStart: 0,
+      loopEnd: 15,
+      steps,
+    };
+  }
+
+  normalizePicoSpec(spec) {
+    const src = spec || {};
+    const stepsIn = Array.isArray(src.steps) ? src.steps : [];
+    const steps = [];
+    for (let i = 0; i < 32; i += 1) {
+      const step = stepsIn[i] || {};
+      steps.push({
+        pitch: this.clampInt(step.pitch ?? 24, 0, 63),
+        waveform: this.clampInt(step.waveform ?? step.wave ?? 0, 0, 7),
+        volume: this.clampInt(step.volume ?? 0, 0, 7),
+        effect: this.clampInt(step.effect ?? step.fx ?? 0, 0, 7),
+      });
+    }
+
+    return {
+      speed: this.clampInt(src.speed ?? 8, 1, 255),
+      loopStart: this.clampInt(src.loopStart ?? 0, 0, 31),
+      loopEnd: this.clampInt(src.loopEnd ?? 15, 0, 31),
+      steps,
+    };
+  }
+
+  writePicoSpecToUi() {
+    if (!this.controlsContainer) return;
+    const spec = this.normalizePicoSpec(this.picoSpec);
+    this.picoSpec = spec;
+    const firstAudible = spec.steps.find((step) => step.volume > 0) || spec.steps[0];
+    this.picoBrush = {
+      waveform: this.clampInt(firstAudible.waveform, 0, 7),
+      volume: this.clampInt(firstAudible.volume, 0, 7),
+      effect: this.clampInt(firstAudible.effect, 0, 7),
+    };
+
+    const setVal = (id, value) => {
+      const el = this.controlsContainer.querySelector(`#${id}`);
+      if (el) el.value = String(value);
+    };
+
+    setVal('pico-waveform', this.picoBrush.waveform);
+    setVal('pico-volume', this.picoVolumeToPercent(this.picoBrush.volume));
+    setVal('pico-effect', this.picoBrush.effect);
+    setVal('pico-speed', this.picoSpeedToSliderValue(spec.speed));
+
+    this.updatePicoReadouts();
+    this.renderPicoGrid();
+    this.updatePicoGridStatus();
+  }
+
+  readPicoUiIntoSpec() {
+    if (!this.controlsContainer) return;
+    const getVal = (id, fallback = 0) => {
+      const el = this.controlsContainer.querySelector(`#${id}`);
+      return el ? Number(el.value) : fallback;
+    };
+
+    this.picoBrush.waveform = this.clampInt(getVal('pico-waveform', this.picoBrush.waveform ?? 0), 0, 7);
+    this.picoBrush.volume = this.percentToPicoVolume(getVal('pico-volume', this.picoVolumeToPercent(this.picoBrush.volume ?? 5)));
+    this.picoBrush.effect = this.clampInt(getVal('pico-effect', this.picoBrush.effect ?? 0), 0, 7);
+    const speed = this.sliderValueToPicoSpeed(getVal('pico-speed', this.picoSpeedToSliderValue(PICO_SPEED_NOMINAL)));
+
+    const current = this.normalizePicoSpec(this.picoSpec);
+    current.speed = speed;
+    this.picoSpec = current;
+    this.updatePicoReadouts();
+  }
+
+  // Waveform/volume/effect act on every audible step so the sliders are audible immediately.
+  // Volume 0 is skipped so dragging volume to silence cannot wipe the pattern.
+  applyBrushToActiveSteps() {
+    const spec = this.normalizePicoSpec(this.picoSpec);
+    const waveform = this.clampInt(this.picoBrush.waveform ?? 0, 0, 7);
+    const effect = this.clampInt(this.picoBrush.effect ?? 0, 0, 7);
+    const volume = this.clampInt(this.picoBrush.volume ?? 5, 0, 7);
+
+    for (let i = 0; i < 32; i += 1) {
+      const step = spec.steps[i];
+      if (!step || this.clampInt(step.volume ?? 0, 0, 7) <= 0) continue;
+      step.waveform = waveform;
+      step.effect = effect;
+      if (volume > 0) step.volume = volume;
+    }
+
+    this.picoSpec = spec;
+  }
+
+  clearPicoSteps() {
+    const spec = this.normalizePicoSpec(this.picoSpec);
+    for (let i = 0; i < 32; i += 1) {
+      spec.steps[i] = {
+        pitch: spec.steps[i]?.pitch ?? 24,
+        waveform: 0,
+        volume: 0,
+        effect: 0,
+      };
+    }
+    this.picoSpec = spec;
+    this.markDirty();
+    this.renderPicoGrid();
+    this.updatePicoGridStatus();
+    this.updateWaveformPreview();
+  }
+
+  initializePicoGrid() {
+    if (!this.controlsContainer) return;
+    const canvas = this.controlsContainer.querySelector('#pico-step-grid');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    this.picoGrid = {
+      canvas,
+      ctx,
+      steps: 32,
+      pitchRows: 64,
+      cellW: canvas.width / 32,
+      cellH: canvas.height / 64,
+    };
+
+    // Keep the backing store matched to the displayed size so lines stay crisp
+    // and cell maths line up at any panel width.
+    this.resizePicoGrid();
+    if (this.picoGridResizeObserver) this.picoGridResizeObserver.disconnect();
+    if (typeof ResizeObserver !== 'undefined') {
+      this.picoGridResizeObserver = new ResizeObserver(() => this.resizePicoGrid());
+      this.picoGridResizeObserver.observe(canvas);
+    }
+
+    canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+    const positionToStepPitch = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const px = (event.clientX - rect.left) * (canvas.width / rect.width);
+      const py = (event.clientY - rect.top) * (canvas.height / rect.height);
+      const step = this.clampInt(Math.floor(px / this.picoGrid.cellW), 0, this.picoGrid.steps - 1);
+      const pitch = this.clampInt((this.picoGrid.pitchRows - 1) - Math.floor(py / this.picoGrid.cellH), 0, this.picoGrid.pitchRows - 1);
+      return { step, pitch };
+    };
+
+    const applyBrushAt = (stepIndex, pitch, erase = false) => {
+      const spec = this.normalizePicoSpec(this.picoSpec);
+      const step = spec.steps[stepIndex] || { pitch: 24, waveform: 0, volume: 0, effect: 0 };
+      step.pitch = this.clampInt(pitch, 0, 63);
+      if (erase) {
+        step.volume = 0;
+      } else {
+        step.volume = this.clampInt(this.picoBrush.volume ?? 5, 0, 7);
+        step.waveform = this.clampInt(this.picoBrush.waveform ?? 0, 0, 7);
+        step.effect = this.clampInt(this.picoBrush.effect ?? 0, 0, 7);
+      }
+      spec.steps[stepIndex] = step;
+      this.picoSpec = spec;
+    };
+
+    const canvasX = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      return (event.clientX - rect.left) * (canvas.width / rect.width);
+    };
+
+    // Loop markers are grabbable within a few pixels of their vertical line.
+    const loopHandleAt = (px) => {
+      const spec = this.normalizePicoSpec(this.picoSpec);
+      const startX = this.clampInt(spec.loopStart, 0, 31) * this.picoGrid.cellW;
+      const endX = (this.clampInt(spec.loopEnd, 0, 31) + 1) * this.picoGrid.cellW;
+      const tolerance = 8;
+      const startDelta = Math.abs(px - startX);
+      const endDelta = Math.abs(px - endX);
+      if (startDelta > tolerance && endDelta > tolerance) return null;
+      return startDelta <= endDelta ? 'start' : 'end';
+    };
+
+    const dragLoopMarker = (px) => {
+      const spec = this.normalizePicoSpec(this.picoSpec);
+      const boundary = this.clampInt(Math.round(px / this.picoGrid.cellW), 0, 32);
+
+      if (this.picoLoopDrag === 'start') {
+        spec.loopStart = this.clampInt(Math.min(boundary, spec.loopEnd), 0, 31);
+      } else {
+        spec.loopEnd = this.clampInt(Math.max(boundary - 1, spec.loopStart), 0, 31);
+      }
+
+      this.picoSpec = spec;
+    };
+
+    canvas.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      const handle = loopHandleAt(canvasX(event));
+      if (handle) {
+        this.picoLoopDrag = handle;
+        dragLoopMarker(canvasX(event));
+        this.markDirty();
+        this.renderPicoGrid();
+        this.updatePicoGridStatus();
+        canvas.setPointerCapture(event.pointerId);
+        return;
+      }
+
+      const pos = positionToStepPitch(event);
+      this.picoHover = pos;
+      this.picoIsDrawing = true;
+      this.picoIsErasing = event.button === 2;
+      applyBrushAt(pos.step, pos.pitch, this.picoIsErasing);
+      this.markDirty();
+      this.renderPicoGrid();
+      this.updatePicoGridStatus();
+      this.updateWaveformPreview();
+      canvas.setPointerCapture(event.pointerId);
+    });
+
+    canvas.addEventListener('pointermove', (event) => {
+      if (this.picoLoopDrag) {
+        dragLoopMarker(canvasX(event));
+        this.markDirty();
+        this.renderPicoGrid();
+        this.updatePicoGridStatus();
+        return;
+      }
+
+      const pos = positionToStepPitch(event);
+      this.picoHover = pos;
+      if (this.picoIsDrawing) {
+        applyBrushAt(pos.step, pos.pitch, this.picoIsErasing);
+        this.markDirty();
+        this.renderPicoGrid();
+      } else {
+        canvas.style.cursor = loopHandleAt(canvasX(event)) ? 'col-resize' : 'crosshair';
+      }
+      this.updatePicoGridStatus();
+    });
+
+    canvas.addEventListener('pointerup', (event) => {
+      const wasLoopDrag = !!this.picoLoopDrag;
+      this.picoLoopDrag = null;
+      this.picoIsDrawing = false;
+      this.picoIsErasing = false;
+      try {
+        canvas.releasePointerCapture(event.pointerId);
+      } catch (error) {
+        // Ignore pointer release races.
+      }
+      this.renderPicoGrid();
+      this.updatePicoGridStatus();
+      if (!wasLoopDrag) this.updateWaveformPreview();
+    });
+
+    canvas.addEventListener('pointerleave', () => {
+      this.picoHover = { step: -1, pitch: -1 };
+      this.renderPicoGrid();
+      this.updatePicoGridStatus();
+    });
+
+    this.renderPicoGrid();
+    this.updatePicoGridStatus();
+  }
+
+  resizePicoGrid() {
+    if (!this.picoGrid) return;
+    const { canvas } = this.picoGrid;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+
+    // Snap to whole pixels per step so the column grid lands on exact boundaries.
+    const width = Math.max(this.picoGrid.steps, Math.round(rect.width));
+    const height = Math.max(this.picoGrid.pitchRows, Math.round(rect.height));
+    if (canvas.width === width && canvas.height === height) return;
+
+    canvas.width = width;
+    canvas.height = height;
+    this.picoGrid.cellW = width / this.picoGrid.steps;
+    this.picoGrid.cellH = height / this.picoGrid.pitchRows;
+    this.renderPicoGrid();
+  }
+
+  renderPicoGrid() {
+    if (!this.picoGrid || !this.picoGrid.ctx) return;
+    const { canvas, ctx, steps, pitchRows, cellW, cellH } = this.picoGrid;
+    const spec = this.normalizePicoSpec(this.picoSpec);
+
+    ctx.fillStyle = '#0b152c';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let x = 0; x <= steps; x += 1) {
+      const px = x * cellW;
+      ctx.strokeStyle = x % 4 === 0 ? '#2d436f' : '#1b2a48';
+      ctx.beginPath();
+      ctx.moveTo(px + 0.5, 0);
+      ctx.lineTo(px + 0.5, canvas.height);
+      ctx.stroke();
+    }
+
+    for (let y = 0; y <= pitchRows; y += 1) {
+      const py = y * cellH;
+      ctx.strokeStyle = y % 12 === 0 ? '#2d436f' : '#1b2a48';
+      ctx.beginPath();
+      ctx.moveTo(0, py + 0.5);
+      ctx.lineTo(canvas.width, py + 0.5);
+      ctx.stroke();
+    }
+
+    for (let i = 0; i < steps; i += 1) {
+      const step = spec.steps[i] || {};
+      const volume = this.clampInt(step.volume || 0, 0, 7);
+      if (volume <= 0) continue;
+      const pitch = this.clampInt(step.pitch || 0, 0, pitchRows - 1);
+      const row = (pitchRows - 1) - pitch;
+      const x = i * cellW;
+      const y = row * cellH;
+      const alpha = 0.35 + (volume / 7) * 0.55;
+      ctx.fillStyle = `rgba(124, 198, 255, ${alpha.toFixed(3)})`;
+      ctx.fillRect(x + 1, y + 1, cellW - 2, cellH - 2);
+    }
+
+    if (this.picoHover.step >= 0 && this.picoHover.pitch >= 0) {
+      const hx = this.picoHover.step * cellW;
+      const hy = ((pitchRows - 1) - this.picoHover.pitch) * cellH;
+      ctx.strokeStyle = '#ffd575';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(hx + 0.5, hy + 0.5, cellW - 1, cellH - 1);
+    }
+
+    const loopStart = this.clampInt(spec.loopStart, 0, steps - 1);
+    const loopEnd = this.clampInt(spec.loopEnd, 0, steps - 1);
+    const loopStartX = loopStart * cellW;
+    const loopEndX = (loopEnd + 1) * cellW;
+
+    if (loopEnd >= loopStart) {
+      // Dim everything outside S..E so the audible range is obvious at a glance.
+      ctx.fillStyle = 'rgba(6, 10, 20, 0.62)';
+      if (loopStartX > 0) ctx.fillRect(0, 0, loopStartX, canvas.height);
+      if (loopEndX < canvas.width) ctx.fillRect(loopEndX, 0, canvas.width - loopEndX, canvas.height);
+    }
+
+    const drawLoopMarker = (x, color, label) => {
+      const px = Math.max(1, Math.min(canvas.width - 1, x));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 0);
+      ctx.lineTo(px, canvas.height);
+      ctx.stroke();
+
+      ctx.fillStyle = color;
+      ctx.fillRect(px - 7, 0, 14, 14);
+      ctx.fillStyle = '#0b152c';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, px, 7);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    };
+
+    drawLoopMarker(loopStartX, '#7cffb2', 'S');
+    drawLoopMarker(loopEndX, '#ffb27c', 'E');
+
+    if (this.picoPlayhead !== null) {
+      const playX = loopStartX + ((loopEndX - loopStartX) * this.picoPlayhead);
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(playX, 0);
+      ctx.lineTo(playX, canvas.height);
+      ctx.stroke();
+    }
+
+    ctx.lineWidth = 1;
+  }
+
+  updatePicoGridStatus() {
+    if (!this.controlsContainer) return;
+    const status = this.controlsContainer.querySelector('#pico-grid-status');
+    if (!status) return;
+
+    if (this.picoHover.step < 0 || this.picoHover.pitch < 0) {
+      status.textContent = `Left drag to draw · right drag to erase · drag S/E to set the playback range · brush wave:${this.picoBrush.waveform} vol:${this.picoVolumeToPercent(this.picoBrush.volume)}% fx:${this.picoBrush.effect}`;
+      return;
+    }
+
+    const step = this.picoSpec.steps[this.picoHover.step] || {};
+    const hoverPitch = this.clampInt(this.picoHover.pitch, 0, 63);
+    const stepVolume = this.clampInt(step.volume ?? 0, 0, 7);
+    status.textContent = `Step ${this.picoHover.step.toString(16).toUpperCase().padStart(2, '0')} | pitch ${hoverPitch} ${this.picoPitchToNoteName(hoverPitch)} ${Math.round(this.picoPitchToHz(hoverPitch))} Hz | wave:${step.waveform ?? 0} vol:${this.picoVolumeToPercent(stepVolume)}% fx:${step.effect ?? 0}`;
+  }
+
+  picoPitchToHz(pitch) {
+    const p = Number(pitch) || 0;
+    // PICO-8 pitch 0 is C-0 = 65.41 Hz, which is MIDI note 36.
+    const midi = 36 + p;
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  picoPitchToNoteName(pitch) {
+    const p = this.clampInt(pitch, 0, 63);
+    return `${PICO_NOTE_NAMES[p % 12]}${Math.floor(p / 12)}`;
+  }
+
+  picoVolumeToPercent(volume) {
+    return Math.round((this.clampInt(volume, 0, 7) / 7) * 100);
+  }
+
+  percentToPicoVolume(percent) {
+    const p = Math.max(0, Math.min(100, Number(percent) || 0));
+    return this.clampInt(Math.round((p / 100) * 7), 0, 7);
+  }
+
+  picoSpeedToTempoPercent(speed) {
+    return (PICO_SPEED_NOMINAL * 100) / this.clampInt(speed, 1, 255);
+  }
+
+  picoSpeedToSliderValue(speed) {
+    const tMin = this.picoSpeedToTempoPercent(255);
+    const tMax = this.picoSpeedToTempoPercent(1);
+    const t = Math.max(tMin, Math.min(tMax, this.picoSpeedToTempoPercent(speed)));
+    return Math.round(PICO_SPEED_SLIDER_MAX * (Math.log(t / tMin) / Math.log(tMax / tMin)));
+  }
+
+  sliderValueToPicoSpeed(sliderValue) {
+    const x = Math.max(0, Math.min(PICO_SPEED_SLIDER_MAX, Number(sliderValue) || 0));
+    const tMin = this.picoSpeedToTempoPercent(255);
+    const tMax = this.picoSpeedToTempoPercent(1);
+    const tempoPercent = tMin * Math.pow(tMax / tMin, x / PICO_SPEED_SLIDER_MAX);
+    return this.clampInt(Math.round((PICO_SPEED_NOMINAL * 100) / tempoPercent), 1, 255);
+  }
+
+  updatePicoReadouts() {
+    if (!this.controlsContainer) return;
+    const setText = (id, text) => {
+      const el = this.controlsContainer.querySelector(`#${id}`);
+      if (el) el.textContent = text;
+    };
+
+    const volume = this.clampInt(this.picoBrush?.volume ?? 5, 0, 7);
+    const speed = this.clampInt(this.picoSpec?.speed ?? PICO_SPEED_NOMINAL, 1, 255);
+
+    setText('pico-volume-readout', `${this.picoVolumeToPercent(volume)}% · raw ${volume}/7`);
+    setText('pico-speed-readout', `${Math.round(this.picoSpeedToTempoPercent(speed))}% tempo · raw ${speed}`);
+  }
+
+  picoWaveSample(phase, waveform) {
+    const p = phase - Math.floor(phase);
+    switch (waveform & 0x07) {
+      case 0: return 1 - (4 * Math.abs(p - 0.5));
+      case 1: return (p < 0.85) ? ((p / 0.85) * 2 - 1) : (((1 - p) / 0.15) * 2 - 1);
+      case 2: return (2 * p) - 1;
+      case 3: return p < 0.5 ? 1 : -1;
+      case 4: return p < 0.25 ? 1 : -1;
+      case 5: return (0.6 * Math.sin(2 * Math.PI * p)) + (0.4 * Math.sin(4 * Math.PI * p));
+      case 6: return (Math.random() * 2) - 1;
+      case 7: return (0.7 * Math.sin(2 * Math.PI * p)) + (0.3 * Math.sin(6 * Math.PI * p));
+      default: return (2 * p) - 1;
+    }
+  }
+
+  renderPicoSamples(pico, sampleRate = 44100, tickRate = 120) {
+    const steps = Array.isArray(pico?.steps) ? pico.steps : [];
+    if (steps.length === 0) return new Float32Array(0);
+
+    const speed = Math.max(1, Number(pico.speed) || 8);
+    const stepSeconds = speed / tickRate;
+    const stepSamples = Math.max(1, Math.floor(stepSeconds * sampleRate));
+    // The S/E markers bound playback: only that span is rendered.
+    const start = this.clampInt(pico.loopStart ?? 0, 0, steps.length - 1);
+    const end = this.clampInt(pico.loopEnd ?? steps.length - 1, start, steps.length - 1);
+    const totalSamples = stepSamples * ((end - start) + 1);
+    const out = new Float32Array(totalSamples);
+    let phase = 0;
+
+    for (let si = start; si <= end; si += 1) {
+      const step = steps[si] || {};
+      const next = steps[Math.min(end, si + 1)] || step;
+      const baseHz = this.picoPitchToHz(step.pitch);
+      const nextHz = this.picoPitchToHz(next.pitch);
+      const vol = Math.max(0, Math.min(7, Number(step.volume) || 0)) / 7;
+      const fx = Number(step.effect) || 0;
+      const waveform = Number(step.waveform) || 0;
+
+      for (let i = 0; i < stepSamples; i += 1) {
+        const t = i / stepSamples;
+        let hz = baseHz;
+
+        if (fx === 1) {
+          hz = baseHz + ((nextHz - baseHz) * t);
+        } else if (fx === 2) {
+          hz = baseHz * (1 + (0.03 * Math.sin(2 * Math.PI * 6 * t)));
+        } else if (fx === 3) {
+          hz = baseHz * Math.max(0.1, 1 - (0.9 * t));
+        } else if (fx === 6 || fx === 7) {
+          const arp = [0, 4, 7, 12];
+          const rate = fx === 6 ? 16 : 8;
+          const idx = Math.floor(t * rate) % arp.length;
+          hz = baseHz * Math.pow(2, arp[idx] / 12);
+        }
+
+        phase += hz / sampleRate;
+        let amp = vol;
+        if (fx === 4) amp *= t;
+        if (fx === 5) amp *= (1 - t);
+        out[((si - start) * stepSamples) + i] = this.picoWaveSample(phase, waveform) * amp * 0.28;
+      }
+    }
+
+    return out;
   }
 
   // Static methods for editor registration

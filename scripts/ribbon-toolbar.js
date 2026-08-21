@@ -902,6 +902,12 @@ class RibbonToolbar {
     this.setupButton('importRwpBtn', async () => {
       await this.importProjectRwp();
     });
+    this.setupButton('importP8Btn', async () => {
+      await this.importProjectP8();
+    });
+    this.setupButton('aiAssistantBtn', () => {
+      window.aiAssistantPanel?.toggle();
+    });
     
     // Project operations
     this.setupButton('buildBtn', async () => {
@@ -1439,6 +1445,25 @@ class RibbonToolbar {
     } catch (e) {
       console.error('[RibbonToolbar] Import failed:', e);
       alert('Import failed: ' + (e?.message || e));
+    }
+  }
+
+  async importProjectP8() {
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.p8,text/plain';
+      input.onchange = async () => {
+        const file = input.files && input.files[0];
+        if (!file) return;
+        const svc = window.serviceContainer?.get?.('pico8ImportService') || window.pico8ImportService;
+        if (!svc) return alert('PICO-8 import service unavailable');
+        await svc.importProject(file);
+      };
+      input.click();
+    } catch (e) {
+      console.error('[RibbonToolbar] PICO-8 import failed:', e);
+      alert('PICO-8 import failed: ' + (e?.message || e));
     }
   }
 

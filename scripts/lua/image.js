@@ -295,7 +295,17 @@ class LuaImageExtensions extends BaseLuaExtension {
   GetSize(...rawArgs) {
     const args = this._normalizeLuaArgs(rawArgs);
     const s = this._getImageByHandleArg(args, 0);
-    return [(s && s._width) || 0, (s && s._height) || 0];
+    if (!s) return [0, 0];
+
+    // Create() does not know the display size, so _width/_height stay 0 until
+    // SetSize is called. Fall back to the current frame's real dimensions so a
+    // freshly created image reports its actual size instead of 0, 0.
+    if (!s._width && !s._height) {
+      const frame = this._getFrameForState(s, this.imageAssets.get(s._assetName));
+      if (frame) return [Number(frame.w) || 0, Number(frame.h) || 0];
+    }
+
+    return [s._width || 0, s._height || 0];
   }
 
   SetAngle(...rawArgs) {

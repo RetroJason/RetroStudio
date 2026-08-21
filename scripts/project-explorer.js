@@ -968,16 +968,18 @@ class ProjectExplorer {
     if (!files || files.length === 0) return;
 
     // Check if there's an active project before allowing file drops
-    // Exception: .rwp files should be allowed even without an active project (they create projects)
+    // Exception: .rwp and .p8 files should be allowed even without an active project (they create projects)
     const activeProject = this.getFocusedProjectName();
     if (!activeProject) {
-      // Check if any files are .rwp files
-      const hasRwpFile = Array.from(files).some(file => 
-        file.name && file.name.toLowerCase().endsWith('.rwp')
+      // Check if any files are project import files
+      const hasProjectImportFile = Array.from(files).some(file => {
+        const lower = (file.name || '').toLowerCase();
+        return lower.endsWith('.rwp') || lower.endsWith('.p8');
+      }
       );
       
-      if (!hasRwpFile) {
-        console.log('[ProjectExplorer] No active project - blocking file drop (non-RWP files)');
+      if (!hasProjectImportFile) {
+        console.log('[ProjectExplorer] No active project - blocking file drop (non-project-import files)');
         // Show a visual indication that the drop was blocked
         const dropOverlay = document.createElement('div');
         dropOverlay.className = 'drop-blocked-overlay';
@@ -985,7 +987,7 @@ class ProjectExplorer {
           <div class="drop-blocked-message">
             <div class="warning-icon">⚠</div>
             <p>Please create or open a project first</p>
-            <small>Files can only be added to an active project<br>(except .rwp project files)</small>
+            <small>Files can only be added to an active project<br>(except .rwp/.p8 import files)</small>
           </div>
         `;
         dropOverlay.style.cssText = `
@@ -1021,11 +1023,15 @@ class ProjectExplorer {
       }
     }
 
-    // Special-case: .rwp archives should trigger project import, not add as binary
+    // Special-case: .rwp/.p8 archives should trigger project import, not add as binary
     try {
       const all = Array.from(files);
       const rwpFiles = all.filter(f => typeof f?.name === 'string' && f.name.toLowerCase().endsWith('.rwp'));
-      const otherFiles = all.filter(f => !f.name.toLowerCase().endsWith('.rwp'));
+      const p8Files = all.filter(f => typeof f?.name === 'string' && f.name.toLowerCase().endsWith('.p8'));
+      const otherFiles = all.filter(f => {
+        const lower = (f.name || '').toLowerCase();
+        return !lower.endsWith('.rwp') && !lower.endsWith('.p8');
+      });
 
       if (rwpFiles.length > 0) {
         const svc = (window.serviceContainer?.get?.('rwpService')) || window.rwpService;
@@ -1035,6 +1041,17 @@ class ProjectExplorer {
           }
         } else {
           console.warn('[ProjectExplorer] rwpService unavailable; skipping .rwp import');
+        }
+      }
+
+      if (p8Files.length > 0) {
+        const svc = (window.serviceContainer?.get?.('pico8ImportService')) || window.pico8ImportService;
+        if (svc && typeof svc.importProject === 'function') {
+          for (const f of p8Files) {
+            try { await svc.importProject(f); } catch (e) { console.warn('[ProjectExplorer] P8 import failed:', e); }
+          }
+        } else {
+          console.warn('[ProjectExplorer] pico8ImportService unavailable; skipping .p8 import');
         }
       }
 

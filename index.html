@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Game Engine Editor</title>
-  <link rel="stylesheet" href="style/main.css?v=7">
+  <link rel="stylesheet" href="style/main.css?v=8">
   <link rel="stylesheet" href="style/project-explorer.css?v=3">
   <link rel="stylesheet" href="style/viewers.css?v=2">
   <link rel="stylesheet" href="style/palette-editor.css?v=2">
@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="style/font-editor.css?v=3">
   <link rel="stylesheet" href="scripts/game-emulator/game-engine.css?v=3">
   <link rel="stylesheet" href="styles/mod-player.css?v=2">
+  <link rel="stylesheet" href="style/ai-assistant.css?v=3">
   
   <!-- Monaco Editor -->
   <link rel="stylesheet" href="scripts/vendor/monaco-editor/vs/editor/editor.main.css">
@@ -73,6 +74,10 @@
             <div class="ribbon-icon">📥</div>
             <div class="ribbon-text">Import</div>
           </button>
+          <button id="importP8Btn" class="ribbon-btn" title="Import PICO-8 Cart (.p8)">
+            <div class="ribbon-icon">🕹️</div>
+            <div class="ribbon-text">Import P8</div>
+          </button>
         </div>
       </div>
       
@@ -115,6 +120,18 @@
         <div id="watchProgress" class="watch-progress" style="display:none">
           <div class="watch-progress-bar"><div class="watch-progress-fill" id="watchProgressFill"></div></div>
           <div class="watch-progress-text" id="watchProgressText"></div>
+        </div>
+      </div>
+
+      <!-- Assistant Section. Hidden by default; ai-assistant-panel.js reveals it
+           only when the studio is served from a loopback origin. -->
+      <div class="ribbon-section" data-ribbon-group="assist" hidden>
+        <div class="ribbon-label">Assistant</div>
+        <div class="ribbon-buttons">
+          <button id="aiAssistantBtn" class="ribbon-btn" title="Toggle the local Lua assistant (Ollama)">
+            <div class="ribbon-icon">🤖</div>
+            <div class="ribbon-text">Assistant</div>
+          </button>
         </div>
       </div>
 
@@ -222,9 +239,11 @@
   <script src="scripts/services/template-service.js"></script>
   <script src="scripts/services/template-catalog.js"></script>
   <script src="scripts/services/resource-pipeline.js"></script>
-  <script src="scripts/services/rwp-service.js?v=5"></script>
+  <script src="scripts/services/rwp-service.js?v=6"></script>
   <script src="scripts/services/rwa-service.js?v=2"></script>
+  <script src="scripts/services/pico8-import-service.js?v=1"></script>
   <script src="scripts/services/monaco-intellisense-service.js"></script>
+  <script src="scripts/services/ai-assistant-service.js?v=6"></script>
   <script src="scripts/utils/modal-utils.js?v=2"></script>
   <script src="scripts/utils/editor-preferences.js?v=1"></script>
   <script src="scripts/utils/image-processor.js"></script>
@@ -244,6 +263,7 @@
   
   <!-- Components -->
   <script src="scripts/components/waveform-display.js"></script>
+  <script src="scripts/components/ai-assistant-panel.js?v=7"></script>
   
   <!-- Build System -->
   <script src="scripts/build-system.js?v=4"></script>
@@ -262,9 +282,9 @@
   <script src="scripts/editors/compound-editor.js"></script>
   
   <!-- UI Management -->
-  <script src="scripts/ribbon-toolbar.js?v=6"></script>
+  <script src="scripts/ribbon-toolbar.js?v=8"></script>
   <script src="scripts/tab-manager.js?v=5"></script>
-  <script src="scripts/project-explorer.js?v=7"></script>
+  <script src="scripts/project-explorer.js?v=8"></script>
   <script src="scripts/game-emulator/simulator-logger.js?v=2"></script>
   <script src="scripts/game-emulator/game-emulator.js?v=8"></script>
   <script src="scripts/game-emulator/embedded-runtime-player.js?v=2"></script>

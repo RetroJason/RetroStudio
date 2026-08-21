@@ -658,6 +658,7 @@ body.no-select {
 
 .ribbon-section[data-ribbon-group="create"],
 .ribbon-section[data-ribbon-group="project"],
+.ribbon-section[data-ribbon-group="assist"],
 .ribbon-section[data-ribbon-group="watch"] {
   align-items: flex-start;
 }

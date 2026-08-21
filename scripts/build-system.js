@@ -963,13 +963,17 @@ class SfxBuilder extends BaseBuilder {
         throw new Error(`Invalid file content for ${file.path}: ${typeof text}`);
       }
       
-      const parameters = this.parseParameters(text);
-      console.log(`[SfxBuilder] Parsed SFXR parameters:`, parameters);
-      
-      // Generate WAV using jsfxr
-      const wavData = await this.generateJsfxrWav(parameters);
+      const parsedSpec = this.parseParameters(text);
+      console.log(`[SfxBuilder] Parsed SFX spec:`, parsedSpec);
+
+      let wavData;
+      if (parsedSpec.mode === 'pico') {
+        wavData = await this.generatePicoSfxWav(parsedSpec.pico);
+      } else {
+        wavData = await this.generateJsfxrWav(parsedSpec.parameters);
+      }
       if (!wavData) {
-        throw new Error('Failed to generate WAV with jsfxr');
+        throw new Error('Failed to generate WAV');
       }
       
       console.log(`[SfxBuilder] Generated WAV data: ${wavData.byteLength} bytes`);
@@ -1014,44 +1018,184 @@ class SfxBuilder extends BaseBuilder {
   parseParameters(jsonContent) {
     try {
       const parsed = JSON.parse(jsonContent);
+
+      if (parsed && parsed.type === 'pico_sfx') {
+        const pico = parsed.pico || parsed;
+        const steps = Array.isArray(pico.steps) ? pico.steps : [];
+        return {
+          mode: 'pico',
+          pico: {
+            speed: Math.max(1, Number(pico.speed) || 8),
+            loopStart: Math.max(0, Number(pico.loopStart) || 0),
+            loopEnd: Math.max(0, Number(pico.loopEnd) || 31),
+            steps: steps.map((step, index) => ({
+              index,
+              pitch: Number(step.pitch) || 0,
+              waveform: Number(step.waveform ?? step.wave ?? 0) || 0,
+              volume: Math.max(0, Math.min(7, Number(step.volume) || 0)),
+              effect: Math.max(0, Math.min(7, Number(step.effect ?? step.fx ?? 0) || 0))
+            }))
+          }
+        };
+      }
       
       // Extract SFXR parameters from the file
       if (parsed.parameters) {
         console.log('[SfxBuilder] Found SFXR parameters in file');
-        return parsed.parameters;
+        return {
+          mode: 'jsfxr',
+          parameters: parsed.parameters
+        };
       } else {
         console.log('[SfxBuilder] No SFXR parameters found, using defaults');
         // Return default SFXR parameters
         return {
-          wave_type: 0,
-          p_base_freq: 0.3,
-          p_freq_limit: 0,
-          p_freq_ramp: 0,
-          p_freq_dramp: 0,
-          p_env_attack: 0,
-          p_env_sustain: 0.3,
-          p_env_punch: 0,
-          p_env_decay: 0.4,
-          p_vib_strength: 0,
-          p_vib_speed: 0,
-          p_arp_mod: 0,
-          p_arp_speed: 0,
-          p_duty: 0,
-          p_duty_ramp: 0,
-          p_repeat_speed: 0,
-          p_pha_offset: 0,
-          p_pha_ramp: 0,
-          p_lpf_freq: 1,
-          p_lpf_ramp: 0,
-          p_lpf_resonance: 0,
-          p_hpf_freq: 0,
-          p_hpf_ramp: 0
+          mode: 'jsfxr',
+          parameters: {
+            wave_type: 0,
+            p_base_freq: 0.3,
+            p_freq_limit: 0,
+            p_freq_ramp: 0,
+            p_freq_dramp: 0,
+            p_env_attack: 0,
+            p_env_sustain: 0.3,
+            p_env_punch: 0,
+            p_env_decay: 0.4,
+            p_vib_strength: 0,
+            p_vib_speed: 0,
+            p_arp_mod: 0,
+            p_arp_speed: 0,
+            p_duty: 0,
+            p_duty_ramp: 0,
+            p_repeat_speed: 0,
+            p_pha_offset: 0,
+            p_pha_ramp: 0,
+            p_lpf_freq: 1,
+            p_lpf_ramp: 0,
+            p_lpf_resonance: 0,
+            p_hpf_freq: 0,
+            p_hpf_ramp: 0
+          }
         };
       }
     } catch (error) {
       console.error('[SfxBuilder] Failed to parse JSON:', error);
       throw new Error('Invalid SFX file format');
     }
+  }
+
+  picoPitchToHz(pitch) {
+    const p = Number(pitch) || 0;
+    // PICO-8 pitch 0 is C-0 = 65.41 Hz, which is MIDI note 36.
+    const midi = 36 + p;
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  picoWaveSample(phase, waveform) {
+    const p = phase - Math.floor(phase);
+    switch (waveform & 0x07) {
+      case 0: return 1 - (4 * Math.abs(p - 0.5));
+      case 1: return (p < 0.85) ? ((p / 0.85) * 2 - 1) : (((1 - p) / 0.15) * 2 - 1);
+      case 2: return (2 * p) - 1;
+      case 3: return p < 0.5 ? 1 : -1;
+      case 4: return p < 0.25 ? 1 : -1;
+      case 5: return (0.6 * Math.sin(2 * Math.PI * p)) + (0.4 * Math.sin(4 * Math.PI * p));
+      case 6: return (Math.random() * 2) - 1;
+      case 7: return (0.7 * Math.sin(2 * Math.PI * p)) + (0.3 * Math.sin(6 * Math.PI * p));
+      default: return (2 * p) - 1;
+    }
+  }
+
+  renderPicoSamples(pico, sampleRate = 44100, tickRate = 120) {
+    const steps = Array.isArray(pico?.steps) ? pico.steps : [];
+    if (steps.length === 0) return new Float32Array(0);
+
+    const speed = Math.max(1, Number(pico.speed) || 8);
+    const stepSeconds = speed / tickRate;
+    const stepSamples = Math.max(1, Math.floor(stepSeconds * sampleRate));
+    // The S/E markers bound playback: only that span is rendered.
+    const clampIdx = (value, min, max) => Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
+    const start = clampIdx(pico.loopStart ?? 0, 0, steps.length - 1);
+    const end = clampIdx(pico.loopEnd ?? steps.length - 1, start, steps.length - 1);
+    const totalSamples = stepSamples * ((end - start) + 1);
+    const out = new Float32Array(totalSamples);
+    let phase = 0;
+
+    for (let si = start; si <= end; si += 1) {
+      const step = steps[si] || {};
+      const next = steps[Math.min(end, si + 1)] || step;
+      const baseHz = this.picoPitchToHz(step.pitch);
+      const nextHz = this.picoPitchToHz(next.pitch);
+      const volume = Math.max(0, Math.min(7, Number(step.volume) || 0)) / 7;
+      const fx = Number(step.effect) || 0;
+      const waveform = Number(step.waveform) || 0;
+
+      for (let i = 0; i < stepSamples; i += 1) {
+        const t = i / stepSamples;
+        let hz = baseHz;
+
+        if (fx === 1) {
+          hz = baseHz + ((nextHz - baseHz) * t);
+        } else if (fx === 2) {
+          hz = baseHz * (1 + (0.03 * Math.sin(2 * Math.PI * 6 * t)));
+        } else if (fx === 3) {
+          hz = baseHz * Math.max(0.1, 1 - (0.9 * t));
+        } else if (fx === 6 || fx === 7) {
+          const arp = [0, 4, 7, 12];
+          const rate = fx === 6 ? 16 : 8;
+          const idx = Math.floor(t * rate) % arp.length;
+          hz = baseHz * Math.pow(2, arp[idx] / 12);
+        }
+
+        phase += hz / sampleRate;
+        let amp = volume;
+        if (fx === 4) amp *= t;
+        if (fx === 5) amp *= (1 - t);
+
+        out[((si - start) * stepSamples) + i] = this.picoWaveSample(phase, waveform) * amp * 0.28;
+      }
+    }
+
+    return out;
+  }
+
+  buildWavFromFloat32(floatSamples, sampleRate = 44100) {
+    const numChannels = 1;
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = floatSamples.length * bytesPerSample;
+    const fileSize = 36 + dataSize;
+    const wavBuffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(wavBuffer);
+
+    this.writeString(view, 0, 'RIFF');
+    view.setUint32(4, fileSize, true);
+    this.writeString(view, 8, 'WAVE');
+    this.writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    this.writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const pcm = new Int16Array(wavBuffer, 44);
+    for (let i = 0; i < floatSamples.length; i += 1) {
+      const sample = Math.max(-1, Math.min(1, floatSamples[i] || 0));
+      pcm[i] = Math.max(-32768, Math.min(32767, sample * 32767));
+    }
+
+    return wavBuffer;
+  }
+
+  async generatePicoSfxWav(picoSpec) {
+    const sampleRate = 44100;
+    const floatSamples = this.renderPicoSamples(picoSpec, sampleRate, 120);
+    return this.buildWavFromFloat32(floatSamples, sampleRate);
   }
   
   async generateJsfxrWav(parameters) {
