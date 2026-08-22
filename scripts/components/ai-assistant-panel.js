@@ -3,6 +3,49 @@
 // Sits inside .main-content as a sibling of .viewer-container so the Lua editor
 // stays visible while the assistant is open.
 
+/**
+ * Models known to work with this panel's edit protocol.
+ *
+ * The selection criterion is not raw capability. Edits are applied by finding a
+ * SEARCH block in the file verbatim, so a model that paraphrases whitespace or
+ * "helpfully" tidies the snippet it was asked to match produces edits that
+ * cannot be applied, however good its reasoning was. Instruction-following
+ * fidelity beats size here, which is why the smallest entry is the default.
+ *
+ * Sizes are the usual 4-bit quantisations and approximate. Check
+ * ollama.com/library for what is current before trusting this list.
+ */
+const AI_RECOMMENDED_MODELS = [
+  {
+    name: 'ornith:9b',
+    size: '~5.6 GB',
+    note: 'Default. Reproduces SEARCH blocks character-exact, so edits apply without falling back to lenient matching.',
+  },
+  {
+    name: 'qwen2.5-coder:7b',
+    size: '~4.7 GB',
+    note: 'Solid fallback that still fits an 8 GB card.',
+  },
+  {
+    name: 'qwen2.5-coder:14b',
+    size: '~9 GB',
+    note: 'Better reasoning if you have 12 GB or more to spare.',
+  },
+  {
+    name: 'deepseek-coder-v2:16b',
+    size: '~9 GB',
+    note: 'Strong at code, but looser about the edit format.',
+  },
+];
+
+/** Local element builder. textContent throughout, so nothing here can inject markup. */
+function aiEl(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
 class AiAssistantPanel {
   constructor(service) {
     this.service = service || window.aiAssistantService;
@@ -112,9 +155,9 @@ class AiAssistantPanel {
     const settingsBtn = document.createElement('button');
     settingsBtn.className = 'ai-panel-btn';
     settingsBtn.type = 'button';
-    settingsBtn.textContent = 'Server';
-    settingsBtn.title = 'Change the Ollama server URL';
-    settingsBtn.addEventListener('click', () => this.promptForBaseUrl());
+    settingsBtn.textContent = 'Settings';
+    settingsBtn.title = 'Server URL, recommended models, setup and safety notes';
+    settingsBtn.addEventListener('click', () => this.showSettings());
     header.appendChild(settingsBtn);
 
     const clearBtn = document.createElement('button');
@@ -205,13 +248,193 @@ class AiAssistantPanel {
     });
   }
 
-  async promptForBaseUrl() {
-    const current = this.service.getBaseUrl();
-    const next = window.prompt('Ollama server URL', current);
-    if (next === null) return;
-    this.service.setBaseUrl(next);
-    this.service.apiReferencePromise = null;
-    await this.refreshModels();
+  /**
+   * Everything the assistant needs explaining, in the one place someone goes
+   * looking when it will not connect: where the model server is, which models
+   * actually work with the edit protocol, and what they are taking on by
+   * pointing a web page at a server running on their own machine.
+   *
+   * Built with createElement rather than an innerHTML template because the
+   * configured base URL and the page origin are interpolated into it. The base
+   * URL comes from stored config and the origin from the address bar, so
+   * neither belongs in a string that is parsed as markup.
+   */
+  showSettings() {
+    const onLoopback = typeof window.isAiAssistantLoopbackOrigin === 'function'
+      ? window.isAiAssistantLoopbackOrigin()
+      : false;
+
+    const overlay = aiEl('div', 'modal-overlay');
+    const dialog = aiEl('div', 'modal-dialog ai-settings-dialog');
+
+    const header = aiEl('div', 'modal-header');
+    header.appendChild(aiEl('h3', 'modal-title', 'Assistant settings'));
+    dialog.appendChild(header);
+
+    const body = aiEl('div', 'modal-body');
+
+    const field = aiEl('div', 'modal-field');
+    const label = aiEl('label', 'modal-label', 'Model server URL');
+    label.htmlFor = 'ai-settings-url';
+    field.appendChild(label);
+
+    const input = aiEl('input', 'modal-input');
+    input.type = 'text';
+    input.id = 'ai-settings-url';
+    input.value = this.service.getBaseUrl();
+    input.spellcheck = false;
+    field.appendChild(input);
+    field.appendChild(aiEl('div', 'modal-hint', 'An Ollama server. Other back ends that only speak the OpenAI-style API will not work here.'));
+    body.appendChild(field);
+
+    body.appendChild(this.buildSetupSection(onLoopback));
+    body.appendChild(this.buildModelsSection());
+    body.appendChild(this.buildSecuritySection());
+
+    dialog.appendChild(body);
+
+    const footer = aiEl('div', 'modal-footer');
+    const cancelBtn = aiEl('button', 'modal-btn modal-btn-secondary', 'Cancel');
+    cancelBtn.type = 'button';
+    const saveBtn = aiEl('button', 'modal-btn modal-btn-primary', 'Save');
+    saveBtn.type = 'button';
+    footer.appendChild(cancelBtn);
+    footer.appendChild(saveBtn);
+    dialog.appendChild(footer);
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const close = () => {
+      document.removeEventListener('keydown', onKeydown);
+      overlay.remove();
+    };
+
+    function onKeydown(event) {
+      if (event.key === 'Escape') close();
+    }
+
+    document.addEventListener('keydown', onKeydown);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    cancelBtn.addEventListener('click', close);
+
+    saveBtn.addEventListener('click', async () => {
+      const next = input.value.trim();
+      close();
+      if (next && next !== this.service.getBaseUrl()) {
+        this.service.setBaseUrl(next);
+        // The reference is fetched relative to the studio, not the model server,
+        // but it is cached per configuration - drop it so a changed server does
+        // not inherit a stale prompt.
+        this.service.apiReferencePromise = null;
+      }
+      await this.refreshModels();
+    });
+
+    input.focus();
+    input.select();
+  }
+
+  buildSetupSection(onLoopback) {
+    const section = aiEl('section', 'ai-settings-section');
+    section.appendChild(aiEl('h4', 'ai-settings-heading', 'Setup'));
+    section.appendChild(aiEl('p', 'ai-settings-text', 'The assistant runs against your own model server. Nothing is sent anywhere else, and there is no account or API key.'));
+
+    const steps = aiEl('ol', 'ai-settings-steps');
+    const install = aiEl('li');
+    install.appendChild(document.createTextNode('Install Ollama from '));
+    const link = aiEl('a', null, 'ollama.com');
+    link.href = 'https://ollama.com';
+    link.target = '_blank';
+    link.rel = 'noreferrer noopener';
+    install.appendChild(link);
+    install.appendChild(document.createTextNode('.'));
+    steps.appendChild(install);
+
+    const pull = aiEl('li');
+    pull.appendChild(document.createTextNode('Pull a model: '));
+    pull.appendChild(aiEl('code', null, `ollama pull ${AI_RECOMMENDED_MODELS[0].name}`));
+    steps.appendChild(pull);
+
+    const serve = aiEl('li');
+    serve.appendChild(document.createTextNode('Start it: '));
+    serve.appendChild(aiEl('code', null, 'ollama serve'));
+    steps.appendChild(serve);
+
+    section.appendChild(steps);
+
+    // Worth its own callout: from a hosted origin every request fails until this
+    // is done, and the browser reports it as a bare TypeError with no mention of
+    // CORS, which sends people looking in entirely the wrong place.
+    const callout = aiEl('div', onLoopback ? 'ai-settings-note' : 'ai-settings-note is-required');
+    callout.appendChild(aiEl(
+      'strong',
+      null,
+      onLoopback
+        ? 'Serving the studio from somewhere other than localhost?'
+        : 'This studio is not on localhost, so this step is required:',
+    ));
+    const originsLine = aiEl('p', 'ai-settings-text');
+    originsLine.appendChild(document.createTextNode('Ollama refuses cross-origin requests unless you allow this origin, then restart it:'));
+    callout.appendChild(originsLine);
+    callout.appendChild(aiEl('pre', 'ai-settings-code', `OLLAMA_ORIGINS=${window.location.origin} ollama serve`));
+    callout.appendChild(aiEl('p', 'ai-settings-text ai-settings-warn', 'Name that origin exactly. Setting it to * opens your model server to every website you visit.'));
+    section.appendChild(callout);
+
+    const browsers = aiEl('p', 'ai-settings-text');
+    browsers.appendChild(document.createTextNode('Browsers also restrict pages that reach into your local network. Chrome, Edge and Firefox allow localhost and may prompt for permission. Safari blocks it outright, so a hosted studio cannot reach a local model server there.'));
+    section.appendChild(browsers);
+
+    return section;
+  }
+
+  buildModelsSection() {
+    const section = aiEl('section', 'ai-settings-section');
+    section.appendChild(aiEl('h4', 'ai-settings-heading', 'Recommended models'));
+    section.appendChild(aiEl('p', 'ai-settings-text', 'Edits are applied by matching the model\u2019s SEARCH block against your file exactly, so a model that follows instructions precisely beats a larger one that paraphrases. Give it at least a 32k context: the system prompt alone is around 4.7k tokens before your file is added.'));
+
+    const table = aiEl('table', 'ai-settings-models');
+    const head = aiEl('tr');
+    head.appendChild(aiEl('th', null, 'Model'));
+    head.appendChild(aiEl('th', null, 'Size'));
+    head.appendChild(aiEl('th', null, 'Notes'));
+    table.appendChild(head);
+
+    for (const model of AI_RECOMMENDED_MODELS) {
+      const row = aiEl('tr');
+      const nameCell = aiEl('td');
+      nameCell.appendChild(aiEl('code', null, model.name));
+      row.appendChild(nameCell);
+      row.appendChild(aiEl('td', null, model.size));
+      row.appendChild(aiEl('td', null, model.note));
+      table.appendChild(row);
+    }
+
+    section.appendChild(table);
+    section.appendChild(aiEl('p', 'ai-settings-text ai-settings-muted', 'Sizes are approximate 4-bit quantisations. A model that spills out of VRAM still runs, just far slower.'));
+    return section;
+  }
+
+  buildSecuritySection() {
+    const section = aiEl('section', 'ai-settings-section');
+    section.appendChild(aiEl('h4', 'ai-settings-heading ai-settings-warn', 'Use at your own risk'));
+
+    const points = [
+      'This assistant edits your files. With auto-apply and save on apply enabled it writes changes straight to disk, and a wrong answer changes your project. Keep your work in version control.',
+      'Your prompts and the open file are sent to whatever server URL is set above. Pointed at your own machine that goes no further; point it elsewhere and your source goes with it.',
+      'Ollama has no authentication. Anything that can reach it can use it, so do not expose port 11434 to your network or the internet.',
+      'Allowing a hosted origin in OLLAMA_ORIGINS means any page on that origin can drive your model server, including anything injected into that site.',
+      'Model output is not reviewed. It can be wrong, insecure, or confidently invent APIs that do not exist. Read the diff before you trust it.',
+    ];
+
+    const list = aiEl('ul', 'ai-settings-risks');
+    for (const point of points) {
+      list.appendChild(aiEl('li', null, point));
+    }
+    section.appendChild(list);
+    return section;
   }
 
   async refreshModels() {
@@ -840,21 +1063,16 @@ class AiAssistantPanel {
 
 window.AiAssistantPanel = AiAssistantPanel;
 
-// Local-development guard, defined by ai-assistant-service.js. Fails closed: if
-// that file did not load, the panel is not created and the ribbon section stays
-// hidden. See isAiAssistantHostAllowed() for why this is loopback-only.
-if (typeof window.isAiAssistantHostAllowed === 'function' && window.isAiAssistantHostAllowed()) {
-  window.aiAssistantPanel = new AiAssistantPanel();
+window.aiAssistantPanel = new AiAssistantPanel();
 
-  const revealAssistantRibbonSection = () => {
-    document
-      .querySelector('.ribbon-section[data-ribbon-group="assist"]')
-      ?.removeAttribute('hidden');
-  };
+const revealAssistantRibbonSection = () => {
+  document
+    .querySelector('.ribbon-section[data-ribbon-group="assist"]')
+    ?.removeAttribute('hidden');
+};
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', revealAssistantRibbonSection, { once: true });
-  } else {
-    revealAssistantRibbonSection();
-  }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', revealAssistantRibbonSection, { once: true });
+} else {
+  revealAssistantRibbonSection();
 }

@@ -1,10 +1,18 @@
-// AI Assistant service - talks to a locally running Ollama server.
+// AI Assistant service - talks to an Ollama server, by default one running on
+// the user's own machine.
 //
-// Local development only. There are deliberately no credentials here: Ollama is
-// unauthenticated on loopback, so nothing sensitive is stored in the browser and
-// nothing leaves the machine. If this graduates to a hosted model provider the
-// request must move behind a server-side proxy rather than gaining an API key
-// field here.
+// There are deliberately no credentials here and no server-side proxy: the
+// browser talks straight to whatever URL is configured. That is only defensible
+// because the intended target is an unauthenticated Ollama on loopback, where
+// there is nothing to authenticate to and nothing leaves the machine. If this
+// ever gains support for a hosted model provider, the request has to move
+// behind a server-side proxy rather than growing an API key field here - a key
+// in browser config is a key in every user's devtools.
+//
+// The feature is no longer restricted to loopback origins. Reaching a local
+// Ollama from a hosted studio is possible, but only after the user allows this
+// origin in OLLAMA_ORIGINS; the settings dialog is where that is explained,
+// along with what they are taking on by doing it.
 
 class AiAssistantService {
   constructor() {
@@ -72,7 +80,11 @@ class AiAssistantService {
     const baseUrl = this.getBaseUrl();
     if (error?.name === 'AbortError') return 'Cancelled.';
     if (error instanceof TypeError) {
-      return `Could not reach Ollama at ${baseUrl}. Check it is running (\`ollama serve\`), and if the studio is not on localhost set OLLAMA_ORIGINS to allow ${window.location.origin}.`;
+      // The "never *" is here rather than only in the settings dialog because
+      // this is the moment someone is tempted by it: the request just failed,
+      // and the first search result for an Ollama CORS error suggests exactly
+      // that. It would leave their model server open to every site they visit.
+      return `Could not reach Ollama at ${baseUrl}. Check it is running (\`ollama serve\`), and if the studio is not on localhost set OLLAMA_ORIGINS to ${window.location.origin} - name that origin exactly, never *.`;
     }
     return error?.message || String(error);
   }
@@ -262,13 +274,16 @@ class AiAssistantService {
   }
 }
 
-// Local-development guard.
-//
-// The assistant talks to an unauthenticated Ollama server on loopback. That only
-// exists on a developer machine, so on any hosted origin the feature is dead
-// weight that would also advertise a capability the deployment cannot honour.
-// This fails closed: anything that is not an explicit loopback origin is denied.
-function isAiAssistantHostAllowed() {
+/**
+ * Whether the studio is served from the same machine the model server is
+ * expected to be on.
+ *
+ * This no longer gates the feature. It only decides how loudly the settings
+ * dialog explains the cross-origin setup, because from a hosted origin nothing
+ * works until the user allows that origin in Ollama, and the failure arrives as
+ * an opaque TypeError rather than anything that names the real cause.
+ */
+function isAiAssistantLoopbackOrigin() {
   try {
     const { hostname, protocol } = window.location;
     if (protocol === 'file:') {
@@ -283,13 +298,10 @@ function isAiAssistantHostAllowed() {
   }
 }
 
-window.isAiAssistantHostAllowed = isAiAssistantHostAllowed;
+window.isAiAssistantLoopbackOrigin = isAiAssistantLoopbackOrigin;
 window.AiAssistantService = AiAssistantService;
+window.aiAssistantService = new AiAssistantService();
 
-if (isAiAssistantHostAllowed()) {
-  window.aiAssistantService = new AiAssistantService();
-
-  if (window.serviceContainer?.registerSingleton) {
-    window.serviceContainer.registerSingleton('aiAssistantService', window.aiAssistantService);
-  }
+if (window.serviceContainer?.registerSingleton) {
+  window.serviceContainer.registerSingleton('aiAssistantService', window.aiAssistantService);
 }

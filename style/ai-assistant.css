@@ -1,8 +1,8 @@
 /* AI Assistant panel - docks below the editor inside .main-content */
 
-/* The assistant ribbon section ships hidden and is revealed only on loopback
-   origins. .ribbon-section sets display, which would otherwise beat the UA
-   [hidden] rule, so this has to be explicit. */
+/* The assistant ribbon section ships hidden and is revealed once the panel
+   script has loaded. .ribbon-section sets display, which would otherwise beat
+   the UA [hidden] rule, so this has to be explicit. */
 .ribbon-section[data-ribbon-group="assist"][hidden] {
   display: none !important;
 }
@@ -270,4 +270,120 @@
 .ai-panel-stop {
   background: #7a2418;
   color: var(--studio-foreground, #fff1d6);
+}
+
+/* Settings dialog. Rides on the shared .modal-* classes for the frame and only
+   styles the documentation inside it. */
+.ai-settings-dialog {
+  max-width: 640px;
+}
+
+.ai-settings-dialog .modal-body {
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.ai-settings-section {
+  margin-top: 18px;
+}
+
+.ai-settings-heading {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--studio-accent-strong, #ffcb68);
+}
+
+.ai-settings-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--studio-foreground, #fff1d6);
+}
+
+.ai-settings-muted {
+  color: var(--studio-muted, #d6a78a);
+}
+
+.ai-settings-warn {
+  color: #ffb4a2;
+}
+
+.ai-settings-steps,
+.ai-settings-risks {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--studio-foreground, #fff1d6);
+}
+
+.ai-settings-risks li {
+  margin-bottom: 6px;
+}
+
+.ai-settings-section code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  background: var(--studio-accent-soft, rgba(255, 172, 74, 0.18));
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.ai-settings-code {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: #120504;
+  border: 1px solid var(--studio-line, rgba(255, 145, 52, 0.22));
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--studio-foreground, #fff1d6);
+  /* Origins get long. Wrap rather than scroll, so the whole command is copyable
+     without anyone having to notice a scrollbar first. */
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.ai-settings-note {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--studio-line-strong, #4f2118);
+  background: rgba(255, 172, 74, 0.06);
+  font-size: 12px;
+}
+
+.ai-settings-note.is-required {
+  border-left-color: #e2703a;
+  background: rgba(226, 112, 58, 0.12);
+}
+
+.ai-settings-note strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--studio-accent-strong, #ffcb68);
+}
+
+.ai-settings-models {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.ai-settings-models th,
+.ai-settings-models td {
+  text-align: left;
+  padding: 5px 8px 5px 0;
+  border-bottom: 1px solid var(--studio-line, rgba(255, 145, 52, 0.22));
+  vertical-align: top;
+}
+
+.ai-settings-models th {
+  color: var(--studio-muted, #d6a78a);
+  font-weight: 600;
+}
+
+.ai-settings-models td:nth-child(2) {
+  white-space: nowrap;
+  color: var(--studio-muted, #d6a78a);
 }
