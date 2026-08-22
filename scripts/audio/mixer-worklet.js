@@ -65,11 +65,19 @@ class MixerWorklet extends AudioWorkletProcessor {
           this.requestInFlight = false;
         } else {
           // One-shot buffer (WAV) - no logging for routine playback
+          const channels = e.data.channels.map(arr => new Float32Array(arr));
+          const length = channels[0] ? channels[0].length : 0;
+          const loop = e.data.loop || null;
           this.buffers.push({
             instanceId: e.data.instanceId || null,
-            channels: e.data.channels.map(arr => new Float32Array(arr)),
+            channels,
             pos: 0,
-            sampleRate: e.data.sampleRate
+            sampleRate: e.data.sampleRate,
+            // A looping buffer never finishes on its own; it plays until a
+            // stop-sound arrives. Without this the caller has to retrigger it
+            // from the game loop, so any frame-rate dip becomes audible silence.
+            loopStart: loop ? Math.max(0, Math.min(loop.start | 0, length - 1)) : -1,
+            loopEnd: loop ? Math.max(1, Math.min((loop.end | 0) + 1, length)) : -1
           });
         }
       } else if (e.data.type === 'stop-stream') {
@@ -122,22 +130,30 @@ class MixerWorklet extends AudioWorkletProcessor {
     for (let i = this.buffers.length - 1; i >= 0; i--) {
       const buf = this.buffers[i];
       const bufferLength = buf.channels[0].length;
-      
+      const looping = buf.loopEnd > buf.loopStart && buf.loopStart >= 0;
+      const loopLength = looping ? buf.loopEnd - buf.loopStart : 0;
+
       for (let c = 0; c < numChannels; c++) {
         const src = buf.channels[c % buf.channels.length];
         for (let s = 0; s < blockSize; s++) {
-          const srcIdx = buf.pos + s;
+          let srcIdx = buf.pos + s;
+          if (looping && srcIdx >= buf.loopEnd) {
+            srcIdx = buf.loopStart + ((srcIdx - buf.loopStart) % loopLength);
+          }
           if (srcIdx < bufferLength) {
             output[c][s] += src[srcIdx] * this.volume;
           }
         }
       }
-      
+
       buf.pos += blockSize;
-      
-      // Remove finished buffers and clear any remaining references
-      if (buf.pos >= bufferLength) {
-        // Zero out the buffer before removing
+
+      if (looping) {
+        if (buf.pos >= buf.loopEnd) {
+          buf.pos = buf.loopStart + ((buf.pos - buf.loopStart) % loopLength);
+        }
+      } else if (buf.pos >= bufferLength) {
+        // Remove finished buffers and clear any remaining references
         buf.channels.forEach(channel => channel.fill(0));
         this.buffers.splice(i, 1);
       }

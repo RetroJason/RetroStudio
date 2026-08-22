@@ -35,6 +35,7 @@ if (!LuaPico8Extensions) {
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
   'pset', 'pget', 'color', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'pico_mode', 'spr',
+  'sspr', 'map', 'mget', 'mset',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print',
   // Math
   'sin', 'cos', 'atan2', 'sqrt', 'abs', 'sgn', 'flr', 'ceil', 'min', 'max', 'mid', 'rnd', 'srand',
@@ -46,6 +47,8 @@ const EXPECTED_FUNCTIONS = [
   'add', 'del', 'count', 'all', 'foreach',
   // Audio
   'music', 'sfx',
+  // Input
+  'btn', 'btnp',
   // Utility
   'printh', 'stat',
 ];
@@ -86,6 +89,12 @@ function makeMockEmulator() {
       playMusic(n, fade, mask) { this._lastMusic = { n, fade, mask }; },
       playSfx(n, channel, offset, length) { this._lastSfx = { n, channel, offset, length }; },
     },
+    inputManager: {
+      _held: 0,
+      _pressed: 0,
+      isKeyHeld(mask) { return (this._held & mask) !== 0; },
+      isKeyPressed(mask) { return (this._pressed & mask) !== 0; },
+    },
   };
 }
 
@@ -109,11 +118,23 @@ function makePico8() {
   return { pico8, emulator };
 }
 
+/** Build a minimal D2TX buffer: 32-byte header followed by the pixel payload. */
+function makeD2Texture(format, width, height, payload) {
+  const bytes = new Uint8Array(32 + payload.length);
+  bytes.set([0x44, 0x32, 0x54, 0x58], 0); // "D2TX"
+  bytes[4] = 2; // version
+  bytes[5] = format;
+  new DataView(bytes.buffer).setUint16(6, width, true);
+  new DataView(bytes.buffer).setUint16(8, height, true);
+  bytes.set(payload, 32);
+  return bytes;
+}
+
 const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 55);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 61);
     },
   },
   {
@@ -274,8 +295,101 @@ const tests = [
     name: 'sset/sget roundtrip writes and reads sprite pixel',
     fn: () => {
       const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
       pico8.sset(4, 6, 12);
       assert.strictEqual(pico8.sget(4, 6), 12);
+    },
+  },
+  {
+    name: '_decodeIndexedD2 reads an i8 texture (mode 0x09) one byte per pixel',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const bytes = makeD2Texture(0x09, 4, 2, [1, 2, 3, 4, 5, 6, 7, 8]);
+      const decoded = pico8._decodeIndexedD2(bytes);
+      assert.strictEqual(decoded.width, 4);
+      assert.strictEqual(decoded.height, 2);
+      assert.deepStrictEqual(Array.from(decoded.pixels), [1, 2, 3, 4, 5, 6, 7, 8]);
+    },
+  },
+  {
+    name: '_decodeIndexedD2 unpacks mode 0x0a as i4, not i2',
+    fn: () => {
+      // Regression: the mode table was off by one, so cart sprite sheets (i4)
+      // were unpacked at 2bpp, halving every colour and doubling the width.
+      const { pico8 } = makePico8();
+      const previousD2File = global.window.D2File;
+      let seenBits = null;
+      global.window.D2File = {
+        _unpackSubBytePixels(data, format, bits, count) {
+          seenBits = bits;
+          return new Uint8Array(count);
+        },
+      };
+      try {
+        pico8._decodeIndexedD2(makeD2Texture(0x0a, 4, 2, [0x21, 0x43, 0x65, 0x87]));
+      } finally {
+        global.window.D2File = previousD2File;
+      }
+      assert.strictEqual(seenBits, 4);
+    },
+  },
+  {
+    name: 'spr blits sprite sheet pixels into the framebuffer with flip and transparency',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      // Sprite 1 occupies sheet x 8..15, y 0..7. Mark its top-left corner only.
+      sheet[(0 * 128) + 8] = 9;
+      pico8.setSpriteSheet(sheet, 128, 128);
+
+      pico8.spr(1, 20, 30);
+      assert.strictEqual(pico8._framebuffer[(30 * 128) + 20], 9);
+      // Colour 0 is transparent by default, so the rest of the cell is untouched.
+      assert.strictEqual(pico8._framebuffer[(30 * 128) + 21], 0);
+
+      // Horizontal flip puts the marked pixel at the far edge of the cell.
+      pico8.spr(1, 40, 50, 1, 1, 1, 0);
+      assert.strictEqual(pico8._framebuffer[(50 * 128) + 47], 9);
+    },
+  },
+  {
+    name: 'sspr stretches a sheet rectangle',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      sheet[0] = 5;
+      pico8.setSpriteSheet(sheet, 128, 128);
+
+      pico8.sspr(0, 0, 1, 1, 10, 10, 2, 2);
+      assert.strictEqual(pico8._framebuffer[(10 * 128) + 10], 5);
+      assert.strictEqual(pico8._framebuffer[(11 * 128) + 11], 5);
+    },
+  },
+  {
+    name: 'map draws non-zero cells and mget/mset access map data',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      sheet[(0 * 128) + 8] = 4; // sprite 1 top-left
+      pico8.setSpriteSheet(sheet, 128, 128);
+
+      const tiles = new Uint8Array(4 * 4);
+      pico8.setMapData(tiles, 4, 4);
+
+      pico8.mset(1, 0, 1);
+      assert.strictEqual(pico8.mget(1, 0), 1);
+
+      pico8.map(0, 0, 0, 0, 4, 4);
+      // Cell (1,0) draws sprite 1 at screen x=8, y=0.
+      assert.strictEqual(pico8._framebuffer[(0 * 128) + 8], 4);
+      // Cell (0,0) is sprite 0, which PICO-8 treats as empty.
+      assert.strictEqual(pico8._framebuffer[0], 0);
     },
   },
   {
@@ -299,11 +413,35 @@ const tests = [
     },
   },
   {
-    name: 'palt forwards transparent color configuration',
+    name: 'palt configures transparency and resets to colour 0',
     fn: () => {
       const { pico8, emulator } = makePico8();
       pico8.palt(0, 1);
       assert.deepStrictEqual(emulator.spriteEngine._flags.transparent[0], { c: 0, t: true });
+      assert.ok(pico8._isTransparentColor(0));
+
+      pico8.palt(0, 0);
+      assert.ok(!pico8._isTransparentColor(0));
+
+      pico8.palt();
+      assert.ok(pico8._isTransparentColor(0));
+    },
+  },
+  {
+    name: 'palt accepts the boolean flag PICO-8 carts actually pass',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      pico8.palt(3, true);
+      assert.deepStrictEqual(emulator.spriteEngine._flags.transparent[0], { c: 3, t: true });
+      assert.ok(pico8._isTransparentColor(3));
+
+      pico8.palt(3, false);
+      assert.deepStrictEqual(emulator.spriteEngine._flags.transparent[1], { c: 3, t: false });
+      assert.ok(!pico8._isTransparentColor(3));
+
+      // Colour 0 is transparent by default, and palt(0, false) must clear it.
+      pico8.palt(0, false);
+      assert.ok(!pico8._isTransparentColor(0));
     },
   },
 
@@ -432,6 +570,68 @@ const tests = [
       let sum = 0;
       pico8.foreach(t, (v) => { sum += v; });
       assert.strictEqual(sum, 6);
+    },
+  },
+
+  // Input
+  {
+    name: 'btn maps pico8 button indices onto input masks',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager._held = 0x0040 | 0x0100; // Left + X
+      assert.strictEqual(pico8.btn(0), true, 'left');
+      assert.strictEqual(pico8.btn(1), false, 'right');
+      assert.strictEqual(pico8.btn(2), false, 'up');
+      assert.strictEqual(pico8.btn(3), false, 'down');
+      assert.strictEqual(pico8.btn(4), false, 'O');
+      assert.strictEqual(pico8.btn(5), true, 'X');
+    },
+  },
+  {
+    name: 'btn with no index returns a bitfield in pico8 button order',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager._held = 0x0080 | 0x0001; // Right (index 1) + O (index 4)
+      assert.strictEqual(pico8.btn(), (1 << 1) | (1 << 4));
+    },
+  },
+  {
+    name: 'btn reads held state while btnp reads this-frame presses',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager._held = 0x0010;   // Up held
+      emulator.inputManager._pressed = 0;     // but not newly pressed
+      assert.strictEqual(pico8.btn(2), true);
+      assert.strictEqual(pico8.btnp(2), false);
+
+      emulator.inputManager._pressed = 0x0010;
+      assert.strictEqual(pico8.btnp(2), true);
+    },
+  },
+  {
+    name: 'btn reports nothing for players other than 0',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager._held = 0x0040;
+      assert.strictEqual(pico8.btn(0, 0), true);
+      assert.strictEqual(pico8.btn(0, 1), false, 'only one controller is wired up');
+    },
+  },
+  {
+    name: 'btn returns false for an out of range button index',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager._held = 0xFFFF;
+      assert.strictEqual(pico8.btn(6), false);
+    },
+  },
+  {
+    name: 'btn is safe before the input manager exists',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      emulator.inputManager = null;
+      assert.strictEqual(pico8.btn(0), false);
+      assert.strictEqual(pico8.btnp(0), false);
     },
   },
 

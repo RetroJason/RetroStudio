@@ -203,6 +203,7 @@ class RetroStudioApplication {
       'scripts/viewers/d2-viewer.js',
       'scripts/viewers/simple-image-viewer.js',
       'scripts/viewers/simple-text-viewer.js',
+      'scripts/viewers/p8mus-viewer.js',
       'scripts/viewers/viewer-plugins.js'
     ];
 
@@ -216,7 +217,7 @@ class RetroStudioApplication {
   loadScript(src) {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = src + (src.includes('?') ? '&' : '?') + 'v=9';
+      script.src = src + (src.includes('?') ? '&' : '?') + 'v=10';
       script.onload = () => {
         console.log(`[Application] Loaded component script: ${src}`);
         resolve();

@@ -670,7 +670,7 @@ class RwpService {
       );
 
       if (embeddedProjectPackages.length === 1) {
-        const embeddedBuffer = await embeddedProjectPackages[0].async('nodebuffer');
+        const embeddedBuffer = await embeddedProjectPackages[0].async('uint8array');
         projectZip = await JSZip.loadAsync(embeddedBuffer);
         manifestFile = projectZip.file('rwp.json');
       } else if (String(file?.name || '').toLowerCase().endsWith('.rws')) {
@@ -774,6 +774,20 @@ class RwpService {
       importEntries.push(nextEntry);
     }
 
+    // Packages carry their own .texture/.frameset companions. Track which images
+    // are fully authored so the explorer's generic auto-generated defaults do not
+    // race with (and clobber) the packaged ones.
+    const authoredCompanions = new Map();
+    for (const entry of importEntries) {
+      const lowerPath = entry.targetStoragePath.toLowerCase();
+      for (const companionExt of ['.texture', '.frameset']) {
+        if (!lowerPath.endsWith(companionExt)) continue;
+        const base = lowerPath.substring(0, lowerPath.length - companionExt.length);
+        if (!authoredCompanions.has(base)) authoredCompanions.set(base, new Set());
+        authoredCompanions.get(base).add(companionExt);
+      }
+    }
+
     for (const entry of importEntries) {
       const fileEntry = projectZip.file(entry.key);
       if (!fileEntry) {
@@ -809,7 +823,12 @@ class RwpService {
       syntheticFile.builderId = entry.builderId;
       syntheticFile.isNewFile = true;
 
-      await explorer.addFileToProject(syntheticFile, entry.folderPath, true, true);
+      const lowerTarget = entry.targetStoragePath.toLowerCase();
+      const companionBase = lowerTarget.substring(0, lowerTarget.lastIndexOf('.'));
+      const authored = authoredCompanions.get(companionBase);
+      const skipCompanionCreation = !!authored && authored.has('.texture') && authored.has('.frameset');
+
+      await explorer.addFileToProject(syntheticFile, entry.folderPath, true, true, { skipCompanionCreation });
     }
 
     // Render the tree first with all files loaded

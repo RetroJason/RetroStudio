@@ -17,6 +17,19 @@
   margin-left: auto;
 }
 
+.sim-stats {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: #9d9d9d;
+  white-space: nowrap;
+  min-width: 108px;
+  text-align: right;
+}
+
+.sim-stats-warn {
+  color: #e5c07b;
+}
+
 .utility-btn {
   background: linear-gradient(180deg, rgba(255, 210, 126, 0.08), rgba(28, 10, 8, 0.96));
   border: 1px solid rgba(255, 145, 52, 0.22);

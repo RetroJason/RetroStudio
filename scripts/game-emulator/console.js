@@ -131,6 +131,9 @@ class GameConsole {
       // Enforce max message limit
       if (this.rawMessages.length > this.options.maxMessages) {
         this.rawMessages = this.rawMessages.slice(-this.options.maxMessages);
+        // Messages were dropped off the front, so the DOM no longer matches a
+        // simple suffix of the buffer and has to be rebuilt.
+        this._renderInvalidated = true;
       }
     } else {
       // Replace entire buffer (for bulk operations)
@@ -142,6 +145,7 @@ class GameConsole {
       } else {
         this.rawMessages = [this.formatMessage(String(text))];
       }
+      this._renderInvalidated = true;
     }
 
     // Apply current filter and update display
@@ -174,22 +178,66 @@ class GameConsole {
   }
 
   // Update the console display with current filter
+  //
+  // PERF: this rebuilds the whole output string, replaces textContent and then
+  // reads scrollHeight (a forced synchronous layout). A running cart that calls
+  // print() logs several messages per frame, and doing that work once per
+  // message made the console 73% of total frame time. Coalesce to at most one
+  // render per animation frame; the debug console does not need to be updated
+  // more often than the display refreshes.
   updateDisplay() {
+    if (this._displayScheduled) return;
+    this._displayScheduled = true;
+
+    const run = () => {
+      this._displayScheduled = false;
+      this.renderDisplay();
+    };
+
+    // rAF is paused while the tab is hidden, so fall back to a timer to make
+    // sure buffered messages still land.
+    if (typeof requestAnimationFrame === 'function' && !document.hidden) {
+      requestAnimationFrame(run);
+    } else {
+      setTimeout(run, 16);
+    }
+  }
+
+  renderDisplay() {
     const consoleOutput = this.container?.querySelector('#console-output');
     if (!consoleOutput || !this.rawMessages) return;
 
     const filterInput = this.container.querySelector('#console-filter-input');
     const filterValue = this.currentFilter || (filterInput ? filterInput.value.trim() : '');
 
-    if (!filterValue) {
-      // No filter, show all messages
-      consoleOutput.textContent = this.rawMessages.join('');
+    // Fast path: only appends since the last render, and no filter in play, so
+    // just the new messages need to reach the DOM. Re-joining the whole buffer
+    // is O(maxMessages) and still dominated frame time even at one render per
+    // frame, because a running cart keeps the buffer permanently full.
+    const canAppend = !filterValue
+      && !this._renderedFilter
+      && !this._renderInvalidated
+      && this._renderedCount > 0
+      && this._renderedCount <= this.rawMessages.length;
+
+    if (canAppend) {
+      if (this._renderedCount < this.rawMessages.length) {
+        const appended = this.rawMessages.slice(this._renderedCount).join('');
+        consoleOutput.appendChild(document.createTextNode(appended));
+        this._renderedCount = this.rawMessages.length;
+      }
     } else {
-      // Apply filter
-      const filter = this.parseFilterString(filterValue);
-      const filteredMessages = this.rawMessages.filter(message => this.matchesFilter(message, filter));
-      consoleOutput.textContent = filteredMessages.join('');
+      const messages = filterValue
+        ? this.rawMessages.filter(
+          message => this.matchesFilter(message, this.parseFilterString(filterValue))
+        )
+        : this.rawMessages;
+      consoleOutput.textContent = messages.join('');
+      this._renderedCount = this.rawMessages.length;
+      this._renderInvalidated = false;
     }
+
+    this._renderedFilter = filterValue;
 
     // Auto-scroll to bottom if enabled
     if (this.options.autoScroll) {
@@ -312,6 +360,7 @@ class GameConsole {
   clearConsole() {
     this.rawMessages = [];
     this.currentFilter = '';
+    this._renderInvalidated = true;
     
     const filterInput = this.container?.querySelector('#console-filter-input');
     if (filterInput) {

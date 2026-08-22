@@ -35,7 +35,7 @@ class ProjectExplorer {
           [sourcesRoot]: {
             type: 'folder',
             children: {
-              Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm'], children: {} },
+              Music: { type: 'folder', filter: ['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'], children: {} },
               SFX: { type: 'folder', filter: ['.wav', '.sfx'], children: {} },
               Images: { type: 'folder', filter: ['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'], children: {} },
               Palettes: { type: 'folder', filter: ['.act', '.pal', '.aco'], children: {} },
@@ -810,7 +810,7 @@ class ProjectExplorer {
     if (type === 'folder') return 'folder';
     
     const ext = this.getFileExtension(name).toLowerCase();
-    if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return 'mod';
+    if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(ext)) return 'mod';
     if (['.wav'].includes(ext)) return 'wav';
     
     return 'file';
@@ -843,7 +843,7 @@ class ProjectExplorer {
     }
     
     const ext = this.getFileExtension(name).toLowerCase();
-    if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return '🎵';
+    if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(ext)) return '🎵';
     if (['.wav'].includes(ext)) return '🔊';
     if (['.lua'].includes(ext)) return '📜';
     if (['.png', '.gif', '.jpg', '.jpeg', '.bmp'].includes(ext)) {
@@ -1146,7 +1146,7 @@ class ProjectExplorer {
   
   filterFile(file, targetPath) {
   const ext = this.getFileExtension(file.name).toLowerCase();
-  const musicExts = ['.mod', '.xm', '.s3m', '.it', '.mptm'];
+  const musicExts = ['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'];
   const sfxExts = ['.wav', '.sfx'];
   const luaExts = ['.lua', '.txt'];
     
@@ -1221,7 +1221,7 @@ class ProjectExplorer {
     return this.addFileToProject(fileMetadata, filtered.path, skipAutoOpen, skipRender);
   }
 
-  addFileToProject(file, path, skipAutoOpen = false, skipRender = false) {
+  addFileToProject(file, path, skipAutoOpen = false, skipRender = false, options = {}) {
     // Return a promise that resolves after persistence (if any)
     let persistResolve;
     let persistReject;
@@ -1303,7 +1303,7 @@ class ProjectExplorer {
   if (file instanceof File) {
       try {
         // Decide binary vs text: known text types stay text; everything else treated as binary
-        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.sprite', '.json', '.package', '.font', '.texture', '.frameset'];
+        const textExts = ['.lua', '.txt', '.pal', '.sfx', '.p8mus', '.sprite', '.json', '.package', '.font', '.texture', '.frameset', '.tilemap', '.tmj'];
         const isBinary = !textExts.includes(finalExt);
         const readPromise = isBinary ? file.arrayBuffer() : file.text();
         readPromise.then(async (content) => {
@@ -1362,7 +1362,9 @@ class ProjectExplorer {
     this.emitFileAddedEvent({ ...file, name: finalFileName }, path);
     
     // Auto-create texture and frameset files for image files (after file is added to project)
-    if (this.isImageFile(finalFileName)) {
+    // Importers that write their own companions pass skipCompanionCreation so the
+    // generic defaults do not race with (and clobber) the authored ones.
+    if (!options.skipCompanionCreation && this.isImageFile(finalFileName)) {
       console.log('[ProjectExplorer] Image file detected, will create texture + frameset files:', finalFileName);
       persistDone.then(() => {
         console.log('[ProjectExplorer] Persistence done, creating companion files for:', finalFileName);
@@ -2393,7 +2395,7 @@ class ProjectExplorer {
     
     switch (filterType) {
       case 'music':
-        return ['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext);
+        return ['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(ext);
       case 'sfx':
         return ['.wav'].includes(ext);
       default:

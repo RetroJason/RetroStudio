@@ -1,6 +1,10 @@
 // pico8.js - Pico-8 API Compatibility Layer for RetroStudio
 // Provides full pico-8 Lua API compatibility for games targeting pico-8 style development
 
+// PICO-8 button index -> RetroStudio input mask.
+// 0 left, 1 right, 2 up, 3 down, 4 O (Z key / B), 5 X (X key / A).
+const PICO8_BUTTON_MASKS = [0x0040, 0x0080, 0x0010, 0x0020, 0x0001, 0x0100];
+
 class LuaPico8Extensions extends BaseLuaExtension {
   constructor(gameEmulator) {
     super();
@@ -9,6 +13,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentPalette = new Map();
     this.randomSeed = 0;
     this.spriteFlags = new Map();
+    // Colour indices skipped when blitting sprite-sheet pixels (palt).
+    this._transparent = new Set([0]);
+    // Decoded sprite sheet / map, installed from the built cart assets.
+    this._sheet = null;
+    this._map = null;
 
     this._logicalWidth = 128;
     this._logicalHeight = 128;
@@ -37,11 +46,137 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.resetRuntimeState();
   }
 
+  /**
+   * Load the cart's sprite sheet and map from the build output.
+   *
+   * These are the exact same artefacts the Studio sprite/tilemap engines use —
+   * `pico8_sprites.d2` and `map.d2m` produced from the imported `.texture` and
+   * `.tilemap`. PICO-8 needs CPU-side pixels because spr()/map() are software
+   * raster ops interleaved with the shape primitives in one framebuffer, and
+   * because sset() mutates the sheet at runtime.
+   */
+  async loadCartAssets() {
+    try {
+      const pathResolver = this._getService?.('pathResolver');
+      const prefix = pathResolver?.getBuildStoragePrefix?.() || 'build/';
+      const files = await this._listBuildFiles(prefix);
+
+      const sheetPath = files.find(p => /(^|\/)pico8_sprites\.d2$/i.test(p));
+      if (sheetPath) {
+        const sheet = this._decodeIndexedD2(await this._loadBinaryFile(sheetPath));
+        if (sheet) {
+          this.setSpriteSheet(sheet.pixels, sheet.width, sheet.height);
+          console.log(`[LuaPico8] Sprite sheet loaded: ${sheet.width}x${sheet.height} from ${sheetPath}`);
+        }
+      }
+
+      const mapPath = files.find(p => /\.d2m$/i.test(p));
+      if (mapPath) {
+        const map = this._decodeD2M(await this._loadBinaryFile(mapPath));
+        if (map) {
+          this.setMapData(map.tiles, map.width, map.height);
+          console.log(`[LuaPico8] Map loaded: ${map.width}x${map.height} from ${mapPath}`);
+        }
+      }
+    } catch (error) {
+      console.warn('[LuaPico8] Failed to load cart assets:', error);
+    }
+  }
+
+  async _listBuildFiles(prefix) {
+    const fileManager = this._getService?.('fileManager');
+    if (!fileManager || typeof fileManager.listFiles !== 'function') return [];
+    const results = await fileManager.listFiles(prefix);
+    return (results || []).map(r => (typeof r === 'string' ? r : (r.path || r.name || ''))).filter(Boolean);
+  }
+
+  async _loadBinaryFile(path) {
+    const fileManager = this._getService?.('fileManager');
+    if (!fileManager) return null;
+
+    const pathResolver = this._getService?.('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
+    const obj = await fileManager.loadFile(normPath);
+    const content = obj?.content ?? obj?.fileContent ?? obj?.data;
+
+    if (content instanceof ArrayBuffer) return new Uint8Array(content);
+    if (ArrayBuffer.isView(content)) return new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+    return null;
+  }
+
+  /** Decode a D2TX indexed texture (I8/I4/I2/I1) to one byte per pixel. */
+  _decodeIndexedD2(bytes) {
+    if (!bytes || bytes.length < 32) return null;
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x54 || bytes[3] !== 0x58) return null;
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const format = view.getUint8(5);
+    const width = view.getUint16(6, true);
+    const height = view.getUint16(8, true);
+    if (!width || !height) return null;
+
+    // Modes per D2File.FORMAT_NAMES: i8 = 0x09, i4 = 0x0a, i2 = 0x0b, i1 = 0x0c.
+    const bitsByFormat = { 0x09: 8, 0x0a: 4, 0x0b: 2, 0x0c: 1 };
+    const bits = bitsByFormat[format];
+    if (!bits) {
+      console.warn(`[LuaPico8] Unsupported sprite sheet format 0x${format.toString(16)}`);
+      return null;
+    }
+
+    const data = bytes.subarray(32);
+    if (bits === 8) {
+      return { pixels: new Uint8Array(data.subarray(0, width * height)), width, height };
+    }
+
+    const d2File = (typeof window !== 'undefined' && window.D2File) || null;
+    if (!d2File?._unpackSubBytePixels) {
+      console.warn('[LuaPico8] D2File unavailable — cannot unpack sub-byte sprite sheet');
+      return null;
+    }
+
+    return {
+      pixels: d2File._unpackSubBytePixels(data, format, bits, width * height),
+      width,
+      height,
+    };
+  }
+
+  /**
+   * Decode the first layer of a D2MP tilemap into PICO-8 sprite indices.
+   * Studio gids are 1-based (firstGid 1 == sprite 0), and gid 0 means empty,
+   * which maps back onto PICO-8's "sprite 0 is empty" convention.
+   */
+  _decodeD2M(bytes) {
+    if (!bytes || bytes.length < 40) return null;
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x4d || bytes[3] !== 0x50) return null;
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const layerCount = view.getUint16(16, true);
+    if (layerCount === 0) return null;
+
+    const layerChunkOffset = view.getUint32(28, true);
+    const layerBase = layerChunkOffset + 4; // skip the chunk's own count field
+    const width = view.getUint16(layerBase + 4, true);
+    const height = view.getUint16(layerBase + 6, true);
+    const dataOffset = layerChunkOffset + view.getUint32(layerBase + 8, true);
+    const cellCount = Math.min(width * height, view.getUint32(layerBase + 12, true) / 4);
+
+    const tiles = new Uint8Array(width * height);
+    for (let i = 0; i < cellCount; i += 1) {
+      const gid = view.getUint32(dataOffset + i * 4, true);
+      tiles[i] = gid > 0 ? ((gid - 1) & 0xff) : 0;
+    }
+
+    return { tiles, width, height };
+  }
+
   resetRuntimeState() {
     this.currentColor = 0;
     this._cameraX = 0;
     this._cameraY = 0;
     this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
+    this.currentPalette.clear();
+    this._transparent = new Set([0]);
     this._clearFb(0, false);
   }
 
@@ -178,12 +313,17 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return x >= 0 && y >= 0 && x < this._fbWidth && y < this._fbHeight;
   }
 
-  _plot(x, y, c, useCamera = true) {
+  _plot(x, y, color, useCamera = true) {
     const drawX = (x | 0) - (useCamera ? this._cameraX : 0);
     const drawY = (y | 0) - (useCamera ? this._cameraY : 0);
     if (!this._inClip(drawX, drawY)) {
       return;
     }
+
+    // pal() draw-palette remap applies to every draw operation.
+    const c = this.currentPalette.size > 0
+      ? (this.currentPalette.get(color & 0x0f) ?? color)
+      : color;
 
     if (!this._isFullResolutionMode()) {
       if (!this._inBounds(drawX, drawY)) {
@@ -538,6 +678,28 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return value;
   }
 
+  /**
+   * Read an optional PICO-8 flag argument.
+   * PICO-8 passes real booleans (palt(0, true)), but 0/1 is also idiomatic,
+   * so both spellings are accepted.
+   */
+  _optionalFlagArg(args, index, defaultValue, methodName, argName) {
+    const raw = args?.[index];
+    if (raw === undefined || raw === null || raw === '') {
+      return defaultValue;
+    }
+    if (typeof raw === 'boolean') return raw;
+    if (typeof raw === 'number') return raw !== 0;
+    if (typeof raw === 'string') {
+      const normalized = raw.toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+      const numeric = Number.parseFloat(raw);
+      if (Number.isFinite(numeric)) return numeric !== 0;
+    }
+    throw new Error(`[Pico8] ${methodName} invalid boolean argument ${argName}: ${raw}`);
+  }
+
   // ============================================================
   // Graphics Functions
   // ============================================================
@@ -715,8 +877,91 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
+   * Install the decoded PICO-8 sprite sheet (one byte per pixel, palette
+   * indices). Shared with the Studio sprite asset built from the same cart, so
+   * there is a single source of pixels.
+   */
+  setSpriteSheet(pixels, width = 128, height = 128) {
+    if (!pixels || !width || !height) {
+      this._sheet = null;
+      return;
+    }
+    this._sheet = {
+      pixels: pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels),
+      width: width | 0,
+      height: height | 0,
+    };
+  }
+
+  /** Install map tile data (one byte per cell = sprite index). */
+  setMapData(tiles, width = 128, height = 64) {
+    if (!tiles || !width || !height) {
+      this._map = null;
+      return;
+    }
+    this._map = {
+      tiles: tiles instanceof Uint8Array ? tiles : new Uint8Array(tiles),
+      width: width | 0,
+      height: height | 0,
+    };
+  }
+
+  _sheetPixel(x, y) {
+    const sheet = this._sheet;
+    if (!sheet) return 0;
+    if (x < 0 || y < 0 || x >= sheet.width || y >= sheet.height) return 0;
+    return sheet.pixels[y * sheet.width + x] & 0x0f;
+  }
+
+  /** Sprite flags packed back into the PICO-8 byte layout (bit f = flag f). */
+  _spriteFlagByte(n) {
+    let byte = 0;
+    for (let f = 0; f < 8; f += 1) {
+      if (this.spriteFlags.get(`sprite_${n}_flag_${f}`)) byte |= (1 << f);
+    }
+    return byte;
+  }
+
+  /**
+   * Copy a rectangle of the sprite sheet into the framebuffer.
+   * Goes through _plot so clip, camera, transparency and the high-resolution
+   * mode all behave exactly as they do for the shape primitives.
+   */
+  _blitSheet(sx, sy, sw, sh, dx, dy, flipX = false, flipY = false) {
+    if (!this._sheet || sw <= 0 || sh <= 0) return;
+
+    for (let row = 0; row < sh; row += 1) {
+      const srcY = sy + (flipY ? (sh - 1 - row) : row);
+      for (let col = 0; col < sw; col += 1) {
+        const srcX = sx + (flipX ? (sw - 1 - col) : col);
+        const c = this._sheetPixel(srcX, srcY);
+        if (this._isTransparentColor(c)) continue;
+        this._plot(dx + col, dy + row, c);
+      }
+    }
+  }
+
+  /** Nearest-neighbour stretch of a sheet rectangle (backs sspr). */
+  _blitSheetScaled(sx, sy, sw, sh, dx, dy, dw, dh, flipX = false, flipY = false) {
+    if (!this._sheet || sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+
+    for (let row = 0; row < dh; row += 1) {
+      const v = Math.floor((row * sh) / dh);
+      const srcY = sy + (flipY ? (sh - 1 - v) : v);
+      for (let col = 0; col < dw; col += 1) {
+        const u = Math.floor((col * sw) / dw);
+        const srcX = sx + (flipX ? (sw - 1 - u) : u);
+        const c = this._sheetPixel(srcX, srcY);
+        if (this._isTransparentColor(c)) continue;
+        this._plot(dx + col, dy + row, c);
+      }
+    }
+  }
+
+  /**
    * Draw sprite n at (x,y) with optional width/height/flip flags
    * Lua: spr(n, x, y, [w, h, fx, fy])
+   * w/h are measured in sprite cells and select a pixel rectangle of the sheet.
    */
   spr(...args) {
     const n = this._requireIntegerArg(args, 0, 'spr', 'n');
@@ -726,15 +971,102 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const h = this._optionalNumberArg(args, 4, 1, 'spr', 'h');
     const fx = this._optionalIntegerArg(args, 5, 0, 'spr', 'fx');
     const fy = this._optionalIntegerArg(args, 6, 0, 'spr', 'fy');
-    
-    if (this.gameEmulator?.spriteEngine?.drawSprite) {
-      this.gameEmulator.spriteEngine.drawSprite(
-        n,
-        Math.floor(x), Math.floor(y),
-        Math.floor(w), Math.floor(h),
-        fx !== 0, fy !== 0
-      );
+
+    const sx = (n % 16) * 8;
+    const sy = Math.floor(n / 16) * 8;
+    const sw = Math.max(0, Math.round(w * 8));
+    const sh = Math.max(0, Math.round(h * 8));
+
+    this._blitSheet(sx, sy, sw, sh, Math.floor(x), Math.floor(y), fx !== 0, fy !== 0);
+  }
+
+  /**
+   * Draw a stretched rectangle of the sprite sheet.
+   * Lua: sspr(sx, sy, sw, sh, dx, dy, [dw, dh, fx, fy])
+   */
+  sspr(...args) {
+    const sx = this._requireIntegerArg(args, 0, 'sspr', 'sx');
+    const sy = this._requireIntegerArg(args, 1, 'sspr', 'sy');
+    const sw = this._requireIntegerArg(args, 2, 'sspr', 'sw');
+    const sh = this._requireIntegerArg(args, 3, 'sspr', 'sh');
+    const dx = this._requireNumberArg(args, 4, 'sspr', 'dx');
+    const dy = this._requireNumberArg(args, 5, 'sspr', 'dy');
+    const dw = this._optionalIntegerArg(args, 6, sw, 'sspr', 'dw');
+    const dh = this._optionalIntegerArg(args, 7, sh, 'sspr', 'dh');
+    const fx = this._optionalIntegerArg(args, 8, 0, 'sspr', 'fx');
+    const fy = this._optionalIntegerArg(args, 9, 0, 'sspr', 'fy');
+
+    this._blitSheetScaled(
+      sx, sy, sw, sh,
+      Math.floor(dx), Math.floor(dy), dw, dh,
+      fx !== 0, fy !== 0
+    );
+  }
+
+  /**
+   * Draw map cells as sprites.
+   * Lua: map(cx, cy, sx, sy, cw, ch, [layer])
+   * Sprite 0 is treated as empty. When layer is non-zero only tiles whose
+   * sprite flags contain every bit of layer are drawn.
+   */
+  map(...args) {
+    const cx = this._optionalIntegerArg(args, 0, 0, 'map', 'cx');
+    const cy = this._optionalIntegerArg(args, 1, 0, 'map', 'cy');
+    const sx = this._optionalIntegerArg(args, 2, 0, 'map', 'sx');
+    const sy = this._optionalIntegerArg(args, 3, 0, 'map', 'sy');
+    const cw = this._optionalIntegerArg(args, 4, this._map?.width ?? 128, 'map', 'cw');
+    const ch = this._optionalIntegerArg(args, 5, this._map?.height ?? 64, 'map', 'ch');
+    const layer = this._optionalIntegerArg(args, 6, 0, 'map', 'layer');
+
+    if (!this._map || !this._sheet) return;
+
+    for (let row = 0; row < ch; row += 1) {
+      for (let col = 0; col < cw; col += 1) {
+        const tile = this._mapTile(cx + col, cy + row);
+        if (tile === 0) continue; // PICO-8 skips sprite 0
+        if (layer !== 0 && (this._spriteFlagByte(tile) & layer) !== layer) continue;
+
+        this._blitSheet(
+          (tile % 16) * 8,
+          Math.floor(tile / 16) * 8,
+          8, 8,
+          sx + (col * 8),
+          sy + (row * 8)
+        );
+      }
     }
+  }
+
+  _mapTile(x, y) {
+    const map = this._map;
+    if (!map) return 0;
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) return 0;
+    return map.tiles[y * map.width + x] & 0xff;
+  }
+
+  /**
+   * Get map cell value
+   * Lua: mget(x, y) -> sprite index
+   */
+  mget(...args) {
+    const x = this._requireNumberArg(args, 0, 'mget', 'x');
+    const y = this._requireNumberArg(args, 1, 'mget', 'y');
+    return this._mapTile(Math.floor(x), Math.floor(y));
+  }
+
+  /**
+   * Set map cell value
+   * Lua: mset(x, y, v)
+   */
+  mset(...args) {
+    const x = Math.floor(this._requireNumberArg(args, 0, 'mset', 'x'));
+    const y = Math.floor(this._requireNumberArg(args, 1, 'mset', 'y'));
+    const v = this._optionalIntegerArg(args, 2, 0, 'mset', 'v');
+
+    const map = this._map;
+    if (!map) return;
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) return;
+    map.tiles[y * map.width + x] = v & 0xff;
   }
 
   /**
@@ -744,11 +1076,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
   sget(...args) {
     const x = this._requireNumberArg(args, 0, 'sget', 'x');
     const y = this._requireNumberArg(args, 1, 'sget', 'y');
-    
-    if (this.gameEmulator?.spriteEngine?.getSpritePixel) {
-      return this.gameEmulator.spriteEngine.getSpritePixel(Math.floor(x), Math.floor(y)) || 0;
-    }
-    return 0;
+
+    return this._sheetPixel(Math.floor(x), Math.floor(y));
   }
 
   /**
@@ -756,13 +1085,14 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: sset(x, y, c)
    */
   sset(...args) {
-    const x = this._requireNumberArg(args, 0, 'sset', 'x');
-    const y = this._requireNumberArg(args, 1, 'sset', 'y');
+    const x = Math.floor(this._requireNumberArg(args, 0, 'sset', 'x'));
+    const y = Math.floor(this._requireNumberArg(args, 1, 'sset', 'y'));
     const c = this._optionalNumberArg(args, 2, this.currentColor, 'sset', 'c');
-    
-    if (this.gameEmulator?.spriteEngine?.setSpritePixel) {
-      this.gameEmulator.spriteEngine.setSpritePixel(Math.floor(x), Math.floor(y), Math.floor(c) & 0xFF);
-    }
+
+    const sheet = this._sheet;
+    if (!sheet) return;
+    if (x < 0 || y < 0 || x >= sheet.width || y >= sheet.height) return;
+    sheet.pixels[y * sheet.width + x] = Math.floor(c) & 0x0f;
   }
 
   /**
@@ -771,8 +1101,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
    */
   fget(...args) {
     const n = this._requireIntegerArg(args, 0, 'fget', 'n');
-    const f = this._optionalIntegerArg(args, 1, 0, 'fget', 'f');
-    
+    const f = this._optionalIntegerArg(args, 1, -1, 'fget', 'f');
+
+    if (f < 0) {
+      return this._spriteFlagByte(n);
+    }
+
     const key = `sprite_${n}_flag_${f}`;
     return this.spriteFlags.get(key) ? 1 : 0;
   }
@@ -809,19 +1143,29 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
   }
 
+  _isTransparentColor(c) {
+    return this._transparent.has(c & 0x0f);
+  }
+
   /**
    * Set transparent color
    * Lua: palt([c, [t]])
+   * With no arguments the default (colour 0 transparent) is restored.
    */
   palt(...args) {
-    // Store transparent color mapping
     const c = this._optionalIntegerArg(args, 0, -1, 'palt', 'c');
-    const t = this._optionalIntegerArg(args, 1, 1, 'palt', 't');
-    
-    if (c >= 0) {
-      if (this.gameEmulator?.spriteEngine?.setTransparentColor) {
-        this.gameEmulator.spriteEngine.setTransparentColor(c, t !== 0);
-      }
+    const t = this._optionalFlagArg(args, 1, true, 'palt', 't');
+
+    if (c < 0) {
+      this._transparent = new Set([0]);
+    } else if (t) {
+      this._transparent.add(c & 0x0f);
+    } else {
+      this._transparent.delete(c & 0x0f);
+    }
+
+    if (this.gameEmulator?.spriteEngine?.setTransparentColor && c >= 0) {
+      this.gameEmulator.spriteEngine.setTransparentColor(c, t);
     }
   }
 
@@ -1362,6 +1706,56 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (this.gameEmulator?.audioEngine?.playSfx) {
       this.gameEmulator.audioEngine.playSfx(n, channel, offset, length);
     }
+  }
+
+  // ============================================================
+  // Input Functions
+  // ============================================================
+
+  /**
+   * Shared body for btn/btnp.
+   * @param {Array} args - positional Lua args: (i, p), both optional
+   * @param {string} methodName - for argument error messages
+   * @param {(mask: number) => boolean} read - reads one button off the input manager
+   */
+  _readButtons(args, methodName, read) {
+    const input = this.gameEmulator?.inputManager;
+    if (!input) return false;
+
+    // Only one physical controller is wired up, so PICO-8 players 1-7 read as unpressed.
+    const player = this._optionalIntegerArg(args, 1, 0, methodName, 'p');
+    if (player !== 0) return false;
+
+    const raw = args?.[0];
+    if (raw === undefined || raw === null || raw === '') {
+      // No index: PICO-8 returns a bitfield in button order rather than a boolean.
+      let bits = 0;
+      for (let i = 0; i < PICO8_BUTTON_MASKS.length; i++) {
+        if (read(input, PICO8_BUTTON_MASKS[i])) bits |= (1 << i);
+      }
+      return bits;
+    }
+
+    const index = this._requireIntegerArg(args, 0, methodName, 'i');
+    const mask = PICO8_BUTTON_MASKS[index];
+    if (mask === undefined) return false;
+    return read(input, mask);
+  }
+
+  /**
+   * Is button i held this frame?
+   * Lua: btn([i], [p]) -> boolean, or bitfield when i is omitted
+   */
+  btn(...args) {
+    return this._readButtons(args, 'btn', (input, mask) => input.isKeyHeld(mask));
+  }
+
+  /**
+   * Was button i pressed this frame?
+   * Lua: btnp([i], [p]) -> boolean, or bitfield when i is omitted
+   */
+  btnp(...args) {
+    return this._readButtons(args, 'btnp', (input, mask) => input.isKeyPressed(mask));
   }
 
   // ============================================================

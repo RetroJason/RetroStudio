@@ -122,7 +122,7 @@ class EditorRegistry {
     if (!targetFolder) {
       if (extension === '.lua') {
   targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Lua` : 'Resources/Lua';
-      } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
+      } else if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(extension)) {
   targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/Music` : 'Resources/Music';
       } else if (extension === '.wav') {
   targetFolder = (window.ProjectPaths && window.ProjectPaths.getSourcesRootUi) ? `${window.ProjectPaths.getSourcesRootUi()}/SFX` : 'Resources/SFX';

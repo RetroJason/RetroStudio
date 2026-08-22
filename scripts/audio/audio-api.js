@@ -1,6 +1,9 @@
 // audio-api.js
 // High-level Audio Engine API for games and applications
 
+/** PICO-8 mixes four sfx channels; a new sfx on a channel replaces the old one. */
+const PICO8_SFX_CHANNELS = 4;
+
 class AudioEngine extends EventTarget {
   constructor() {
     super(); // Enable event functionality
@@ -24,7 +27,12 @@ class AudioEngine extends EventTarget {
     this.nextInstanceId = 1;
     this.loadedModResourceId = null;
     this.lastSongStartError = null;
-    
+
+    // PICO-8 playback (music()/sfx())
+    this.picoResourceProvider = null;
+    this.picoMusic = null; // { number, node, gain }
+    this.picoMusicCache = new Map(); // song number -> rendered samples
+
     this.isInitialized = false;
     this.initializationPromise = null;
   }
@@ -83,7 +91,7 @@ class AudioEngine extends EventTarget {
       }
       
       // Load audio worklet
-      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js?v=2');
+      await this.audioContext.audioWorklet.addModule('scripts/audio/mixer-worklet.js?v=3');
       this.workletNode = new AudioWorkletNode(this.audioContext, 'mixer-worklet');
       this.workletNode.connect(this.audioContext.destination);
       this.setMasterVolume(this.masterVolume.left, this.masterVolume.right);
@@ -341,7 +349,7 @@ class AudioEngine extends EventTarget {
    * @param {number} volume - Volume (0.0 to 1.0+)
    * @returns {string|null} Instance ID for the playing sound, or null on failure
    */
-  async startSound(resourceOrId, volume = 1.0) {
+  async startSound(resourceOrId, volume = 1.0, options = {}) {
     const initialized = await this.ensureInitialized();
     if (!initialized) {
       return null;
@@ -405,7 +413,8 @@ class AudioEngine extends EventTarget {
         type: 'play',
         instanceId,
         channels: channels,
-        sampleRate: resource.audioBuffer.sampleRate
+        sampleRate: resource.audioBuffer.sampleRate,
+        loop: options.loop || null
       });
       
       this.activeSounds.set(instanceId, {
@@ -687,7 +696,10 @@ class AudioEngine extends EventTarget {
       for (const instanceId of this.activeSounds.keys()) {
         this.stopSound(instanceId);
       }
-      
+
+      // Stop PICO-8 music, which plays outside the mixer worklet
+      this.stopPicoMusic(0);
+
       // Clear current resource
       this.currentResourceId = null;
       this.loadedModResourceId = null;
@@ -732,6 +744,7 @@ class AudioEngine extends EventTarget {
       }
       
       // Clear all active tracking
+      this.stopPicoMusic(0);
       this.activeSongs.clear();
       this.activeSounds.clear();
       this.currentResourceId = null;
@@ -742,6 +755,318 @@ class AudioEngine extends EventTarget {
       console.error('[AudioEngine] Error in emergency audio stop:', error);
       return false;
     }
+  }
+
+  // ============================================================
+  // PICO-8 playback (music()/sfx() from scripts/lua/pico8.js)
+  // ============================================================
+
+  /**
+   * Supply the lookup used to turn PICO-8 numbers into studio resources.
+   * @param {{getMusicSource?: function(number): (string|object|null),
+   *          getSfxResourceId?: function(number): (string|null)}} provider
+   */
+  setPicoResourceProvider(provider) {
+    this.picoResourceProvider = provider || null;
+  }
+
+  /**
+   * Play an imported PICO-8 song (`.p8mus`).
+   * @param {number} n - Song number, or -1 to stop.
+   * @param {number} fade - Fade in/out length in milliseconds.
+   * @param {number} mask - Reserved channel mask (unused; PICO-8 compatibility).
+   * @returns {Promise<boolean>} Success status
+   */
+  async playMusic(n, fade = 0, mask = 0xFF) {
+    if (n < 0) {
+      this.stopPicoMusic(fade);
+      return true;
+    }
+
+    const source = this.picoResourceProvider?.getMusicSource?.(n);
+    if (!source) {
+      console.warn(`[AudioEngine] No PICO-8 music resource for music(${n})`);
+      return false;
+    }
+
+    if (typeof PicoAudio === 'undefined') {
+      console.warn('[AudioEngine] PicoAudio module is not loaded; music() ignored');
+      return false;
+    }
+
+    const initialized = await this.ensureInitialized();
+    if (!initialized) {
+      return false;
+    }
+
+    if (this.audioContext.state === 'suspended' && !this._isOutputMuted()) {
+      try {
+        await this.audioContext.resume();
+      } catch (error) {
+        console.error('[AudioEngine] Failed to resume AudioContext before PICO-8 music:', error);
+        return false;
+      }
+    }
+
+    let rendered;
+    try {
+      rendered = this._renderPicoMusic(n, source);
+    } catch (error) {
+      console.error(`[AudioEngine] Failed to render PICO-8 music ${n}:`, error);
+      return false;
+    }
+
+    if (!rendered || !rendered.samples.length) {
+      console.warn(`[AudioEngine] PICO-8 music ${n} rendered to silence`);
+      return false;
+    }
+
+    this.stopPicoMusic(0);
+
+    const buffer = this.audioContext.createBuffer(1, rendered.samples.length, rendered.sampleRate);
+    buffer.copyToChannel(rendered.samples, 0);
+
+    const node = this.audioContext.createBufferSource();
+    node.buffer = buffer;
+    if (rendered.loopStartSample !== null) {
+      node.loop = true;
+      node.loopStart = rendered.loopStartSample / rendered.sampleRate;
+      node.loopEnd = buffer.duration;
+    }
+
+    const gain = this.audioContext.createGain();
+    const target = this._picoMasterGain();
+    const fadeSeconds = Math.max(0, Number(fade) || 0) / 1000;
+    if (fadeSeconds > 0) {
+      gain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      gain.gain.linearRampToValueAtTime(target, this.audioContext.currentTime + fadeSeconds);
+    } else {
+      gain.gain.value = target;
+    }
+
+    node.connect(gain);
+    gain.connect(this.audioContext.destination);
+
+    node.onended = () => {
+      if (this.picoMusic && this.picoMusic.node === node) {
+        this.picoMusic = null;
+      }
+    };
+
+    this.picoMusic = { number: n, node, gain };
+    node.start();
+    console.log(`[AudioEngine] Started PICO-8 music ${n} (loop: ${node.loop})`);
+    return true;
+  }
+
+  /**
+   * Stop the currently playing PICO-8 song.
+   * @param {number} fade - Fade out length in milliseconds.
+   * @returns {boolean} Success status
+   */
+  stopPicoMusic(fade = 0) {
+    const playing = this.picoMusic;
+    if (!playing) return false;
+
+    this.picoMusic = null;
+    playing.node.onended = null;
+
+    const fadeSeconds = Math.max(0, Number(fade) || 0) / 1000;
+    const stopAt = this.audioContext.currentTime + fadeSeconds;
+
+    if (fadeSeconds > 0) {
+      playing.gain.gain.setValueAtTime(playing.gain.gain.value, this.audioContext.currentTime);
+      playing.gain.gain.linearRampToValueAtTime(0, stopAt);
+    }
+
+    try {
+      playing.node.stop(stopAt);
+    } catch (_) {
+      // Already stopped.
+    }
+
+    // Release the graph once playback has actually finished.
+    setTimeout(() => {
+      playing.node.disconnect();
+      playing.gain.disconnect();
+    }, Math.ceil(fadeSeconds * 1000) + 50);
+
+    return true;
+  }
+
+  /**
+   * Play an imported PICO-8 sound effect (`.sfx`, built to WAV).
+   * @param {number} n - SFX number, or negative to stop.
+   * @param {number} channel - PICO-8 channel 0-3, or negative to auto-assign.
+   * @param {number} offset - Reserved (PICO-8 compatibility).
+   * @param {number} length - Reserved (PICO-8 compatibility).
+   * @returns {Promise<string|null>} Instance ID, or null on failure
+   */
+  async playSfx(n, channel = -1, offset = 0, length = 32) {
+    if (!this._picoChannels) {
+      this._picoChannels = new Map();
+    }
+
+    const requested = Number.isFinite(channel) ? Math.floor(channel) : -1;
+
+    if (n < 0) {
+      // sfx(-1) stops the given channel, sfx(-2) releases a looping sfx.
+      if (requested >= 0) {
+        const entry = this._picoChannels.get(requested);
+        if (entry) {
+          this.stopSound(entry.instanceId);
+          this._picoChannels.delete(requested);
+        }
+        return null;
+      }
+      for (const [instanceId, playback] of Array.from(this.activeSounds.entries())) {
+        if (playback.isPicoSfx) {
+          this.stopSound(instanceId);
+        }
+      }
+      this._picoChannels.clear();
+      return null;
+    }
+
+    const resourceId = this.picoResourceProvider?.getSfxResourceId?.(n);
+    if (!resourceId) {
+      console.warn(`[AudioEngine] No PICO-8 sfx resource for sfx(${n})`);
+      return null;
+    }
+
+    let target = requested >= 0 ? Math.min(requested, PICO8_SFX_CHANNELS - 1) : -1;
+    if (target < 0) {
+      target = 0;
+      while (target < PICO8_SFX_CHANNELS - 1 && this._picoChannelPlaying(target)) {
+        target++;
+      }
+    }
+
+    // Carts hold a continuous sound (engine hum, wind) by re-issuing the same
+    // sfx on the same channel every frame. Restarting it each time would stack
+    // one overlapping one-shot per frame, so let the existing playback run.
+    const playing = this._picoChannelPlaying(target);
+    if (playing && playing.sfxNumber === n) {
+      return playing.instanceId;
+    }
+    if (playing) {
+      this.stopSound(playing.instanceId);
+    }
+
+    const loop = this._wavLoopPoints(resourceId);
+    const instanceId = await this.startSound(resourceId, this._picoMasterGain(), { loop });
+    if (instanceId) {
+      const playback = this.activeSounds.get(instanceId);
+      if (playback) playback.isPicoSfx = true;
+      this._picoChannels.set(target, {
+        instanceId,
+        sfxNumber: n,
+        // A looping sfx runs until something replaces it, so it must never be
+        // aged out; a one-shot has to be, because the worklet never reports
+        // completion back to us.
+        endsAt: loop ? 0 : Date.now() + this._picoSfxDurationMs(resourceId),
+      });
+    }
+    return instanceId;
+  }
+
+  /**
+   * Current playback on a PICO-8 channel, or null when it is free.
+   *
+   * The mixer worklet never reports completion, so playback is aged out using
+   * the resource duration; without this the channel would stay busy forever.
+   */
+  _picoChannelPlaying(channel) {
+    const entry = this._picoChannels?.get(channel);
+    if (!entry) return null;
+
+    if (!this.activeSounds.has(entry.instanceId)) {
+      this._picoChannels.delete(channel);
+      return null;
+    }
+    if (entry.endsAt && Date.now() >= entry.endsAt) {
+      this.stopSound(entry.instanceId);
+      this._picoChannels.delete(channel);
+      return null;
+    }
+    return entry;
+  }
+
+  _picoSfxDurationMs(resourceId) {
+    const seconds = this.resources.get(resourceId)?.audioBuffer?.duration;
+    return Number.isFinite(seconds) ? seconds * 1000 : 0;
+  }
+
+  /**
+   * Loop points from a WAV's standard `smpl` chunk, in sample frames, or null
+   * when the file is a plain one-shot. The build system writes this chunk for
+   * PICO-8 SFX slots whose cart loop end is past their loop start.
+   */
+  _wavLoopPoints(resourceId) {
+    const resource = this.resources.get(resourceId);
+    if (!resource) return null;
+    if (resource._loopPoints !== undefined) return resource._loopPoints;
+
+    resource._loopPoints = null;
+    const data = resource.data;
+    if (data instanceof ArrayBuffer && data.byteLength >= 12) {
+      const view = new DataView(data);
+      const bytes = new Uint8Array(data);
+      let offset = 12;
+      while (offset + 8 <= bytes.length) {
+        const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+        const size = view.getUint32(offset + 4, true);
+        if (id === 'smpl' && size >= 60 && offset + 8 + size <= bytes.length) {
+          const body = offset + 8;
+          if (view.getUint32(body + 28, true) >= 1) {
+            resource._loopPoints = {
+              start: view.getUint32(body + 44, true),
+              end: view.getUint32(body + 48, true),
+            };
+          }
+          break;
+        }
+        offset += 8 + size + (size & 1);
+      }
+    }
+
+    // The file is rendered at its own rate but decoded to the context rate, so
+    // frame indices have to be rescaled or the loop drifts out of the buffer.
+    const points = resource._loopPoints;
+    if (points && resource.audioBuffer) {
+      const decoded = resource.audioBuffer.length;
+      const total = points.end + 1;
+      if (total > 0 && decoded > 0 && total !== decoded) {
+        const ratio = decoded / total;
+        points.start = Math.round(points.start * ratio);
+        points.end = Math.max(points.start, Math.round((points.end + 1) * ratio) - 1);
+      }
+    }
+    return resource._loopPoints;
+  }
+
+  _picoMasterGain() {
+    const { left, right } = this.masterVolume;
+    return Math.max(0, (left + right) / 2);
+  }
+
+  _renderPicoMusic(n, source) {
+    if (!this.picoMusicCache) {
+      this.picoMusicCache = new Map();
+    }
+    if (this.picoMusicCache.has(n)) {
+      return this.picoMusicCache.get(n);
+    }
+
+    const song = PicoAudio.parseP8Mus(source);
+    const rendered = PicoAudio.renderSong(
+      song.patterns,
+      0,
+      song.slots,
+      this.audioContext.sampleRate
+    );
+    this.picoMusicCache.set(n, rendered);
+    return rendered;
   }
 }
 

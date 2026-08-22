@@ -1,5 +1,53 @@
 // pico8-import-service.js
-// Import PICO-8 text carts (.p8) into RetroStudio projects.
+// Convert PICO-8 text carts (.p8) into RetroStudio source packages (.rws).
+//
+// The converter only ever emits SOURCE files (.png/.texture/.frameset/.sprite/
+// .tilemap/.sfx/.p8mus/.lua). Built artefacts (.d2/.d2s/.d2f/.d2fs/.d2m) are the
+// build system's job, so the cart is packaged as an .rws and handed to the
+// normal RwpService import path rather than being written straight into the
+// Project Explorer.
+
+// Mirrors the text/binary split in ProjectExplorer.addFileToProject so the
+// manifest's `binary` flag round-trips identically on import.
+const PICO8_DRAFT_TEXT_EXTENSIONS = [
+  '.lua', '.txt', '.pal', '.sfx', '.p8mus', '.sprite',
+  '.json', '.package', '.font', '.texture', '.frameset', '.tilemap', '.tmj',
+];
+
+/**
+ * In-memory stand-in for ProjectExplorer used while converting a cart. It
+ * implements just enough of the explorer surface (`addFileToProject` and
+ * `getPreferredManagedFolderForExtension`) that every `importXxx` method can
+ * write to a package instead of to live project storage.
+ */
+class Pico8ProjectDraft {
+  constructor(projectName, sourcesRootUi) {
+    this.projectName = projectName;
+    this.sourcesRootUi = sourcesRootUi;
+    /** @type {Map<string, {storagePath: string, bytes: Uint8Array, binary: boolean}>} */
+    this.files = new Map();
+  }
+
+  getPreferredManagedFolderForExtension(projectName, extension) {
+    const subfolder = window.ProjectPaths?.resolveFolderForExtension?.(extension);
+    return `${projectName}/${subfolder || `${this.sourcesRootUi}/Binary`}`;
+  }
+
+  async addFileToProject(file, folderPath) {
+    const uiPath = `${folderPath}/${file.name}`;
+    const storagePath = window.ProjectPaths?.normalizeStoragePath
+      ? window.ProjectPaths.normalizeStoragePath(uiPath)
+      : uiPath;
+    const dot = file.name.lastIndexOf('.');
+    const extension = dot >= 0 ? file.name.substring(dot).toLowerCase() : '';
+
+    this.files.set(storagePath, {
+      storagePath,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      binary: !PICO8_DRAFT_TEXT_EXTENSIONS.includes(extension),
+    });
+  }
+}
 
 class Pico8ImportService {
   constructor(services) {
@@ -113,9 +161,15 @@ class Pico8ImportService {
       for (let i = 0; i < 32; i += 1) {
         const offset = 8 + (i * 5);
         const token = clean.slice(offset, offset + 5).padEnd(5, '0');
+        // The waveform nibble is 0-f: the low 3 bits pick one of the eight
+        // built-in instruments and bit 3 means "use SFX 0-7 as a custom
+        // instrument" instead. Clamping to 0-7 would turn instrument 8 into
+        // the phaser rather than the triangle it is based on.
+        const instrument = Number.parseInt(token.slice(2, 3), 16) || 0;
         steps.push({
           pitch: this.clampInt(Number.parseInt(token.slice(0, 2), 16) || 0, 0, 63),
-          waveform: this.clampInt(Number.parseInt(token.slice(2, 3), 16) || 0, 0, 7),
+          waveform: instrument & 0x07,
+          custom: instrument >= 8,
           volume: this.clampInt(Number.parseInt(token.slice(3, 4), 16) || 0, 0, 7),
           effect: this.clampInt(Number.parseInt(token.slice(4, 5), 16) || 0, 0, 7),
         });
@@ -174,13 +228,588 @@ class Pico8ImportService {
         speed: this.clampInt(slot.speed || 8, 1, 255),
         loopStart,
         loopEnd,
+        // Only a real loop repeats forever. LEN and plain no-loop slots play
+        // their range once, so the flag has to survive alongside the range.
+        loop: hasLoop,
         steps,
       },
     };
   }
 
+  /**
+   * Parse the __music__ section of a .p8 cart.
+   * Each line is one pattern: 2 hex chars of flags followed by 4 channel bytes.
+   * Flag bits are 0x01 loop start, 0x02 loop end, 0x04 stop.
+   * A channel byte with 0x40 set means that channel is silent for the pattern.
+   */
+  parseP8MusicSection(lines) {
+    const source = Array.isArray(lines) ? lines : String(lines || '').split('\n');
+    const patterns = [];
+
+    for (const rawLine of source) {
+      const clean = String(rawLine || '').trim().toLowerCase().replace(/[^0-9a-f]/g, '');
+      if (clean.length < 10) continue;
+
+      const flags = Number.parseInt(clean.slice(0, 2), 16) || 0;
+      const channels = [];
+      for (let c = 0; c < 4; c += 1) {
+        const byte = Number.parseInt(clean.slice(2 + (c * 2), 4 + (c * 2)), 16);
+        const value = Number.isFinite(byte) ? byte : 0x40;
+        channels.push((value & 0x40) ? -1 : (value & 0x3f));
+      }
+
+      patterns.push({
+        index: patterns.length,
+        flags,
+        loopStart: Boolean(flags & 0x01),
+        loopEnd: Boolean(flags & 0x02),
+        stop: Boolean(flags & 0x04),
+        channels,
+      });
+    }
+
+    return patterns;
+  }
+
+  /**
+   * Group the flat pattern table into songs. PICO-8 `music(n)` starts at pattern n
+   * and runs until a stop or loop-end flag, so each group is one playable song.
+   */
+  buildPicoSongs(patterns) {
+    const list = Array.isArray(patterns) ? patterns : [];
+    const songs = [];
+    let start = null;
+    let loopTo = null;
+
+    for (const pattern of list) {
+      const silent = pattern.channels.every((slot) => slot < 0);
+      if (start === null) {
+        if (silent && !pattern.stop && !pattern.loopEnd) continue;
+        start = pattern.index;
+        loopTo = null;
+      }
+      if (pattern.loopStart) loopTo = pattern.index;
+      if (pattern.stop || pattern.loopEnd) {
+        songs.push({
+          start,
+          end: pattern.index,
+          loopTo: pattern.loopEnd ? (loopTo === null ? start : loopTo) : null,
+        });
+        start = null;
+        loopTo = null;
+      }
+    }
+
+    if (start !== null) {
+      songs.push({ start, end: list[list.length - 1].index, loopTo });
+    }
+
+    return songs;
+  }
+
+  /**
+   * Build a self-contained RetroStudio `.p8mus` song from a song range.
+   * The referenced SFX slots are embedded so the song plays without resolving
+   * sibling `.sfx` resources at runtime.
+   */
+  picoSongToMusicJson(song, patterns, sfxSlots, meta = {}) {
+    const songPatterns = patterns.filter((p) => p.index >= song.start && p.index <= song.end);
+    if (songPatterns.length === 0) return null;
+
+    const usedSlots = new Set();
+    for (const pattern of songPatterns) {
+      for (const slot of pattern.channels) {
+        if (slot >= 0) usedSlots.add(slot);
+      }
+    }
+    if (usedSlots.size === 0) return null;
+
+    const sfx = {};
+    for (const slotIndex of Array.from(usedSlots).sort((a, b) => a - b)) {
+      const slot = (sfxSlots || []).find((s) => s.index === slotIndex);
+      if (!slot) continue;
+      sfx[slotIndex] = {
+        speed: this.clampInt(slot.speed || 8, 1, 255),
+        loopStart: this.clampInt(slot.loopStart, 0, 31),
+        // PICO-8 loop ends are exclusive, so a full-slot loop stores 32.
+        loopEnd: this.clampInt(slot.loopEnd, 0, 32),
+        steps: slot.steps,
+      };
+    }
+
+    return {
+      type: 'pico_music',
+      version: '1.0',
+      name: meta.name || `music_${String(song.start).padStart(2, '0')}`,
+      sourceFile: meta.sourceFile || null,
+      song: {
+        start: song.start,
+        end: song.end,
+        loopTo: song.loopTo,
+        patterns: songPatterns.map((p) => ({
+          index: p.index,
+          flags: p.flags,
+          loopStart: p.loopStart,
+          loopEnd: p.loopEnd,
+          stop: p.stop,
+          channels: p.channels,
+        })),
+      },
+      sfx,
+    };
+  }
+
+  // ============================================================
+  // Graphics (__gfx__) and map (__map__) conversion
+  // ============================================================
+
+  /**
+   * Decode __gfx__ into the 128x128 sprite sheet. Each character is one pixel
+   * as a PICO-8 palette index (0-15).
+   */
+  parseP8GfxSection(lines) {
+    const source = Array.isArray(lines) ? lines : String(lines || '').split('\n');
+    const width = 128;
+    const height = 128;
+    const pixels = new Uint8Array(width * height);
+    let rowsSeen = 0;
+    let wrote = false;
+
+    for (const rawLine of source) {
+      const row = String(rawLine || '').trim().toLowerCase();
+      if (!row) continue;
+      if (rowsSeen >= height) break;
+
+      for (let x = 0; x < Math.min(width, row.length); x += 1) {
+        const n = Number.parseInt(row[x], 16);
+        if (Number.isFinite(n)) {
+          pixels[rowsSeen * width + x] = n & 0x0f;
+          wrote = true;
+        }
+      }
+      rowsSeen += 1;
+    }
+
+    return wrote ? { width, height, pixels, rows: rowsSeen } : null;
+  }
+
+  /**
+   * Decode __map__ into tile indices. The text section only ever carries the
+   * 32 rows of dedicated map memory; rows 32-63 live in the shared region.
+   */
+  parseP8MapSection(lines) {
+    const source = Array.isArray(lines) ? lines : String(lines || '').split('\n');
+    const width = 128;
+    const rows = [];
+
+    for (const rawLine of source) {
+      const line = String(rawLine || '').trim().toLowerCase();
+      if (line) rows.push(line);
+    }
+    if (rows.length === 0) return null;
+
+    const height = rows.length;
+    const tiles = new Uint8Array(width * height);
+    let wrote = false;
+
+    for (let y = 0; y < height; y += 1) {
+      const row = rows[y];
+      for (let x = 0; x < width; x += 1) {
+        const i = x * 2;
+        if (i + 1 >= row.length) break;
+        const byte = Number.parseInt(row.slice(i, i + 2), 16);
+        if (Number.isFinite(byte)) {
+          tiles[y * width + x] = byte & 0xff;
+          wrote = true;
+        }
+      }
+    }
+
+    return wrote ? { width, height, tiles } : null;
+  }
+
+  /**
+   * PICO-8 map rows 32-63 share memory with sprites 128-255 (gfx rows 64-127).
+   * Reinterpret that region as tile bytes: two 4-bit pixels per byte, low nibble
+   * first.
+   */
+  extractSharedMapRows(gfx) {
+    if (!gfx || gfx.rows < 128) return null;
+
+    const width = 128;
+    const height = 32;
+    const tiles = new Uint8Array(width * height);
+    let nonZero = 0;
+
+    for (let index = 0; index < tiles.length; index += 1) {
+      const gfxRow = 64 + Math.floor(index / 64);
+      const x = (index % 64) * 2;
+      const base = gfxRow * gfx.width + x;
+      const byte = (gfx.pixels[base] & 0x0f) | ((gfx.pixels[base + 1] & 0x0f) << 4);
+      tiles[index] = byte;
+      if (byte !== 0) nonZero += 1;
+    }
+
+    return nonZero > 0 ? { width, height, tiles, nonZero } : null;
+  }
+
+  /**
+   * Detect whether a cart draws sprites 128-255. Those sprites occupy the same
+   * bytes as map rows 32-63, so only one interpretation can be meaningful.
+   */
+  cartUsesHighSprites(luaSource) {
+    const source = String(luaSource || '');
+    for (const match of source.matchAll(/\b(?:spr|sspr)\s*\(\s*(\d+)/g)) {
+      if (Number(match[1]) >= 128) return true;
+    }
+    return false;
+  }
+
+  /** PICO-8's fixed 16-colour palette as `#rrggbb` strings. */
+  static get PICO8_PALETTE() {
+    return [
+      '#000000', '#1d2b53', '#7e2553', '#008751',
+      '#ab5236', '#5f574f', '#c2c3c7', '#fff1e8',
+      '#ff004d', '#ffa300', '#ffec27', '#00e436',
+      '#29adff', '#83769c', '#ff77a8', '#ffccaa',
+    ];
+  }
+
+  _crc32(bytes) {
+    let table = Pico8ImportService._crcTable;
+    if (!table) {
+      table = new Uint32Array(256);
+      for (let n = 0; n < 256; n += 1) {
+        let c = n;
+        for (let k = 0; k < 8; k += 1) {
+          c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[n] = c >>> 0;
+      }
+      Pico8ImportService._crcTable = table;
+    }
+
+    let crc = 0xffffffff;
+    for (let i = 0; i < bytes.length; i += 1) {
+      crc = table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  _pngChunk(type, data) {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    for (let i = 0; i < 4; i += 1) out[4 + i] = type.charCodeAt(i);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, this._crc32(out.subarray(4, 8 + data.length)));
+    return out;
+  }
+
+  /** Wrap raw bytes in a zlib stream using uncompressed deflate blocks. */
+  _zlibStore(raw) {
+    const MAX = 0xffff;
+    const blockCount = Math.max(1, Math.ceil(raw.length / MAX));
+    const out = new Uint8Array(2 + (blockCount * 5) + raw.length + 4);
+    let p = 0;
+
+    out[p++] = 0x78; // CMF: deflate, 32K window
+    out[p++] = 0x01; // FLG: no dictionary, fastest
+
+    for (let block = 0; block < blockCount; block += 1) {
+      const offset = block * MAX;
+      const size = Math.min(MAX, raw.length - offset);
+      out[p++] = block === blockCount - 1 ? 1 : 0;
+      out[p++] = size & 0xff;
+      out[p++] = (size >>> 8) & 0xff;
+      out[p++] = ~size & 0xff;
+      out[p++] = (~size >>> 8) & 0xff;
+      out.set(raw.subarray(offset, offset + size), p);
+      p += size;
+    }
+
+    let a = 1;
+    let b = 0;
+    for (let i = 0; i < raw.length; i += 1) {
+      a = (a + raw[i]) % 65521;
+      b = (b + a) % 65521;
+    }
+    out[p++] = (b >>> 8) & 0xff;
+    out[p++] = b & 0xff;
+    out[p++] = (a >>> 8) & 0xff;
+    out[p++] = a & 0xff;
+
+    return out.subarray(0, p);
+  }
+
+  /**
+   * Encode palette-indexed pixels as an 8-bit indexed PNG. Writing indices
+   * directly keeps the PICO-8 colours exact instead of round-tripping RGBA
+   * through a canvas.
+   */
+  encodeIndexedPng(width, height, pixels, palette) {
+    const raw = new Uint8Array(height * (width + 1));
+    for (let y = 0; y < height; y += 1) {
+      raw[y * (width + 1)] = 0; // filter type: none
+      raw.set(pixels.subarray(y * width, (y + 1) * width), (y * (width + 1)) + 1);
+    }
+
+    const ihdr = new Uint8Array(13);
+    const ihdrView = new DataView(ihdr.buffer);
+    ihdrView.setUint32(0, width);
+    ihdrView.setUint32(4, height);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 3; // colour type: indexed
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+
+    const plte = new Uint8Array(palette.length * 3);
+    palette.forEach((hex, i) => {
+      const value = parseInt(String(hex).replace('#', ''), 16);
+      plte[i * 3] = (value >> 16) & 0xff;
+      plte[(i * 3) + 1] = (value >> 8) & 0xff;
+      plte[(i * 3) + 2] = value & 0xff;
+    });
+
+    const parts = [
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      this._pngChunk('IHDR', ihdr),
+      this._pngChunk('PLTE', plte),
+      this._pngChunk('IDAT', this._zlibStore(raw)),
+      this._pngChunk('IEND', new Uint8Array(0)),
+    ];
+
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const png = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      png.set(part, offset);
+      offset += part.length;
+    }
+    return png;
+  }
+
+  /**
+   * Write the cart's sprite sheet as a PNG plus the `.texture` metadata the
+   * build pipeline needs to emit a Dave2D texture.
+   */
+  async importSpriteSheet(draft, projectName, gfx, sourceFile = null) {
+    if (!gfx) return null;
+
+    const folder = draft.getPreferredManagedFolderForExtension(projectName, '.png');
+
+    const baseName = 'pico8_sprites';
+    const palette = Pico8ImportService.PICO8_PALETTE;
+    const png = this.encodeIndexedPng(gfx.width, gfx.height, gfx.pixels, palette);
+
+    // The converter writes its own .texture (4bpp indexed) and .frameset (256 8x8
+    // frames); the explorer's generic image companions would otherwise race with
+    // these writes and replace them with rgb565 / single full-image defaults.
+    await this.addBinaryFile(draft, folder, `${baseName}.png`, png, 'image/png', {
+      skipCompanionCreation: true,
+    });
+
+    // Cross-resource references are stored project-relative so a copied or
+    // renamed project still resolves them (ProjectPaths.rebaseManagedPath
+    // re-prefixes them against the owning file's project).
+    const pngPath = this.toProjectRelativePath(`${folder}/${baseName}.png`);
+    const texture = {
+      version: 1,
+      name: baseName,
+      sourceImage: pngPath,
+      sourceImagePath: pngPath,
+      width: gfx.width,
+      height: gfx.height,
+      colorDepth: 4,
+      palette,
+      metadata: {
+        sourceImagePath: pngPath,
+        outputPixelFormat: 'd2_mode_i4',
+        paletteOffset: 0,
+        scale: 1.0,
+        tileWidth: 8,
+        tileHeight: 8,
+        // PICO-8 treats colour 0 as transparent in spr()/map() unless palt()
+        // says otherwise; the pixels stay opaque so nothing is lost.
+        transparentIndex: 0,
+        sourceCart: sourceFile,
+      },
+    };
+
+    await this.addTextFile(draft, folder, `${baseName}.texture`, JSON.stringify(texture, null, 2));
+
+    const frameset = await this.importFrameset(draft, projectName, folder, baseName, gfx, pngPath);
+
+    return {
+      pngFile: `${baseName}.png`,
+      textureFile: `${baseName}.texture`,
+      texturePath: this.toProjectRelativePath(`${folder}/${baseName}.texture`),
+      framesetFile: frameset?.framesetFile || null,
+      spriteFile: frameset?.spriteFile || null,
+      frameCount: frameset?.frameCount || 0,
+      width: gfx.width,
+      height: gfx.height,
+      spriteCount: 256,
+    };
+  }
+
+  /**
+   * Emit the sprite-sheet grid as a `.frameset` (256 uniform 8x8 frames, frame
+   * id == PICO-8 sprite index) plus a `.sprite` that exposes one single-frame
+   * animation per sprite. This makes the sheet a first-class Studio sprite
+   * asset, so `Sprite.Create('pico8_sprites')` and the PICO-8 runtime share one
+   * source of pixels instead of each carrying their own copy.
+   */
+  async importFrameset(draft, projectName, imageFolder, baseName, gfx, pngPath) {
+    const tileSize = 8;
+    const columns = Math.floor(gfx.width / tileSize);
+    const rows = Math.floor(gfx.height / tileSize);
+    const frameCount = columns * rows;
+    if (frameCount <= 0) return null;
+
+    const frames = [];
+    const animations = [];
+    for (let index = 0; index < frameCount; index += 1) {
+      const label = `spr_${String(index).padStart(3, '0')}`;
+      frames.push({
+        id: index,
+        name: label,
+        x: (index % columns) * tileSize,
+        y: Math.floor(index / columns) * tileSize,
+        w: tileSize,
+        h: tileSize,
+      });
+      // No Sprite.SetFrame exists, so a single-frame animation per sprite is
+      // the only way for Lua to select a specific PICO-8 sprite index.
+      animations.push({
+        name: label,
+        frameIds: [`0:${index}`],
+        frameDuration: 100,
+        loop: false,
+      });
+    }
+
+    const framesetName = `${baseName}.frameset`;
+    const frameset = {
+      version: 1,
+      name: baseName,
+      imagePath: pngPath,
+      imageWidth: gfx.width,
+      imageHeight: gfx.height,
+      frameWidth: tileSize,
+      frameHeight: tileSize,
+      columns,
+      rows,
+      frames,
+    };
+    await this.addTextFile(draft, imageFolder, framesetName, JSON.stringify(frameset, null, 2));
+
+    const spriteFolder = draft.getPreferredManagedFolderForExtension(projectName, '.sprite');
+    const framesetPath = this.toProjectRelativePath(`${imageFolder}/${framesetName}`);
+    const sprite = {
+      version: 1,
+      name: baseName,
+      framesets: [{ path: framesetPath }],
+      animations,
+    };
+    await this.addTextFile(draft, spriteFolder, `${baseName}.sprite`, JSON.stringify(sprite, null, 2));
+
+    return {
+      framesetFile: framesetName,
+      framesetPath,
+      spriteFile: `${baseName}.sprite`,
+      spritePath: this.toProjectRelativePath(`${spriteFolder}/${baseName}.sprite`),
+      frameCount,
+    };
+  }
+
+  toProjectRelativePath(fullPath) {
+    return window.ProjectPaths?.toProjectRelative
+      ? window.ProjectPaths.toProjectRelative(fullPath)
+      : fullPath;
+  }
+
+  /**
+   * Write the cart's map as a Studio `.tilemap`, referencing the sprite-sheet
+   * texture as an 8x8 tileset of 256 tiles.
+   */
+  async importTilemap(draft, projectName, map, texturePath, sourceFile = null) {
+    if (!map) return null;
+
+    const folder = draft.getPreferredManagedFolderForExtension(projectName, '.tilemap');
+
+    const firstGid = 1;
+    // PICO-8's map() skips sprite 0, so tile 0 becomes an empty cell (gid 0).
+    const data = new Array(map.width * map.height);
+    for (let i = 0; i < data.length; i += 1) {
+      const tile = map.tiles[i];
+      data[i] = tile === 0 ? 0 : tile + firstGid;
+    }
+
+    const tilemap = {
+      schema: 'retrostudio-map-v1',
+      app: 'RetroStudio',
+      mapData: {
+        map: {
+          width: map.width,
+          height: map.height,
+          tileWidth: 8,
+          tileHeight: 8,
+          orientation: 'orthogonal',
+        },
+        layers: [{
+          name: 'Map',
+          width: map.width,
+          height: map.height,
+          visible: true,
+          opacity: 1,
+          data,
+        }],
+        tilesets: [{
+          firstGid,
+          name: 'pico8_sprites',
+          tileWidth: 8,
+          tileHeight: 8,
+          columns: 16,
+          tileCount: 256,
+          spacing: 0,
+          margin: 0,
+          sourceTexturePath: texturePath || '',
+          image: {
+            source: texturePath || '',
+            width: 128,
+            height: 128,
+          },
+        }],
+      },
+      source: {
+        cart: sourceFile,
+        note: 'Tile gid = PICO-8 sprite index + 1; gid 0 is PICO-8 sprite 0 (skipped by map()).',
+      },
+    };
+
+    const fileName = 'map.tilemap';
+    await this.addTextFile(draft, folder, fileName, JSON.stringify(tilemap, null, 2));
+
+    return {
+      file: fileName,
+      width: map.width,
+      height: map.height,
+      usedTiles: new Set(Array.from(map.tiles)).size,
+    };
+  }
+
   buildRuntimeLua(luaSource) {
-    const source = String(luaSource || '').trim();
+    // PICO-8 ships a patched Lua, so the cart source has to be lowered to plain
+    // Lua 5.2 before lua.vm.js will even compile it.
+    const parser = (typeof window !== 'undefined' && window.Pico8Parser)
+      || (typeof globalThis !== 'undefined' && globalThis.Pico8Parser);
+    if (!parser) throw new Error('Pico8Parser unavailable; cannot convert cart Lua.');
+
+    // trimEnd only: the parser emits every statement on its original line, so
+    // trimming the front would shift runtime error line numbers off the source.
+    const source = parser.compile(String(luaSource || '')).trimEnd();
     const hasSetup = /\bfunction\s+Setup\s*\(/.test(source);
     const hasUpdate = /\bfunction\s+Update\s*\(/.test(source);
     const hasInit = /\bfunction\s+_init\s*\(/.test(source);
@@ -232,7 +861,7 @@ class Pico8ImportService {
     return chunks.join('\n');
   }
 
-  detectCompatibilityWarnings(luaSource, parsedSections, sfxConverted = 0) {
+  detectCompatibilityWarnings(luaSource, parsedSections, sfxConverted = 0, musicConverted = 0, graphics = {}) {
     const warnings = [];
     const source = String(luaSource || '');
     const checks = [
@@ -263,10 +892,37 @@ class Pico8ImportService {
     const sfxLines = (parsedSections?.sfx || []).join('').trim();
     const musicLines = (parsedSections?.music || []).join('').trim();
 
-    if (gfxLines) warnings.push('Includes __gfx__ data. First pass import stores this section as text; native conversion is pending.');
-    if (mapLines) warnings.push('Includes __map__ data. First pass import stores this section as text; native conversion is pending.');
+    if (gfxLines) {
+      if (graphics?.convertedGraphics) {
+        warnings.push('Converted __gfx__ to pico8_sprites.png/.texture (128x128, 4bpp indexed). PICO-8 treats colour 0 as transparent at draw time; the texture keeps it opaque black.');
+        if (graphics.convertedGraphics.spriteFile) {
+          warnings.push(`Generated ${graphics.convertedGraphics.spriteFile} with ${graphics.convertedGraphics.frameCount} 8x8 frames (one single-frame animation per PICO-8 sprite index), so Sprite.Create() and PICO-8 spr() share the same sheet.`);
+        }
+      } else {
+        warnings.push('Includes __gfx__ data. The raw section is stored as text; no pixels were decoded.');
+      }
+    }
+
+    if (mapLines) {
+      if (graphics?.convertedMap) {
+        warnings.push(`Converted __map__ to map.tilemap (${graphics.convertedMap.width}x${graphics.convertedMap.height} tiles, 8x8). Tile gid = sprite index + 1; gid 0 means empty because PICO-8's map() skips sprite 0.`);
+      } else {
+        warnings.push('Includes __map__ data. The raw section is stored as text; no tiles were decoded.');
+      }
+
+      if (graphics?.sharedRows && !graphics.sharedRowsUsed) {
+        warnings.push('Map rows 32-63 share memory with sprites 128-255, and this cart draws sprites in that range, so only the first 32 map rows were imported.');
+      } else if (graphics?.sharedRowsUsed) {
+        warnings.push('Map rows 32-63 were recovered from the shared sprite/map memory region (sprites 128-255). If the cart actually uses those sprites through variables, delete the extra rows.');
+      }
+    }
+
+    if (!graphics?.convertedGraphics && graphics?.convertedMap) {
+      warnings.push('The imported tilemap has no tileset texture because __gfx__ was empty. Assign a tileset before building.');
+    }
+
     if (sfxLines && !sfxConverted) warnings.push('Includes __sfx__ data, but no slot contained audible steps. The raw section is stored as text.');
-    if (musicLines) warnings.push('Includes __music__ data. First pass import stores this section as text; native conversion is pending.');
+    if (musicLines && !musicConverted) warnings.push('Includes __music__ data, but no pattern referenced a playable SFX slot. The raw section is stored as text.');
 
     return warnings;
   }
@@ -285,6 +941,10 @@ class Pico8ImportService {
       `- Update synthesized: ${summary.transformed.synthesizedUpdate ? 'yes' : 'no'}`,
       '',
       `Converted SFX slots: ${(summary?.convertedSfx || []).length}`,
+      `Converted music songs: ${(summary?.convertedMusic || []).length}`,
+      `Sprite sheet: ${summary?.convertedGraphics ? `${summary.convertedGraphics.textureFile} (${summary.convertedGraphics.width}x${summary.convertedGraphics.height})` : 'none'}`,
+      `Sprite asset: ${summary?.convertedGraphics?.spriteFile ? `${summary.convertedGraphics.spriteFile} (${summary.convertedGraphics.frameCount} frames)` : 'none'}`,
+      `Tilemap: ${summary?.convertedMap ? `${summary.convertedMap.file} (${summary.convertedMap.width}x${summary.convertedMap.height} tiles)` : 'none'}`,
       '',
       'Compatibility warnings:',
       warningLines,
@@ -301,22 +961,62 @@ class Pico8ImportService {
     alert(message);
   }
 
-  async addTextFile(explorer, folderPath, fileName, content) {
+  async addTextFile(draft, folderPath, fileName, content) {
     const file = new File([String(content || '')], fileName, { type: 'text/plain' });
-    await explorer.addFileToProject(file, folderPath, true, true);
+    await draft.addFileToProject(file, folderPath, true, true);
+  }
+
+  async addBinaryFile(draft, folderPath, fileName, bytes, mimeType = 'application/octet-stream', options = {}) {
+    const file = new File([bytes], fileName, { type: mimeType });
+    await draft.addFileToProject(file, folderPath, true, true, options);
+  }
+
+  /**
+   * Stamp the package settings a PICO-8 cart implies. Without a category the
+   * runtime packager refuses to emit app.ini, so an imported cart would fail to
+   * play until the user opened Package Settings by hand.
+   */
+  async applyPackageSettings(draft, projectName, parsed) {
+    const settings = {
+      formatVersion: 1,
+      projectName,
+      packageKind: 'rwa',
+      title: this.readCartHeaderComment(parsed?.lua, 0) || projectName,
+      author: this.readCartHeaderComment(parsed?.lua, 1) || '',
+      version: '1.0.0',
+      description: '',
+      category: 'lua_game',
+      icons: { icon32: '', icon128: '' },
+      screenshots: [],
+      videos: [],
+    };
+
+    const folder = `${projectName}/${this.getSourcesRootUi()}/Package`;
+    await this.addTextFile(draft, folder, 'app.package', JSON.stringify(settings, null, 2));
+  }
+
+  /**
+   * PICO-8 carts conventionally open with `-- title` then `-- by author`.
+   */
+  readCartHeaderComment(lua, index) {
+    if (typeof lua !== 'string') return '';
+    const comments = [];
+    for (const line of lua.split('\n', 8)) {
+      const match = line.match(/^\s*--\s*(.+?)\s*$/);
+      if (!match) break;
+      comments.push(match[1].replace(/^by\s+/i, ''));
+    }
+    return comments[index] || '';
   }
 
   /**
    * Convert every audible slot in the cart's __sfx__ section into a Studio `.sfx`
    * resource. File names keep the PICO-8 slot number so `sfx(n)` calls line up.
    */
-  async importSfxSlots(explorer, projectName, sfxLines) {
-    const slots = this.parseP8SfxSection(sfxLines);
-    if (slots.length === 0) return [];
+  async importSfxSlots(draft, projectName, slots) {
+    if (!Array.isArray(slots) || slots.length === 0) return [];
 
-    const sfxFolder = explorer.getPreferredManagedFolderForExtension
-      ? explorer.getPreferredManagedFolderForExtension(projectName, '.sfx')
-      : `${projectName}/${this.getSourcesRootUi()}/SFX`;
+    const sfxFolder = draft.getPreferredManagedFolderForExtension(projectName, '.sfx');
 
     const converted = [];
     for (const slot of slots) {
@@ -324,7 +1024,7 @@ class Pico8ImportService {
       if (!spec) continue;
 
       const fileName = `sfx_${String(slot.index).padStart(2, '0')}.sfx`;
-      await this.addTextFile(explorer, sfxFolder, fileName, JSON.stringify(spec, null, 2));
+      await this.addTextFile(draft, sfxFolder, fileName, JSON.stringify(spec, null, 2));
       converted.push({
         slot: slot.index,
         file: fileName,
@@ -337,38 +1037,72 @@ class Pico8ImportService {
     return converted;
   }
 
-  async importProject(file, options = {}) {
-    this.ensureDeps();
-    const explorer = this.projectExplorer;
-    if (!explorer) throw new Error('ProjectExplorer unavailable');
+  /**
+   * Convert the cart's __music__ section into `.p8mus` song resources.
+   * One file per song entry point, named so `music(n)` maps to `music_NN.p8mus`.
+   */
+  async importMusicSongs(draft, projectName, musicLines, sfxSlots, sourceFile = null) {
+    const patterns = this.parseP8MusicSection(musicLines);
+    if (patterns.length === 0) return [];
 
+    const songs = this.buildPicoSongs(patterns);
+    if (songs.length === 0) return [];
+
+    const musicFolder = draft.getPreferredManagedFolderForExtension(projectName, '.p8mus');
+
+    const converted = [];
+    for (const song of songs) {
+      const name = `music_${String(song.start).padStart(2, '0')}`;
+      const spec = this.picoSongToMusicJson(song, patterns, sfxSlots, { name, sourceFile });
+      if (!spec) continue;
+
+      const fileName = `${name}.p8mus`;
+      await this.addTextFile(draft, musicFolder, fileName, JSON.stringify(spec, null, 2));
+      converted.push({
+        start: song.start,
+        end: song.end,
+        loopTo: song.loopTo,
+        patterns: spec.song.patterns.length,
+        sfxSlots: Object.keys(spec.sfx).length,
+        file: fileName,
+      });
+    }
+
+    return converted;
+  }
+
+  /**
+   * Convert a `.p8` cart into a RetroStudio source package (`.rws`).
+   *
+   * Nothing is written to project storage and no built artefacts are produced —
+   * the result is a self-contained bundle of source files that the normal
+   * `.rws`/`.rwp` import path (or the Retrowww uploader) can consume.
+   */
+  async convertToRws(file, options = {}) {
     if (!file || typeof file.name !== 'string' || !file.name.toLowerCase().endsWith('.p8')) {
       throw new Error('Only .p8 files are currently supported.');
     }
-
-    const parsed = this.parseP8Text(await file.text());
-    const preferredName = this.sanitizeProjectName(options.projectNameOverride || file.name);
-    const projectName = this.allocateProjectName(explorer, preferredName);
-
-    explorer.addProject(projectName);
-    explorer.setFocusedProjectName(projectName);
-
-    if (typeof explorer.applyTemplateDefaults === 'function') {
-      await explorer.applyTemplateDefaults(projectName);
-    } else if (typeof explorer.ensurePackageScaffold === 'function') {
-      await explorer.ensurePackageScaffold(projectName);
+    if (typeof JSZip === 'undefined') {
+      throw new Error('JSZip is unavailable; cannot build an .rws package.');
     }
 
+    const parsed = this.parseP8Text(await file.text());
+    const projectName = options.projectNameOverride
+      ? this.sanitizeProjectName(options.projectNameOverride)
+      : this.sanitizeProjectName(file.name);
+
     const sourcesRoot = this.getSourcesRootUi();
-    const preferredLuaFolder = explorer.getPreferredManagedFolderForExtension
-      ? explorer.getPreferredManagedFolderForExtension(projectName, '.lua')
-      : `${projectName}/${sourcesRoot}/Lua`;
+    const draft = new Pico8ProjectDraft(projectName, sourcesRoot);
+
+    await this.applyPackageSettings(draft, projectName, parsed);
+
+    const preferredLuaFolder = draft.getPreferredManagedFolderForExtension(projectName, '.lua');
     const importFolder = `${projectName}/${sourcesRoot}/Import/pico8`;
 
     const runtimeLua = this.buildRuntimeLua(parsed.lua);
 
-    await this.addTextFile(explorer, preferredLuaFolder, 'main.lua', runtimeLua);
-    await this.addTextFile(explorer, importFolder, 'cart-original.p8', parsed.raw);
+    await this.addTextFile(draft, preferredLuaFolder, 'main.lua', runtimeLua);
+    await this.addTextFile(draft, importFolder, 'cart-original.p8', parsed.raw);
 
     const namedSections = ['gfx', 'map', 'gff', 'sfx', 'music', 'label'];
     for (const name of namedSections) {
@@ -376,10 +1110,45 @@ class Pico8ImportService {
       if (sectionLines.length === 0) continue;
       const sectionContent = sectionLines.join('\n').trim();
       if (!sectionContent) continue;
-      await this.addTextFile(explorer, importFolder, `${name}.txt`, sectionContent);
+      await this.addTextFile(draft, importFolder, `${name}.txt`, sectionContent);
     }
 
-    const convertedSfx = await this.importSfxSlots(explorer, projectName, parsed.sections.sfx || []);
+    const convertedSfxSlots = this.parseP8SfxSection(parsed.sections.sfx || []);
+    const convertedSfx = await this.importSfxSlots(draft, projectName, convertedSfxSlots);
+    const convertedMusic = await this.importMusicSongs(
+      draft,
+      projectName,
+      parsed.sections.music || [],
+      convertedSfxSlots,
+      file.name
+    );
+
+    const gfx = this.parseP8GfxSection(parsed.sections.gfx || []);
+    const convertedGraphics = await this.importSpriteSheet(draft, projectName, gfx, file.name);
+
+    const map = this.parseP8MapSection(parsed.sections.map || []);
+    const sharedRows = this.extractSharedMapRows(gfx);
+    const usesHighSprites = this.cartUsesHighSprites(parsed.lua);
+    let mapSource = map;
+    let sharedRowsUsed = false;
+
+    // Map rows 32-63 and sprites 128-255 are the same bytes. Only extend the map
+    // when the cart shows no sign of drawing those sprites.
+    if (map && sharedRows && !usesHighSprites) {
+      const tiles = new Uint8Array(map.width * (map.height + sharedRows.height));
+      tiles.set(map.tiles, 0);
+      tiles.set(sharedRows.tiles, map.width * map.height);
+      mapSource = { width: map.width, height: map.height + sharedRows.height, tiles };
+      sharedRowsUsed = true;
+    }
+
+    const convertedMap = await this.importTilemap(
+      draft,
+      projectName,
+      mapSource,
+      convertedGraphics?.texturePath || '',
+      file.name
+    );
 
     const importSummary = {
       sourceFile: file.name,
@@ -396,19 +1165,113 @@ class Pico8ImportService {
         music: (parsed.sections.music || []).length > 0,
       },
       convertedSfx,
-      warnings: this.detectCompatibilityWarnings(parsed.lua, parsed.sections, convertedSfx.length),
+      convertedMusic,
+      convertedGraphics,
+      convertedMap,
+      warnings: this.detectCompatibilityWarnings(
+        parsed.lua,
+        parsed.sections,
+        convertedSfx.length,
+        convertedMusic.length,
+        { convertedGraphics, convertedMap, sharedRows, sharedRowsUsed, usesHighSprites }
+      ),
     };
-    await this.addTextFile(explorer, importFolder, 'import-summary.json', JSON.stringify(importSummary, null, 2));
+    await this.addTextFile(draft, importFolder, 'import-summary.json', JSON.stringify(importSummary, null, 2));
 
-    explorer.renderTree?.();
-    if (typeof explorer.initializeProjectConfig === 'function') {
-      await explorer.initializeProjectConfig();
+    const blob = await this.buildRwsBlob(draft);
+    return { blob, fileName: `${projectName}.rws`, projectName, summary: importSummary };
+  }
+
+  /**
+   * Package a draft as `.rws` — a ZIP holding exactly one `.rwp`, which is what
+   * `RwpService.importProject` detects and unwraps.
+   *
+   * No `runtime/` payload or `package.ini` is emitted: both describe built
+   * output, which only the studio's build system can produce. The studio adds
+   * them when the loaded project is exported or published.
+   */
+  async buildRwsBlob(draft) {
+    const projectZip = new JSZip();
+    const manifestFiles = [];
+
+    for (const entry of draft.files.values()) {
+      projectZip.file(entry.storagePath, entry.bytes, { binary: true });
+      manifestFiles.push({ path: entry.storagePath, builderId: null, binary: entry.binary });
     }
 
-    await this.showImportSummaryModal(importSummary);
+    const manifest = {
+      format: 'retro-watch-project',
+      version: 2,
+      projectName: draft.projectName,
+      sourcesRoot: draft.sourcesRootUi,
+      createdAt: new Date().toISOString(),
+      files: manifestFiles,
+      generator: 'Pico8ImportService',
+    };
+    projectZip.file('rwp.json', new TextEncoder().encode(JSON.stringify(manifest)), { binary: true });
+
+    const projectBlob = await projectZip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const workspaceZip = new JSZip();
+    workspaceZip.file(`${draft.projectName}.rwp`, new Uint8Array(await projectBlob.arrayBuffer()), {
+      binary: true,
+    });
+
+    return workspaceZip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+  }
+
+  /**
+   * Convert a cart and save the resulting `.rws` to disk without touching the
+   * open workspace. Useful for producing bundle-upload fixtures.
+   */
+  async downloadRws(file, options = {}) {
+    const converted = await this.convertToRws(file, options);
+    const url = URL.createObjectURL(converted.blob);
+    try {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = converted.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    return converted;
+  }
+
+  async importProject(file, options = {}) {
+    this.ensureDeps();
+    const explorer = this.projectExplorer;
+    if (!explorer) throw new Error('ProjectExplorer unavailable');
+
+    const rwpService = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+    if (!rwpService || typeof rwpService.importProject !== 'function') {
+      throw new Error('RwpService unavailable; cannot import the converted package.');
+    }
+
+    const preferredName = this.sanitizeProjectName(options.projectNameOverride || file?.name);
+    const projectName = this.allocateProjectName(explorer, preferredName);
+
+    const converted = await this.convertToRws(file, { projectNameOverride: projectName });
+    const packageFile = new File([converted.blob], converted.fileName, {
+      type: 'application/zip',
+    });
+
+    await rwpService.importProject(packageFile, { projectNameOverride: projectName });
+
+    await this.showImportSummaryModal(converted.summary);
 
     window.gameEmulator?.updateStatus?.(`Imported PICO-8 cart: ${projectName}`, 'success');
-    return importSummary;
+    return converted.summary;
   }
 }
 

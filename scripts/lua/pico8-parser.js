@@ -1,0 +1,1328 @@
+/**
+ * PICO-8 dialect parser.
+ *
+ * PICO-8 ships a patched Lua, so cart source has to be lowered to stock Lua 5.2
+ * before lua.vm.js will compile it. This does that with a real lexer and
+ * recursive-descent parser rather than text substitution, because most of the
+ * dialect is grammar rather than spelling: `x += 1`, `if (c) a=1 b=2` and the
+ * bitwise operators all depend on knowing where a statement ends, and that is
+ * exactly what a regex cannot see.
+ *
+ * Operator precedence follows Lua 5.3, which is where PICO-8 took its bitwise
+ * operators from. Lua 5.2 has no bitwise operators at all, so those lower to the
+ * runtime functions in pico8.js (band, bor, shl, ...).
+ *
+ * Output preserves line numbers: every token is emitted on the line it came
+ * from, so runtime errors point at the author's line and not ours.
+ */
+(function umd(root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else root.Pico8Parser = api;
+}(typeof globalThis !== 'undefined' ? globalThis : this, function factory() {
+  'use strict';
+
+  // =========================================================================
+  // Shared tables
+  // =========================================================================
+
+  const KEYWORDS = new Set([
+    'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
+    'goto', 'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return',
+    'then', 'true', 'until', 'while',
+  ]);
+
+  /** Longest match wins, so this is sorted by length before use. */
+  const OPERATORS = [
+    '>>>=', '<<>=', '>><=',
+    '>>>', '<<>', '>><', '^^=', '..=', '...', '<<=', '>>=',
+    '==', '~=', '!=', '<=', '>=', '<<', '>>', '^^', '..', '::',
+    '+=', '-=', '*=', '/=', '%=', '^=', '\\=', '&=', '|=',
+    '+', '-', '*', '/', '%', '^', '#', '&', '|', '~', '<', '>', '=',
+    '(', ')', '{', '}', '[', ']', ';', ':', ',', '.', '\\', '@', '$', '?',
+  ].sort((a, b) => b.length - a.length);
+
+  /** PICO-8 spells "not equal" both ways; normalise at the lexer. */
+  const OPERATOR_ALIASES = { '!=': '~=' };
+
+  /** Lua 5.3 binding powers. right < left means right associative. */
+  const BINARY_PREC = {
+    or: [1, 1],
+    and: [2, 2],
+    '<': [3, 3], '>': [3, 3], '<=': [3, 3], '>=': [3, 3], '~=': [3, 3], '==': [3, 3],
+    '|': [4, 4],
+    '^^': [5, 5],
+    '&': [6, 6],
+    '<<': [7, 7], '>>': [7, 7], '>>>': [7, 7], '<<>': [7, 7], '>><': [7, 7],
+    '..': [9, 8],
+    '+': [10, 10], '-': [10, 10],
+    '*': [11, 11], '/': [11, 11], '%': [11, 11], '\\': [11, 11],
+    '^': [14, 13],
+  };
+  const UNARY_PREC = 12;
+  /** Anything lowered to a call is atomic and never needs bracketing. */
+  const ATOMIC_PREC = [100, 100];
+
+  const UNARY_OPERATORS = new Set(['-', 'not', '#', '~', '@', '%', '$']);
+
+  /** Binary operators Lua 5.2 does not have; these become runtime calls. */
+  const BINARY_TO_CALL = {
+    '&': 'band', '|': 'bor', '^^': 'bxor',
+    '<<': 'shl', '>>': 'shr', '>>>': 'lshr', '<<>': 'rotl', '>><': 'rotr',
+  };
+  const UNARY_TO_CALL = { '~': 'bnot', '@': 'peek', '%': 'peek2', $: 'peek4' };
+
+  /** `a \ b` is integer division: flr(a / b). */
+  const INTEGER_DIVIDE = '\\';
+
+  /**
+   * PICO-8 adds its own string escapes for P8SCII control codes, filling the
+   * character slots below Lua's own \a=7 .. \r=13. Lua 5.2 rejects these
+   * outright, so they are decoded here and re-emitted as plain \ddd escapes.
+   */
+  const P8SCII_ESCAPES = {
+    '*': '\x01', '#': '\x02', '-': '\x03', '|': '\x04', '+': '\x05', '^': '\x06',
+  };
+
+  /** Compound assignment is "any binary operator with = appended". */
+  const COMPOUND_ASSIGN = {
+    '+=': '+', '-=': '-', '*=': '*', '/=': '/', '%=': '%', '^=': '^',
+    '..=': '..', '\\=': '\\',
+    '&=': '&', '|=': '|', '^^=': '^^',
+    '<<=': '<<', '>>=': '>>', '>>>=': '>>>', '<<>=': '<<>', '>><=': '>><',
+  };
+
+  const BLOCK_ENDERS = new Set(['end', 'else', 'elseif', 'until']);
+
+  function fail(message, line, column) {
+    const error = new Error(`pico8: ${message} (line ${line})`);
+    error.line = line;
+    error.column = column;
+    throw error;
+  }
+
+  // =========================================================================
+  // Lexer
+  // =========================================================================
+
+  const isDigit = (ch) => ch >= '0' && ch <= '9';
+  const isHexDigit = (ch) => isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+  const isNameStart = (ch) => (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_';
+  const isNameChar = (ch) => isNameStart(ch) || isDigit(ch);
+
+  function tokenize(source) {
+    const src = String(source == null ? '' : source);
+    const tokens = [];
+    let pos = 0;
+    let line = 1;
+    let lineStart = 0;
+
+    const column = () => (pos - lineStart) + 1;
+
+    /** Reads `[[`/`[==[` and returns the level, or -1 if this is not one. */
+    function longBracketLevel(at) {
+      if (src[at] !== '[') return -1;
+      let i = at + 1;
+      while (src[i] === '=') i += 1;
+      return src[i] === '[' ? (i - at - 1) : -1;
+    }
+
+    function readLongBracket(level, startLine) {
+      const close = `]${'='.repeat(level)}]`;
+      const bodyStart = pos + level + 2;
+      const end = src.indexOf(close, bodyStart);
+      if (end < 0) fail('unfinished long bracket', startLine, column());
+      let body = src.slice(bodyStart, end);
+      for (let i = bodyStart; i < end + close.length; i += 1) {
+        if (src[i] === '\n') { line += 1; lineStart = i + 1; }
+      }
+      const raw = src.slice(pos, end + close.length);
+      pos = end + close.length;
+      // Lua drops a newline immediately after the opening bracket.
+      if (body[0] === '\n') body = body.slice(1);
+      else if (body.startsWith('\r\n')) body = body.slice(2);
+      return { raw, value: body };
+    }
+
+    function readShortString(quote, startLine) {
+      const start = pos;
+      let value = '';
+      pos += 1;
+      while (pos < src.length) {
+        const ch = src[pos];
+        if (ch === quote) {
+          pos += 1;
+          return { raw: src.slice(start, pos), value, quote };
+        }
+        if (ch === '\n') break;
+        if (ch === '\\') {
+          const next = src[pos + 1];
+          const simple = {
+            n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', f: '\f', v: '\v',
+            '\\': '\\', '"': '"', "'": "'", '\n': '\n',
+            ...P8SCII_ESCAPES,
+          };
+          if (next === '\n') { line += 1; lineStart = pos + 2; }
+          if (next === 'z') {
+            // Lua 5.2's \z swallows the following run of whitespace.
+            pos += 2;
+            while (pos < src.length && /\s/.test(src[pos])) {
+              if (src[pos] === '\n') { line += 1; lineStart = pos + 1; }
+              pos += 1;
+            }
+            continue;
+          }
+          if (Object.prototype.hasOwnProperty.call(simple, next)) {
+            value += simple[next];
+            pos += 2;
+          } else if (next === 'x') {
+            value += String.fromCharCode(parseInt(src.substr(pos + 2, 2), 16) || 0);
+            pos += 4;
+          } else if (isDigit(next)) {
+            let digits = '';
+            let i = pos + 1;
+            while (digits.length < 3 && isDigit(src[i])) { digits += src[i]; i += 1; }
+            value += String.fromCharCode(Number(digits));
+            pos = i;
+          } else {
+            value += next == null ? '' : next;
+            pos += 2;
+          }
+          continue;
+        }
+        value += ch;
+        pos += 1;
+      }
+      return fail('unfinished string', startLine, column());
+    }
+
+    function readNumber(startLine, startColumn) {
+      const start = pos;
+      let value;
+
+      if (src[pos] === '0' && (src[pos + 1] === 'x' || src[pos + 1] === 'X')) {
+        pos += 2;
+        let digits = '';
+        while (isHexDigit(src[pos])) { digits += src[pos]; pos += 1; }
+        let fraction = '';
+        if (src[pos] === '.') {
+          pos += 1;
+          while (isHexDigit(src[pos])) { fraction += src[pos]; pos += 1; }
+        }
+        let exponent = 0;
+        if (src[pos] === 'p' || src[pos] === 'P') {
+          pos += 1;
+          let exp = '';
+          if (src[pos] === '+' || src[pos] === '-') { exp += src[pos]; pos += 1; }
+          while (isDigit(src[pos])) { exp += src[pos]; pos += 1; }
+          exponent = Number(exp);
+        }
+        if (!digits && !fraction) fail('malformed number', startLine, startColumn);
+        value = parseInt(digits || '0', 16);
+        for (let i = 0; i < fraction.length; i += 1) {
+          value += parseInt(fraction[i], 16) / (16 ** (i + 1));
+        }
+        value *= 2 ** exponent;
+        return { value, raw: src.slice(start, pos) };
+      }
+
+      if (src[pos] === '0' && (src[pos + 1] === 'b' || src[pos + 1] === 'B')) {
+        pos += 2;
+        let digits = '';
+        while (src[pos] === '0' || src[pos] === '1') { digits += src[pos]; pos += 1; }
+        let fraction = '';
+        if (src[pos] === '.') {
+          pos += 1;
+          while (src[pos] === '0' || src[pos] === '1') { fraction += src[pos]; pos += 1; }
+        }
+        if (!digits && !fraction) fail('malformed binary number', startLine, startColumn);
+        value = digits ? parseInt(digits, 2) : 0;
+        for (let i = 0; i < fraction.length; i += 1) {
+          value += Number(fraction[i]) / (2 ** (i + 1));
+        }
+        return { value, raw: src.slice(start, pos) };
+      }
+
+      while (isDigit(src[pos])) pos += 1;
+      if (src[pos] === '.') { pos += 1; while (isDigit(src[pos])) pos += 1; }
+      if (src[pos] === 'e' || src[pos] === 'E') {
+        pos += 1;
+        if (src[pos] === '+' || src[pos] === '-') pos += 1;
+        while (isDigit(src[pos])) pos += 1;
+      }
+      const raw = src.slice(start, pos);
+      value = Number(raw);
+      if (!Number.isFinite(value)) fail(`malformed number near '${raw}'`, startLine, startColumn);
+      return { value, raw };
+    }
+
+    while (pos < src.length) {
+      const ch = src[pos];
+
+      if (ch === '\n') { pos += 1; line += 1; lineStart = pos; continue; }
+      if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\f' || ch === '\v') { pos += 1; continue; }
+
+      if (ch === '-' && src[pos + 1] === '-') {
+        pos += 2;
+        const level = longBracketLevel(pos);
+        if (level >= 0) { readLongBracket(level, line); continue; }
+        while (pos < src.length && src[pos] !== '\n') pos += 1;
+        continue;
+      }
+
+      // `#include` is a cart directive rather than Lua, so the whole line is
+      // captured verbatim for the importer to resolve later.
+      if (ch === '#'
+        && /^[ \t]*$/.test(src.slice(lineStart, pos))
+        && /^#include\b/i.test(src.slice(pos, pos + 9))) {
+        const directiveLine = line;
+        const directiveColumn = column();
+        let end = src.indexOf('\n', pos);
+        if (end < 0) end = src.length;
+        const file = src.slice(pos + 8, end).trim();
+        pos = end;
+        tokens.push({
+          type: 'include', value: file, line: directiveLine, column: directiveColumn,
+        });
+        continue;
+      }
+
+      const startLine = line;
+      const startColumn = column();
+
+      if (ch === '"' || ch === "'") {
+        const { raw, value, quote } = readShortString(ch, startLine);
+        tokens.push({
+          type: 'string', value, raw, quote, long: false, line: startLine, column: startColumn,
+        });
+        continue;
+      }
+
+      if (ch === '[') {
+        const level = longBracketLevel(pos);
+        if (level >= 0) {
+          const { raw, value } = readLongBracket(level, startLine);
+          tokens.push({
+            type: 'string', value, raw, long: true, line: startLine, column: startColumn,
+          });
+          continue;
+        }
+      }
+
+      if (isDigit(ch) || (ch === '.' && isDigit(src[pos + 1]))) {
+        const { value, raw } = readNumber(startLine, startColumn);
+        tokens.push({ type: 'number', value, raw, line: startLine, column: startColumn });
+        continue;
+      }
+
+      if (isNameStart(ch)) {
+        const start = pos;
+        while (pos < src.length && isNameChar(src[pos])) pos += 1;
+        const word = src.slice(start, pos);
+        tokens.push({
+          type: KEYWORDS.has(word) ? 'keyword' : 'name',
+          value: word,
+          line: startLine,
+          column: startColumn,
+        });
+        continue;
+      }
+
+      const op = OPERATORS.find((candidate) => src.startsWith(candidate, pos));
+      if (!op) fail(`unexpected symbol near '${ch}'`, startLine, startColumn);
+      pos += op.length;
+      tokens.push({
+        type: 'op',
+        value: OPERATOR_ALIASES[op] || op,
+        line: startLine,
+        column: startColumn,
+      });
+    }
+
+    tokens.push({ type: 'eof', value: '<eof>', line, column: column() });
+    return tokens;
+  }
+
+  // =========================================================================
+  // Parser
+  // =========================================================================
+
+  function parse(source) {
+    const tokens = tokenize(source);
+    let index = 0;
+
+    const peek = (ahead = 0) => tokens[Math.min(index + ahead, tokens.length - 1)];
+    const next = () => tokens[index++];
+
+    const isOp = (value, ahead = 0) => {
+      const token = peek(ahead);
+      return token.type === 'op' && token.value === value;
+    };
+    const isKeyword = (value, ahead = 0) => {
+      const token = peek(ahead);
+      return token.type === 'keyword' && token.value === value;
+    };
+
+    function expectOp(value) {
+      if (!isOp(value)) {
+        const token = peek();
+        fail(`'${value}' expected near '${token.value}'`, token.line, token.column);
+      }
+      return next();
+    }
+
+    function expectKeyword(value) {
+      if (!isKeyword(value)) {
+        const token = peek();
+        fail(`'${value}' expected near '${token.value}'`, token.line, token.column);
+      }
+      return next();
+    }
+
+    function expectName() {
+      const token = peek();
+      if (token.type !== 'name') fail(`<name> expected near '${token.value}'`, token.line, token.column);
+      return next().value;
+    }
+
+    // ---- expressions ------------------------------------------------------
+
+    function parsePrimaryExpression() {
+      const token = peek();
+      if (token.type === 'name') {
+        next();
+        return { type: 'Identifier', name: token.value, line: token.line };
+      }
+      if (isOp('(')) {
+        next();
+        const expression = parseExpression(0);
+        expectOp(')');
+        return { type: 'Paren', expression, line: token.line };
+      }
+      return fail(`unexpected symbol near '${token.value}'`, token.line, token.column);
+    }
+
+    const stringNode = (token) => ({
+      type: 'StringLiteral',
+      raw: token.raw,
+      value: token.value,
+      quote: token.quote,
+      long: token.long,
+      line: token.line,
+    });
+
+    function parseCallArguments() {
+      const token = peek();
+      if (token.type === 'string') {
+        next();
+        return { kind: 'string', argument: stringNode(token) };
+      }
+      if (isOp('{')) {
+        return { kind: 'table', argument: parseTable() };
+      }
+      expectOp('(');
+      const args = [];
+      if (!isOp(')')) {
+        args.push(parseExpression(0));
+        while (isOp(',')) { next(); args.push(parseExpression(0)); }
+      }
+      expectOp(')');
+      return { kind: 'paren', args };
+    }
+
+    function parseSuffixedExpression() {
+      let base = parsePrimaryExpression();
+      for (;;) {
+        if (isOp('.')) {
+          next();
+          base = { type: 'Member', base, name: expectName(), indexer: '.', line: base.line };
+        } else if (isOp('[')) {
+          next();
+          const index = parseExpression(0);
+          expectOp(']');
+          base = { type: 'Index', base, index, line: base.line };
+        } else if (isOp(':')) {
+          next();
+          const name = expectName();
+          const callee = { type: 'Member', base, name, indexer: ':', line: base.line };
+          base = { type: 'Call', base: callee, ...parseCallArguments(), line: base.line };
+        } else if (isOp('(') || isOp('{') || peek().type === 'string') {
+          base = { type: 'Call', base, ...parseCallArguments(), line: base.line };
+        } else {
+          return base;
+        }
+      }
+    }
+
+    function parseTable() {
+      const open = expectOp('{');
+      const fields = [];
+      while (!isOp('}')) {
+        if (isOp('[')) {
+          next();
+          const key = parseExpression(0);
+          expectOp(']');
+          expectOp('=');
+          fields.push({ kind: 'index', key, value: parseExpression(0) });
+        } else if (peek().type === 'name' && isOp('=', 1)) {
+          const key = expectName();
+          next();
+          fields.push({ kind: 'name', key, value: parseExpression(0) });
+        } else {
+          fields.push({ kind: 'array', value: parseExpression(0) });
+        }
+        if (isOp(',') || isOp(';')) next();
+        else break;
+      }
+      expectOp('}');
+      return { type: 'Table', fields, line: open.line };
+    }
+
+    function parseFunctionBody(line) {
+      expectOp('(');
+      const params = [];
+      let hasVararg = false;
+      if (!isOp(')')) {
+        for (;;) {
+          if (isOp('...')) { next(); hasVararg = true; break; }
+          params.push(expectName());
+          if (!isOp(',')) break;
+          next();
+        }
+      }
+      expectOp(')');
+      const body = parseBlock();
+      const end = expectKeyword('end');
+      return { params, hasVararg, body, line, endLine: end.line };
+    }
+
+    function parseSimpleExpression() {
+      const token = peek();
+      if (token.type === 'number') {
+        next();
+        return { type: 'NumericLiteral', value: token.value, line: token.line };
+      }
+      if (token.type === 'string') {
+        next();
+        return stringNode(token);
+      }
+      if (isKeyword('nil') || isKeyword('true') || isKeyword('false')) {
+        next();
+        return { type: 'Literal', value: token.value, line: token.line };
+      }
+      if (isOp('...')) {
+        next();
+        return { type: 'Vararg', line: token.line };
+      }
+      if (isOp('{')) return parseTable();
+      if (isKeyword('function')) {
+        next();
+        return { type: 'FunctionExpression', ...parseFunctionBody(token.line) };
+      }
+      return parseSuffixedExpression();
+    }
+
+    function parseExpression(limit) {
+      const token = peek();
+      let left;
+
+      const unary = (token.type === 'op' || token.type === 'keyword') && UNARY_OPERATORS.has(token.value);
+      if (unary) {
+        next();
+        left = {
+          type: 'Unary',
+          operator: token.value,
+          argument: parseExpression(UNARY_PREC),
+          line: token.line,
+        };
+      } else {
+        left = parseSimpleExpression();
+      }
+
+      for (;;) {
+        const op = peek();
+        const usable = op.type === 'op' || op.type === 'keyword';
+        const prec = usable ? BINARY_PREC[op.value] : undefined;
+        if (!prec || prec[0] <= limit) return left;
+        next();
+        const right = parseExpression(prec[1]);
+        left = {
+          type: 'Binary', operator: op.value, left, right, line: left.line,
+        };
+      }
+    }
+
+    function parseExpressionList() {
+      const list = [parseExpression(0)];
+      while (isOp(',')) { next(); list.push(parseExpression(0)); }
+      return list;
+    }
+
+    // ---- statements -------------------------------------------------------
+
+    function blockEnded() {
+      const token = peek();
+      if (token.type === 'eof') return true;
+      return token.type === 'keyword' && BLOCK_ENDERS.has(token.value);
+    }
+
+    /**
+     * `sameLine` is what makes the shorthand forms work: PICO-8's bracketed
+     * `if`/`while` swallow statements only to the end of the physical line.
+     */
+    function parseBlock(sameLine) {
+      const body = [];
+      while (!blockEnded()) {
+        if (sameLine != null && peek().line !== sameLine) break;
+        if (isKeyword('return')) {
+          body.push(parseReturn(sameLine));
+          break;
+        }
+        const statement = parseStatement();
+        if (statement) body.push(statement);
+      }
+      return body;
+    }
+
+    /**
+     * A `return` closing a shorthand if ends with the line: in
+     * `if (a) f() return` the return takes no values, even though the next line
+     * starts with something that would otherwise parse as an expression.
+     */
+    function parseReturn(sameLine) {
+      const token = expectKeyword('return');
+      const endsHere = blockEnded()
+        || isOp(';')
+        || (sameLine != null && peek().line !== sameLine);
+      const values = endsHere ? [] : parseExpressionList();
+      if (isOp(';')) next();
+      return { type: 'Return', values, line: token.line };
+    }
+
+    function parseIf() {
+      const token = expectKeyword('if');
+      const condition = parseExpression(0);
+
+      // A bracketed condition is only shorthand when nothing else follows it.
+      // `if (a or b) and c then` parses as a whole expression ending in `then`,
+      // so it stays an ordinary if.
+      if (condition.type === 'Paren' && !isKeyword('then')) {
+        const body = parseBlock(token.line);
+        if (!body.length) {
+          fail('shorthand if needs a statement on the same line', token.line, token.column);
+        }
+        const clauses = [{ condition: condition.expression, body, line: token.line }];
+        let alternate = null;
+        if (isKeyword('else') && peek().line === token.line) {
+          next();
+          alternate = parseBlock(token.line);
+        }
+        return {
+          type: 'If', clauses, alternate, shorthand: true, line: token.line, endLine: token.line,
+        };
+      }
+
+      expectKeyword('then');
+      const clauses = [{ condition, body: parseBlock(), line: token.line }];
+      while (isKeyword('elseif')) {
+        const elseifToken = next();
+        const elseifCondition = parseExpression(0);
+        expectKeyword('then');
+        clauses.push({ condition: elseifCondition, body: parseBlock(), line: elseifToken.line });
+      }
+      let alternate = null;
+      let elseLine = 0;
+      if (isKeyword('else')) {
+        elseLine = next().line;
+        alternate = parseBlock();
+      }
+      const end = expectKeyword('end');
+      return {
+        type: 'If', clauses, alternate, elseLine, shorthand: false, line: token.line, endLine: end.line,
+      };
+    }
+
+    function parseWhile() {
+      const token = expectKeyword('while');
+      const condition = parseExpression(0);
+
+      if (condition.type === 'Paren' && !isKeyword('do')) {
+        const body = parseBlock(token.line);
+        if (!body.length) {
+          fail('shorthand while needs a statement on the same line', token.line, token.column);
+        }
+        return {
+          type: 'While',
+          condition: condition.expression,
+          body,
+          shorthand: true,
+          line: token.line,
+          endLine: token.line,
+        };
+      }
+
+      expectKeyword('do');
+      const body = parseBlock();
+      const end = expectKeyword('end');
+      return {
+        type: 'While', condition, body, shorthand: false, line: token.line, endLine: end.line,
+      };
+    }
+
+    function parseDo() {
+      const token = expectKeyword('do');
+      const body = parseBlock();
+      const end = expectKeyword('end');
+      return { type: 'Do', body, line: token.line, endLine: end.line };
+    }
+
+    function parseRepeat() {
+      const token = expectKeyword('repeat');
+      const body = parseBlock();
+      const until = expectKeyword('until');
+      const condition = parseExpression(0);
+      return {
+        type: 'Repeat', body, condition, line: token.line, untilLine: until.line,
+      };
+    }
+
+    function parseFor() {
+      const token = expectKeyword('for');
+      const first = expectName();
+      if (isOp('=')) {
+        next();
+        const start = parseExpression(0);
+        expectOp(',');
+        const limit = parseExpression(0);
+        let step = null;
+        if (isOp(',')) { next(); step = parseExpression(0); }
+        expectKeyword('do');
+        const body = parseBlock();
+        const end = expectKeyword('end');
+        return {
+          type: 'NumericFor',
+          variable: first,
+          start,
+          limit,
+          step,
+          body,
+          line: token.line,
+          endLine: end.line,
+        };
+      }
+      const names = [first];
+      while (isOp(',')) { next(); names.push(expectName()); }
+      expectKeyword('in');
+      const iterators = parseExpressionList();
+      expectKeyword('do');
+      const body = parseBlock();
+      const end = expectKeyword('end');
+      return {
+        type: 'GenericFor', names, iterators, body, line: token.line, endLine: end.line,
+      };
+    }
+
+    function parseFunctionStatement() {
+      const token = expectKeyword('function');
+      let name = { type: 'Identifier', name: expectName(), line: token.line };
+      let isMethod = false;
+      while (isOp('.')) {
+        next();
+        name = {
+          type: 'Member', base: name, name: expectName(), indexer: '.', line: token.line,
+        };
+      }
+      if (isOp(':')) {
+        next();
+        name = {
+          type: 'Member', base: name, name: expectName(), indexer: ':', line: token.line,
+        };
+        isMethod = true;
+      }
+      return {
+        type: 'FunctionDeclaration',
+        identifier: name,
+        isLocal: false,
+        isMethod,
+        ...parseFunctionBody(token.line),
+      };
+    }
+
+    function parseLocal() {
+      const token = expectKeyword('local');
+      if (isKeyword('function')) {
+        next();
+        const name = { type: 'Identifier', name: expectName(), line: token.line };
+        return {
+          type: 'FunctionDeclaration',
+          identifier: name,
+          isLocal: true,
+          isMethod: false,
+          ...parseFunctionBody(token.line),
+        };
+      }
+      const names = [expectName()];
+      while (isOp(',')) { next(); names.push(expectName()); }
+      let values = [];
+      if (isOp('=')) { next(); values = parseExpressionList(); }
+      return {
+        type: 'Local', names, values, line: token.line,
+      };
+    }
+
+    function parsePrint() {
+      const token = expectOp('?');
+      const args = [];
+      if (peek().line === token.line && peek().type !== 'eof' && !blockEnded()) {
+        args.push(parseExpression(0));
+        while (isOp(',')) { next(); args.push(parseExpression(0)); }
+      }
+      return {
+        type: 'Call',
+        base: { type: 'Identifier', name: 'print', line: token.line },
+        kind: 'paren',
+        args,
+        line: token.line,
+        statement: true,
+      };
+    }
+
+    function parseExpressionStatement() {
+      const start = peek();
+      const first = parseSuffixedExpression();
+
+      const token = peek();
+      if (token.type === 'op' && COMPOUND_ASSIGN[token.value]) {
+        next();
+        const value = parseExpression(0);
+        return {
+          type: 'CompoundAssignment',
+          target: first,
+          operator: COMPOUND_ASSIGN[token.value],
+          value,
+          line: start.line,
+        };
+      }
+
+      if (isOp(',') || isOp('=')) {
+        const targets = [first];
+        while (isOp(',')) { next(); targets.push(parseSuffixedExpression()); }
+        expectOp('=');
+        return {
+          type: 'Assignment', targets, values: parseExpressionList(), line: start.line,
+        };
+      }
+
+      if (first.type !== 'Call') {
+        fail(`syntax error near '${token.value}'`, token.line, token.column);
+      }
+      return { ...first, statement: true };
+    }
+
+    function parseStatement() {
+      const token = peek();
+
+      if (token.type === 'include') {
+        next();
+        return { type: 'Include', file: token.value, line: token.line };
+      }
+
+      if (token.type === 'op') {
+        if (token.value === ';') { next(); return null; }
+        if (token.value === '::') {
+          next();
+          const name = expectName();
+          expectOp('::');
+          return { type: 'Label', name, line: token.line };
+        }
+        if (token.value === '?') return parsePrint();
+      }
+
+      if (token.type === 'keyword') {
+        switch (token.value) {
+          case 'if': return parseIf();
+          case 'while': return parseWhile();
+          case 'do': return parseDo();
+          case 'for': return parseFor();
+          case 'repeat': return parseRepeat();
+          case 'function': return parseFunctionStatement();
+          case 'local': return parseLocal();
+          case 'return': return parseReturn();
+          case 'break': next(); return { type: 'Break', line: token.line };          case 'goto': {
+            next();
+            return { type: 'Goto', label: expectName(), line: token.line };
+          }
+          default: break;
+        }
+      }
+
+      return parseExpressionStatement();
+    }
+
+    const body = parseBlock();
+    const last = peek();
+    if (last.type !== 'eof') {
+      fail(`unexpected symbol near '${last.value}'`, last.line, last.column);
+    }
+    return { type: 'Chunk', body, line: 1 };
+  }
+
+  // =========================================================================
+  // Code generator
+  // =========================================================================
+
+  /**
+   * Writes tokens at the line they came from. Anything that has to move (an
+   * expanded shorthand `if`, say) simply lands on the line its opener was on.
+   */
+  class Writer {
+    constructor() {
+      this.out = '';
+      this.line = 1;
+      this.needSpace = false;
+      this.suppress = false;
+    }
+
+    put(text, line, options) {
+      if (text === '' || text == null) return;
+      const opts = options || {};
+      const target = Math.max(line || this.line, this.line);
+      if (target > this.line) {
+        this.out += '\n'.repeat(target - this.line);
+        this.line = target;
+      } else if (this.needSpace && !this.suppress && !opts.tight) {
+        this.out += ' ';
+      }
+      this.out += text;
+      // A long string carries its own newlines, so the cursor has to follow
+      // them or everything after it drifts down the file.
+      const breaks = text.length - text.replace(/\n/g, '').length;
+      if (breaks) this.line += breaks;
+      this.needSpace = true;
+      this.suppress = Boolean(opts.open);
+    }
+
+    toString() {
+      return this.out;
+    }
+  }
+
+  function formatNumber(value) {
+    if (Object.is(value, -0)) return '0';
+    return String(value);
+  }
+
+  /**
+   * Long strings have no escapes at all, so they are emitted verbatim. Short
+   * strings are rebuilt from the decoded text because the original spelling may
+   * contain PICO-8 escapes that Lua 5.2 refuses to compile.
+   */
+  function formatString(node) {
+    if (node.long) return node.raw;
+    const quote = node.quote === "'" ? "'" : '"';
+    let out = quote;
+    for (let i = 0; i < node.value.length; i += 1) {
+      const ch = node.value[i];
+      const code = node.value.charCodeAt(i);
+      if (ch === quote || ch === '\\') out += `\\${ch}`;
+      else if (ch === '\n') out += '\\n';
+      else if (ch === '\r') out += '\\r';
+      else if (ch === '\t') out += '\\t';
+      // Always three digits, so a following digit cannot extend the escape.
+      else if (code < 32 || code === 127) out += `\\${String(code).padStart(3, '0')}`;
+      else out += ch;
+    }
+    return out + quote;
+  }
+
+  function precedenceOf(node) {
+    if (node.type === 'Binary') {
+      if (BINARY_TO_CALL[node.operator] || node.operator === INTEGER_DIVIDE) return ATOMIC_PREC;
+      return BINARY_PREC[node.operator] || ATOMIC_PREC;
+    }
+    if (node.type === 'Unary') {
+      if (UNARY_TO_CALL[node.operator]) return ATOMIC_PREC;
+      return [UNARY_PREC, UNARY_PREC];
+    }
+    return ATOMIC_PREC;
+  }
+
+  /** True when the target can safely be written out twice. */
+  function isPureTarget(node) {
+    switch (node.type) {
+      case 'Identifier':
+        return true;
+      case 'Member':
+        return isPureTarget(node.base);
+      case 'Index':
+        return isPureTarget(node.base)
+          && ['Identifier', 'NumericLiteral', 'StringLiteral', 'Literal'].includes(node.index.type);
+      default:
+        return false;
+    }
+  }
+
+  function generate(ast) {
+    const writer = new Writer();
+
+    function genExpression(node, line) {
+      const at = line || node.line;
+      switch (node.type) {
+        case 'Identifier':
+          writer.put(node.name, at);
+          break;
+        case 'NumericLiteral':
+          writer.put(formatNumber(node.value), at);
+          break;
+        case 'StringLiteral':
+          writer.put(formatString(node), at);
+          break;
+        case 'Literal':
+          writer.put(node.value, at);
+          break;
+        case 'Vararg':
+          writer.put('...', at);
+          break;
+        case 'Paren':
+          writer.put('(', at, { open: true });
+          genExpression(node.expression);
+          writer.put(')', writer.line, { tight: true });
+          break;
+        case 'Member':
+          genExpression(node.base, at);
+          writer.put(node.indexer, writer.line, { tight: true, open: true });
+          writer.put(node.name, writer.line);
+          break;
+        case 'Index':
+          genExpression(node.base, at);
+          writer.put('[', writer.line, { tight: true, open: true });
+          genExpression(node.index);
+          writer.put(']', writer.line, { tight: true });
+          break;
+        case 'Call':
+          genCall(node, at);
+          break;
+        case 'Table':
+          genTable(node, at, false);
+          break;
+        case 'FunctionExpression':
+          writer.put('function', at, { open: true });
+          genFunctionRest(node);
+          break;
+        case 'Unary':
+          genUnary(node, at);
+          break;
+        case 'Binary':
+          genBinary(node, at);
+          break;
+        default:
+          throw new Error(`pico8: cannot generate ${node.type}`);
+      }
+    }
+
+    function genCallArgs(node) {
+      if (node.kind === 'string') {
+        writer.put(formatString(node.argument), writer.line, { tight: true });
+        return;
+      }
+      if (node.kind === 'table') {
+        genTable(node.argument, writer.line, true);
+        return;
+      }
+      writer.put('(', writer.line, { tight: true, open: true });
+      node.args.forEach((arg, i) => {
+        if (i > 0) writer.put(',', writer.line, { tight: true });
+        genExpression(arg);
+      });
+      writer.put(')', writer.line, { tight: true });
+    }
+
+    function genCall(node, at) {
+      genExpression(node.base, at);
+      genCallArgs(node);
+    }
+
+    function genTable(node, at, tight) {
+      writer.put('{', at, { tight: Boolean(tight), open: true });
+      node.fields.forEach((field, i) => {
+        if (i > 0) writer.put(',', writer.line, { tight: true });
+        if (field.kind === 'index') {
+          writer.put('[', field.value.line, { open: true });
+          genExpression(field.key);
+          writer.put(']', writer.line, { tight: true });
+          writer.put('=', writer.line);
+        } else if (field.kind === 'name') {
+          writer.put(field.key, field.value.line);
+          writer.put('=', writer.line);
+        }
+        genExpression(field.value);
+      });
+      writer.put('}', writer.line, { tight: true });
+    }
+
+    function genFunctionRest(node) {
+      writer.put('(', writer.line, { tight: true, open: true });
+      node.params.forEach((param, i) => {
+        if (i > 0) writer.put(',', writer.line, { tight: true });
+        writer.put(param, writer.line);
+      });
+      if (node.hasVararg) {
+        if (node.params.length) writer.put(',', writer.line, { tight: true });
+        writer.put('...', writer.line);
+      }
+      writer.put(')', writer.line, { tight: true });
+      genBlock(node.body);
+      writer.put('end', node.endLine);
+    }
+
+    function genUnary(node, at) {
+      const call = UNARY_TO_CALL[node.operator];
+      if (call) {
+        writer.put(call, at);
+        writer.put('(', writer.line, { tight: true, open: true });
+        genExpression(node.argument);
+        writer.put(')', writer.line, { tight: true });
+        return;
+      }
+      // `not` is a word, so it needs the space that `-` and `#` must not have.
+      writer.put(node.operator, at, { open: node.operator !== 'not' });
+      const needsParens = precedenceOf(node.argument)[1] < UNARY_PREC;
+      if (needsParens) writer.put('(', writer.line, { tight: true, open: true });
+      genExpression(node.argument);
+      if (needsParens) writer.put(')', writer.line, { tight: true });
+    }
+
+    function genBinary(node, at) {
+      const call = BINARY_TO_CALL[node.operator];
+      if (call || node.operator === INTEGER_DIVIDE) {
+        writer.put(call || 'flr', at);
+        writer.put('(', writer.line, { tight: true, open: true });
+        genExpression(node.left);
+        writer.put(call ? ',' : '/', writer.line, { tight: Boolean(call) });
+        genExpression(node.right);
+        writer.put(')', writer.line, { tight: true });
+        return;
+      }
+
+      const prec = BINARY_PREC[node.operator];
+      const leftParens = precedenceOf(node.left)[1] < prec[0];
+      if (leftParens) writer.put('(', at, { open: true });
+      genExpression(node.left, leftParens ? writer.line : at);
+      if (leftParens) writer.put(')', writer.line, { tight: true });
+
+      writer.put(node.operator, writer.line);
+
+      const rightParens = precedenceOf(node.right)[0] <= prec[1];
+      if (rightParens) writer.put('(', writer.line, { open: true });
+      genExpression(node.right);
+      if (rightParens) writer.put(')', writer.line, { tight: true });
+    }
+
+    function genTargetList(targets) {
+      targets.forEach((target, i) => {
+        if (i > 0) writer.put(',', writer.line, { tight: true });
+        genExpression(target);
+      });
+    }
+
+    function genExpressionList(values) {
+      values.forEach((value, i) => {
+        if (i > 0) writer.put(',', writer.line, { tight: true });
+        genExpression(value);
+      });
+    }
+
+    /**
+     * `a[f()] += 1` must not call f twice, so an impure target is hoisted into
+     * a do-block first. Simple names and constant keys are rewritten in place.
+     */
+    function genCompoundAssignment(node) {
+      const at = node.line;
+      if (isPureTarget(node.target)) {
+        genExpression(node.target, at);
+        writer.put('=', writer.line);
+        genBinary({
+          type: 'Binary', operator: node.operator, left: node.target, right: node.value, line: at,
+        }, writer.line);
+        return;
+      }
+
+      const object = { type: 'Identifier', name: '__p8_obj', line: at };
+      writer.put('do', at);
+      writer.put('local', writer.line);
+      writer.put('__p8_obj', writer.line);
+
+      let slot;
+      if (node.target.type === 'Index') {
+        writer.put(',', writer.line, { tight: true });
+        writer.put('__p8_key', writer.line);
+        writer.put('=', writer.line);
+        genExpression(node.target.base);
+        writer.put(',', writer.line, { tight: true });
+        genExpression(node.target.index);
+        slot = {
+          type: 'Index', base: object, index: { type: 'Identifier', name: '__p8_key', line: at }, line: at,
+        };
+      } else {
+        writer.put('=', writer.line);
+        genExpression(node.target.base);
+        slot = {
+          type: 'Member', base: object, name: node.target.name, indexer: '.', line: at,
+        };
+      }
+
+      genExpression(slot, writer.line);
+      writer.put('=', writer.line);
+      genBinary({
+        type: 'Binary', operator: node.operator, left: slot, right: node.value, line: writer.line,
+      }, writer.line);
+      writer.put('end', writer.line);
+    }
+
+    function genStatement(node) {
+      const at = node.line;
+      switch (node.type) {
+        case 'Local':
+          writer.put('local', at);
+          node.names.forEach((name, i) => {
+            if (i > 0) writer.put(',', writer.line, { tight: true });
+            writer.put(name, writer.line);
+          });
+          if (node.values.length) {
+            writer.put('=', writer.line);
+            genExpressionList(node.values);
+          }
+          break;
+
+        case 'Assignment':
+          genTargetList(node.targets);
+          writer.put('=', writer.line);
+          genExpressionList(node.values);
+          break;
+
+        case 'CompoundAssignment':
+          genCompoundAssignment(node);
+          break;
+
+        case 'Call':
+          genCall(node, at);
+          break;
+
+        case 'Return':
+          writer.put('return', at);
+          if (node.values.length) genExpressionList(node.values);
+          break;
+
+        case 'Break':
+          writer.put('break', at);
+          break;
+
+        case 'Goto':
+          writer.put('goto', at);
+          writer.put(node.label, writer.line);
+          break;
+
+        case 'Label':
+          writer.put(`::${node.name}::`, at);
+          break;
+
+        case 'Include':
+          fail(
+            `unresolved #include '${node.file}': includes must be expanded before compiling`,
+            node.line,
+            1,
+          );
+          break;
+
+        case 'Do':
+          writer.put('do', at);
+          genBlock(node.body);
+          writer.put('end', node.endLine);
+          break;
+
+        case 'If':
+          node.clauses.forEach((clause, i) => {
+            writer.put(i === 0 ? 'if' : 'elseif', clause.line);
+            genExpression(clause.condition);
+            writer.put('then', writer.line);
+            genBlock(clause.body);
+          });
+          if (node.alternate) {
+            writer.put('else', node.shorthand ? writer.line : (node.elseLine || writer.line));
+            genBlock(node.alternate);
+          }
+          writer.put('end', node.endLine);
+          break;
+
+        case 'While':
+          writer.put('while', at);
+          genExpression(node.condition);
+          writer.put('do', writer.line);
+          genBlock(node.body);
+          writer.put('end', node.endLine);
+          break;
+
+        case 'Repeat':
+          writer.put('repeat', at);
+          genBlock(node.body);
+          writer.put('until', node.untilLine);
+          genExpression(node.condition);
+          break;
+
+        case 'NumericFor':
+          writer.put('for', at);
+          writer.put(node.variable, writer.line);
+          writer.put('=', writer.line);
+          genExpression(node.start);
+          writer.put(',', writer.line, { tight: true });
+          genExpression(node.limit);
+          if (node.step) {
+            writer.put(',', writer.line, { tight: true });
+            genExpression(node.step);
+          }
+          writer.put('do', writer.line);
+          genBlock(node.body);
+          writer.put('end', node.endLine);
+          break;
+
+        case 'GenericFor':
+          writer.put('for', at);
+          node.names.forEach((name, i) => {
+            if (i > 0) writer.put(',', writer.line, { tight: true });
+            writer.put(name, writer.line);
+          });
+          writer.put('in', writer.line);
+          genExpressionList(node.iterators);
+          writer.put('do', writer.line);
+          genBlock(node.body);
+          writer.put('end', node.endLine);
+          break;
+
+        case 'FunctionDeclaration':
+          if (node.isLocal) writer.put('local', at);
+          writer.put('function', at, { open: false });
+          genExpression(node.identifier, writer.line);
+          genFunctionRest(node);
+          break;
+
+        default:
+          throw new Error(`pico8: cannot generate ${node.type}`);
+      }
+    }
+
+    function genBlock(body) {
+      body.forEach((statement) => genStatement(statement));
+    }
+
+    genBlock(ast.body);
+    return writer.toString();
+  }
+
+  function compile(source) {
+    return generate(parse(source));
+  }
+
+  return {
+    tokenize, parse, generate, compile,
+  };
+}));

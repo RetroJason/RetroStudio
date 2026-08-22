@@ -64,6 +64,9 @@ class BuildSystem {
         return 'sprite';
       case '.frameset':
         return 'frameset';
+      case '.tilemap':
+      case '.tmj':
+        return 'tilemap';
       default: return 'copy';
     }
   }
@@ -823,7 +826,7 @@ class CopyBuilder extends BaseBuilder {
       // Read file content - check persistent storage first for saved edits
       let content;
   const fileExtension = (file.path.split('.').pop() || '').toLowerCase();
-  const textExtensions = ['pal', 'lua', 'txt', 'json', 'xml', 'csv', 'md'];
+  const textExtensions = ['pal', 'lua', 'txt', 'json', 'xml', 'csv', 'md', 'p8mus'];
   const isTextFile = textExtensions.includes(fileExtension);
       
       // First try to load from persistent storage (for saved edits)
@@ -1028,6 +1031,7 @@ class SfxBuilder extends BaseBuilder {
             speed: Math.max(1, Number(pico.speed) || 8),
             loopStart: Math.max(0, Number(pico.loopStart) || 0),
             loopEnd: Math.max(0, Number(pico.loopEnd) || 31),
+            loop: !!pico.loop,
             steps: steps.map((step, index) => ({
               index,
               pitch: Number(step.pitch) || 0,
@@ -1091,7 +1095,7 @@ class SfxBuilder extends BaseBuilder {
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  picoWaveSample(phase, waveform) {
+  picoWaveSample(phase, waveform, noise) {
     const p = phase - Math.floor(phase);
     switch (waveform & 0x07) {
       case 0: return 1 - (4 * Math.abs(p - 0.5));
@@ -1100,10 +1104,39 @@ class SfxBuilder extends BaseBuilder {
       case 3: return p < 0.5 ? 1 : -1;
       case 4: return p < 0.25 ? 1 : -1;
       case 5: return (0.6 * Math.sin(2 * Math.PI * p)) + (0.4 * Math.sin(4 * Math.PI * p));
-      case 6: return (Math.random() * 2) - 1;
+      case 6: return this.picoNoiseSample(phase, noise);
       case 7: return (0.7 * Math.sin(2 * Math.PI * p)) + (0.3 * Math.sin(6 * Math.PI * p));
       default: return (2 * p) - 1;
     }
+  }
+
+  /**
+   * PICO-8's noise is not white noise: it is white noise through a one-pole
+   * lowpass whose cutoff follows the note, so low notes rumble and high notes
+   * hiss. A plain Math.random() per sample ignores pitch entirely and renders
+   * every noise SFX as the same flat hiss.
+   *
+   * Constants come from zepto8's reverse-engineered synth: the filter
+   * coefficient is the phase advance scaled by 22050 / freq(key 63), and the
+   * output is boosted for low keys to compensate for the heavier filtering.
+   *
+   * That 22050 is zepto8's synth rate, so the raw coefficient is only correct
+   * when rendering at 22050 Hz. The phase advance per sample is freq/rate, so
+   * at any other rate the coefficient has to be renormalised by rate/22050 or
+   * the filter ends up proportionally darker and quieter.
+   *
+   * The 1.5 gain is also zepto8's, and zepto8 normalises its waveforms to a
+   * +/-0.25 square. picoWaveSample above normalises to a +/-1 square, so the
+   * noise has to be lifted by that same factor of 4 to sit at the right level
+   * relative to the tonal waveforms.
+   */
+  picoNoiseSample(phase, noise) {
+    const state = noise || { lastPhase: phase, lastSample: 0, key: 0, rateScale: 1 };
+    const scale = Math.max(0, phase - state.lastPhase) * 8.858923 * (state.rateScale || 1);
+    const sample = (state.lastSample + (scale * ((Math.random() * 2) - 1))) / (1 + scale);
+    state.lastSample = sample;
+    const factor = 1 - (Math.max(0, Math.min(63, state.key)) / 63);
+    return sample * 6 * (1 + (factor * factor));
   }
 
   renderPicoSamples(pico, sampleRate = 44100, tickRate = 120) {
@@ -1120,6 +1153,7 @@ class SfxBuilder extends BaseBuilder {
     const totalSamples = stepSamples * ((end - start) + 1);
     const out = new Float32Array(totalSamples);
     let phase = 0;
+    const noise = { lastPhase: 0, lastSample: 0, key: 0, rateScale: sampleRate / 22050 };
 
     for (let si = start; si <= end; si += 1) {
       const step = steps[si] || {};
@@ -1129,6 +1163,7 @@ class SfxBuilder extends BaseBuilder {
       const volume = Math.max(0, Math.min(7, Number(step.volume) || 0)) / 7;
       const fx = Number(step.effect) || 0;
       const waveform = Number(step.waveform) || 0;
+      noise.key = Number(step.pitch) || 0;
 
       for (let i = 0; i < stepSamples; i += 1) {
         const t = i / stepSamples;
@@ -1152,21 +1187,31 @@ class SfxBuilder extends BaseBuilder {
         if (fx === 4) amp *= t;
         if (fx === 5) amp *= (1 - t);
 
-        out[((si - start) * stepSamples) + i] = this.picoWaveSample(phase, waveform) * amp * 0.28;
+        // PICO-8 uses volume/7 directly as the channel amplitude; there is no
+        // extra attenuation on top. Scaling further here made quiet SFX
+        // (e.g. noise at volume 1) render around -33 dBFS and inaudible.
+        // buildWavFromFloat32 clamps to +/-1, matching PICO-8's own clipping.
+        out[((si - start) * stepSamples) + i] = this.picoWaveSample(phase, waveform, noise) * amp;
+        noise.lastPhase = phase;
       }
     }
 
     return out;
   }
 
-  buildWavFromFloat32(floatSamples, sampleRate = 44100) {
+  buildWavFromFloat32(floatSamples, sampleRate = 44100, loop = false) {
     const numChannels = 1;
     const bytesPerSample = 2;
     const blockAlign = numChannels * bytesPerSample;
     const byteRate = sampleRate * blockAlign;
     const dataSize = floatSamples.length * bytesPerSample;
-    const fileSize = 36 + dataSize;
-    const wavBuffer = new ArrayBuffer(44 + dataSize);
+    // A looping sample carries a standard 'smpl' chunk (36 byte header + one
+    // 24 byte loop record) so the loop survives as part of the audio file and
+    // does not need a parallel metadata channel.
+    const smplSize = loop ? 60 : 0;
+    const smplTotal = loop ? 8 + smplSize : 0;
+    const fileSize = 36 + smplTotal + dataSize;
+    const wavBuffer = new ArrayBuffer(44 + smplTotal + dataSize);
     const view = new DataView(wavBuffer);
 
     this.writeString(view, 0, 'RIFF');
@@ -1180,10 +1225,33 @@ class SfxBuilder extends BaseBuilder {
     view.setUint32(28, byteRate, true);
     view.setUint16(32, blockAlign, true);
     view.setUint16(34, 16, true);
-    this.writeString(view, 36, 'data');
-    view.setUint32(40, dataSize, true);
 
-    const pcm = new Int16Array(wavBuffer, 44);
+    let offset = 36;
+    if (loop) {
+      this.writeString(view, offset, 'smpl');
+      view.setUint32(offset + 4, smplSize, true);
+      view.setUint32(offset + 8, 0, true);                                  // manufacturer
+      view.setUint32(offset + 12, 0, true);                                 // product
+      view.setUint32(offset + 16, Math.round(1e9 / sampleRate), true);      // sample period (ns)
+      view.setUint32(offset + 20, 60, true);                                // MIDI unity note
+      view.setUint32(offset + 24, 0, true);                                 // pitch fraction
+      view.setUint32(offset + 28, 0, true);                                 // SMPTE format
+      view.setUint32(offset + 32, 0, true);                                 // SMPTE offset
+      view.setUint32(offset + 36, 1, true);                                 // loop count
+      view.setUint32(offset + 40, 0, true);                                 // sampler data bytes
+      view.setUint32(offset + 44, 0, true);                                 // cue point id
+      view.setUint32(offset + 48, 0, true);                                 // type: forward
+      view.setUint32(offset + 52, 0, true);                                 // loop start frame
+      view.setUint32(offset + 56, Math.max(0, floatSamples.length - 1), true); // loop end frame
+      view.setUint32(offset + 60, 0, true);                                 // fraction
+      view.setUint32(offset + 64, 0, true);                                 // play count: infinite
+      offset += 8 + smplSize;
+    }
+
+    this.writeString(view, offset, 'data');
+    view.setUint32(offset + 4, dataSize, true);
+
+    const pcm = new Int16Array(wavBuffer, offset + 8);
     for (let i = 0; i < floatSamples.length; i += 1) {
       const sample = Math.max(-1, Math.min(1, floatSamples[i] || 0));
       pcm[i] = Math.max(-32768, Math.min(32767, sample * 32767));
@@ -1195,7 +1263,7 @@ class SfxBuilder extends BaseBuilder {
   async generatePicoSfxWav(picoSpec) {
     const sampleRate = 44100;
     const floatSamples = this.renderPicoSamples(picoSpec, sampleRate, 120);
-    return this.buildWavFromFloat32(floatSamples, sampleRate);
+    return this.buildWavFromFloat32(floatSamples, sampleRate, !!picoSpec?.loop);
   }
   
   async generateJsfxrWav(parameters) {

@@ -1619,6 +1619,26 @@
           "example": "circfill(64, 64, 10, 5)"
         },
         {
+          "name": "btn",
+          "description": "Is button i held this frame? Omit i to get a bitfield of all buttons. Buttons: 0 left, 1 right, 2 up, 3 down, 4 O, 5 X. Only player 0 is wired to a device.",
+          "parameters": [
+            {"name": "i", "type": "number", "optional": true},
+            {"name": "p", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "boolean"},
+          "example": "if btn(0) then x -= 1 end"
+        },
+        {
+          "name": "btnp",
+          "description": "Was button i pressed this frame? Omit i to get a bitfield of all buttons. Buttons: 0 left, 1 right, 2 up, 3 down, 4 O, 5 X. Only player 0 is wired to a device.",
+          "parameters": [
+            {"name": "i", "type": "number", "optional": true},
+            {"name": "p", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "boolean"},
+          "example": "if btnp(4) then jump() end"
+        },
+        {
           "name": "cls",
           "description": "Clear screen",
           "parameters": [{"name": "c", "type": "number", "optional": true}],
@@ -1644,6 +1664,57 @@
             {"name": "fy", "type": "number", "optional": true}
           ],
           "example": "spr(1, 10, 20)"
+        },
+        {
+          "name": "sspr",
+          "description": "Draw a stretched rectangle of the sprite sheet",
+          "parameters": [
+            {"name": "sx", "type": "number"},
+            {"name": "sy", "type": "number"},
+            {"name": "sw", "type": "number"},
+            {"name": "sh", "type": "number"},
+            {"name": "dx", "type": "number"},
+            {"name": "dy", "type": "number"},
+            {"name": "dw", "type": "number", "optional": true},
+            {"name": "dh", "type": "number", "optional": true},
+            {"name": "fx", "type": "number", "optional": true},
+            {"name": "fy", "type": "number", "optional": true}
+          ],
+          "example": "sspr(0, 0, 8, 8, 10, 20, 16, 16)"
+        },
+        {
+          "name": "map",
+          "description": "Draw map cells as sprites",
+          "parameters": [
+            {"name": "cx", "type": "number", "optional": true},
+            {"name": "cy", "type": "number", "optional": true},
+            {"name": "sx", "type": "number", "optional": true},
+            {"name": "sy", "type": "number", "optional": true},
+            {"name": "cw", "type": "number", "optional": true},
+            {"name": "ch", "type": "number", "optional": true},
+            {"name": "layer", "type": "number", "optional": true}
+          ],
+          "example": "map(0, 0, 0, 0, 16, 16)"
+        },
+        {
+          "name": "mget",
+          "description": "Get the sprite index stored in a map cell",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local tile = mget(3, 4)"
+        },
+        {
+          "name": "mset",
+          "description": "Set the sprite index stored in a map cell",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "v", "type": "number", "optional": true}
+          ],
+          "example": "mset(3, 4, 17)"
         },
         {
           "name": "sin",
@@ -1966,7 +2037,7 @@
           "description": "Set transparent color",
           "parameters": [
             {"name": "c", "type": "number", "optional": true},
-            {"name": "t", "type": "number", "optional": true}
+            {"name": "t", "type": "boolean", "optional": true}
           ],
           "example": "palt(0, true)"
         },

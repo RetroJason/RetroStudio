@@ -361,7 +361,7 @@ class EditorBase extends ViewerBase {
           ? gameEngine.projectExplorer.getPreferredManagedFolderForExtension(project, extension)
           : null;
         targetPath = preferredLuaFolder || `${sourcesRoot}/Lua`;
-      } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
+      } else if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(extension)) {
         targetPath = `${sourcesRoot}/Music`;
       } else if (extension === '.wav' || extension === '.sfx') {
         targetPath = `${sourcesRoot}/SFX`;
@@ -552,7 +552,7 @@ class EditorBase extends ViewerBase {
         ? gameEngine.projectExplorer.getPreferredManagedFolderForExtension(project, extension)
         : null;
       targetPath = preferredLuaFolder || `${sourcesRoot}/Lua`;
-    } else if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
+    } else if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(extension)) {
       targetPath = `${sourcesRoot}/Music`;
     } else if (extension === '.wav' || extension === '.sfx') {
       targetPath = `${sourcesRoot}/SFX`;

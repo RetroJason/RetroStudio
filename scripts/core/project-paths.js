@@ -54,7 +54,7 @@
     resolveFolderForExtension(extension) {
       const ext = (extension || '').toLowerCase();
       if (ext === '.lua' || ext === '.txt') return this.getSourcesSubfolder('Lua');
-      if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(ext)) return this.getSourcesSubfolder('Music');
+      if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(ext)) return this.getSourcesSubfolder('Music');
       if (ext === '.wav' || ext === '.sfx') return this.getSourcesSubfolder('SFX');
       if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(ext)) return this.getSourcesSubfolder('Images');
       if (['.tilemap', '.tmj', '.tmx'].includes(ext)) return this.getSourcesSubfolder('Maps');

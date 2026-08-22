@@ -356,7 +356,7 @@ class SimpleTextViewer extends ViewerBase {
 }
 
 // Static metadata for auto-registration
-SimpleTextViewer.getFileExtensions = () => ['.json', '.texture'];
+SimpleTextViewer.getFileExtensions = () => ['.json', '.texture', '.p8mus'];
 SimpleTextViewer.getDisplayName = () => 'Text Viewer';
 SimpleTextViewer.getIcon = () => '📄';
 SimpleTextViewer.getPriority = () => 50; // Medium priority

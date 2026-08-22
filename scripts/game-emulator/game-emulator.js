@@ -369,7 +369,7 @@ class GameEmulator {
         summary.palettes++;
       } else if (lowerPath.match(/\.(wav|sfx)$/)) {
         summary.sfx++;
-      } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm)$/)) {
+      } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm|p8mus)$/)) {
         summary.music++;
       } else {
         summary.other++;
@@ -1125,7 +1125,7 @@ class GameEmulator {
     // Determine resource type and supported extensions
     const resourceTypeMap = {
       'SFX': ['wav'],
-      'MUSIC': ['mod', 'xm', 's3m', 'it'],
+      'MUSIC': ['mod', 'xm', 's3m', 'it', 'p8mus'],
       'GRAPHICS': ['png', 'jpg', 'jpeg', 'gif', 'bmp'],
       'DATA': ['json', 'txt', 'xml'],
       'SHADERS': ['glsl', 'frag', 'vert'],
@@ -1169,8 +1169,12 @@ class GameEmulator {
       if (!resource.loaded) {
         console.log(`[GameEmulator] Preloading ${resource.type} resource: ${resourceId}`);
         
-        // Handle audio resources (SFX and MUSIC)
-        if (resource.type === 'SFX' || resource.type === 'MUSIC') {
+        // Handle audio resources (SFX and MUSIC). `.p8mus` songs are JSON pattern
+        // data interpreted by the PICO-8 music player, not decodable audio, so they
+        // skip the audio engine preload and are simply marked available.
+        const isDecodableAudio = (resource.type === 'SFX' || resource.type === 'MUSIC')
+          && String(resource.extension || '').toLowerCase() !== 'p8mus';
+        if (isDecodableAudio) {
           const loadPromise = this.preloadAudioResource(resource)
             .then((audioResourceId) => {
               resource.loaded = true;
@@ -1184,6 +1188,20 @@ class GameEmulator {
             });
           
           preloadPromises.push(loadPromise);
+        } else if (String(resource.extension || '').toLowerCase() === 'p8mus') {
+          // Keep the song JSON in memory so the synchronous Lua music() call can
+          // reach it without awaiting storage.
+          const loadPromise = this.preloadPicoMusicResource(resource)
+            .then((text) => {
+              resource.picoMusicSource = text;
+              resource.loaded = true;
+            })
+            .catch((error) => {
+              console.warn(`[GameEmulator] Failed to preload PICO-8 music ${resourceId}:`, error);
+              resource.loaded = false;
+            });
+
+          preloadPromises.push(loadPromise);
         } else {
           // For non-audio resources, just mark as loaded (no preloading needed)
           // They will be loaded on-demand when accessed
@@ -1196,9 +1214,60 @@ class GameEmulator {
     // Wait for all audio resources to load
     await Promise.all(preloadPromises);
     
+    this.registerPicoAudioProvider();
+
     const loadedCount = Array.from(this.resourceMap.values()).filter(r => r.loaded).length;
     console.log(`[GameEmulator] Preloaded ${loadedCount}/${this.resourceMap.size} resources into memory`);
     this.logLoadedAudioResources('after preloadResources');
+  }
+
+  /**
+   * Read a `.p8mus` song body as text. Unlike MOD/WAV resources these stay as
+   * JSON pattern data and are synthesized on demand by the PICO-8 music player.
+   * @param {Object} resource - Resource entry from resourceMap
+   * @returns {Promise<string>} Song JSON text
+   */
+  async preloadPicoMusicResource(resource) {
+    const fileManager = this.getActiveFileManager();
+    if (!fileManager) {
+      throw new Error('FileManager not available');
+    }
+
+    const storagePath = this.normalizeStoragePath(resource.filePath) || resource.filePath;
+    const fileData = await fileManager.loadFile(storagePath);
+    const text = fileData && (fileData.fileContent || fileData.content);
+    if (typeof text !== 'string') {
+      throw new Error(`Expected text content for ${storagePath}`);
+    }
+
+    console.log(`[GameEmulator] Loaded PICO-8 music resource: ${resource.id}`);
+    return text;
+  }
+
+  /**
+   * Teach the AudioEngine how to map PICO-8 song/sfx numbers onto studio
+   * resources so Lua music()/sfx() calls reach real audio.
+   */
+  registerPicoAudioProvider() {
+    if (!this.audioEngine || typeof this.audioEngine.setPicoResourceProvider !== 'function') {
+      return;
+    }
+
+    // Imported songs are named `music_NN` after their first cart pattern, and
+    // sfx `sfx_NN` after their cart slot, so the PICO-8 number is the suffix.
+    const findByNumber = (type, prefix, n) => {
+      const suffix = String(n).padStart(2, '0');
+      return this.resourceMap.get(`${type}.${prefix}_${suffix}`)
+        || this.resourceMap.get(`${type}.${prefix}_${n}`)
+        || null;
+    };
+
+    this.audioEngine.setPicoResourceProvider({
+      getMusicSource: (n) => findByNumber('MUSIC', 'MUSIC', n)?.picoMusicSource || null,
+      getSfxResourceId: (n) => findByNumber('SFX', 'SFX', n)?.audioResource || null
+    });
+
+    console.log('[GameEmulator] Registered PICO-8 audio resource provider');
   }
 
   /**
@@ -1927,43 +1996,6 @@ class GameEmulator {
     }
   }
 
-  /**
-   * Preprocess Lua script for pico-8 compatibility
-   * Converts compound assignment operators (+=, -=, etc.) to standard Lua
-   * @param {string} code - Raw Lua code
-   * @returns {string} Preprocessed code
-   */
-  preprocessLuaScript(code) {
-    if (!code) return code;
-    
-    // Convert compound assignment operators to standard Lua
-    // Pattern: variable += value -> variable = variable + value
-    // Handles: +=, -=, *=, /=, %=
-    
-    // Match compound assignments, being careful not to match == or ~= or other operators
-    const compoundOpsPattern = /([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[[^\]]+\])?)\s*(\+=|-=|\*=|\/=|%=)\s*(.+?)(?=\n|;|$)/g;
-    
-    let preprocessed = code.replace(compoundOpsPattern, (match, variable, operator, value) => {
-      // Extract the actual operator (without the =)
-      const actualOp = operator.slice(0, -1);
-      return `${variable} = ${variable} ${actualOp} ${value}`;
-    });
-
-    // Also handle cases where there's no newline at the end of the last statement
-    // This catches += at the very end of the code
-    preprocessed = preprocessed.replace(/([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*|\[[^\]]+\])?)\s*(\+=|-=|\*=|\/=|%=)\s*(.+?)$/gm, (match, variable, operator, value) => {
-      const actualOp = operator.slice(0, -1);
-      return `${variable} = ${variable} ${actualOp} ${value}`;
-    });
-    
-    // Debug: log if preprocessing made changes
-    if (preprocessed !== code) {
-      console.log('[GameEmulator] Lua preprocessing applied - compound operators converted to standard Lua');
-    }
-    
-    return preprocessed;
-  }
-
   async loadAndExecuteScript(scriptData) {
     console.log('[GameEmulator] Loading and executing Lua script...');
     this.updateStatus('Loading Lua script...', 'info');
@@ -2048,14 +2080,12 @@ class GameEmulator {
       
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
-      
-      // Preprocess script for pico-8 compatibility (+=, -=, etc.)
-      const preprocessedCode = this.preprocessLuaScript(scriptData.content);
-      
-      // Load the concatenated script into Lua
+
+      // Scripts reach here as plain Lua 5.2. PICO-8 carts are lowered once at
+      // import time by Pico8Parser, so there is nothing to rewrite at run time.
       console.log('[GameEmulator] Loading script into Lua engine...');
       try {
-        L.execute(preprocessedCode);
+        L.execute(scriptData.content);
         console.log('[GameEmulator] Script loaded successfully');
         logRunPhase('luaLoadScript');
         
@@ -2187,6 +2217,9 @@ class GameEmulator {
           if (pico8Ext && typeof pico8Ext.initGpu === 'function') {
             pico8Ext.initGpu(this._gpu);
           }
+          if (pico8Ext && typeof pico8Ext.loadCartAssets === 'function') {
+            await pico8Ext.loadCartAssets();
+          }
           logRunPhase('gpuInit');
         } else {
           console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
@@ -2276,6 +2309,7 @@ class GameEmulator {
     this.isPaused = false; // Make sure we start unpaused
     this.lastFrameTime = performance.now();
     this.frameCount = 0;
+    this._frameStats = null;
     this.showCompileOverlay();
     
     // Update button appearance
@@ -2389,16 +2423,41 @@ class GameEmulator {
         return;
       }
       
-      // Schedule next frame (60fps = ~16.67ms)
-      setTimeout(() => {
-        if (this.isRunning) {
-          requestAnimationFrame(runFrame);
-        }
-      }, 1000 / 60);
+      this.recordFrameStats(currentTime);
     };
-    
+
+    // Pace off requestAnimationFrame alone. The loop used to chain
+    // setTimeout(1000/60) -> requestAnimationFrame, so it paid BOTH waits every
+    // frame and inherited setTimeout's throttling. Measured in the browser with
+    // a cart running: rAF fired every ~12ms while setTimeout(16.67) actually
+    // fired every ~85ms, capping the simulator near 11fps on ~6ms of work.
+    const targetFrameMs = 1000 / 60;
+    let nextFrameDue = 0;
+
+    const tick = (timestamp) => {
+      if (!this.isRunning || !this.luaState) {
+        console.log('[GameEmulator] Game loop stopped - isRunning:', this.isRunning, 'luaState:', !!this.luaState);
+        return;
+      }
+
+      // Queue the next callback first so a throw inside the frame cannot kill
+      // the loop; stopGameLoop() clears isRunning and the check above ends it.
+      requestAnimationFrame(tick);
+
+      if (timestamp < nextFrameDue) return;
+
+      // Advance by whole frames so the average rate tracks the target, but
+      // resync after a stall rather than trying to catch up on a backlog.
+      nextFrameDue += targetFrameMs;
+      if (nextFrameDue < timestamp) {
+        nextFrameDue = timestamp + targetFrameMs;
+      }
+
+      runFrame();
+    };
+
     console.log('[GameEmulator] Starting first frame...');
-    requestAnimationFrame(runFrame);
+    requestAnimationFrame(tick);
   }
   
   stopGameLoop() {
@@ -2407,9 +2466,56 @@ class GameEmulator {
     this.isPaused = false; // Reset pause state when stopping
     this.hideCompileOverlay();
     this.updateStatus('Game loop stopped', 'info');
-    
+    this._frameStats = null;
+    this.renderFrameStats(null);
+
     // Update button appearance
     this.updatePlayPauseButton();
+  }
+
+  /**
+   * Accumulate frame timings and publish them to the simulator toolbar.
+   *
+   * Reported over a rolling window rather than per frame so the number is
+   * readable. "fps" is frames actually delivered; "ms cpu" is the time this
+   * frame's Update + render took, which is what tells you whether a low frame
+   * rate is the cart's fault or the scheduler's.
+   */
+  recordFrameStats(frameStartTime) {
+    const now = performance.now();
+    let stats = this._frameStats;
+    if (!stats) {
+      stats = this._frameStats = { frames: 0, cpuMs: 0, windowStart: frameStartTime };
+    }
+
+    stats.frames += 1;
+    stats.cpuMs += now - frameStartTime;
+
+    const elapsed = now - stats.windowStart;
+    if (elapsed < 500) return;
+
+    this.renderFrameStats({
+      fps: (stats.frames * 1000) / elapsed,
+      cpuMs: stats.cpuMs / stats.frames,
+    });
+
+    stats.frames = 0;
+    stats.cpuMs = 0;
+    stats.windowStart = now;
+  }
+
+  renderFrameStats(stats) {
+    const element = this.contentContainer?.querySelector('#simStats');
+    if (!element) return;
+
+    if (!stats) {
+      element.textContent = '-- fps';
+      element.classList.remove('sim-stats-warn');
+      return;
+    }
+
+    element.textContent = `${stats.fps.toFixed(1)} fps \u00b7 ${stats.cpuMs.toFixed(1)} ms cpu`;
+    element.classList.toggle('sim-stats-warn', stats.fps < 25);
   }
 
   updateCompileOverlay(didDrawFrame) {
@@ -3102,6 +3208,9 @@ class GameEmulator {
           ${this.options.showConsole ? '<button class="utility-btn console-btn" id="consoleToggleBtn" title="Toggle Debug Console"></button>' : ''}
         </div>`
       : '';
+    const statsReadout = this.options.showPlaybackControls !== false
+      ? '<div class="sim-stats" id="simStats" title="Frames delivered per second, and CPU time this simulator spends building each frame (Update + render). If cpu time is well under the frame budget but fps is low, the limit is the browser scheduler, not your game.">-- fps</div>'
+      : '';
     const consolePanel = this.options.showConsole
       ? `<div class="console-slide-panel" id="consoleSlidePanel">
           <!-- GameConsole will be rendered here -->
@@ -3170,7 +3279,7 @@ class GameEmulator {
         </div>`
       : '';
 
-    const controls = `${playbackControls}${reloadButton}${volumeControls}${utilityControls}`;
+    const controls = `${playbackControls}${reloadButton}${volumeControls}${utilityControls}${statsReadout}`;
 
     this.contentContainer.innerHTML = `
       ${controls ? `<div class="game-controls">${controls}</div>` : ''}
