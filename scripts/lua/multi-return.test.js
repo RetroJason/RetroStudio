@@ -119,7 +119,54 @@ function checkBridgeExpandsArrays() {
   );
 }
 
-// 3. A freshly created image should report its real size, not 0, 0.
+// 3. rnd(t) must be adapted in Lua, because a table cannot cross the JS bridge.
+function checkRndTableAdapter() {
+  const emitted = [];
+  const extension = new global.BaseLuaExtension();
+  extension.setLuaState({ execute: (source) => emitted.push(source) });
+
+  extension.registerMethod('rnd', function rnd() {}, 'Pico8');
+  const rndLua = emitted.join('\n');
+
+  // A Lua table reaches a bridged JS function as the string "table: 0x...",
+  // never as an object, so a JS-side `typeof x === 'object'` branch can never
+  // fire. rnd(t) has to be answered in Lua or the cart dies with
+  // "[Pico8] rnd invalid numeric argument x: table: 0x...".
+  assert.ok(
+    /if type\(x\) == "table" then/.test(rndLua),
+    'Pico8.rnd is registered without a Lua-side table branch, so rnd(t) will '
+    + 'reach the JS implementation as a string and throw',
+  );
+
+  // The adapter rebinds Pico8.rnd, so the global alias has to be assigned
+  // afterwards or `rnd` keeps pointing at the unwrapped numeric-only version.
+  const adapterAt = rndLua.indexOf('if type(x) == "table" then');
+  const aliasAt = rndLua.indexOf('rnd = Pico8.rnd');
+  assert.ok(aliasAt !== -1, 'Pico8.rnd is no longer aliased to the rnd global');
+  assert.ok(
+    adapterAt < aliasAt,
+    'The rnd global alias is assigned before the table adapter wraps Pico8.rnd, '
+    + 'so the global rnd() still rejects tables',
+  );
+
+  // The adapter must delegate the numeric case rather than reimplementing it.
+  assert.ok(
+    /return __rndNative\(x\)/.test(rndLua),
+    'The rnd adapter no longer forwards non-table arguments to the JS implementation',
+  );
+
+  // Functions without an adapter must be left exactly as they were.
+  const other = [];
+  const plain = new global.BaseLuaExtension();
+  plain.setLuaState({ execute: (source) => other.push(source) });
+  plain.registerMethod('sin', function sin() {}, 'Pico8');
+  assert.ok(
+    !/if type\(x\) == "table" then/.test(other.join('\n')),
+    'The rnd adapter leaked into other Pico8 functions',
+  );
+}
+
+// 4. A freshly created image should report its real size, not 0, 0.
 function checkImageGetSizeUsesFrameDimensions() {
   const LuaImageExtensions = loadExtensionClass('Image');
   assert.ok(LuaImageExtensions, 'Failed to load LuaImageExtensions');
@@ -143,12 +190,14 @@ function run() {
 
   const checked = checkMultiReturnImplementations();
   checkBridgeExpandsArrays();
+  checkRndTableAdapter();
   checkImageGetSizeUsesFrameDimensions();
 
   console.log(JSON.stringify({
     multiReturnFunctionsChecked: checked.length,
     functions: checked,
     bridgeExpandsArrays: true,
+    rndTableAdapter: true,
     imageGetSizeUsesFrameDimensions: true,
   }, null, 2));
 }

@@ -64,7 +64,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._gpu = gpu;
     this._fbTexture = null;
     this._dirty = true;
-    this.resetRuntimeState();
+    // Deliberately NOT resetRuntimeState() here. GPU init is a renderer
+    // lifecycle event that lands *after* the cart's _init has run, so
+    // resetting here wiped state the cart had already chosen - carts calling
+    // palt() in _init lost their transparency and drew opaque backgrounds.
+    // The cart-level reset belongs to script load, which does it before the
+    // cart executes; this method only owns the GPU handles above.
   }
 
   /**
@@ -1918,8 +1923,21 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Random number (0 to x)
    * Lua: rnd([x]) -> result
+   *
+   * Handed a table, PICO-8 picks one of its elements instead of returning a
+   * number, which carts lean on for things like rnd(spawn_points). An empty
+   * table gives nil, matching an out of range index in Lua.
    */
   rnd(...args) {
+    const t = args[0];
+    if (this._isTableLike(t)) {
+      const values = Array.isArray(t)
+        ? t
+        : this._getNumericKeys(t).map((key) => t[key]);
+      if (values.length === 0) return undefined;
+      return values[Math.floor(Math.random() * values.length)];
+    }
+
     const x = this._optionalNumberArg(args, 0, 1.0, 'rnd', 'x');
     return Math.random() * x;
   }

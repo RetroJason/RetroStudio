@@ -237,6 +237,30 @@ class BaseLuaExtension {
     `
       : '';
 
+    // A few PICO-8 builtins accept either a number or a table. A table cannot
+    // cross the JS bridge (see the note above - it arrives as the string
+    // "table: 0x..."), so the table case is answered in Lua and everything
+    // else is forwarded to the JS implementation that was just registered.
+    const luaArgumentAdapters = {
+      rnd: `
+        local __rndNative = ${className}.${luaFunctionName}
+        function ${className}.${luaFunctionName}(x)
+          -- rnd(t) returns one of the table's elements rather than a number.
+          -- An empty table gives nil, like an out of range index would.
+          if type(x) == "table" then
+            local n = #x
+            if n == 0 then return nil end
+            return x[math.floor(__rndNative(n)) + 1]
+          end
+          return __rndNative(x)
+        end
+      `,
+    };
+
+    const registerArgumentAdapter = className === 'Pico8'
+      ? (luaArgumentAdapters[luaFunctionName] || '')
+      : '';
+
     // Register as part of a class/namespace using Lua script
     this.luaState.execute(`
     -- A JS function can only return one value, so multi-return API functions
@@ -276,6 +300,7 @@ class BaseLuaExtension {
         function ${className}.${luaFunctionName}(...)
             return __retroExpandJsResult(__impl(__null, ...))
         end
+        ${registerArgumentAdapter}
         ${registerGlobalAlias}
     end
     `);

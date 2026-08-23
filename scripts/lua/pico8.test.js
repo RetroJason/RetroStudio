@@ -834,6 +834,30 @@ const tests = [
       assert.ok(!pico8._isTransparentColor(0));
     },
   },
+  {
+    name: 'initGpu does not wipe transparency the cart chose in _init',
+    fn: () => {
+      const { pico8 } = makePico8();
+
+      // A cart's _init typically runs before the renderer hands over its GPU.
+      pico8.palt(0, false);
+      pico8.palt(3, true);
+
+      pico8.initGpu({});
+
+      // initGpu used to call resetRuntimeState(), which landed after _init and
+      // put transparency back to the default {0}. Carts then drew an opaque
+      // background colour behind every sprite.
+      assert.ok(
+        pico8._isTransparentColor(3),
+        'initGpu cleared the transparency the cart set in _init',
+      );
+      assert.ok(
+        !pico8._isTransparentColor(0),
+        'initGpu restored colour 0 transparency that the cart turned off',
+      );
+    },
+  },
 
   // Math
   {
@@ -867,6 +891,35 @@ const tests = [
       assert.ok(n >= 0 && n <= 10);
       pico8.srand(1234);
       assert.strictEqual(pico8.randomSeed, 1234);
+    },
+  },
+  {
+    name: 'rnd given a table picks one of its elements rather than throwing',
+    fn: () => {
+      const { pico8 } = makePico8();
+
+      // An array-backed table, which is what add() builds.
+      const values = ['a', 'b', 'c'];
+      for (let i = 0; i < 50; i += 1) {
+        assert.ok(values.includes(pico8.rnd(values)));
+      }
+
+      // A table that came across as an object keyed by index.
+      const keyed = { 1: 10, 2: 20 };
+      for (let i = 0; i < 50; i += 1) {
+        assert.ok([10, 20].includes(pico8.rnd(keyed)));
+      }
+
+      // Every element should be reachable, not just the first.
+      const seen = new Set();
+      for (let i = 0; i < 200; i += 1) seen.add(pico8.rnd(values));
+      assert.strictEqual(seen.size, 3);
+
+      // Empty table is nil, like an out of range index in Lua.
+      assert.strictEqual(pico8.rnd([]), undefined);
+
+      // Numbers still behave.
+      assert.ok(pico8.rnd(4) < 4);
     },
   },
 
