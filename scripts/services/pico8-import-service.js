@@ -469,6 +469,24 @@ class Pico8ImportService {
   }
 
   /**
+   * Place recovered shared rows at map row 32, where they actually live.
+   *
+   * PICO-8 trims trailing empty rows when it writes __map__, so a cart that
+   * stores a one screen tall level yields height 16 even though the shared
+   * region is still rows 32-63. Appending would land those rows at 16-47 and
+   * shift the whole lower half of the map.
+   */
+  mergeSharedMapRows(map, sharedRows) {
+    const SHARED_ROW_START = 32;
+    const keptRows = Math.min(map.height, SHARED_ROW_START);
+    const height = SHARED_ROW_START + sharedRows.height;
+    const tiles = new Uint8Array(map.width * height);
+    tiles.set(map.tiles.subarray(0, map.width * keptRows), 0);
+    tiles.set(sharedRows.tiles, map.width * SHARED_ROW_START);
+    return { width: map.width, height, tiles };
+  }
+
+  /**
    * Detect whether a cart draws sprites 128-255. Those sprites occupy the same
    * bytes as map rows 32-63, so only one interpretation can be meaningful.
    */
@@ -1046,7 +1064,12 @@ class Pico8ImportService {
       }
 
       if (graphics?.sharedRows && !graphics.sharedRowsUsed) {
-        warnings.push('Map rows 32-63 share memory with sprites 128-255, and this cart draws sprites in that range, so only the first 32 map rows were imported.');
+        // Not a truncation: the cart demonstrably draws sprites out of these
+        // bytes, so there was never any map data up there to lose. Say so, or it
+        // reads as though the level was cut short.
+        const mapRows = graphics?.convertedMap?.height;
+        const rowText = Number.isFinite(mapRows) ? ` The map is ${mapRows} rows.` : '';
+        warnings.push(`Map rows 32-63 are the same bytes as sprites 128-255. This cart draws sprites in that range, so those bytes were imported as sprite data and no map rows were discarded.${rowText}`);
       } else if (graphics?.sharedRowsUsed) {
         warnings.push('Map rows 32-63 were recovered from the shared sprite/map memory region (sprites 128-255). If the cart actually uses those sprites through variables, delete the extra rows.');
       }
@@ -1719,10 +1742,7 @@ class Pico8ImportService {
     // Map rows 32-63 and sprites 128-255 are the same bytes. Only extend the map
     // when the cart shows no sign of drawing those sprites.
     if (map && sharedRows && !usesHighSprites) {
-      const tiles = new Uint8Array(map.width * (map.height + sharedRows.height));
-      tiles.set(map.tiles, 0);
-      tiles.set(sharedRows.tiles, map.width * map.height);
-      mapSource = { width: map.width, height: map.height + sharedRows.height, tiles };
+      mapSource = this.mergeSharedMapRows(map, sharedRows);
       sharedRowsUsed = true;
     }
 
