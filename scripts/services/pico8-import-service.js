@@ -79,6 +79,7 @@ class Pico8ImportService {
 
   sanitizeProjectName(rawName) {
     const base = String(rawName || 'ImportedPico8')
+      .replace(/\.zip$/i, '')
       .replace(/\.p8(\.png)?$/i, '')
       .trim();
 
@@ -142,6 +143,20 @@ class Pico8ImportService {
     const n = Math.round(Number(value));
     if (!Number.isFinite(n)) return min;
     return Math.max(min, Math.min(max, n));
+  }
+
+  /**
+   * Normalise the __gff__ section into 256 bytes of sprite flags as a hex
+   * string (two chars per sprite, sprite 0 first).
+   *
+   * PICO-8 writes two lines of 128 hex chars each; anything shorter is padded
+   * with zeroes so sprite indices never shift.
+   */
+  parseP8GffSection(lines) {
+    const source = Array.isArray(lines) ? lines.join('') : String(lines || '');
+    const hex = source.toLowerCase().replace(/[^0-9a-f]/g, '').slice(0, 512);
+    if (!hex) return '';
+    return hex.padEnd(512, '0');
   }
 
   /**
@@ -800,7 +815,7 @@ class Pico8ImportService {
     };
   }
 
-  buildRuntimeLua(luaSource) {
+  buildRuntimeLua(luaSource, options = {}) {
     // PICO-8 ships a patched Lua, so the cart source has to be lowered to plain
     // Lua 5.2 before lua.vm.js will even compile it.
     const parser = (typeof window !== 'undefined' && window.Pico8Parser)
@@ -812,10 +827,6 @@ class Pico8ImportService {
     const source = parser.compile(String(luaSource || '')).trimEnd();
     const hasSetup = /\bfunction\s+Setup\s*\(/.test(source);
     const hasUpdate = /\bfunction\s+Update\s*\(/.test(source);
-    const hasInit = /\bfunction\s+_init\s*\(/.test(source);
-    const hasUpdate60 = /\bfunction\s+_update60\s*\(/.test(source);
-    const hasUpdateP8 = /\bfunction\s+_update\s*\(/.test(source);
-    const hasDraw = /\bfunction\s+_draw\s*\(/.test(source);
 
     const chunks = [];
     if (source) {
@@ -825,7 +836,29 @@ class Pico8ImportService {
     chunks.push('');
     chunks.push('-- Imported by Pico8ImportService');
 
-    if (!hasSetup && hasInit) {
+    // In a cart, print() draws text into the framebuffer; it is not logging.
+    // The emulator otherwise replaces the global print() with its debug-console
+    // capture after extensions load, which both hides the cart's HUD and floods
+    // the console. Opting in here scopes the change to imported carts, so
+    // ordinary Studio projects keep print()-to-console.
+    chunks.push('_retrostudio_pico8_print = Pico8 and Pico8.print or nil');
+    chunks.push('');
+
+    // The cart's __gff__ sprite flags have no home in a Studio asset - a
+    // .texture carries no per-sprite metadata - so they ride along here.
+    // Without them every fget() returns 0 and flag-driven collision or terrain
+    // silently stops working.
+    const spriteFlags = String(options.spriteFlags || '');
+    if (spriteFlags && /[1-9a-f]/.test(spriteFlags)) {
+      chunks.push(`pico_flags("${spriteFlags}")`);
+      chunks.push('');
+    }
+
+    // Bind the PICO-8 entry points at call time, not import time. Scanning the
+    // source for "function _update(" misses the carts that swap entry points to
+    // change game state (`_update,_draw = world_update,world_draw`), and those
+    // carts then ran with an empty Update() and never advanced.
+    if (!hasSetup) {
       chunks.push('function Setup()');
       chunks.push('  if type(_init) == "function" then _init() end');
       chunks.push('end');
@@ -834,26 +867,13 @@ class Pico8ImportService {
 
     if (!hasUpdate) {
       chunks.push('function Update(deltaTime)');
-      if (hasUpdate60) {
-        chunks.push('  _update60()');
-      } else if (hasUpdateP8) {
-        chunks.push('  _update()');
-      }
-      if (hasDraw) {
-        chunks.push('  _draw()');
-      }
-      if (!hasUpdate60 && !hasUpdateP8 && !hasDraw) {
-        chunks.push('  -- No PICO-8 frame functions were found; add game logic here.');
-      }
-      chunks.push('end');
-      chunks.push('');
-    }
-
-    if (chunks.length === 2) {
-      chunks.push('function Setup()');
-      chunks.push('end');
-      chunks.push('');
-      chunks.push('function Update(deltaTime)');
+      chunks.push('  -- PICO-8 prefers _update60 when a cart defines both.');
+      chunks.push('  if type(_update60) == "function" then');
+      chunks.push('    _update60()');
+      chunks.push('  elseif type(_update) == "function" then');
+      chunks.push('    _update()');
+      chunks.push('  end');
+      chunks.push('  if type(_draw) == "function" then _draw() end');
       chunks.push('end');
       chunks.push('');
     }
@@ -865,26 +885,24 @@ class Pico8ImportService {
     const warnings = [];
     const source = String(luaSource || '');
     const checks = [
-      { api: 'cartdata', regex: /\bcartdata\s*\(/ },
-      { api: 'dget', regex: /\bdget\s*\(/ },
-      { api: 'dset', regex: /\bdset\s*\(/ },
-      { api: 'peek', regex: /\bpeek\s*\(/ },
-      { api: 'poke', regex: /\bpoke\s*\(/ },
-      { api: 'peek2', regex: /\bpeek2\s*\(/ },
-      { api: 'poke2', regex: /\bpoke2\s*\(/ },
-      { api: 'reload', regex: /\breload\s*\(/ },
       { api: 'cstore', regex: /\bcstore\s*\(/ },
       { api: 'serial', regex: /\bserial\s*\(/ },
       { api: 'run', regex: /\brun\s*\(/ },
       { api: 'extcmd', regex: /\bextcmd\s*\(/ },
-      { api: 'menuitem', regex: /\bmenuitem\s*\(/ },
-      { api: 'printh', regex: /\bprinth\s*\(/ },
     ];
 
     for (const check of checks) {
       if (check.regex.test(source)) {
         warnings.push(`Uses ${check.api}(), which may be unsupported or partial in RetroStudio runtime.`);
       }
+    }
+
+    // Supported, but not identically to PICO-8.
+    if (/\bflip\s*\(/.test(source)) {
+      warnings.push('Uses flip(). It presents the framebuffer but cannot block until the next display frame, so flip-driven animation runs faster than on PICO-8.');
+    }
+    if (/\bmenuitem\s*\(/.test(source)) {
+      warnings.push('Uses menuitem(). The entries are registered but there is no pause menu yet, so the cart\'s menu actions cannot be triggered.');
     }
 
     const gfxLines = (parsedSections?.gfx || []).join('').trim();
@@ -932,10 +950,15 @@ class Pico8ImportService {
       ? summary.warnings.map((w, i) => `${i + 1}. ${w}`).join('\n')
       : 'None';
 
+    const includeLines = (summary?.includes || []).length
+      ? summary.includes.map((inc) => `- ${inc.directive} -> ${inc.path} (${inc.lines} lines)`).join('\n')
+      : null;
+
     const message = [
       `Project: ${summary.projectName}`,
       `Source: ${summary.sourceFile}`,
       '',
+      ...(includeLines ? ['Expanded #include files:', includeLines, ''] : []),
       'Lifecycle transforms:',
       `- Setup synthesized from _init: ${summary.transformed.setupFromInit ? 'yes' : 'no'}`,
       `- Update synthesized: ${summary.transformed.synthesizedUpdate ? 'yes' : 'no'}`,
@@ -1072,6 +1095,385 @@ class Pico8ImportService {
   }
 
   /**
+   * Files a `#include` directive is allowed to name. PICO-8 accepts a plaintext
+   * Lua file or another cart (optionally one tab of it). A `.p8.png` is not
+   * includable: PICO-8 only reads text here.
+   */
+  isIncludableName(name) {
+    return /\.(lua|p8|txt)$/i.test(String(name || ''));
+  }
+
+  /**
+   * True for either cartridge form. PICO-8 exports the same cart as `.p8` text
+   * or as a `.p8.png` label image with the cart hidden in its low colour bits,
+   * and both are importable.
+   */
+  isCartName(name) {
+    return /\.p8(\.png)?$/i.test(String(name || ''));
+  }
+
+  /**
+   * Recover `.p8` text from a cart image so that nothing downstream has to know
+   * which of the two forms the user picked.
+   */
+  async readCartImage(name, bytes) {
+    if (typeof Pico8P8Png === 'undefined') {
+      throw new Error('The .p8.png reader is unavailable; cannot read a cart image.');
+    }
+    try {
+      return (await Pico8P8Png.readCart(bytes)).text;
+    } catch (error) {
+      throw new Error(`${name} could not be read as a PICO-8 cart image: ${error.message}`);
+    }
+  }
+
+  /**
+   * Collapse a path to a comparable key: forward slashes, no `.`/`..` segments,
+   * lower case. `..` that would escape the root is dropped rather than kept, the
+   * same way PICO-8 clamps `CD ..` at the top of its virtual drive.
+   */
+  normalizeIncludePath(rawPath) {
+    const stack = [];
+    for (const part of String(rawPath || '').replace(/\\/g, '/').split('/')) {
+      if (!part || part === '.') continue;
+      if (part === '..') { stack.pop(); continue; }
+      stack.push(part);
+    }
+    return stack.join('/').toLowerCase();
+  }
+
+  /**
+   * Index include candidates for lookup by full path and by bare filename.
+   * @param {{path: string, text: string}[]} entries
+   */
+  indexIncludeSources(entries) {
+    const byPath = new Map();
+    const byName = new Map();
+
+    for (const entry of entries || []) {
+      const key = this.normalizeIncludePath(entry.path);
+      if (!key) continue;
+      byPath.set(key, entry);
+
+      const base = key.split('/').pop();
+      if (!byName.has(base)) byName.set(base, []);
+      byName.get(base).push(entry);
+    }
+
+    return { byPath, byName };
+  }
+
+  /**
+   * `#include foo.lua`, `#include alltabs.p8`, `#include onetab.p8:1`.
+   *
+   * The `:n` suffix only means a tab index after a cart, so a bare path that
+   * happens to contain a colon is left alone.
+   */
+  parseIncludeDirective(spec) {
+    const raw = String(spec || '').trim();
+    const tabbed = raw.match(/^(.*\.p8):(\d+)$/i);
+    if (tabbed) return { path: tabbed[1], tab: Number.parseInt(tabbed[2], 10) };
+    return { path: raw, tab: null };
+  }
+
+  /**
+   * Find the file a directive names. Paths are relative to the cart, so try that
+   * first, then the archive root, and finally fall back to a bare filename match
+   * when it is unambiguous - authors often flatten a cart and its libraries into
+   * one folder when zipping them up.
+   */
+  lookupIncludeSource(sources, includePath, baseDir) {
+    const relative = this.normalizeIncludePath(`${baseDir || ''}/${includePath}`);
+    const fromRoot = this.normalizeIncludePath(includePath);
+
+    if (sources.byPath.has(relative)) return sources.byPath.get(relative);
+    if (sources.byPath.has(fromRoot)) return sources.byPath.get(fromRoot);
+
+    const matches = sources.byName.get(fromRoot.split('/').pop()) || [];
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  /**
+   * PICO-8 identifies a cart by its header line rather than its extension, and
+   * real projects rely on that: Pico8Platformer ships `platformer.lua`, which is
+   * a complete cart file. Trusting the extension would paste the `pico-8
+   * cartridge` header straight into the Lua and fail to parse.
+   */
+  looksLikeCartText(text) {
+    return /^\s*pico-?8 cartridge/i.test(String(text || ''));
+  }
+
+  /**
+   * Split a cart's Lua into its editor tabs. PICO-8 writes `-->8` on its own
+   * line between tabs.
+   */
+  extractCartTabs(p8Text) {
+    return this.parseP8Text(p8Text).lua.split(/^-->8[ \t]*$/m);
+  }
+
+  /**
+   * Pull the text a directive refers to out of the file it resolved to.
+   * Returns `{ text }` or `{ error }`.
+   */
+  readIncludeText(entry, spec) {
+    if (!this.looksLikeCartText(entry.text)) {
+      if (spec.tab !== null) return { error: 'tab indices are only valid for PICO-8 carts' };
+      return { text: entry.text };
+    }
+
+    const tabs = this.extractCartTabs(entry.text);
+    // Join with '' rather than '\n': splitting consumed the `-->8` text but left
+    // the newlines on either side, so the tab separator already occupies a line.
+    if (spec.tab === null) return { text: tabs.join('') };
+    if (spec.tab < 0 || spec.tab >= tabs.length) {
+      return { error: `${entry.path} has ${tabs.length} tab(s), so tab ${spec.tab} does not exist` };
+    }
+    return { text: tabs[spec.tab] };
+  }
+
+  /**
+   * Expand `#include` directives into the cart's Lua.
+   *
+   * PICO-8 pastes the included text in place of the directive line, so the
+   * flattened result keeps the author's own line numbering for everything above
+   * each include. Includes are deliberately NOT expanded recursively - the
+   * PICO-8 manual states "Includes are not performed recursively" - so a
+   * directive inside an included file is reported instead of being followed.
+   */
+  resolveIncludes(luaSource, sources, options = {}) {
+    const baseDir = options.baseDir || '';
+    const lines = String(luaSource || '').replace(/\r\n?/g, '\n').split('\n');
+
+    const resolved = [];
+    const problems = [];
+    const out = [];
+
+    for (const line of lines) {
+      const match = line.match(/^[ \t]*#include[ \t]+(\S.*?)[ \t]*$/i);
+      if (!match) {
+        out.push(line);
+        continue;
+      }
+
+      const directive = match[1];
+      const spec = this.parseIncludeDirective(directive);
+      const entry = this.lookupIncludeSource(sources, spec.path, baseDir);
+
+      if (!entry) {
+        problems.push({ directive, reason: 'file was not supplied with the cart' });
+        out.push(line);
+        continue;
+      }
+
+      const read = this.readIncludeText(entry, spec);
+      if (read.error) {
+        problems.push({ directive, reason: read.error });
+        out.push(line);
+        continue;
+      }
+
+      const text = String(read.text || '').replace(/\r\n?/g, '\n');
+      if (/^[ \t]*#include[ \t]/im.test(text)) {
+        problems.push({
+          directive,
+          reason: `${entry.path} contains its own #include, and PICO-8 does not expand includes recursively`,
+        });
+        out.push(line);
+        continue;
+      }
+
+      const body = text.split('\n');
+      resolved.push({
+        directive,
+        path: entry.path,
+        tab: spec.tab,
+        lines: body.length,
+        text,
+      });
+      out.push(...body);
+    }
+
+    return { lua: out.join('\n'), resolved, problems };
+  }
+
+  /**
+   * Rewrite a cart's `__lua__` section with its `#include` directives already
+   * expanded. PICO-8 does the same on export - "any included files are
+   * flattened and saved with the cartridge so that there are no external
+   * dependencies" - and it matters twice over here: the archived copy stays
+   * re-importable on its own, and no stray `.lua` is left in the project for
+   * the Lua build to sweep up and compile as game source.
+   */
+  flattenCartText(rawP8, expandedLua) {
+    const lines = String(rawP8 || '').replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let inLua = false;
+    let wroteLua = false;
+
+    for (const line of lines) {
+      const header = line.match(/^__([a-z0-9_]+)__\s*$/i);
+      if (header) {
+        inLua = header[1].toLowerCase() === 'lua';
+        out.push(line);
+        if (inLua) {
+          out.push(expandedLua);
+          wroteLua = true;
+        }
+        continue;
+      }
+      if (!inLua) out.push(line);
+    }
+
+    if (!wroteLua) out.push('__lua__', expandedLua);
+    return out.join('\n');
+  }
+
+  describeIncludeProblems(cartName, problems) {    return [
+      `${cartName} has ${problems.length} unresolved #include directive(s):`,
+      ...problems.map((p) => `  #include ${p.directive} — ${p.reason}`),
+      '',
+      'PICO-8 stores include files next to the cart on disk, so a lone .p8 does not carry them.',
+      'Re-import a .zip archive containing the cart and its include files, or select them all together.',
+    ].join('\n');
+  }
+
+  /**
+   * Read a `.p8`/`.p8.png` cart (optionally with sibling files selected
+   * alongside it) or a `.zip` archive into
+   * `{ cartName, cartText, cartDir, sources }`.
+   */
+  async readCartBundle(file, options = {}) {
+    const name = String(file?.name || '');
+
+    if (/\.zip$/i.test(name)) return this.readCartArchive(file, options);
+    if (!this.isCartName(name)) {
+      throw new Error('Only .p8 / .p8.png carts and .zip archives containing one are supported.');
+    }
+
+    const entries = [];
+    for (const extra of options.includeFiles || []) {
+      if (!extra || extra === file || typeof extra.name !== 'string') continue;
+      if (!this.isIncludableName(extra.name)) continue;
+      // webkitRelativePath is set when a whole folder is chosen, which preserves
+      // the layout that relative #include paths are written against.
+      entries.push({ path: extra.webkitRelativePath || extra.name, text: await extra.text() });
+    }
+
+    const cartText = /\.png$/i.test(name)
+      ? await this.readCartImage(name, new Uint8Array(await file.arrayBuffer()))
+      : await file.text();
+
+    return {
+      cartName: name,
+      cartText,
+      cartDir: '',
+      sources: this.indexIncludeSources(entries),
+    };
+  }
+
+  /**
+   * Pick the cart out of a zip and read every file that could satisfy one of its
+   * `#include` directives.
+   */
+  async readCartArchive(file, options = {}) {
+    if (typeof JSZip === 'undefined') {
+      throw new Error('JSZip is unavailable; cannot read the archive.');
+    }
+
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const paths = [];
+    // __MACOSX holds resource-fork twins of every real entry; including them
+    // would make each filename ambiguous for the bare-name fallback.
+    zip.forEach((relativePath, entry) => {
+      if (entry.dir) return;
+      if (/(^|\/)__macosx\//i.test(relativePath)) return;
+      if (/(^|\/)\._/.test(relativePath)) return;
+      paths.push(relativePath);
+    });
+
+    const cartPath = this.chooseCartPath(paths, file.name, options.cartPath);
+
+    const entries = [];
+    for (const path of paths) {
+      if (path === cartPath) continue;
+      if (!this.isIncludableName(path)) continue;
+      entries.push({ path, text: await zip.file(path).async('string') });
+    }
+
+    const slash = cartPath.lastIndexOf('/');
+    const cartText = /\.png$/i.test(cartPath)
+      ? await this.readCartImage(cartPath, await zip.file(cartPath).async('uint8array'))
+      : await zip.file(cartPath).async('string');
+
+    return {
+      cartName: cartPath.split('/').pop(),
+      cartText,
+      cartDir: slash >= 0 ? cartPath.slice(0, slash) : '',
+      sources: this.indexIncludeSources(entries),
+      archiveName: file.name,
+    };
+  }
+
+  /**
+   * Decide which `.p8` in an archive is the cart to import. Ambiguity is an
+   * error rather than a guess: picking the wrong cart silently imports the wrong
+   * game.
+   */
+  chooseCartPath(paths, archiveName, requestedPath) {
+    const carts = paths.filter((path) => this.isCartName(path));
+    if (carts.length === 0) throw new Error(`${archiveName} contains no .p8 cart.`);
+    if (carts.length === 1) return carts[0];
+
+    if (requestedPath) {
+      const wanted = this.normalizeIncludePath(requestedPath);
+      const hit = carts.find((path) => this.normalizeIncludePath(path) === wanted);
+      // Falling back to a guess here would quietly import a different cart than
+      // the caller asked for, which is exactly the bug the picker exists to stop.
+      if (!hit) throw new Error(`${archiveName} has no cart at ${requestedPath}.`);
+      return hit;
+    }
+
+    const archiveBase = String(archiveName || '').replace(/\.zip$/i, '').toLowerCase();
+    const named = carts.filter(
+      (path) => path.split('/').pop().replace(/\.p8(\.png)?$/i, '').toLowerCase() === archiveBase
+    );
+    if (named.length === 1) return named[0];
+
+    const depth = (path) => path.split('/').length;
+    const shallowest = Math.min(...carts.map(depth));
+    const top = carts.filter((path) => depth(path) === shallowest);
+    if (top.length === 1) return top[0];
+
+    // Guessing here would silently import the wrong game, so make the caller
+    // choose. The candidate list rides along so the UI can offer a picker.
+    const error = new Error(
+      `${archiveName} contains ${carts.length} carts. Choose which one to import.`
+    );
+    error.cartPaths = carts;
+    throw error;
+  }
+
+  /**
+   * True when a `.zip` looks like a PICO-8 cart archive rather than an ordinary
+   * asset the user meant to drop into the project.
+   */
+  async looksLikeCartArchive(file) {
+    try {
+      if (typeof JSZip === 'undefined') return false;
+      const zip = await JSZip.loadAsync(await file.arrayBuffer());
+      let found = false;
+      zip.forEach((relativePath, entry) => {
+        if (entry.dir || found) return;
+        if (/(^|\/)__macosx\//i.test(relativePath)) return;
+        if (this.isCartName(relativePath)) found = true;
+      });
+      return found;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /**
    * Convert a `.p8` cart into a RetroStudio source package (`.rws`).
    *
    * Nothing is written to project storage and no built artefacts are produced —
@@ -1079,17 +1481,29 @@ class Pico8ImportService {
    * `.rws`/`.rwp` import path (or the Retrowww uploader) can consume.
    */
   async convertToRws(file, options = {}) {
-    if (!file || typeof file.name !== 'string' || !file.name.toLowerCase().endsWith('.p8')) {
-      throw new Error('Only .p8 files are currently supported.');
+    const name = typeof file?.name === 'string' ? file.name : '';
+    if (!this.isCartName(name) && !/\.zip$/i.test(name)) {
+      throw new Error('Only .p8 / .p8.png carts and .zip archives containing one are supported.');
     }
     if (typeof JSZip === 'undefined') {
       throw new Error('JSZip is unavailable; cannot build an .rws package.');
     }
 
-    const parsed = this.parseP8Text(await file.text());
+    const bundle = await this.readCartBundle(file, options);
+    const parsed = this.parseP8Text(bundle.cartText);
+
+    // Flatten #include directives before anything reads the cart's Lua: the
+    // token scans below (high sprites, compatibility warnings) and the parser
+    // all need to see the included code, not the directive line.
+    const includes = this.resolveIncludes(parsed.lua, bundle.sources, { baseDir: bundle.cartDir });
+    if (includes.problems.length > 0) {
+      throw new Error(this.describeIncludeProblems(bundle.cartName, includes.problems));
+    }
+    const cartLua = includes.lua;
+
     const projectName = options.projectNameOverride
       ? this.sanitizeProjectName(options.projectNameOverride)
-      : this.sanitizeProjectName(file.name);
+      : this.sanitizeProjectName(bundle.cartName);
 
     const sourcesRoot = this.getSourcesRootUi();
     const draft = new Pico8ProjectDraft(projectName, sourcesRoot);
@@ -1099,10 +1513,20 @@ class Pico8ImportService {
     const preferredLuaFolder = draft.getPreferredManagedFolderForExtension(projectName, '.lua');
     const importFolder = `${projectName}/${sourcesRoot}/Import/pico8`;
 
-    const runtimeLua = this.buildRuntimeLua(parsed.lua);
+    const runtimeLua = this.buildRuntimeLua(cartLua, {
+      spriteFlags: this.parseP8GffSection(parsed.sections?.gff),
+    });
 
     await this.addTextFile(draft, preferredLuaFolder, 'main.lua', runtimeLua);
-    await this.addTextFile(draft, importFolder, 'cart-original.p8', parsed.raw);
+
+    // Archive the flattened cart rather than the original text plus its loose
+    // include files: the project's Lua build compiles every .lua it finds, so
+    // an archived `platformer.lua` full of raw PICO-8 would be concatenated
+    // into the game and fail to parse.
+    const archivedCart = includes.resolved.length > 0
+      ? this.flattenCartText(parsed.raw, cartLua)
+      : parsed.raw;
+    await this.addTextFile(draft, importFolder, 'cart-original.p8', archivedCart);
 
     const namedSections = ['gfx', 'map', 'gff', 'sfx', 'music', 'label'];
     for (const name of namedSections) {
@@ -1120,15 +1544,15 @@ class Pico8ImportService {
       projectName,
       parsed.sections.music || [],
       convertedSfxSlots,
-      file.name
+      bundle.cartName
     );
 
     const gfx = this.parseP8GfxSection(parsed.sections.gfx || []);
-    const convertedGraphics = await this.importSpriteSheet(draft, projectName, gfx, file.name);
+    const convertedGraphics = await this.importSpriteSheet(draft, projectName, gfx, bundle.cartName);
 
     const map = this.parseP8MapSection(parsed.sections.map || []);
     const sharedRows = this.extractSharedMapRows(gfx);
-    const usesHighSprites = this.cartUsesHighSprites(parsed.lua);
+    const usesHighSprites = this.cartUsesHighSprites(cartLua);
     let mapSource = map;
     let sharedRowsUsed = false;
 
@@ -1147,34 +1571,51 @@ class Pico8ImportService {
       projectName,
       mapSource,
       convertedGraphics?.texturePath || '',
-      file.name
+      bundle.cartName
     );
 
+    const warnings = this.detectCompatibilityWarnings(
+      cartLua,
+      parsed.sections,
+      convertedSfx.length,
+      convertedMusic.length,
+      { convertedGraphics, convertedMap, sharedRows, sharedRowsUsed, usesHighSprites }
+    );
+
+    if (includes.resolved.length > 0) {
+      warnings.unshift(
+        `Expanded ${includes.resolved.length} #include file(s) into main.lua. `
+        + 'cart-original.p8 was flattened the same way, so it has no external dependencies.'
+      );
+      if (includes.resolved.some((include) => include.tab !== null)) {
+        warnings.push(
+          'A #include used the cart:tab form. Tab indices are treated as 0-based '
+          + '(the numbering PICO-8 shows on its editor tabs); check the included code if it looks off by one.'
+        );
+      }
+    }
+
     const importSummary = {
-      sourceFile: file.name,
+      sourceFile: bundle.archiveName || bundle.cartName,
+      cartFile: bundle.cartName,
       projectName,
       transformed: {
         setupFromInit: /\bfunction\s+Setup\s*\(/.test(runtimeLua) && /_init/.test(runtimeLua),
         synthesizedUpdate: /\bfunction\s+Update\s*\(/.test(runtimeLua),
       },
       hasSections: {
-        lua: Boolean(parsed.lua),
+        lua: Boolean(cartLua),
         gfx: (parsed.sections.gfx || []).length > 0,
         map: (parsed.sections.map || []).length > 0,
         sfx: (parsed.sections.sfx || []).length > 0,
         music: (parsed.sections.music || []).length > 0,
       },
+      includes: includes.resolved.map(({ directive, path, tab, lines }) => ({ directive, path, tab, lines })),
       convertedSfx,
       convertedMusic,
       convertedGraphics,
       convertedMap,
-      warnings: this.detectCompatibilityWarnings(
-        parsed.lua,
-        parsed.sections,
-        convertedSfx.length,
-        convertedMusic.length,
-        { convertedGraphics, convertedMap, sharedRows, sharedRowsUsed, usesHighSprites }
-      ),
+      warnings,
     };
     await this.addTextFile(draft, importFolder, 'import-summary.json', JSON.stringify(importSummary, null, 2));
 
@@ -1248,6 +1689,26 @@ class Pico8ImportService {
     return converted;
   }
 
+  /**
+   * Ask which cart to import when an archive holds several. Returns null when
+   * there is no UI to ask with, or the user cancelled.
+   */
+  async promptForCartPath(archiveName, cartPaths) {
+    if (!window.ModalUtils?.showForm) return null;
+    const picked = await window.ModalUtils.showForm(
+      'Choose a cart',
+      [{
+        name: 'cartPath',
+        type: 'select',
+        label: `${archiveName} contains ${cartPaths.length} carts`,
+        options: cartPaths.map((path) => ({ value: path, text: path })),
+        required: true,
+      }],
+      { okText: 'Import' }
+    );
+    return picked?.cartPath || null;
+  }
+
   async importProject(file, options = {}) {
     this.ensureDeps();
     const explorer = this.projectExplorer;
@@ -1261,7 +1722,16 @@ class Pico8ImportService {
     const preferredName = this.sanitizeProjectName(options.projectNameOverride || file?.name);
     const projectName = this.allocateProjectName(explorer, preferredName);
 
-    const converted = await this.convertToRws(file, { projectNameOverride: projectName });
+    let converted;
+    try {
+      converted = await this.convertToRws(file, { ...options, projectNameOverride: projectName });
+    } catch (error) {
+      if (!Array.isArray(error?.cartPaths)) throw error;
+      const cartPath = await this.promptForCartPath(file.name, error.cartPaths);
+      if (!cartPath) throw error;
+      converted = await this.convertToRws(file, { ...options, cartPath, projectNameOverride: projectName });
+    }
+
     const packageFile = new File([converted.blob], converted.fileName, {
       type: 'application/zip',
     });

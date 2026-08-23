@@ -1717,6 +1717,213 @@
           "example": "mset(3, 4, 17)"
         },
         {
+          "name": "sget",
+          "description": "Read a pixel from the sprite sheet",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"}
+          ],
+          "returns": {"type": "number"},
+          "example": "local c = sget(8, 8)"
+        },
+        {
+          "name": "sset",
+          "description": "Write a pixel to the sprite sheet",
+          "parameters": [
+            {"name": "x", "type": "number"},
+            {"name": "y", "type": "number"},
+            {"name": "c", "type": "number", "optional": true}
+          ],
+          "example": "sset(8, 8, 7)"
+        },
+        {
+          "name": "fget",
+          "description": "Read sprite flags. fget(n) returns the whole byte, fget(n, f) returns flag f as a boolean",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "f", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "any"},
+          "example": "if fget(tile, 0) then solid = true end"
+        },
+        {
+          "name": "fset",
+          "description": "Write sprite flags. fset(n, v) sets the whole byte, fset(n, f, v) sets flag f",
+          "parameters": [
+            {"name": "n", "type": "number"},
+            {"name": "f", "type": "number", "optional": true},
+            {"name": "v", "type": "any", "optional": true}
+          ],
+          "example": "fset(3, 0, true)"
+        },
+        {
+          "name": "pico_flags",
+          "description": "Install the cart's __gff__ sprite flags from a hex string, or read them back. Emitted by the PICO-8 importer; carts do not normally call this",
+          "parameters": [
+            {"name": "hex", "type": "string", "optional": true}
+          ],
+          "returns": {"type": "string"},
+          "example": "pico_flags(\"0001030000\")"
+        },
+        {
+          "name": "cartdata",
+          "description": "Claim a 64-number persistent save area. Returns false if saved data already existed",
+          "parameters": [{"name": "id", "type": "string"}],
+          "returns": {"type": "boolean"},
+          "example": "cartdata(\"my_game\")"
+        },
+        {
+          "name": "dget",
+          "description": "Read a value from persistent cart data (index 0-63)",
+          "parameters": [{"name": "index", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local hiscore = dget(0)"
+        },
+        {
+          "name": "dset",
+          "description": "Write a value to persistent cart data (index 0-63)",
+          "parameters": [
+            {"name": "index", "type": "number"},
+            {"name": "value", "type": "number"}
+          ],
+          "example": "dset(0, score)"
+        },
+        {
+          "name": "menuitem",
+          "description": "Add or remove a pause-menu entry (index 1-5). Omit the label to remove the entry",
+          "parameters": [
+            {"name": "index", "type": "number"},
+            {"name": "label", "type": "string", "optional": true},
+            {"name": "callback", "type": "function", "optional": true}
+          ],
+          "example": "menuitem(1, \"save game\", savegame)"
+        },
+        {
+          "name": "peek",
+          "description": "Read one or more bytes of memory",
+          "parameters": [
+            {"name": "addr", "type": "number"},
+            {"name": "n", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "number"},
+          "example": "local b = peek(0x3000)"
+        },
+        {
+          "name": "poke",
+          "description": "Write one or more bytes of memory",
+          "parameters": [
+            {"name": "addr", "type": "number"},
+            {"name": "value", "type": "number", "optional": true}
+          ],
+          "example": "poke(0x3000, 0x01)"
+        },
+        {
+          "name": "peek2",
+          "description": "Read a signed 16-bit little-endian value",
+          "parameters": [{"name": "addr", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local v = peek2(0x4300)"
+        },
+        {
+          "name": "poke2",
+          "description": "Write a 16-bit little-endian value",
+          "parameters": [
+            {"name": "addr", "type": "number"},
+            {"name": "value", "type": "number"}
+          ],
+          "example": "poke2(0x4300, 1000)"
+        },
+        {
+          "name": "peek4",
+          "description": "Read a 32-bit 16.16 fixed-point value",
+          "parameters": [{"name": "addr", "type": "number"}],
+          "returns": {"type": "number"},
+          "example": "local v = peek4(0x4300)"
+        },
+        {
+          "name": "poke4",
+          "description": "Write a 32-bit 16.16 fixed-point value",
+          "parameters": [
+            {"name": "addr", "type": "number"},
+            {"name": "value", "type": "number"}
+          ],
+          "example": "poke4(0x4300, 1.5)"
+        },
+        {
+          "name": "memcpy",
+          "description": "Copy a block of memory (overlapping ranges are safe)",
+          "parameters": [
+            {"name": "dest", "type": "number"},
+            {"name": "src", "type": "number"},
+            {"name": "len", "type": "number"}
+          ],
+          "example": "memcpy(0x0, 0x1000, 0x1000)"
+        },
+        {
+          "name": "memset",
+          "description": "Fill a block of memory with a byte value",
+          "parameters": [
+            {"name": "dest", "type": "number"},
+            {"name": "value", "type": "number"},
+            {"name": "len", "type": "number"}
+          ],
+          "example": "memset(0x4300, 0, 256)"
+        },
+        {
+          "name": "reload",
+          "description": "Restore a block of memory from cart ROM. With no arguments, restores the whole cart",
+          "parameters": [
+            {"name": "dest", "type": "number", "optional": true},
+            {"name": "src", "type": "number", "optional": true},
+            {"name": "len", "type": "number", "optional": true}
+          ],
+          "example": "reload(0x0, 0x0, 0x2000)"
+        },
+        {
+          "name": "flip",
+          "description": "Present the current framebuffer. Unlike PICO-8 this does not wait for the next display frame",
+          "parameters": [],
+          "example": "flip()"
+        },
+        {
+          "name": "cocreate",
+          "description": "Create a coroutine from a function",
+          "parameters": [{"name": "f", "type": "function"}],
+          "returns": {"type": "thread"},
+          "example": "local co = cocreate(myloop)"
+        },
+        {
+          "name": "coresume",
+          "description": "Resume a coroutine, returning success plus any yielded values",
+          "parameters": [
+            {"name": "c", "type": "thread"},
+            {"name": "...", "type": "any", "optional": true}
+          ],
+          "returns": {"type": "any"},
+          "example": "coresume(co, button)"
+        },
+        {
+          "name": "costatus",
+          "description": "Return a coroutine's status: running, suspended or dead",
+          "parameters": [{"name": "c", "type": "thread"}],
+          "returns": {"type": "string"},
+          "example": "if costatus(co) == \"dead\" then co = nil end"
+        },
+        {
+          "name": "cowrap",
+          "description": "Create a coroutine wrapped as a callable function",
+          "parameters": [{"name": "f", "type": "function"}],
+          "returns": {"type": "function"},
+          "example": "local step = cowrap(myloop)"
+        },
+        {
+          "name": "yield",
+          "description": "Suspend the running coroutine, returning any values passed to the next resume",
+          "parameters": [{"name": "...", "type": "any", "optional": true}],
+          "returns": {"type": "any"},
+          "example": "local cmd = yield()"
+        },
+        {
           "name": "sin",
           "description": "Sine function (takes 0.0-1.0, not radians)",
           "parameters": [{"name": "x", "type": "number"}],
@@ -1945,6 +2152,24 @@
           "example": "local num = tonum('42')"
         },
         {
+          "name": "chr",
+          "description": "Build a string from one or more character ordinals",
+          "parameters": [{"name": "val", "type": "number"}],
+          "returns": {"type": "string"},
+          "example": "local s = chr(104, 105)"
+        },
+        {
+          "name": "ord",
+          "description": "Read character ordinals out of a string. The third argument is a count, not an end index",
+          "parameters": [
+            {"name": "str", "type": "string"},
+            {"name": "index", "type": "number", "optional": true},
+            {"name": "num_results", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "number"},
+          "example": "local a, b = ord('abc', 1, 2)"
+        },
+        {
           "name": "add",
           "description": "Add value to table",
           "parameters": [
@@ -1994,14 +2219,26 @@
         },
         {
           "name": "print",
-          "description": "Print text at position",
+          "description": "Draw text with the built-in font. With no x/y it prints at the cursor and drops a line, scrolling the screen at the bottom. Returns the x position after the last character.",
           "parameters": [
             {"name": "text", "type": "string"},
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true},
             {"name": "color", "type": "number", "optional": true}
           ],
+          "returns": {"type": "number", "description": "X position after the last character"},
           "example": "print('hello', 10, 20, 7)"
+        },
+        {
+          "name": "cursor",
+          "description": "Set the text cursor used by print() when no coordinates are given, and optionally the pen colour. Returns the previous cursor position.",
+          "parameters": [
+            {"name": "x", "type": "number", "optional": true},
+            {"name": "y", "type": "number", "optional": true},
+            {"name": "col", "type": "number", "optional": true}
+          ],
+          "returns": {"type": "number", "description": "Previous cursor x, y"},
+          "example": "cursor(0, 0, 7)"
         },
         {
           "name": "camera",
@@ -2074,6 +2311,20 @@
           "description": "Print to console (debug)",
           "parameters": [{"name": "text", "type": "string"}],
           "example": "printh('debug message')"
+        },
+        {
+          "name": "time",
+          "description": "Seconds the cart has been running, counted in frames",
+          "parameters": [],
+          "returns": {"type": "number"},
+          "example": "local elapsed = time()"
+        },
+        {
+          "name": "t",
+          "description": "Short alias for time()",
+          "parameters": [],
+          "returns": {"type": "number"},
+          "example": "local elapsed = t()"
         }
       ]
     }

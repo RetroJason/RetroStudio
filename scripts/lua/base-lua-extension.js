@@ -117,10 +117,18 @@ class BaseLuaExtension {
       }
     };
 
-   
-    const isPico8TableHelper = className === 'Pico8' && ['add', 'del', 'count', 'all', 'foreach'].includes(luaFunctionName);
+    // Some PICO-8 builtins cannot go through the JS bridge at all:
+    //  - the table helpers take and return Lua tables, which would have to be
+    //    marshalled both ways on every call;
+    //  - the coroutine helpers must yield across their own call frame, and a
+    //    yield cannot cross a C/JS boundary ("attempt to yield across a
+    //    C-call boundary").
+    // Both are implemented directly in Lua instead.
+    const isPico8LuaNative = className === 'Pico8'
+      && ['add', 'del', 'count', 'all', 'foreach',
+        'cocreate', 'coresume', 'costatus', 'cowrap', 'yield'].includes(luaFunctionName);
 
-    if (isPico8TableHelper) {
+    if (isPico8LuaNative) {
       const luaHelperImplementations = {
       add: `
     function Pico8.add(t, v, i)
@@ -177,6 +185,39 @@ class BaseLuaExtension {
       end
     end
     foreach = Pico8.foreach
+      `,
+      cocreate: `
+    function Pico8.cocreate(f)
+      return coroutine.create(f)
+    end
+    cocreate = Pico8.cocreate
+      `,
+      coresume: `
+    function Pico8.coresume(c, ...)
+      return coroutine.resume(c, ...)
+    end
+    coresume = Pico8.coresume
+      `,
+      costatus: `
+    function Pico8.costatus(c)
+      -- PICO-8 reports a dead coroutine for anything that is not a live one,
+      -- so carts can call costatus() on a nil-ed out handle.
+      if type(c) ~= "thread" then return "dead" end
+      return coroutine.status(c)
+    end
+    costatus = Pico8.costatus
+      `,
+      cowrap: `
+    function Pico8.cowrap(f)
+      return coroutine.wrap(f)
+    end
+    cowrap = Pico8.cowrap
+      `,
+      yield: `
+    function Pico8.yield(...)
+      return coroutine.yield(...)
+    end
+    yield = Pico8.yield
       `,
       };
 

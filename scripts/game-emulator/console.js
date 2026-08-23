@@ -9,7 +9,7 @@ class GameConsole {
     this.rawMessages = [];
     this.options = {
       showTimestamps: options.showTimestamps || false,
-      maxMessages: options.maxMessages || 10000,
+      maxMessages: options.maxMessages || 1000,
       autoScroll: options.autoScroll !== false,
       showLineNumbers: options.showLineNumbers || false,
       ...options
@@ -130,10 +130,17 @@ class GameConsole {
 
       // Enforce max message limit
       if (this.rawMessages.length > this.options.maxMessages) {
-        this.rawMessages = this.rawMessages.slice(-this.options.maxMessages);
-        // Messages were dropped off the front, so the DOM no longer matches a
-        // simple suffix of the buffer and has to be rebuilt.
-        this._renderInvalidated = true;
+        const dropCount = this.rawMessages.length - this.options.maxMessages;
+        const dropped = this.rawMessages.splice(0, dropCount);
+        // Record how many characters left the front so the rendered text can be
+        // trimmed in place. Invalidating instead meant that once the buffer was
+        // full - which happens within seconds for a cart that print()s its HUD
+        // every frame - every single render fell back to re-joining all 10000
+        // messages, and the console ate 73% of the frame again.
+        let droppedChars = 0;
+        for (const message of dropped) droppedChars += message.length;
+        this._pendingTrimChars = (this._pendingTrimChars || 0) + droppedChars;
+        this._renderedCount = Math.max(0, (this._renderedCount || 0) - dropCount);
       }
     } else {
       // Replace entire buffer (for bulk operations)
@@ -203,6 +210,20 @@ class GameConsole {
     }
   }
 
+  /**
+   * The console body is one big Text node so appends and front-trims are
+   * character edits rather than DOM rebuilds.
+   */
+  _ensureTextNode(consoleOutput) {
+    if (this._renderedNode && this._renderedNode.parentNode === consoleOutput) {
+      return this._renderedNode;
+    }
+    consoleOutput.textContent = '';
+    this._renderedNode = document.createTextNode('');
+    consoleOutput.appendChild(this._renderedNode);
+    return this._renderedNode;
+  }
+
   renderDisplay() {
     const consoleOutput = this.container?.querySelector('#console-output');
     if (!consoleOutput || !this.rawMessages) return;
@@ -210,20 +231,27 @@ class GameConsole {
     const filterInput = this.container.querySelector('#console-filter-input');
     const filterValue = this.currentFilter || (filterInput ? filterInput.value.trim() : '');
 
-    // Fast path: only appends since the last render, and no filter in play, so
-    // just the new messages need to reach the DOM. Re-joining the whole buffer
-    // is O(maxMessages) and still dominated frame time even at one render per
-    // frame, because a running cart keeps the buffer permanently full.
+    // Fast path: only appends and front-trims since the last render, and no
+    // filter in play, so the DOM can be edited in place. Re-joining the whole
+    // buffer is O(maxMessages) and still dominated frame time even at one
+    // render per frame, because a running cart keeps the buffer permanently
+    // full.
     const canAppend = !filterValue
       && !this._renderedFilter
       && !this._renderInvalidated
-      && this._renderedCount > 0
+      && this._renderedNode
+      && this._renderedNode.parentNode === consoleOutput
+      && this._renderedCount >= 0
       && this._renderedCount <= this.rawMessages.length;
 
     if (canAppend) {
+      const node = this._renderedNode;
+      if (this._pendingTrimChars > 0) {
+        node.deleteData(0, Math.min(this._pendingTrimChars, node.length));
+        this._pendingTrimChars = 0;
+      }
       if (this._renderedCount < this.rawMessages.length) {
-        const appended = this.rawMessages.slice(this._renderedCount).join('');
-        consoleOutput.appendChild(document.createTextNode(appended));
+        node.appendData(this.rawMessages.slice(this._renderedCount).join(''));
         this._renderedCount = this.rawMessages.length;
       }
     } else {
@@ -232,8 +260,12 @@ class GameConsole {
           message => this.matchesFilter(message, this.parseFilterString(filterValue))
         )
         : this.rawMessages;
-      consoleOutput.textContent = messages.join('');
+      // Full rebuild: drop the old node so _ensureTextNode starts from empty
+      // rather than appending to whatever is already on screen.
+      this._renderedNode = null;
+      this._ensureTextNode(consoleOutput).appendData(messages.join(''));
       this._renderedCount = this.rawMessages.length;
+      this._pendingTrimChars = 0;
       this._renderInvalidated = false;
     }
 
@@ -361,6 +393,9 @@ class GameConsole {
     this.rawMessages = [];
     this.currentFilter = '';
     this._renderInvalidated = true;
+    this._renderedCount = 0;
+    this._pendingTrimChars = 0;
+    this._renderedNode = null;
     
     const filterInput = this.container?.querySelector('#console-filter-input');
     if (filterInput) {

@@ -655,7 +655,10 @@ class GameEmulator {
         // Initialize GameConsole
         this.gameConsole = new GameConsole({
           showTimestamps: false,
-          maxMessages: 5000,
+          // Scrollback costs a full text layout every time the panel updates,
+          // and a running cart can log every frame. Measured with Minima
+          // (~375 lines/sec): 5000 lines = 15 fps, 2000 = 50 fps, 1000 = 60 fps.
+          maxMessages: 1000,
           autoScroll: true
         });
         
@@ -1235,7 +1238,20 @@ class GameEmulator {
 
     const storagePath = this.normalizeStoragePath(resource.filePath) || resource.filePath;
     const fileData = await fileManager.loadFile(storagePath);
-    const text = fileData && (fileData.fileContent || fileData.content);
+    const content = fileData && (fileData.fileContent || fileData.content);
+
+    // Studio has two file managers with different conventions: the editor's
+    // IndexedDB store hands back text, while the runtime archive player hands
+    // back an ArrayBuffer for anything it classifies as binary. Decode rather
+    // than reject so a song loads the same way down either path.
+    let text = content;
+    if (content instanceof ArrayBuffer || ArrayBuffer.isView(content)) {
+      const bytes = content instanceof ArrayBuffer
+        ? new Uint8Array(content)
+        : new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
+      text = new TextDecoder('utf-8').decode(bytes);
+    }
+
     if (typeof text !== 'string') {
       throw new Error(`Expected text content for ${storagePath}`);
     }
@@ -3031,6 +3047,15 @@ class GameEmulator {
       end
 
       function print(...)
+        -- An imported PICO-8 cart sets _retrostudio_pico8_print, because there
+        -- print() is a *drawing* call that rasterises text into the
+        -- framebuffer, not a logging call. Mirroring it into the debug console
+        -- floods the console with thousands of lines a second and used to cost
+        -- 73% of the frame. printh() is the debug channel for cart code.
+        if _retrostudio_pico8_print then
+          return _retrostudio_pico8_print(...)
+        end
+
         local parts = {}
         for i = 1, select('#', ...) do
           local v = select(i, ...)

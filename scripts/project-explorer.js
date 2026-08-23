@@ -974,7 +974,7 @@ class ProjectExplorer {
       // Check if any files are project import files
       const hasProjectImportFile = Array.from(files).some(file => {
         const lower = (file.name || '').toLowerCase();
-        return lower.endsWith('.rwp') || lower.endsWith('.p8');
+        return lower.endsWith('.rwp') || /\.p8(\.png)?$/.test(lower);
       }
       );
       
@@ -1027,10 +1027,33 @@ class ProjectExplorer {
     try {
       const all = Array.from(files);
       const rwpFiles = all.filter(f => typeof f?.name === 'string' && f.name.toLowerCase().endsWith('.rwp'));
-      const p8Files = all.filter(f => typeof f?.name === 'string' && f.name.toLowerCase().endsWith('.p8'));
+      const pico8Svc = (window.serviceContainer?.get?.('pico8ImportService')) || window.pico8ImportService;
+
+      // A .zip is only a cart archive if it actually holds a .p8; anything else
+      // is a plain asset the user meant to drop into the project.
+      const cartArchives = [];
+      if (pico8Svc && typeof pico8Svc.looksLikeCartArchive === 'function') {
+        for (const f of all) {
+          if (typeof f?.name !== 'string' || !f.name.toLowerCase().endsWith('.zip')) continue;
+          if (await pico8Svc.looksLikeCartArchive(f)) cartArchives.push(f);
+        }
+      }
+
+      // A cart is either .p8 text or a .p8.png label image; both import as one.
+      const p8Files = all.filter(f => typeof f?.name === 'string' && /\.p8(\.png)?$/i.test(f.name));
+      const cartFiles = [...p8Files, ...cartArchives];
+
+      // Loose .lua files dropped alongside a cart are its #include sources, not
+      // files to add to the open project.
+      const includeFiles = cartFiles.length > 0
+        ? all.filter(f => typeof f?.name === 'string' && /\.(lua|txt)$/i.test(f.name))
+        : [];
+
       const otherFiles = all.filter(f => {
         const lower = (f.name || '').toLowerCase();
-        return !lower.endsWith('.rwp') && !lower.endsWith('.p8');
+        if (lower.endsWith('.rwp')) return false;
+        if (cartFiles.includes(f) || includeFiles.includes(f)) return false;
+        return true;
       });
 
       if (rwpFiles.length > 0) {
@@ -1044,11 +1067,15 @@ class ProjectExplorer {
         }
       }
 
-      if (p8Files.length > 0) {
-        const svc = (window.serviceContainer?.get?.('pico8ImportService')) || window.pico8ImportService;
-        if (svc && typeof svc.importProject === 'function') {
-          for (const f of p8Files) {
-            try { await svc.importProject(f); } catch (e) { console.warn('[ProjectExplorer] P8 import failed:', e); }
+      if (cartFiles.length > 0) {
+        if (pico8Svc && typeof pico8Svc.importProject === 'function') {
+          for (const f of cartFiles) {
+            try {
+              await pico8Svc.importProject(f, { includeFiles: includeFiles.filter(i => i !== f) });
+            } catch (e) {
+              console.warn('[ProjectExplorer] P8 import failed:', e);
+              alert(`PICO-8 import failed for ${f.name}:\n\n${e?.message || e}`);
+            }
           }
         } else {
           console.warn('[ProjectExplorer] pico8ImportService unavailable; skipping .p8 import');

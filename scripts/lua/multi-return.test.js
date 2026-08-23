@@ -96,12 +96,21 @@ function checkBridgeExpandsArrays() {
   );
 
   // Count call sites rather than just looking for the helper's name: the helper
-  // can still be defined while a call site bypasses it. Every place that calls
-  // into JS must be wrapped, both the namespaced function and the Pico8 alias.
-  const callSites = (source.match(/js\.global\.\$\{globalFunctionName\}\(/g) || []).length;
-  const wrapped = (source.match(/__retroExpandJsResult\(\s*js\.global\.\$\{globalFunctionName\}\(/g) || []).length;
+  // can still be defined while a call site bypasses it. The bridge resolves
+  // js.global.<name> once into the `__impl` upvalue (looking it up per call cost
+  // ~0.93ms and capped the API at ~2000 calls/second), so every invocation of
+  // __impl is a call into JS and must be wrapped. The Pico-8 global alias is a
+  // plain assignment to the same function, so it shares this one call site.
+  assert.ok(
+    /local __impl = js\.global\.\$\{globalFunctionName\}/.test(source),
+    'base-lua-extension.js no longer resolves js.global.<name> into an upvalue; '
+    + 'if the bridge shape changed, this test needs to follow it',
+  );
 
-  assert.ok(callSites >= 2, `Expected at least 2 bridge call sites, found ${callSites}`);
+  const callSites = (source.match(/__impl\(/g) || []).length;
+  const wrapped = (source.match(/__retroExpandJsResult\(\s*__impl\(/g) || []).length;
+
+  assert.ok(callSites >= 1, `Expected at least 1 bridge call site, found ${callSites}`);
   assert.strictEqual(
     wrapped,
     callSites,

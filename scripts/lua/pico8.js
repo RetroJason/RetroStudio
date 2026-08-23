@@ -12,12 +12,33 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentColor = 0;
     this.currentPalette = new Map();
     this.randomSeed = 0;
-    this.spriteFlags = new Map();
+    // PICO-8 stores sprite flags as one byte per sprite at 0x3000; keep the
+    // same layout so fget/fset and peek/poke see the same bits.
+    this.spriteFlags = new Uint8Array(256);
     // Colour indices skipped when blitting sprite-sheet pixels (palt).
     this._transparent = new Set([0]);
     // Decoded sprite sheet / map, installed from the built cart assets.
     this._sheet = null;
     this._map = null;
+    // Pristine copies of the cart's ROM regions, so reload() can restore data
+    // the cart has since overwritten with poke()/memcpy()/sset().
+    this._romSheet = null;
+    this._romSpriteFlags = new Uint8Array(256);
+    this._romMap = null;
+    // 0x4300-0x5dff general-purpose RAM. Allocated lazily; most carts never
+    // touch it and 6.9KB per run is pure waste when they do not.
+    this._userRam = null;
+    // cartdata()/dget()/dset() persistent storage: 64 numbers, or null until
+    // the cart has claimed an id.
+    this._cartDataId = null;
+    this._cartData = null;
+    // menuitem() entries, keyed by 1-based slot.
+    this.menuItems = new Map();
+
+    // print()/cursor() text cursor, in logical (128x128) pixels.
+    this._cursorX = 0;
+    this._cursorY = 0;
+    this._font = null;
 
     this._logicalWidth = 128;
     this._logicalHeight = 128;
@@ -174,6 +195,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentColor = 0;
     this._cameraX = 0;
     this._cameraY = 0;
+    this._cursorX = 0;
+    this._cursorY = 0;
     this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
     this.currentPalette.clear();
     this._transparent = new Set([0]);
@@ -526,6 +549,29 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
   }
 
+  /**
+   * Scroll the framebuffer up, filling the exposed rows with colour 0.
+   *
+   * Used by print() when the text cursor walks off the bottom of the screen,
+   * which is how PICO-8 behaves for coordinate-less print(). `rows` is in
+   * logical pixels; in full-resolution mode one logical row is several
+   * framebuffer rows.
+   */
+  _scrollFb(logicalRows) {
+    const rows = this._logicalToRenderY(logicalRows);
+    if (rows <= 0) {
+      return;
+    }
+    const shift = rows * this._fbWidth;
+    if (shift >= this._framebuffer.length) {
+      this._clearFb(0);
+      return;
+    }
+    this._framebuffer.copyWithin(0, shift);
+    this._framebuffer.fill(0, this._framebuffer.length - shift);
+    this._markDirty();
+  }
+
   _ensureFramebufferTexture(gpu) {
     if (!gpu) {
       return;
@@ -855,6 +901,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (engine?.clear) {
       engine.clear(Math.floor(c) & 0xFF);
     }
+    // PICO-8 homes the text cursor on cls().
+    this._cursorX = 0;
+    this._cursorY = 0;
   }
 
   /**
@@ -884,6 +933,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
   setSpriteSheet(pixels, width = 128, height = 128) {
     if (!pixels || !width || !height) {
       this._sheet = null;
+      this._romSheet = null;
       return;
     }
     this._sheet = {
@@ -891,12 +941,20 @@ class LuaPico8Extensions extends BaseLuaExtension {
       width: width | 0,
       height: height | 0,
     };
+    // reload() copies out of cart ROM, which never changes, so snapshot the
+    // sheet before the cart gets a chance to sset()/poke() over it.
+    this._romSheet = {
+      pixels: new Uint8Array(this._sheet.pixels),
+      width: this._sheet.width,
+      height: this._sheet.height,
+    };
   }
 
   /** Install map tile data (one byte per cell = sprite index). */
   setMapData(tiles, width = 128, height = 64) {
     if (!tiles || !width || !height) {
       this._map = null;
+      this._romMap = null;
       return;
     }
     this._map = {
@@ -904,6 +962,40 @@ class LuaPico8Extensions extends BaseLuaExtension {
       width: width | 0,
       height: height | 0,
     };
+    this._romMap = {
+      tiles: new Uint8Array(this._map.tiles),
+      width: this._map.width,
+      height: this._map.height,
+    };
+  }
+
+  /**
+   * Install the cart's `__gff__` sprite flags.
+   *
+   * Lua: pico_flags(["00010203..."]) -> hex string
+   *
+   * The flags are cart ROM with no Studio asset to live in — a `.texture` has
+   * no per-sprite metadata — so the importer emits them as a hex string in the
+   * generated `main.lua`. Without this every fget() returns 0, which silently
+   * breaks any cart that uses flags for collision or terrain.
+   */
+  pico_flags(...args) {
+    if (!args || args.length === 0 || args[0] === undefined || args[0] === null) {
+      let hex = '';
+      for (let i = 0; i < this.spriteFlags.length; i += 1) {
+        hex += this.spriteFlags[i].toString(16).padStart(2, '0');
+      }
+      return hex;
+    }
+
+    const hex = String(args[0]).replace(/[^0-9a-fA-F]/g, '');
+    this.spriteFlags.fill(0);
+    const count = Math.min(this.spriteFlags.length, Math.floor(hex.length / 2));
+    for (let i = 0; i < count; i += 1) {
+      this.spriteFlags[i] = Number.parseInt(hex.substr(i * 2, 2), 16) & 0xff;
+    }
+    this._romSpriteFlags = new Uint8Array(this.spriteFlags);
+    return hex;
   }
 
   _sheetPixel(x, y) {
@@ -915,11 +1007,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /** Sprite flags packed back into the PICO-8 byte layout (bit f = flag f). */
   _spriteFlagByte(n) {
-    let byte = 0;
-    for (let f = 0; f < 8; f += 1) {
-      if (this.spriteFlags.get(`sprite_${n}_flag_${f}`)) byte |= (1 << f);
-    }
-    return byte;
+    const index = n | 0;
+    if (index < 0 || index >= this.spriteFlags.length) return 0;
+    return this.spriteFlags[index];
   }
 
   /**
@@ -969,15 +1059,17 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const y = this._requireNumberArg(args, 2, 'spr', 'y');
     const w = this._optionalNumberArg(args, 3, 1, 'spr', 'w');
     const h = this._optionalNumberArg(args, 4, 1, 'spr', 'h');
-    const fx = this._optionalIntegerArg(args, 5, 0, 'spr', 'fx');
-    const fy = this._optionalIntegerArg(args, 6, 0, 'spr', 'fy');
+    // Carts pass real booleans here (`spr(n, x, y, 1, 1, flip, false)`), so
+    // these must go through the flag reader rather than parseInt.
+    const fx = this._optionalFlagArg(args, 5, false, 'spr', 'fx');
+    const fy = this._optionalFlagArg(args, 6, false, 'spr', 'fy');
 
     const sx = (n % 16) * 8;
     const sy = Math.floor(n / 16) * 8;
     const sw = Math.max(0, Math.round(w * 8));
     const sh = Math.max(0, Math.round(h * 8));
 
-    this._blitSheet(sx, sy, sw, sh, Math.floor(x), Math.floor(y), fx !== 0, fy !== 0);
+    this._blitSheet(sx, sy, sw, sh, Math.floor(x), Math.floor(y), fx, fy);
   }
 
   /**
@@ -993,13 +1085,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const dy = this._requireNumberArg(args, 5, 'sspr', 'dy');
     const dw = this._optionalIntegerArg(args, 6, sw, 'sspr', 'dw');
     const dh = this._optionalIntegerArg(args, 7, sh, 'sspr', 'dh');
-    const fx = this._optionalIntegerArg(args, 8, 0, 'sspr', 'fx');
-    const fy = this._optionalIntegerArg(args, 9, 0, 'sspr', 'fy');
+    const fx = this._optionalFlagArg(args, 8, false, 'sspr', 'fx');
+    const fy = this._optionalFlagArg(args, 9, false, 'sspr', 'fy');
 
     this._blitSheetScaled(
       sx, sy, sw, sh,
       Math.floor(dx), Math.floor(dy), dw, dh,
-      fx !== 0, fy !== 0
+      fx, fy
     );
   }
 
@@ -1097,36 +1189,397 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /**
    * Get sprite flag
-   * Lua: fget(n, [f]) -> value
+   * Lua: fget(n) -> byte, fget(n, f) -> boolean
+   *
+   * The single-flag form returns a BOOLEAN, not 0/1. Lua treats 0 as truthy,
+   * so returning a number here makes `if fget(n, 7) then` fire for every
+   * sprite.
    */
   fget(...args) {
     const n = this._requireIntegerArg(args, 0, 'fget', 'n');
     const f = this._optionalIntegerArg(args, 1, -1, 'fget', 'f');
 
+    const byte = this._spriteFlagByte(n);
     if (f < 0) {
-      return this._spriteFlagByte(n);
+      return byte;
+    }
+    if (f > 7) {
+      return false;
     }
 
-    const key = `sprite_${n}_flag_${f}`;
-    return this.spriteFlags.get(key) ? 1 : 0;
+    return (byte & (1 << f)) !== 0;
   }
 
   /**
    * Set sprite flag
-   * Lua: fset(n, [f, v])
+   * Lua: fset(n, v) sets the whole flag byte, fset(n, f, v) sets one bit
    */
   fset(...args) {
     const n = this._requireIntegerArg(args, 0, 'fset', 'n');
-    const f = this._optionalIntegerArg(args, 1, 0, 'fset', 'f');
-    const v = this._optionalIntegerArg(args, 2, 1, 'fset', 'v');
-    
-    const key = `sprite_${n}_flag_${f}`;
-    if (v !== 0) {
-      this.spriteFlags.set(key, true);
+    if (n < 0 || n >= this.spriteFlags.length) return;
+
+    // Two-argument form addresses the byte, not a bit. Getting this wrong
+    // turns `fset(n, band(fget(n), 64))` into a write to a random flag.
+    if (args.length < 3 || args[2] === undefined || args[2] === null) {
+      this.spriteFlags[n] = this._optionalIntegerArg(args, 1, 0, 'fset', 'v') & 0xff;
+      return;
+    }
+
+    const f = this._requireIntegerArg(args, 1, 'fset', 'f');
+    if (f < 0 || f > 7) return;
+    // PICO-8 accepts either a boolean or 0/1 here.
+    const raw = args[2];
+    let v;
+    if (typeof raw === 'boolean') {
+      v = raw;
+    } else if (typeof raw === 'number') {
+      v = raw !== 0;
     } else {
-      this.spriteFlags.delete(key);
+      v = this._coerceBooleanArg(raw, 'fset', 'v');
+    }
+
+    if (v) {
+      this.spriteFlags[n] |= (1 << f);
+    } else {
+      this.spriteFlags[n] &= ~(1 << f) & 0xff;
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Persistent cart data (cartdata / dget / dset)
+  // ---------------------------------------------------------------------------
+
+  /** localStorage key for a cartdata id. */
+  static _cartDataStorageKey(id) {
+    return `retrostudio.pico8.cartdata.${id}`;
+  }
+
+  /**
+   * Claim a 64-number persistent save area.
+   * Lua: cartdata(id) -> boolean (false if the id was already in use)
+   *
+   * PICO-8 restricts the id to lowercase alphanumerics and underscore so it can
+   * be used as a filename; keep the same rule rather than letting a cart write
+   * an arbitrary localStorage key.
+   */
+  cartdata(...args) {
+    const id = String(args[0] ?? '').trim();
+    if (!/^[a-z0-9_]{1,64}$/.test(id)) {
+      throw new Error(`cartdata() invalid id: ${JSON.stringify(id)}`);
+    }
+
+    this._cartDataId = id;
+    this._cartData = new Float64Array(64);
+
+    let existed = false;
+    try {
+      const raw = globalThis.localStorage?.getItem(LuaPico8Extensions._cartDataStorageKey(id));
+      if (raw) {
+        const values = JSON.parse(raw);
+        if (Array.isArray(values)) {
+          existed = true;
+          for (let i = 0; i < 64 && i < values.length; i += 1) {
+            this._cartData[i] = Number(values[i]) || 0;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[Pico8] cartdata() could not read saved data:', error);
+    }
+
+    return !existed;
+  }
+
+  _persistCartData() {
+    if (!this._cartDataId || !this._cartData) return;
+    try {
+      globalThis.localStorage?.setItem(
+        LuaPico8Extensions._cartDataStorageKey(this._cartDataId),
+        JSON.stringify(Array.from(this._cartData)),
+      );
+    } catch (error) {
+      console.warn('[Pico8] dset() could not persist cart data:', error);
+    }
+  }
+
+  /**
+   * Read a saved value.
+   * Lua: dget(index) -> number
+   */
+  dget(...args) {
+    const index = this._requireIntegerArg(args, 0, 'dget', 'index');
+    if (!this._cartData || index < 0 || index > 63) return 0;
+    return this._cartData[index];
+  }
+
+  /**
+   * Write a saved value.
+   * Lua: dset(index, value)
+   */
+  dset(...args) {
+    const index = this._requireIntegerArg(args, 0, 'dset', 'index');
+    const value = this._optionalNumberArg(args, 1, 0, 'dset', 'value');
+    if (!this._cartData) {
+      throw new Error('dset() called before cartdata(); the cart has no save area');
+    }
+    if (index < 0 || index > 63) return;
+    this._cartData[index] = value;
+    this._persistCartData();
+  }
+
+  /**
+   * Register a pause-menu entry.
+   * Lua: menuitem(index, [label, callback])
+   *
+   * The entries are recorded so a host pause menu can render them; passing only
+   * an index removes the entry, which is how PICO-8 hides items.
+   */
+  menuitem(...args) {
+    const index = this._requireIntegerArg(args, 0, 'menuitem', 'index');
+    if (index < 1 || index > 5) return;
+
+    const label = args[1];
+    if (label === undefined || label === null || label === '') {
+      this.menuItems.delete(index);
+      return;
+    }
+
+    this.menuItems.set(index, { label: String(label), callback: args[2] ?? null });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Memory access (peek / poke / memcpy / memset / reload)
+  //
+  // Only the regions with a backing store in this runtime are mapped:
+  //   0x0000-0x1fff sprite sheet (two 4-bit pixels per byte, low nibble first)
+  //   0x2000-0x2fff map rows 0-31 (one sprite index per byte)
+  //   0x3000-0x30ff sprite flags
+  //   0x4300-0x5dff general-purpose RAM
+  // Everything else reads 0 and ignores writes rather than throwing, because
+  // carts poke hardware registers speculatively and a throw would kill them.
+  // ---------------------------------------------------------------------------
+
+  _readByte(addr, useRom = false) {
+    const a = addr | 0;
+    if (a < 0 || a > 0x7fff) return 0;
+
+    if (a < 0x2000) {
+      const sheet = useRom ? this._romSheet : this._sheet;
+      if (!sheet) return 0;
+      const y = a >> 6;
+      const x = (a & 0x3f) * 2;
+      if (y >= sheet.height || x + 1 >= sheet.width) return 0;
+      const row = y * sheet.width + x;
+      return (sheet.pixels[row] & 0x0f) | ((sheet.pixels[row + 1] & 0x0f) << 4);
+    }
+
+    if (a < 0x3000) {
+      const map = useRom ? this._romMap : this._map;
+      if (!map) return 0;
+      const offset = a - 0x2000;
+      return offset < map.tiles.length ? map.tiles[offset] : 0;
+    }
+
+    if (a < 0x3100) {
+      const flags = useRom ? this._romSpriteFlags : this.spriteFlags;
+      return flags[a - 0x3000] || 0;
+    }
+
+    if (a >= 0x4300 && a < 0x5e00) {
+      // ROM has no user RAM; reload() of this region yields zeroes, as it does
+      // on hardware for a cart that never stored anything there.
+      if (useRom || !this._userRam) return 0;
+      return this._userRam[a - 0x4300];
+    }
+
+    return 0;
+  }
+
+  _writeByte(addr, value) {
+    const a = addr | 0;
+    const v = value & 0xff;
+    if (a < 0 || a > 0x7fff) return;
+
+    if (a < 0x2000) {
+      const sheet = this._sheet;
+      if (!sheet) return;
+      const y = a >> 6;
+      const x = (a & 0x3f) * 2;
+      if (y >= sheet.height || x + 1 >= sheet.width) return;
+      const row = y * sheet.width + x;
+      sheet.pixels[row] = v & 0x0f;
+      sheet.pixels[row + 1] = (v >> 4) & 0x0f;
+      return;
+    }
+
+    if (a < 0x3000) {
+      const map = this._map;
+      if (!map) return;
+      const offset = a - 0x2000;
+      if (offset < map.tiles.length) map.tiles[offset] = v;
+      return;
+    }
+
+    if (a < 0x3100) {
+      this.spriteFlags[a - 0x3000] = v;
+      return;
+    }
+
+    if (a >= 0x4300 && a < 0x5e00) {
+      if (!this._userRam) this._userRam = new Uint8Array(0x5e00 - 0x4300);
+      this._userRam[a - 0x4300] = v;
+    }
+  }
+
+  /**
+   * Read one byte.
+   * Lua: peek(addr, [n]) -> byte, ...
+   */
+  peek(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'peek', 'addr');
+    const n = this._optionalIntegerArg(args, 1, 1, 'peek', 'n');
+    if (n <= 1) return this._readByte(addr);
+
+    const values = [];
+    for (let i = 0; i < Math.min(n, 8192); i += 1) values.push(this._readByte(addr + i));
+    return values;
+  }
+
+  /**
+   * Write one or more bytes.
+   * Lua: poke(addr, [value, ...])
+   */
+  poke(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'poke', 'addr');
+    if (args.length < 2) {
+      this._writeByte(addr, 0);
+      return;
+    }
+    for (let i = 1; i < args.length; i += 1) {
+      this._writeByte(addr + i - 1, Math.floor(Number(args[i]) || 0));
+    }
+  }
+
+  /** Lua: peek2(addr) -> signed 16-bit little-endian value */
+  peek2(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'peek2', 'addr');
+    const raw = this._readByte(addr) | (this._readByte(addr + 1) << 8);
+    return raw >= 0x8000 ? raw - 0x10000 : raw;
+  }
+
+  /** Lua: poke2(addr, value) */
+  poke2(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'poke2', 'addr');
+    const value = Math.floor(this._optionalNumberArg(args, 1, 0, 'poke2', 'value'));
+    this._writeByte(addr, value);
+    this._writeByte(addr + 1, value >> 8);
+  }
+
+  /** Lua: peek4(addr) -> 16.16 fixed-point value as a number */
+  peek4(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'peek4', 'addr');
+    let raw = 0;
+    for (let i = 3; i >= 0; i -= 1) raw = (raw * 256) + this._readByte(addr + i);
+    if (raw >= 0x80000000) raw -= 0x100000000;
+    return raw / 65536;
+  }
+
+  /** Lua: poke4(addr, value) */
+  poke4(...args) {
+    const addr = this._requireIntegerArg(args, 0, 'poke4', 'addr');
+    const value = this._optionalNumberArg(args, 1, 0, 'poke4', 'value');
+    let raw = Math.round(value * 65536);
+    if (raw < 0) raw += 0x100000000;
+    for (let i = 0; i < 4; i += 1) this._writeByte(addr + i, (raw / (256 ** i)) & 0xff);
+  }
+
+  /**
+   * Copy a block of memory.
+   * Lua: memcpy(dest, src, len)
+   *
+   * Buffered through a temporary so overlapping ranges behave like memmove;
+   * carts scroll sprite rows with overlapping copies.
+   */
+  memcpy(...args) {
+    const dest = this._requireIntegerArg(args, 0, 'memcpy', 'dest');
+    const src = this._requireIntegerArg(args, 1, 'memcpy', 'src');
+    const len = this._requireIntegerArg(args, 2, 'memcpy', 'len');
+    if (len <= 0) return;
+
+    const buffer = new Uint8Array(len);
+    for (let i = 0; i < len; i += 1) buffer[i] = this._readByte(src + i);
+    for (let i = 0; i < len; i += 1) this._writeByte(dest + i, buffer[i]);
+  }
+
+  /**
+   * Fill a block of memory.
+   * Lua: memset(dest, value, len)
+   */
+  memset(...args) {
+    const dest = this._requireIntegerArg(args, 0, 'memset', 'dest');
+    const value = this._requireIntegerArg(args, 1, 'memset', 'value');
+    const len = this._requireIntegerArg(args, 2, 'memset', 'len');
+    for (let i = 0; i < len; i += 1) this._writeByte(dest + i, value);
+  }
+
+  /**
+   * Restore a block of memory from cart ROM.
+   * Lua: reload(dest, src, len)
+   *
+   * With no arguments PICO-8 reloads the whole cart; here that means restoring
+   * every ROM-backed region to its imported state.
+   */
+  reload(...args) {
+    if (args.length === 0) {
+      if (this._romSheet && this._sheet) this._sheet.pixels.set(this._romSheet.pixels);
+      if (this._romMap && this._map) this._map.tiles.set(this._romMap.tiles);
+      this.spriteFlags.set(this._romSpriteFlags);
+      return;
+    }
+
+    const dest = this._requireIntegerArg(args, 0, 'reload', 'dest');
+    const src = this._requireIntegerArg(args, 1, 'reload', 'src');
+    const len = this._requireIntegerArg(args, 2, 'reload', 'len');
+    if (len <= 0) return;
+
+    const buffer = new Uint8Array(len);
+    for (let i = 0; i < len; i += 1) buffer[i] = this._readByte(src + i, true);
+    for (let i = 0; i < len; i += 1) this._writeByte(dest + i, buffer[i]);
+  }
+
+  /**
+   * Present the current framebuffer.
+   * Lua: flip()
+   *
+   * On hardware flip() also blocks until the next display frame. A cart calls
+   * it from inside its own loop, and the browser cannot yield the JS stack, so
+   * this pushes the pixels out but does not wait — a cart animating purely
+   * through flip() will run faster than it does on PICO-8.
+   */
+  flip() {
+    const gpu = this._gpu;
+    if (!gpu || !this._renderEnabled) return;
+    this.renderFrame(gpu, 0);
+    if (typeof gpu.present === 'function') gpu.present();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Coroutines
+  //
+  // These are implemented in Lua (see BaseLuaExtension.registerMethod) because
+  // a coroutine cannot yield across a JS call frame. The stubs exist so the
+  // extension loader finds a method for each api.json entry.
+  // ---------------------------------------------------------------------------
+
+  cocreate() { throw new Error('cocreate() must be provided by the Lua-native implementation'); }
+
+  coresume() { throw new Error('coresume() must be provided by the Lua-native implementation'); }
+
+  costatus() { throw new Error('costatus() must be provided by the Lua-native implementation'); }
+
+  cowrap() { throw new Error('cowrap() must be provided by the Lua-native implementation'); }
+
+  yield() { throw new Error('yield() must be provided by the Lua-native implementation'); }
 
   /**
    * Set palette mapping
@@ -1200,31 +1653,153 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
+   * The built-in PICO-8 font, loaded from pico8-font.js.
+   *
+   * Resolved lazily rather than in the constructor: the extension loader pulls
+   * pico8.js in dynamically, so it is not guaranteed to run after the plain
+   * script tag in index.html.
+   */
+  _getFont() {
+    if (!this._font) {
+      this._font = (typeof window !== 'undefined' && window.Pico8Font)
+        || (typeof globalThis !== 'undefined' && globalThis.Pico8Font)
+        || null;
+    }
+    return this._font;
+  }
+
+  _printableText(value) {
+    if (value === undefined || value === null) {
+      return '[nil]';
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'true' : 'false';
+    }
+    return String(value);
+  }
+
+  /**
+   * Rasterise `text` into the framebuffer one glyph pixel at a time.
+   *
+   * Goes through _plot() rather than writing _framebuffer directly so text
+   * picks up camera(), clip() and the pal() remap exactly like every other
+   * draw call, and so it composites in draw order.
+   *
+   * Returns the pen position after the last character: `right` is the x the
+   * next glyph would occupy (what PICO-8's print() returns) and `bottom` is
+   * the y of the final line.
+   */
+  _drawText(text, x, y, color) {
+    const font = this._getFont();
+    if (!font) {
+      return { right: x, bottom: y };
+    }
+
+    const tabStop = font.NARROW_ADVANCE * 4;
+    let penX = x;
+    let penY = y;
+    let right = x;
+
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+
+      if (code === 10) {
+        penY += font.LINE_HEIGHT;
+        penX = x;
+        continue;
+      }
+      if (code === 9) {
+        penX = x + (Math.floor((penX - x) / tabStop) + 1) * tabStop;
+        if (penX > right) {
+          right = penX;
+        }
+        continue;
+      }
+      // Unimplemented P8SCII control codes are consumed without drawing.
+      if (code < 32) {
+        continue;
+      }
+
+      const rows = font.rowsFor(code);
+      if (rows) {
+        for (let ry = 0; ry < rows.length; ry += 1) {
+          const bits = rows[ry];
+          if (!bits) {
+            continue;
+          }
+          for (let rx = 0; rx < 8; rx += 1) {
+            if (bits & (1 << rx)) {
+              this._plot(penX + rx, penY + ry, color);
+            }
+          }
+        }
+      }
+
+      penX += font.advanceFor(code);
+      if (penX > right) {
+        right = penX;
+      }
+    }
+
+    return { right, bottom: penY };
+  }
+
+  /**
+   * Move the text cursor used by coordinate-less print()
+   * Lua: cursor([x, y, [col]]) -> prevX, prevY
+   */
+  cursor(...args) {
+    const prevX = this._cursorX;
+    const prevY = this._cursorY;
+    this._cursorX = Math.floor(this._optionalNumberArg(args, 0, 0, 'cursor', 'x'));
+    this._cursorY = Math.floor(this._optionalNumberArg(args, 1, 0, 'cursor', 'y'));
+
+    const col = this._optionalNumberArg(args, 2, undefined, 'cursor', 'col');
+    if (col !== undefined) {
+      this.currentColor = Math.floor(col) & 0xFF;
+    }
+    return [prevX, prevY];
+  }
+
+  /**
    * Print text at position
-   * Lua: print(text, x, y, [color])
+   * Lua: print(text, [x, y], [color]) -> x position after the last character
+   *
+   * With no x/y the text goes at the cursor and the cursor drops a line,
+   * scrolling the screen once it reaches the bottom. `color` is sticky: PICO-8
+   * uses it to set the pen for subsequent draws too.
    */
   print(...args) {
-    const text = args[0]?.toString() ?? '';
+    const text = args.length === 0 ? '' : this._printableText(args[0]);
     const x = this._optionalNumberArg(args, 1, undefined, 'print', 'x');
     const y = this._optionalNumberArg(args, 2, undefined, 'print', 'y');
-    const color = this._optionalNumberArg(args, 3, this.currentColor, 'print', 'color');
+    const col = this._optionalNumberArg(args, 3, undefined, 'print', 'color');
 
-    // If no coordinates were provided, treat this like debug output.
-    if (x === undefined || y === undefined) {
-      if (this.gameEmulator?.gameConsole?.writeToConsole) {
-        this.gameEmulator.gameConsole.writeToConsole(`${text}\n`, true);
+    if (col !== undefined) {
+      this.currentColor = Math.floor(col) & 0xFF;
+    }
+
+    const font = this._getFont();
+    const lineHeight = font ? font.LINE_HEIGHT : 6;
+    const useCursor = x === undefined || y === undefined;
+
+    let penX = useCursor ? this._cursorX : Math.floor(x);
+    let penY = useCursor ? this._cursorY : Math.floor(y);
+
+    if (useCursor) {
+      // Printing past the bottom scrolls rather than drawing offscreen.
+      const maxY = this._logicalHeight - lineHeight;
+      while (penY > maxY) {
+        this._scrollFb(lineHeight);
+        penY -= lineHeight;
       }
-      console.log(text);
-      return;
-    }
-    
-    if (this.gameEmulator?.spriteEngine?.drawText) {
-      this.gameEmulator.spriteEngine.drawText(text, Math.floor(x), Math.floor(y), Math.floor(color) & 0xFF);
-      return;
     }
 
-    // Local test harnesses may not have drawText; fall back to console.
-    console.log(text);
+    const { right, bottom } = this._drawText(text, penX, penY, this.currentColor);
+
+    this._cursorX = penX;
+    this._cursorY = bottom + lineHeight;
+    return right;
   }
 
   // ============================================================
@@ -1510,6 +2085,53 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return Number.isFinite(value) ? value : 0;
   }
 
+  /**
+   * Build a string from character ordinals
+   * Lua: chr(val, [val2, ...]) -> string
+   */
+  chr(...args) {
+    let out = '';
+    for (let i = 0; i < args.length; i += 1) {
+      const code = this._requireIntegerArg(args, i, 'chr', `val${i + 1}`);
+      // PICO-8 strings are byte strings, so keep every code in 0..255 rather
+      // than letting String.fromCharCode mint a multi-byte character.
+      out += String.fromCharCode(code & 0xff);
+    }
+    return out;
+  }
+
+  /**
+   * Read character ordinals out of a string
+   * Lua: ord(str, [index], [num_results]) -> number, ...
+   *
+   * Note the third argument is a COUNT, not an end index as in Lua's
+   * string.byte(s, i, j): ord("abc", 2, 2) yields 98, 99.
+   */
+  ord(...args) {
+    const s = args[0]?.toString() ?? '';
+    const index = this._optionalIntegerArg(args, 1, 1, 'ord', 'index');
+    const requested = this._optionalIntegerArg(args, 2, 1, 'ord', 'num_results');
+
+    const start = index - 1; // Lua indices are 1-based.
+    if (!Number.isFinite(start) || start < 0 || start >= s.length || requested < 1) {
+      // Out of range reads are nil in PICO-8, not an error. Return undefined
+      // rather than null: null crosses the bridge as js.null userdata, which
+      // Lua would treat as a truthy value.
+      return undefined;
+    }
+
+    // Stop at the end of the string rather than padding with nil.
+    const count = Math.min(requested, s.length - start);
+    const codes = [];
+    for (let i = 0; i < count; i += 1) {
+      codes.push(s.charCodeAt(start + i));
+    }
+
+    // A bare ord() is single-valued; the bridge only expands arrays into Lua
+    // multiple returns, so hand back a plain number unless more were asked for.
+    return args.length >= 3 ? codes : codes[0];
+  }
+
   _isTableLike(value) {
     return Array.isArray(value) || (value !== null && typeof value === 'object');
   }
@@ -1769,6 +2391,27 @@ class LuaPico8Extensions extends BaseLuaExtension {
   printh(...args) {
     const text = args[0]?.toString() ?? '';
     console.log(`[Pico8] ${text}`);
+  }
+
+  /**
+   * Seconds the cart has been running
+   * Lua: time() -> seconds
+   */
+  time() {
+    // PICO-8 derives time() from the frame counter rather than a wall clock, so
+    // it stays in step with the simulation when frames run late. Studio's game
+    // loop already maintains that counter and zeroes it in startGameLoop(), so
+    // read it instead of starting a second clock in here.
+    const frames = this.gameEmulator?.frameCount || 0;
+    return frames / 60;
+  }
+
+  /**
+   * Short alias for time()
+   * Lua: t() -> seconds
+   */
+  t() {
+    return this.time();
   }
 
   /**

@@ -46,7 +46,10 @@ class RuntimeArchiveFileManager {
   }
 
   isTextPath(path) {
-    return /\.(lua|ini|json|txt|xml|csv|md|glsl|vert|frag|frameset)$/i.test(path);
+    // `.p8mus` songs are JSON pattern data that the PICO-8 music player parses
+    // as text. Leaving them off this list handed music() an ArrayBuffer, the
+    // preloader rejected it, and every cart imported from a .p8 played silently.
+    return /\.(lua|ini|json|txt|xml|csv|md|glsl|vert|frag|frameset|p8mus)$/i.test(path);
   }
 
   createRecord(file) {

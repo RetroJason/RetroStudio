@@ -1452,13 +1452,18 @@ class RibbonToolbar {
     try {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.p8,text/plain';
+      // A cart that uses #include needs its .lua files too, so allow either a
+      // .zip holding the whole folder or a multi-select of the loose files.
+      input.accept = '.p8,.png,.zip,.lua,text/plain';
+      input.multiple = true;
       input.onchange = async () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
+        const files = Array.from(input.files || []);
+        if (!files.length) return;
         const svc = window.serviceContainer?.get?.('pico8ImportService') || window.pico8ImportService;
         if (!svc) return alert('PICO-8 import service unavailable');
-        await svc.importProject(file);
+        const cart = files.find(f => /(\.p8(\.png)?|\.zip)$/i.test(f.name || ''));
+        if (!cart) return alert('Select a .p8 or .p8.png cart, or a .zip archive containing one.');
+        await svc.importProject(cart, { includeFiles: files.filter(f => f !== cart) });
       };
       input.click();
     } catch (e) {
