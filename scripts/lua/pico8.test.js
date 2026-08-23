@@ -7,6 +7,7 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 class BaseLuaExtension {
@@ -167,6 +168,28 @@ const tests = [
       for (const fnName of EXPECTED_FUNCTIONS) {
         assert.strictEqual(typeof pico8[fnName], 'function', `Missing function: ${fnName}`);
       }
+    },
+  },
+  {
+    // api.json is what extension-loader.js actually registers with Lua, so it
+    // is the real surface. This list drives the coverage gate below; if the two
+    // drift, a cart-visible function can ship with no test at all.
+    name: 'Contract: the expected function list matches the Pico8 category in api.json',
+    fn: () => {
+      const api = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'api.json'), 'utf8'));
+      const category = (api.categories || []).find((c) => c.name === 'Pico8');
+      assert.ok(category, 'api.json has no Pico8 category');
+
+      const declared = (category.functions || []).map((f) => f.name).sort();
+      const expected = [...EXPECTED_FUNCTIONS].sort();
+
+      const undeclared = expected.filter((name) => !declared.includes(name));
+      const untested = declared.filter((name) => !expected.includes(name));
+
+      assert.deepStrictEqual(untested, [],
+        `api.json declares PICO-8 functions with no test coverage: ${untested.join(', ')}`);
+      assert.deepStrictEqual(undeclared, [],
+        `Tests expect PICO-8 functions that api.json does not declare: ${undeclared.join(', ')}`);
     },
   },
 
