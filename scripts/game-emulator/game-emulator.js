@@ -49,6 +49,10 @@ class GameEmulator {
     this.hasDeferredResourceInvalidation = false;
     this.frameCount = 0;
     this.lastFrameTime = 0;
+    // How often Update() runs. 0 means once per display frame, which is what
+    // Studio projects want. PICO-8 carts ask for 30 (see setUpdateRate).
+    this._updateIntervalMs = 0;
+    this._updateAccumulatorMs = 0;
     this.compileOverlayHidden = true;
     this.compileOverlayShownAt = 0;
     this.extensionLoader = null; // Lua extension loader
@@ -2093,6 +2097,11 @@ class GameEmulator {
       if (pico8Ext && typeof pico8Ext.resetRuntimeState === 'function') {
         pico8Ext.resetRuntimeState();
       }
+
+      // Back to one update per display frame. A cart that wants 30fps sets it
+      // again from Setup(), which runs below; without this reset a Studio
+      // project opened after a PICO-8 cart would inherit the slower rate.
+      this.setUpdateRate(0);
       
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
@@ -2319,12 +2328,33 @@ class GameEmulator {
     }
   }
   
+  /**
+   * Choose how often Update() runs, in frames per second.
+   *
+   * Studio projects leave this at 0 and update once per display frame. A PICO-8
+   * cart asks for 30 unless it defines _update60, because that is the rate its
+   * movement constants were written against - running it per display frame
+   * plays the game at double speed.
+   *
+   * Rendering is unaffected and still happens every display frame.
+   *
+   * @param {number} hz - target updates per second, or 0 for every frame.
+   * @returns {number} the interval in ms that was applied (0 = every frame).
+   */
+  setUpdateRate(hz) {
+    const rate = Number(hz);
+    this._updateIntervalMs = Number.isFinite(rate) && rate > 0 ? (1000 / rate) : 0;
+    this._updateAccumulatorMs = 0;
+    return this._updateIntervalMs;
+  }
+
   startGameLoop() {
     console.log('[GameEmulator] Starting game loop...');
     this.isRunning = true;
     this.isPaused = false; // Make sure we start unpaused
     this.lastFrameTime = performance.now();
     this.frameCount = 0;
+    this._updateAccumulatorMs = 0;
     this._frameStats = null;
     this.showCompileOverlay();
     
@@ -2341,17 +2371,39 @@ class GameEmulator {
       const deltaTime = currentTime - this.lastFrameTime;
       this.lastFrameTime = currentTime;
       this.frameCount++;
-      
+
+      // A cart may want to run slower than the display: PICO-8 is 30fps unless
+      // it defines _update60. Accumulate real elapsed time and only step the
+      // game when a whole cart frame is due. The frames in between still
+      // render, so the picture stays live at the display's rate.
+      let stepGame = !this.isPaused;
+      let updateDelta = deltaTime;
+      if (stepGame && this._updateIntervalMs > 0) {
+        this._updateAccumulatorMs += deltaTime;
+        stepGame = this._updateAccumulatorMs >= this._updateIntervalMs;
+        if (stepGame) {
+          // Hand the cart the time that actually passed since it last ran, not
+          // one display frame, so anything reading deltaTime stays honest.
+          updateDelta = this._updateAccumulatorMs;
+          // Carry the remainder so pacing does not drift, but never carry more
+          // than a whole frame or a slow patch repays itself as fast-forward.
+          this._updateAccumulatorMs = Math.min(
+            this._updateAccumulatorMs - this._updateIntervalMs,
+            this._updateIntervalMs
+          );
+        }
+      }
+
       try {
         // Update input manager first (processes input for this frame)
-        if (this.inputManager) {
+        if (this.inputManager && stepGame) {
           this.inputManager.updateFrame();
         }
         
         // Only update if not paused
-        if (!this.isPaused) {
+        if (stepGame) {
           // Call Update(deltaTime) in Lua
-          this.luaState.execute(`Update(${deltaTime})`);
+          this.luaState.execute(`Update(${updateDelta})`);
         }
         
         // ── Render pass ──────────────────────────────────────────────
@@ -2416,7 +2468,10 @@ class GameEmulator {
         // Always check for new print output from Lua (even when paused, to capture any buffered output)
         this.captureLuaPrintOutput();
 
-        if (this.inputManager) {
+        if (this.inputManager && (stepGame || this.isPaused)) {
+          // Edge state (pressed/released) is cleared only on a frame the cart
+          // actually saw. A cart running at 30fps would otherwise lose every
+          // tap that began and ended inside a display frame it skipped.
           this.inputManager.endFrame();
         }
         

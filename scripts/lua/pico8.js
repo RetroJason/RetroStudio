@@ -1003,6 +1003,33 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return hex;
   }
 
+  /**
+   * Run the cart at PICO-8's frame rate.
+   *
+   * Lua: pico_fps([rate]) -> number
+   *
+   * PICO-8 ticks at 30fps and only runs at 60 when the cart defines _update60.
+   * Studio's loop calls Update() once per display frame, so a 30fps cart played
+   * at double speed until the importer started calling this from Setup().
+   *
+   * Drawing still happens every display frame; only the game step is paced.
+   * Passing 0 restores one update per display frame, which is the Studio
+   * default and what every non-PICO-8 project uses.
+   */
+  pico_fps(...args) {
+    const emulator = this.gameEmulator;
+    if (!args || args.length === 0) {
+      const interval = emulator?._updateIntervalMs || 0;
+      return interval > 0 ? (1000 / interval) : 0;
+    }
+
+    const rate = this._optionalNumberArg(args, 0, 0, 'pico_fps', 'rate');
+    if (typeof emulator?.setUpdateRate === 'function') {
+      emulator.setUpdateRate(rate);
+    }
+    return rate > 0 ? rate : 0;
+  }
+
   _sheetPixel(x, y) {
     const sheet = this._sheet;
     if (!sheet) return 0;

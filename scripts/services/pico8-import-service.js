@@ -996,6 +996,16 @@ class Pico8ImportService {
     if (!hasSetup) {
       chunks.push('function Setup()');
       chunks.push('  if type(_init) == "function" then _init() end');
+      chunks.push('  -- PICO-8 ticks at 30fps and only runs at 60 for carts that');
+      chunks.push('  -- define _update60. Studio updates once per display frame, so');
+      chunks.push('  -- without this a 30fps cart plays at double speed. PICO-8 fixes');
+      chunks.push('  -- the rate when the cart starts, which is why this is decided');
+      chunks.push('  -- here rather than per frame.');
+      chunks.push('  if type(_update60) == "function" then');
+      chunks.push('    pico_fps(60)');
+      chunks.push('  else');
+      chunks.push('    pico_fps(30)');
+      chunks.push('  end');
       chunks.push('end');
       chunks.push('');
     }

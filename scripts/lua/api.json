@@ -1652,6 +1652,13 @@
           "example": "pico_mode(2)"
         },
         {
+          "name": "pico_fps",
+          "description": "Set how often the cart's update runs, in frames per second (30 for _update carts, 60 for _update60, 0 = every display frame). Drawing is unaffected.",
+          "parameters": [{"name": "rate", "type": "number", "optional": true}],
+          "returns": {"type": "number"},
+          "example": "pico_fps(30)"
+        },
+        {
           "name": "spr",
           "description": "Draw sprite",
           "parameters": [

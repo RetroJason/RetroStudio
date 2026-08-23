@@ -59,7 +59,7 @@ const EXPECTED_FUNCTIONS = [
   // Input
   'btn', 'btnp',
   // Utility
-  'printh', 'stat', 'menuitem', 'flip', 'pico_flags', 'time', 't',
+  'printh', 'stat', 'menuitem', 'flip', 'pico_flags', 'pico_fps', 'time', 't',
 ];
 
 const coveredFunctions = new Set();
@@ -105,6 +105,14 @@ function makeMockEmulator() {
       isKeyHeld(mask) { return (this._held & mask) !== 0; },
       isKeyPressed(mask) { return (this._pressed & mask) !== 0; },
     },
+    // Mirrors GameEmulator.setUpdateRate so pico_fps can be exercised without
+    // standing up the whole emulator.
+    _updateIntervalMs: 0,
+    setUpdateRate(hz) {
+      const rate = Number(hz);
+      this._updateIntervalMs = Number.isFinite(rate) && rate > 0 ? (1000 / rate) : 0;
+      return this._updateIntervalMs;
+    },
   };
 }
 
@@ -149,7 +157,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 86);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 87);
     },
   },
   {
@@ -450,6 +458,33 @@ const tests = [
       assert.strictEqual(fakeGpu.blitCall.opts.y, 56);
       assert.strictEqual(fakeGpu.blitCall.opts.scaleX, 2);
       assert.strictEqual(fakeGpu.blitCall.opts.scaleY, 2);
+    },
+  },
+  {
+    name: 'pico_fps paces the cart without touching the display rate',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+
+      assert.strictEqual(pico8.pico_fps(), 0, 'Studio default is one update per display frame');
+
+      // A cart with only _update() is a 30fps cart. Anything else runs it twice
+      // as fast as the author intended.
+      pico8.pico_fps(30);
+      assert.ok(
+        Math.abs(emulator._updateIntervalMs - (1000 / 30)) < 1e-9,
+        `30fps should ask the emulator for a 33.33ms step, got ${emulator._updateIntervalMs}`
+      );
+      assert.strictEqual(Math.round(pico8.pico_fps()), 30, 'the rate reads back');
+
+      pico8.pico_fps(60);
+      assert.ok(
+        Math.abs(emulator._updateIntervalMs - (1000 / 60)) < 1e-9,
+        'a _update60 cart steps every display frame worth of time'
+      );
+
+      pico8.pico_fps(0);
+      assert.strictEqual(emulator._updateIntervalMs, 0, 'zero restores per-frame updates');
+      assert.strictEqual(pico8.pico_fps(), 0);
     },
   },
   {
