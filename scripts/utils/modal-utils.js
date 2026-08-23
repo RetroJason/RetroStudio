@@ -567,9 +567,22 @@ class ModalUtils {
   }
   
   /**
+   * Escape text for safe interpolation into innerHTML.
+   *
+   * Modal text routinely carries names that came from outside the app - a
+   * filename, an imported cart's header - so it cannot be trusted as markup.
+   */
+  static escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[ch]));
+  }
+
+  /**
    * Show a custom confirm dialog
    * @param {string} title - Dialog title
-   * @param {string} message - Dialog message
+   * @param {string} message - Dialog message. Plain text; newlines become line
+   *   breaks. Use options.bodyHtml when a caller needs real structure.
    * @param {Object} options - Additional options
    * @returns {Promise<boolean>} - Resolves with true/false
    */
@@ -582,18 +595,26 @@ class ModalUtils {
       // Create modal dialog
       const dialog = document.createElement('div');
       dialog.className = 'modal-dialog';
-      
+
+      // Callers pass plain text, so escape it and keep the line breaks they
+      // wrote - otherwise a multi-line message collapses into one paragraph.
+      const body = options.bodyHtml
+        ? options.bodyHtml
+        : `<p style="color: #cccccc; margin: 0; line-height: 1.5;">${
+          ModalUtils.escapeHtml(message).replace(/\n/g, '<br>')
+        }</p>`;
+
       // Create modal content
       dialog.innerHTML = `
         <div class="modal-header">
-          <h3 class="modal-title">${title}</h3>
+          <h3 class="modal-title">${ModalUtils.escapeHtml(title)}</h3>
         </div>
         <div class="modal-body">
-          <p style="color: #cccccc; margin: 0; line-height: 1.5;">${message}</p>
+          ${body}
         </div>
         <div class="modal-footer">
-          <button class="modal-btn modal-btn-secondary" id="modal-cancel">${options.cancelText || 'Cancel'}</button>
-          <button class="modal-btn ${options.danger ? 'modal-btn-danger' : 'modal-btn-primary'}" id="modal-ok">${options.okText || 'OK'}</button>
+          <button class="modal-btn modal-btn-secondary" id="modal-cancel">${ModalUtils.escapeHtml(options.cancelText || 'Cancel')}</button>
+          <button class="modal-btn ${options.danger ? 'modal-btn-danger' : 'modal-btn-primary'}" id="modal-ok">${ModalUtils.escapeHtml(options.okText || 'OK')}</button>
         </div>
       `;
       

@@ -778,8 +778,16 @@ class RwpService {
     // are fully authored so the explorer's generic auto-generated defaults do not
     // race with (and clobber) the packaged ones.
     const authoredCompanions = new Map();
+    // A bitmap font's atlas is an image the font owns, not artwork the project
+    // draws with. Left alone the explorer would synthesise a .texture for it,
+    // and the texture builder would then write <base>.d2 straight over the .d2
+    // the font builder produces from the .font - same path, last writer wins.
+    const fontAtlasBases = new Set();
     for (const entry of importEntries) {
       const lowerPath = entry.targetStoragePath.toLowerCase();
+      if (lowerPath.endsWith('.font')) {
+        fontAtlasBases.add(lowerPath.substring(0, lowerPath.length - '.font'.length));
+      }
       for (const companionExt of ['.texture', '.frameset']) {
         if (!lowerPath.endsWith(companionExt)) continue;
         const base = lowerPath.substring(0, lowerPath.length - companionExt.length);
@@ -826,7 +834,10 @@ class RwpService {
       const lowerTarget = entry.targetStoragePath.toLowerCase();
       const companionBase = lowerTarget.substring(0, lowerTarget.lastIndexOf('.'));
       const authored = authoredCompanions.get(companionBase);
-      const skipCompanionCreation = !!authored && authored.has('.texture') && authored.has('.frameset');
+      // The atlas is matched to its .font by base name, which is the pairing
+      // the font importer writes (pico8_font.png next to pico8_font.font).
+      const skipCompanionCreation = (!!authored && authored.has('.texture') && authored.has('.frameset'))
+        || fontAtlasBases.has(companionBase);
 
       await explorer.addFileToProject(syntheticFile, entry.folderPath, true, true, { skipCompanionCreation });
     }

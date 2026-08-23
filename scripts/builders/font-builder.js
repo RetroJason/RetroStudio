@@ -9,7 +9,9 @@ class FontBuilder extends BaseBuilder {
   /**
    * Build a .font file into .d2 + .fnt outputs for the target device.
    *
-   * A .font file is JSON metadata created by the FontEditor:
+   * A .font file is JSON metadata. There are two flavours.
+   *
+   * TrueType (the FontEditor's output, and the default when "source" is absent):
    * {
    *   "type": "retrowatch-font",
    *   "sourceFontPath": "...",
@@ -18,6 +20,25 @@ class FontBuilder extends BaseBuilder {
    *   "outputPixelFormat": "d2_mode_alpha8",
    *   ...
    * }
+   *
+   * Bitmap, for pixel fonts that cannot survive being rasterised from an
+   * outline. A 3x5 glyph rendered from a TTF at 5px lands wherever the
+   * hinter puts it and picks up antialiasing; the whole point of a pixel font
+   * is that the author placed every pixel. So the atlas is authored directly
+   * and the build only has to package it:
+   * {
+   *   "type": "retrowatch-font",
+   *   "source": "bitmap",
+   *   "sourceAtlasPath": "Sources/Fonts/pico8_font.png",
+   *   "outputPixelFormat": "d2_mode_alpha8",
+   *   "lineHeight": 6,
+   *   "base": 5,
+   *   "atlas": { "columns": 16, "cellWidth": 8, "cellHeight": 6, "firstCode": 32 },
+   *   "ranges": [ { "first": 32, "last": 127, "width": 3, "height": 5, "xadvance": 4 } ]
+   * }
+   *
+   * Both flavours converge on the same .d2 payload and the same BMFont .fnt
+   * writer, so the firmware sees one font format either way.
    *
   * The FontEditor previews runtime outputs, but the build always regenerates
   * them from metadata so the D2 header and payload are produced by the
@@ -166,14 +187,20 @@ class FontBuilder extends BaseBuilder {
   }
 
   async _generateOutputsFromMetadata(fontJson, basePath) {
-    if (typeof FontAtlasGenerator === 'undefined') {
-      throw new Error('FontAtlasGenerator is not available; cannot generate font atlas during build');
-    }
     if (typeof D2File === 'undefined' || typeof D2File.buildFromRGBA !== 'function') {
       throw new Error('D2File.buildFromRGBA is not available; cannot generate .d2 during build');
     }
     if (!fontJson || fontJson.type !== 'retrowatch-font') {
       throw new Error('Invalid .font metadata; expected retrowatch-font JSON');
+    }
+
+    // A pixel font ships its own atlas; there is no outline to rasterise.
+    if (String(fontJson.source || '').toLowerCase() === 'bitmap') {
+      return this._generateOutputsFromAtlas(fontJson, basePath);
+    }
+
+    if (typeof FontAtlasGenerator === 'undefined') {
+      throw new Error('FontAtlasGenerator is not available; cannot generate font atlas during build');
     }
     if (!fontJson.sourceFontPath) {
       throw new Error(`.font metadata is missing sourceFontPath: ${basePath}.font`);
@@ -236,6 +263,186 @@ class FontBuilder extends BaseBuilder {
     const fntBytes = generator.toBMFontBinary(result, pageName);
 
     return { d2Bytes, fntBytes };
+  }
+
+  /**
+   * Package an authored pixel-font atlas: decode the PNG, convert it to a D2
+   * texture, and describe the glyph grid as BMFont metrics.
+   *
+   * The .fnt is written by the same FontAtlasGenerator.toBMFontBinary() the
+   * TrueType path uses, so both flavours produce byte-identical structure and
+   * the firmware only ever learns one format.
+   */
+  async _generateOutputsFromAtlas(fontJson, basePath) {
+    if (!fontJson.sourceAtlasPath) {
+      throw new Error(`.font metadata is missing sourceAtlasPath: ${basePath}.font`);
+    }
+    if (typeof FontAtlasGenerator === 'undefined') {
+      throw new Error('FontAtlasGenerator is not available; cannot write the .fnt during build');
+    }
+
+    const RWImageData = window.ImageData;
+    if (!RWImageData || typeof RWImageData.fromFile !== 'function') {
+      throw new Error('RetroStudio ImageData loader is not available; cannot decode the font atlas');
+    }
+
+    let atlasContent = null;
+    let resolvedAtlasPath = null;
+    for (const candidatePath of this._candidateSourceFontPaths(fontJson.sourceAtlasPath, basePath)) {
+      atlasContent = await this._loadFileContent(candidatePath);
+      if (atlasContent) {
+        resolvedAtlasPath = candidatePath;
+        break;
+      }
+    }
+
+    if (!atlasContent) {
+      throw new Error(`Font atlas not found: ${fontJson.sourceAtlasPath}`);
+    }
+
+    // ImageData.fromFile() only understands a base64/data-URL string or a plain
+    // ArrayBuffer. Storage hands back whichever of those - or a typed array -
+    // it happens to be holding, and a Uint8Array falls through its type check
+    // as "Unsupported content type".
+    let decodable = atlasContent;
+    if (ArrayBuffer.isView(decodable)) {
+      decodable = decodable.buffer.slice(
+        decodable.byteOffset,
+        decodable.byteOffset + decodable.byteLength
+      );
+    }
+
+    const image = await RWImageData.fromFile(decodable, resolvedAtlasPath);
+    const width = image.width;
+    const height = image.height;
+    const frame = image.frames?.[0];
+    if (!frame || !frame.colors) {
+      throw new Error(`Unable to decode font atlas pixels: ${resolvedAtlasPath}`);
+    }
+
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    for (let index = 0; index < frame.colors.length; index += 1) {
+      const color = frame.colors[index];
+      const offset = index * 4;
+      rgba[offset] = color.r;
+      rgba[offset + 1] = color.g;
+      rgba[offset + 2] = color.b;
+      rgba[offset + 3] = Math.round((color.alpha ?? 1) * 255);
+    }
+
+    const outputPixelFormat = fontJson.outputPixelFormat || 'd2_mode_alpha8';
+    const d2Bytes = D2File.buildFromRGBA({
+      outputPixelFormat,
+      metadata: {
+        outputPixelFormat,
+        paletteOffset: 0,
+      },
+      rotation: 0,
+      compressionType: 'none',
+    }, rgba, width, height);
+
+    const glyphs = this._expandAtlasGlyphs(fontJson, basePath, width, height);
+
+    const result = {
+      fontFamily: fontJson.fontFamily || basePath.split('/').pop(),
+      // A pixel font has no point size; report the glyph height so anything
+      // reading the .fnt info block sees a sane number.
+      fontSize: fontJson.fontSize ?? (fontJson.base ?? 0),
+      padding: fontJson.padding ?? 0,
+      spacing: fontJson.spacing ?? 0,
+      lineHeight: fontJson.lineHeight ?? height,
+      base: fontJson.base ?? fontJson.lineHeight ?? height,
+      width,
+      height,
+      glyphs,
+    };
+
+    const pageName = basePath.split('/').pop() + '.png';
+    const fntBytes = new FontAtlasGenerator().toBMFontBinary(result, pageName);
+
+    return { d2Bytes, fntBytes };
+  }
+
+  /**
+   * Turn the compact {atlas grid} + {ranges} description into one BMFont char
+   * record per code point.
+   *
+   * The grid is what makes this compact: cell N holds code `firstCode + N`, so
+   * only the differing ink sizes need spelling out. PICO-8, for instance, is
+   * two ranges - 3x5 narrow ASCII and 7x5 wide symbols - rather than 128
+   * near-identical entries.
+   */
+  _expandAtlasGlyphs(fontJson, basePath, atlasWidth, atlasHeight) {
+    const grid = fontJson.atlas;
+    if (!grid) {
+      throw new Error(`.font metadata is missing atlas grid: ${basePath}.font`);
+    }
+
+    const columns = Number(grid.columns);
+    const cellWidth = Number(grid.cellWidth);
+    const cellHeight = Number(grid.cellHeight);
+    const firstCode = Number(grid.firstCode ?? 0);
+    if (!(columns > 0) || !(cellWidth > 0) || !(cellHeight > 0)) {
+      throw new Error(`.font atlas grid needs positive columns, cellWidth and cellHeight: ${basePath}.font`);
+    }
+    if (columns * cellWidth > atlasWidth) {
+      throw new Error(
+        `.font atlas grid is ${columns}x${cellWidth}px wide but the image is only ${atlasWidth}px: ${basePath}.font`
+      );
+    }
+
+    const ranges = Array.isArray(fontJson.ranges) ? fontJson.ranges : [];
+    if (ranges.length === 0) {
+      throw new Error(`.font metadata is missing ranges: ${basePath}.font`);
+    }
+
+    const rowCount = Math.floor(atlasHeight / cellHeight);
+    const capacity = columns * rowCount;
+    const glyphs = [];
+    const seen = new Set();
+
+    for (const range of ranges) {
+      const first = Number(range.first);
+      const last = Number(range.last ?? range.first);
+      const inkWidth = Number(range.width ?? cellWidth);
+      const inkHeight = Number(range.height ?? cellHeight);
+      const xadvance = Number(range.xadvance ?? inkWidth);
+
+      for (let code = first; code <= last; code += 1) {
+        const index = code - firstCode;
+        if (index < 0 || index >= capacity) {
+          throw new Error(
+            `.font range covers code ${code}, which falls outside the ${columns}x${rowCount} atlas grid: ${basePath}.font`
+          );
+        }
+        // Later ranges must not silently shadow earlier ones; a duplicate is
+        // an authoring mistake that would otherwise emit two records for the
+        // same code and let the consumer pick whichever it saw last.
+        if (seen.has(code)) {
+          throw new Error(`.font ranges cover code ${code} twice: ${basePath}.font`);
+        }
+        seen.add(code);
+
+        glyphs.push({
+          id: code,
+          x: (index % columns) * cellWidth,
+          y: Math.floor(index / columns) * cellHeight,
+          width: inkWidth,
+          height: inkHeight,
+          xoffset: Number(range.xoffset ?? 0),
+          yoffset: Number(range.yoffset ?? 0),
+          xadvance,
+          page: 0,
+          chnl: 15,
+        });
+      }
+    }
+
+    if (glyphs.length === 0) {
+      throw new Error(`.font ranges describe no glyphs: ${basePath}.font`);
+    }
+
+    return glyphs;
   }
 
   _toBuildOutputPath(path) {

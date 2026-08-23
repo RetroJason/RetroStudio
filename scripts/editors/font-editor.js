@@ -442,6 +442,21 @@ class FontEditor extends EditorBase {
 
   async renderPreview() {
     const currentRevision = ++this.previewRevision;
+
+    // A bitmap font has no outline to rasterise and none of the controls on
+    // this form apply to it. Bail out before _syncMetadataFromForm(), which
+    // would otherwise stamp this editor's TTF defaults over the atlas
+    // description and make the font unbuildable.
+    if (this._isBitmapFont()) {
+      this._clearPreview();
+      this._setStatus(
+        'This is a bitmap font: its glyphs come from the linked atlas image, not a TrueType face. '
+        + 'Edit the atlas to change it.',
+        'neutral'
+      );
+      return;
+    }
+
     this._syncMetadataFromForm();
     this._refreshSourceSummary();
 
@@ -883,7 +898,17 @@ class FontEditor extends EditorBase {
     await this.renderPreview();
   }
 
+  /** True for .font metadata whose glyphs come from an atlas image. */
+  _isBitmapFont() {
+    return String(this.metadata?.source || '').toLowerCase() === 'bitmap';
+  }
+
   getContent() {
+    // Round-trip bitmap metadata untouched; see renderPreview().
+    if (this._isBitmapFont()) {
+      return JSON.stringify(this.metadata, null, 2);
+    }
+
     this._syncMetadataFromForm();
 
     if (!this.metadata.sourceFontPath) {

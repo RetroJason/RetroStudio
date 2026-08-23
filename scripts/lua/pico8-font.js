@@ -28,8 +28,10 @@
 // - PICO-8 draws A-Z and a-z with two *different* glyph sets. Here both cases
 //   fold to the same capitals, so text stays readable but a cart that switches
 //   case for a stylistic effect will not show the difference.
-// - Characters >= 0x80 (PICO-8's button/heart/symbol block) render as a hollow
-//   box placeholder at the correct 8px advance, so layout still lines up.
+// - Characters 0x80..0x99 (the button/heart/symbol block) are approximations of
+//   PICO-8's shapes at the same 7x5 size and 8px advance, not pixel copies.
+// - Characters 0x9a and up are PICO-8's kana. They measure correctly but render
+//   as a hollow box placeholder, and the exported atlas stops at 0x9f.
 // - P8SCII control codes (\^c colour switches, wide/tall modes, ...) are
 //   consumed without effect. Only \n and \t do anything.
 
@@ -154,6 +156,43 @@
   // Placeholder for the 0x80+ symbol block: a hollow 7x5 box.
   const WIDE_PLACEHOLDER = packRows(['#######', '#.....#', '#.....#', '#.....#', '#######']);
 
+  // The 0x80..0x99 symbol block, keyed by PICO-8 character code. These are the
+  // ones carts actually print - button prompts, hearts, stars - so they get real
+  // shapes rather than the placeholder. 0x9a and up is kana; see KNOWN
+  // DEVIATIONS.
+  const WIDE_GLYPH_ROWS = {
+    0x80: ['#######', '#######', '#######', '#######', '#######'], // full block
+    0x81: ['#.#.#.#', '.#.#.#.', '#.#.#.#', '.#.#.#.', '#.#.#.#'], // medium shade
+    0x82: ['##...##', '#######', '#.#.#.#', '#######', '.#####.'], // cat
+    0x83: ['..###..', '..###..', '#######', '.#####.', '..###..'], // down
+    0x84: ['#...#..', '.......', '..#...#', '.......', '#...#..'], // light shade
+    0x85: ['#..#..#', '.#.#.#.', '#######', '.#.#.#.', '#..#..#'], // asterisk
+    0x86: ['..###..', '.#####.', '#######', '.#####.', '..###..'], // filled dot
+    0x87: ['.##.##.', '#######', '#######', '.#####.', '...#...'], // heart
+    0x88: ['..###..', '.#...#.', '#..#..#', '.#...#.', '..###..'], // ringed dot
+    0x89: ['..###..', '..###..', '#######', '...#...', '..#.#..'], // person
+    0x8a: ['...#...', '..###..', '.#####.', '#######', '.##.##.'], // house
+    0x8b: ['...####', '..#####', '#######', '..#####', '...####'], // left
+    0x8c: ['.#####.', '#.#.#.#', '#.....#', '#.###.#', '.#####.'], // face
+    0x8d: ['...###.', '...#.#.', '...#...', '.###...', '.###...'], // note
+    0x8e: ['.#####.', '##...##', '##...##', '##...##', '.#####.'], // O button
+    0x8f: ['...#...', '..###..', '#######', '..###..', '...#...'], // diamond
+    0x90: ['.......', '.......', '.......', '.......', '.#.#.#.'], // ellipsis
+    0x91: ['####...', '#####..', '#######', '#####..', '####...'], // right
+    0x92: ['...#...', '.#####.', '#######', '.#####.', '.#...#.'], // star
+    0x93: ['#######', '.#####.', '..###..', '.#####.', '#######'], // hourglass
+    0x94: ['..###..', '.#####.', '#######', '..###..', '..###..'], // up
+    0x95: ['#.....#', '.#...#.', '..#.#..', '...#...', '.......'], // caron
+    0x96: ['...#...', '..#.#..', '.#...#.', '#.....#', '.......'], // wedge
+    0x97: ['##...##', '.##.##.', '..###..', '.##.##.', '##...##'], // X button
+    0x98: ['#######', '.......', '#######', '.......', '#######'], // rows
+    0x99: ['#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#', '#.#.#.#'], // columns
+  };
+
+  for (const code of Object.keys(WIDE_GLYPH_ROWS)) {
+    glyphsByCode.set(Number(code), packRows(WIDE_GLYPH_ROWS[code]));
+  }
+
   // Anything printable we have no glyph for still needs *something* on screen,
   // otherwise a missing character looks like a rendering bug rather than an
   // unsupported one.
@@ -179,7 +218,7 @@
         return null;
       }
       if (code >= 0x80) {
-        return WIDE_PLACEHOLDER;
+        return glyphsByCode.get(code) || WIDE_PLACEHOLDER;
       }
       return glyphsByCode.get(code) || NARROW_PLACEHOLDER;
     },
@@ -206,6 +245,125 @@
       return widest;
     },
   };
+
+  // ── atlas export ────────────────────────────────────────────────────────
+  //
+  // Rasterising on the CPU keeps print() correct (see the header), but it also
+  // leaves the glyphs living only inside Studio's JavaScript. Nothing the build
+  // pipeline can see means nothing reaches the watch, so a cart that prints its
+  // HUD would come up blank on hardware.
+  //
+  // buildAtlas() spills this same table into a texture page plus BMFont-shaped
+  // metrics, so the importer can write a real .font asset that builds to the
+  // .fnt/.d2 pair the firmware's font renderer already consumes. Both the
+  // simulator and the asset read this one table, so they cannot drift apart.
+
+  // 16 columns is just a readable sheet shape; nothing depends on it beyond the
+  // metrics reported below.
+  const ATLAS_COLUMNS = 16;
+  // 0x20..0x9f - the printable range rowsFor() answers for. Below 0x20 is
+  // control codes, above 0x9f PICO-8 itself has nothing.
+  const ATLAS_FIRST_CODE = 0x20;
+  const ATLAS_CODE_COUNT = 128;
+
+  // The advance carries one column/row of letter spacing beyond the ink.
+  const NARROW_INK_WIDTH = NARROW_ADVANCE - 1;
+  const WIDE_INK_WIDTH = WIDE_ADVANCE - 1;
+
+  /**
+   * Render every glyph into a single RGBA texture page and describe each one in
+   * the {id, x, y, width, height, xoffset, yoffset, xadvance, page, chnl} shape
+   * FontAtlasGenerator.toBMFontBinary() expects, so the .fnt writer is shared
+   * rather than duplicated.
+   *
+   * Ink is opaque white: the glyph lives in the alpha channel so the texture
+   * works as d2_mode_alpha8, and the renderer supplies the colour.
+   */
+  function buildAtlas() {
+    const cellWidth = WIDE_ADVANCE;
+    const cellHeight = LINE_HEIGHT;
+    const rowCount = Math.ceil(ATLAS_CODE_COUNT / ATLAS_COLUMNS);
+    const width = ATLAS_COLUMNS * cellWidth;
+    const height = rowCount * cellHeight;
+    const rgba = new Uint8Array(width * height * 4);
+    const glyphs = [];
+
+    for (let index = 0; index < ATLAS_CODE_COUNT; index += 1) {
+      const code = ATLAS_FIRST_CODE + index;
+      const originX = (index % ATLAS_COLUMNS) * cellWidth;
+      const originY = Math.floor(index / ATLAS_COLUMNS) * cellHeight;
+      const packed = font.rowsFor(code);
+      const inkWidth = code >= 0x80 ? WIDE_INK_WIDTH : NARROW_INK_WIDTH;
+
+      if (packed) {
+        for (let y = 0; y < GLYPH_HEIGHT; y += 1) {
+          const bits = packed[y];
+          for (let x = 0; x < inkWidth; x += 1) {
+            if (!(bits & (1 << x))) continue;
+            const offset = (((originY + y) * width) + originX + x) * 4;
+            rgba[offset] = 0xff;
+            rgba[offset + 1] = 0xff;
+            rgba[offset + 2] = 0xff;
+            rgba[offset + 3] = 0xff;
+          }
+        }
+      }
+
+      glyphs.push({
+        id: code,
+        x: originX,
+        y: originY,
+        // Uniform per-range ink size, including blanks like space: a fully
+        // transparent 3x5 blit costs nothing and draws the same as skipping
+        // it, and it keeps this array identical to what a consumer derives
+        // from the grid+ranges metadata written alongside the atlas.
+        width: inkWidth,
+        height: GLYPH_HEIGHT,
+        xoffset: 0,
+        yoffset: 0,
+        xadvance: font.advanceFor(code),
+        page: 0,
+        chnl: 15,
+      });
+    }
+
+    return {
+      width,
+      height,
+      rgba,
+      glyphs,
+      columns: ATLAS_COLUMNS,
+      cellWidth,
+      cellHeight,
+      firstCode: ATLAS_FIRST_CODE,
+      codeCount: ATLAS_CODE_COUNT,
+      lineHeight: LINE_HEIGHT,
+      // PICO-8 glyphs sit on the baseline with no descenders, so the baseline
+      // is the full glyph height.
+      base: GLYPH_HEIGHT,
+      // The same layout stated compactly, for the .font metadata. Expanding
+      // these against the grid above must reproduce `glyphs` exactly - that is
+      // what keeps the shipped asset and this table from drifting apart.
+      ranges: [
+        {
+          first: ATLAS_FIRST_CODE,
+          last: 0x7f,
+          width: NARROW_INK_WIDTH,
+          height: GLYPH_HEIGHT,
+          xadvance: NARROW_ADVANCE,
+        },
+        {
+          first: 0x80,
+          last: ATLAS_FIRST_CODE + ATLAS_CODE_COUNT - 1,
+          width: WIDE_INK_WIDTH,
+          height: GLYPH_HEIGHT,
+          xadvance: WIDE_ADVANCE,
+        },
+      ],
+    };
+  }
+
+  font.buildAtlas = buildAtlas;
 
   root.Pico8Font = font;
   if (typeof module !== 'undefined' && module.exports) {

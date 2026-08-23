@@ -2991,7 +2991,11 @@ class GameEmulator {
       
       console.log('[GameEditor] Loading Lua engine...');
       const script = document.createElement('script');
-      script.src = 'scripts/external/lua/dist/lua.vm.js';
+      // Our own copy of the scripts/external/lua build, patched so a Lua string
+      // comes back as the bytes it holds rather than being re-read as UTF-8,
+      // which is what lets PICO-8 characters survive. See
+      // scripts/external/lua-vm/byte-strings.patch.
+      script.src = 'scripts/external/lua-vm/lua.vm.js?v=1';
       script.onload = () => {
         console.log('[GameEditor] Lua engine loaded successfully');
         resolve();

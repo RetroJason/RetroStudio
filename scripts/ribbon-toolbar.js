@@ -1434,12 +1434,20 @@ class RibbonToolbar {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.rwp,application/octet-stream,application/gzip,application/json';
+      // onchange fires long after the enclosing try/catch has returned, so it
+      // needs its own - otherwise a rejection here is an unhandled promise and
+      // the user sees the import silently do nothing.
       input.onchange = async () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
-        if (!svc) return alert('Project import service unavailable');
-        await svc.importProject(file);
+        try {
+          const file = input.files && input.files[0];
+          if (!file) return;
+          const svc = window.serviceContainer?.get?.('rwpService') || window.rwpService;
+          if (!svc) return alert('Project import service unavailable');
+          await svc.importProject(file);
+        } catch (e) {
+          console.error('[RibbonToolbar] Import failed:', e);
+          alert('Import failed: ' + (e?.message || e));
+        }
       };
       input.click();
     } catch (e) {
@@ -1456,14 +1464,22 @@ class RibbonToolbar {
       // .zip holding the whole folder or a multi-select of the loose files.
       input.accept = '.p8,.png,.zip,.lua,text/plain';
       input.multiple = true;
+      // onchange fires long after the enclosing try/catch has returned, so it
+      // needs its own - otherwise a rejection here is an unhandled promise and
+      // the user sees the import silently do nothing.
       input.onchange = async () => {
-        const files = Array.from(input.files || []);
-        if (!files.length) return;
-        const svc = window.serviceContainer?.get?.('pico8ImportService') || window.pico8ImportService;
-        if (!svc) return alert('PICO-8 import service unavailable');
-        const cart = files.find(f => /(\.p8(\.png)?|\.zip)$/i.test(f.name || ''));
-        if (!cart) return alert('Select a .p8 or .p8.png cart, or a .zip archive containing one.');
-        await svc.importProject(cart, { includeFiles: files.filter(f => f !== cart) });
+        try {
+          const files = Array.from(input.files || []);
+          if (!files.length) return;
+          const svc = window.serviceContainer?.get?.('pico8ImportService') || window.pico8ImportService;
+          if (!svc) return alert('PICO-8 import service unavailable');
+          const cart = files.find(f => /(\.p8(\.png)?|\.zip)$/i.test(f.name || ''));
+          if (!cart) return alert('Select a .p8 or .p8.png cart, or a .zip archive containing one.');
+          await svc.importProject(cart, { includeFiles: files.filter(f => f !== cart) });
+        } catch (e) {
+          console.error('[RibbonToolbar] PICO-8 import failed:', e);
+          alert('PICO-8 import failed: ' + (e?.message || e));
+        }
       };
       input.click();
     } catch (e) {

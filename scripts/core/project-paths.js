@@ -57,6 +57,9 @@
       if (['.mod', '.xm', '.s3m', '.it', '.mptm', '.p8mus'].includes(ext)) return this.getSourcesSubfolder('Music');
       if (ext === '.wav' || ext === '.sfx') return this.getSourcesSubfolder('SFX');
       if (['.png', '.gif', '.jpg', '.jpeg', '.bmp', '.tga', '.texture', '.frameset', '.d2'].includes(ext)) return this.getSourcesSubfolder('Images');
+      // Matches FontEditor.getDefaultFolder(); without this a .font landed in
+      // Sources/Binary while the editor created new ones in Sources/Fonts.
+      if (['.font', '.ttf', '.otf'].includes(ext)) return this.getSourcesSubfolder('Fonts');
       if (['.tilemap', '.tmj', '.tmx'].includes(ext)) return this.getSourcesSubfolder('Maps');
       if (['.pal', '.act', '.aco'].includes(ext)) return this.getSourcesSubfolder('Palettes');
       if (ext === '.sprite') return this.getSourcesSubfolder('Sprites');

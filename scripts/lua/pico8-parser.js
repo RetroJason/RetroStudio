@@ -84,6 +84,103 @@
     '*': '\x01', '#': '\x02', '-': '\x03', '|': '\x04', '+': '\x05', '^': '\x06',
   };
 
+  /**
+   * Since 0.2.0 a button glyph can stand in for its btn() index, so carts write
+   * `btnp(🅾️)` rather than `btnp(4)`. A .p8 stores them as UTF-8, and the emoji
+   * ones are usually followed by a variation selector (U+FE0F) that carries no
+   * meaning here - so each glyph is listed with and without it, longest first.
+   */
+  const BUTTON_GLYPHS = [
+    ['\u2B05\uFE0F', 0], ['\u2B05', 0],               // left
+    ['\u27A1\uFE0F', 1], ['\u27A1', 1],               // right
+    ['\u2B06\uFE0F', 2], ['\u2B06', 2],               // up
+    ['\u2B07\uFE0F', 3], ['\u2B07', 3],               // down
+    ['\uD83C\uDD7E\uFE0F', 4], ['\uD83C\uDD7E', 4],   // O
+    ['\u274E\uFE0F', 5], ['\u274E', 5],               // X
+  ];
+
+  const UTF8_ENCODER = new TextEncoder();
+
+  /**
+   * PICO-8's character set. A cart holds text as single bytes, but a .p8 file is
+   * written as UTF-8, so every byte outside ASCII shows up in the file as a
+   * multi-byte glyph. Translating them back to their byte is what makes `#s`
+   * count what the cart expects (layout code leans on it constantly, e.g.
+   * `print(s, 64 - #s * 2)`), and what lets print() find the glyph in the font.
+   *
+   * Index == the PICO-8 character code. 0x20..0x7e map to themselves.
+   */
+  const P8SCII_CHARSET = [
+    '\0', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '\t', '\n', 'ᵇ', 'ᶜ', '\r', 'ᵉ', 'ᶠ',
+    '▮', '■', '□', '⁙', '⁘', '‖', '◀', '▶', '「', '」', '¥', '•', '、', '。', '゛', '゜',
+  ];
+  for (let code = 0x20; code < 0x7f; code += 1) {
+    P8SCII_CHARSET.push(String.fromCharCode(code));
+  }
+  P8SCII_CHARSET.push(
+    '○',
+    // Several of these carry a trailing variation selector (U+FE0F); both the
+    // decorated and bare spellings are accepted below.
+    '█', '▒', '🐱', '⬇️', '░', '✽', '●', '♥', '☉', '웃', '⌂', '⬅️', '😐', '♪', '🅾️', '◆',
+    '…', '➡️', '★', '⧗', '⬆️', 'ˇ', '∧', '❎', '▤', '▥', 'あ', 'い', 'う', 'え', 'お', 'か',
+    'き', 'く', 'け', 'こ', 'さ', 'し', 'す', 'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', 'な', 'に',
+    'ぬ', 'ね', 'の', 'は', 'ひ', 'ふ', 'へ', 'ほ', 'ま', 'み', 'む', 'め', 'も', 'や', 'ゆ', 'よ',
+    'ら', 'り', 'る', 'れ', 'ろ', 'わ', 'を', 'ん', 'っ', 'ゃ', 'ゅ', 'ょ', 'ア', 'イ', 'ウ', 'エ',
+    'オ', 'カ', 'キ', 'ク', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ', 'タ', 'チ', 'ツ', 'テ', 'ト',
+    'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', 'ハ', 'ヒ', 'フ', 'ヘ', 'ホ', 'マ', 'ミ', 'ム', 'メ', 'モ', 'ヤ',
+    'ユ', 'ヨ', 'ラ', 'リ', 'ル', 'レ', 'ロ', 'ワ', 'ヲ', 'ン', 'ッ', 'ャ', 'ュ', 'ョ', '◜', '◝',
+  );
+
+  /**
+   * Glyph spelling -> PICO-8 character code. ASCII is left out; it is identity.
+   *
+   * Several of these glyphs are usually written with a trailing variation
+   * selector (U+FE0F) asking for the emoji rendering. It carries no meaning for
+   * a cart, and whether a given .p8 includes it varies, so it is stripped from
+   * both the table and the text being mapped.
+   */
+  const VARIATION_SELECTOR = /\uFE0F/g;
+  const P8SCII_CODES = new Map();
+  for (let code = 0; code < P8SCII_CHARSET.length; code += 1) {
+    const glyph = P8SCII_CHARSET[code].replace(VARIATION_SELECTOR, '');
+    if (glyph.codePointAt(0) < 0x80) continue;
+    P8SCII_CODES.set(glyph, code);
+  }
+  /** Longest remaining spelling is a surrogate pair. */
+  const P8SCII_MAX_UNITS = 2;
+
+  /**
+   * Rewrite decoded string text into PICO-8's single-byte characters. Anything
+   * outside the character set is kept as its raw UTF-8 bytes, which is what
+   * PICO-8 itself does with text it does not recognise.
+   */
+  function toP8Scii(text) {
+    if (!/[^\x00-\x7f]/.test(text)) return text;
+    const source = text.replace(VARIATION_SELECTOR, '');
+    let out = '';
+    let i = 0;
+    while (i < source.length) {
+      let matched = false;
+      for (let len = P8SCII_MAX_UNITS; len >= 1; len -= 1) {
+        const code = P8SCII_CODES.get(source.substr(i, len));
+        if (code === undefined) continue;
+        out += String.fromCharCode(code);
+        i += len;
+        matched = true;
+        break;
+      }
+      if (matched) continue;
+      const point = source.codePointAt(i);
+      if (point < 0x80) { out += source[i]; i += 1; continue; }
+      const units = point > 0xffff ? 2 : 1;
+      for (const byte of UTF8_ENCODER.encode(source.substr(i, units))) {
+        out += String.fromCharCode(byte);
+      }
+      i += units;
+    }
+    return out;
+  }
+
   /** Compound assignment is "any binary operator with = appended". */
   const COMPOUND_ASSIGN = {
     '+=': '+', '-=': '-', '*=': '*', '/=': '/', '%=': '%', '^=': '^',
@@ -293,7 +390,7 @@
       if (ch === '"' || ch === "'") {
         const { raw, value, quote } = readShortString(ch, startLine);
         tokens.push({
-          type: 'string', value, raw, quote, long: false, line: startLine, column: startColumn,
+          type: 'string', value: toP8Scii(value), raw, quote, long: false, line: startLine, column: startColumn,
         });
         continue;
       }
@@ -303,7 +400,7 @@
         if (level >= 0) {
           const { raw, value } = readLongBracket(level, startLine);
           tokens.push({
-            type: 'string', value, raw, long: true, line: startLine, column: startColumn,
+            type: 'string', value: toP8Scii(value), raw, long: true, line: startLine, column: startColumn,
           });
           continue;
         }
@@ -329,7 +426,23 @@
       }
 
       const op = OPERATORS.find((candidate) => src.startsWith(candidate, pos));
-      if (!op) fail(`unexpected symbol near '${ch}'`, startLine, startColumn);
+      if (!op) {
+        // Checked only once the ASCII paths have all missed, so the common case
+        // never pays for it.
+        const glyph = BUTTON_GLYPHS.find(([text]) => src.startsWith(text, pos));
+        if (glyph) {
+          pos += glyph[0].length;
+          tokens.push({
+            type: 'number',
+            value: glyph[1],
+            raw: glyph[0],
+            line: startLine,
+            column: startColumn,
+          });
+          continue;
+        }
+        fail(`unexpected symbol near '${ch}'`, startLine, startColumn);
+      }
       pos += op.length;
       tokens.push({
         type: 'op',
@@ -916,9 +1029,13 @@
    * Long strings have no escapes at all, so they are emitted verbatim. Short
    * strings are rebuilt from the decoded text because the original spelling may
    * contain PICO-8 escapes that Lua 5.2 refuses to compile.
+   *
+   * A long string holding PICO-8 characters cannot be emitted verbatim either -
+   * its raw spelling is still the UTF-8 glyph - so it is rebuilt as a quoted
+   * string, which decodes to exactly the same bytes.
    */
   function formatString(node) {
-    if (node.long) return node.raw;
+    if (node.long && !/[^\x00-\x7e]/.test(node.value)) return node.raw;
     const quote = node.quote === "'" ? "'" : '"';
     let out = quote;
     for (let i = 0; i < node.value.length; i += 1) {
@@ -929,7 +1046,9 @@
       else if (ch === '\r') out += '\\r';
       else if (ch === '\t') out += '\\t';
       // Always three digits, so a following digit cannot extend the escape.
-      else if (code < 32 || code === 127) out += `\\${String(code).padStart(3, '0')}`;
+      // Everything from 0x7f up is escaped too, keeping the output plain ASCII
+      // rather than leaving bytes that Lua would have to read as UTF-8.
+      else if (code < 32 || code >= 127) out += `\\${String(code).padStart(3, '0')}`;
       else out += ch;
     }
     return out + quote;

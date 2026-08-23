@@ -499,6 +499,78 @@ test('Lua escapes are preserved through the round trip', () => {
   assert.strictEqual(c('x = "\\65"'), 'x = "A"');
 });
 
+// ===========================================================================
+// Button glyph constants - carts write btnp(O) rather than btnp(4)
+// ===========================================================================
+
+test('each button glyph carries the btn() index it stands for', () => {
+  const pairs = [
+    ['\u2B05\uFE0F', 0], ['\u27A1\uFE0F', 1], ['\u2B06\uFE0F', 2],
+    ['\u2B07\uFE0F', 3], ['\uD83C\uDD7E\uFE0F', 4], ['\u274E\uFE0F', 5],
+  ];
+  for (const [glyph, index] of pairs) {
+    const [token] = tokenize(glyph);
+    assert.strictEqual(token.type, 'number', glyph);
+    assert.strictEqual(token.value, index, glyph);
+  }
+});
+
+test('a glyph is read the same with or without its variation selector', () => {
+  assert.strictEqual(tokenize('\u274E')[0].value, tokenize('\u274E\uFE0F')[0].value);
+  assert.strictEqual(tokenize('\u2B05')[0].value, tokenize('\u2B05\uFE0F')[0].value);
+});
+
+test('a glyph compiles to the plain number, so Lua 5.2 never sees it', () => {
+  assert.strictEqual(c('if btnp(\uD83C\uDD7E\uFE0F) then x = 1 end'), 'if btnp(4) then x = 1 end');
+  assert.strictEqual(c('x = btn(\u2B05\uFE0F)'), 'x = btn(0)');
+});
+
+test('a glyph inside a string stays text and is not folded to a number', () => {
+  const tokens = tokenize('"press \u274E"');
+  assert.strictEqual(tokens[0].type, 'string');
+  assert.strictEqual(tokens[0].value, 'press \x97');
+});
+
+test('an unsupported symbol is still reported rather than silently dropped', () => {
+  assert.throws(() => tokenize('x = \u00A7'), /unexpected symbol/);
+});
+
+// P8SCII strings - a .p8 stores text as UTF-8, PICO-8 runs it as single bytes
+test('each glyph in a string becomes the single byte PICO-8 would hold', () => {
+  const cases = [
+    ['\u2B05\uFE0F', 0x8b], ['\u27A1\uFE0F', 0x91], ['\u2B06\uFE0F', 0x94],
+    ['\u2B07\uFE0F', 0x83], ['\uD83C\uDD7E\uFE0F', 0x8e], ['\u274E\uFE0F', 0x97],
+    ['\u2665', 0x87], ['\u2605', 0x92], ['\u25CF', 0x86], ['\u25AE', 0x10],
+    ['\u25CB', 0x7f], ['\u3042', 0x9a],
+  ];
+  for (const [glyph, code] of cases) {
+    assert.strictEqual(tokenize(`"${glyph}"`)[0].value, String.fromCharCode(code), glyph);
+  }
+});
+
+test('a glyph counts as one character, so centring maths lines up', () => {
+  assert.strictEqual(tokenize('"\u2B05\uFE0F\u27A1\uFE0F"')[0].value.length, 2);
+});
+
+test('a glyph is mapped the same with or without its variation selector', () => {
+  assert.strictEqual(tokenize('"\u274E"')[0].value, tokenize('"\u274E\uFE0F"')[0].value);
+});
+
+test('compiled strings stay ASCII so Lua 5.2 never sees a raw high byte', () => {
+  const out = c('print("press \u274E")');
+  assert.strictEqual(out, 'print("press \\151")');
+  assert.ok(!/[^\x00-\x7f]/.test(out));
+});
+
+test('a long string carrying glyphs is rebuilt rather than emitted verbatim', () => {
+  assert.strictEqual(c('x = [[a\u2665b]]'), 'x = "a\\135b"');
+});
+
+test('text outside the character set falls back to its UTF-8 bytes', () => {
+  // PICO-8 keeps unknown text as raw bytes rather than dropping it.
+  assert.strictEqual(tokenize('"\u00E9"')[0].value, '\xc3\xa9');
+});
+
 test('quote style is preserved', () => {
   assert.strictEqual(c("x = 'a != b'"), "x = 'a != b'");
   assert.strictEqual(c("x = 'it\\'s'"), "x = 'it\\'s'");

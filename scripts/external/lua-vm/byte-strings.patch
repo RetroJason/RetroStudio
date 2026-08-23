@@ -1,0 +1,60 @@
+diff --git a/src/lua.js b/src/lua.js
+index d7f2c61..1da90c4 100644
+--- a/src/lua.js
++++ b/src/lua.js
+@@ -450,17 +450,53 @@ Lua.State.prototype.pushstring = function (str) {
+ 	var chars = emscripten.intArrayFromString(str, true);
+ 	this.pushlstring(chars, chars.length);
+ };
++// A Lua string is a byte string, not text. emscripten.Pointer_stringify gives
++// back the bytes verbatim only while every one of them is below 128; the moment
++// a single byte is higher it re-reads the whole buffer as UTF-8, which turns any
++// string carrying real bytes (a PICO-8 cart's characters, packed binary) into
++// garbage - and it reads to the NUL terminator, ignoring the length it was
++// given. So decode as UTF-8 only when the bytes genuinely are UTF-8, and
++// otherwise hand back one JS character per byte, losing nothing.
++Lua.readLuaString = function (ptr, len) {
++	if (!len || ptr === 0 /* NULL */) return "";
++	// Re-read the view every time: the heap is replaced when it grows.
++	var bytes = emscripten.HEAPU8.subarray(ptr, ptr + len);
++	var high = 0;
++	for (var i = 0; i < len; i++) high |= bytes[i];
++	if (high < 128) return Lua.bytesToString(bytes);
++	if (Lua._utf8Decoder) {
++		try {
++			return Lua._utf8Decoder.decode(bytes);
++		} catch (e) {
++			// Not text. Fall through and keep the bytes.
++		}
++	}
++	return Lua.bytesToString(bytes);
++};
++// Chunked so a long string cannot blow the argument limit of apply().
++Lua.bytesToString = function (bytes) {
++	var CHUNK = 4096;
++	if (bytes.length <= CHUNK) return String.fromCharCode.apply(String, bytes);
++	var out = "";
++	for (var i = 0; i < bytes.length; i += CHUNK) {
++		out += String.fromCharCode.apply(String, bytes.subarray(i, i + CHUNK));
++	}
++	return out;
++};
++Lua._utf8Decoder = (typeof TextDecoder !== "undefined")
++	? new TextDecoder("utf-8", { fatal: true })
++	: null;
+ Lua.State.prototype.raw_tostring = function(i) {
+ 	var l = emscripten.allocate(4, "i32", emscripten.ALLOC_STACK);
+ 	var p = Lua.lib.tolstring(this._L, i || -1, l);
+ 	if (p === 0 /* NULL */) return null;
+-	return emscripten.Pointer_stringify(p, emscripten.getValue(l, "i32"));
++	return Lua.readLuaString(p, emscripten.getValue(l, "i32"));
+ };
+ // This version calls __tostring metamethod
+ Lua.State.prototype.tostring = function(i) {
+ 	var l = emscripten.allocate(4, "i32", emscripten.ALLOC_STACK);
+ 	var p = this.tolstring(i || -1, l);
+-	return emscripten.Pointer_stringify(p, emscripten.getValue(l, "i32"));
++	return Lua.readLuaString(p, emscripten.getValue(l, "i32"));
+ };
+ Lua.State.prototype.lua_to_js = function(i) {
+ 	switch(this.type(i)) {

@@ -606,6 +606,123 @@ class Pico8ImportService {
   }
 
   /**
+   * Encode straight RGBA pixels as a 32-bit PNG.
+   *
+   * The font atlas needs real transparency rather than a palette index that
+   * happens to mean "background", because the build turns it into a
+   * d2_mode_alpha8 texture where the alpha channel *is* the glyph.
+   */
+  encodeRgbaPng(width, height, rgba) {
+    const stride = width * 4;
+    const raw = new Uint8Array(height * (stride + 1));
+    for (let y = 0; y < height; y += 1) {
+      raw[y * (stride + 1)] = 0; // filter type: none
+      raw.set(rgba.subarray(y * stride, (y + 1) * stride), (y * (stride + 1)) + 1);
+    }
+
+    const ihdr = new Uint8Array(13);
+    const ihdrView = new DataView(ihdr.buffer);
+    ihdrView.setUint32(0, width);
+    ihdrView.setUint32(4, height);
+    ihdr[8] = 8; // bit depth
+    ihdr[9] = 6; // colour type: RGBA
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+
+    const parts = [
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      this._pngChunk('IHDR', ihdr),
+      this._pngChunk('IDAT', this._zlibStore(raw)),
+      this._pngChunk('IEND', new Uint8Array(0)),
+    ];
+
+    const total = parts.reduce((sum, part) => sum + part.length, 0);
+    const png = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      png.set(part, offset);
+      offset += part.length;
+    }
+    return png;
+  }
+
+  /**
+   * Write the PICO-8 print() font as a real project asset: an atlas PNG plus
+   * the `.font` metadata that builds it into the .d2 + .fnt pair.
+   *
+   * WHY THE IMPORT CARRIES A FONT AT ALL
+   * ------------------------------------
+   * A cart has no font in it - PICO-8's is part of the console, not the
+   * cartridge - so there is nothing here to convert. Studio supplies the
+   * glyphs from Pico8Font, and print() rasterises them on the CPU because it
+   * has to obey camera()/clip()/pal() and draw order (see pico8-font.js).
+   *
+   * That works in the simulator but leaves the glyphs living only in
+   * JavaScript, where the build pipeline cannot see them: a cart that draws
+   * its HUD with print() would come up blank on the watch. Emitting the same
+   * table as an asset gives the firmware's font renderer something to load.
+   * Both sides read Pico8Font.buildAtlas(), so they cannot disagree.
+   */
+  async importFont(draft, projectName, sourceFile = null) {
+    const fontApi = (typeof window !== 'undefined' && window.Pico8Font)
+      || (typeof globalThis !== 'undefined' && globalThis.Pico8Font);
+    if (!fontApi || typeof fontApi.buildAtlas !== 'function') {
+      return null;
+    }
+
+    const atlas = fontApi.buildAtlas();
+    const baseName = 'pico8_font';
+    const folder = draft.getPreferredManagedFolderForExtension(projectName, '.font');
+
+    // The atlas sits beside its .font rather than in Sources/Images: it is not
+    // artwork the project draws with, and splitting the pair across folders
+    // just makes it easy to move one without the other.
+    const png = this.encodeRgbaPng(atlas.width, atlas.height, atlas.rgba);
+    await this.addBinaryFile(draft, folder, `${baseName}.png`, png, 'image/png', {
+      skipCompanionCreation: true,
+    });
+
+    const pngPath = this.toProjectRelativePath(`${folder}/${baseName}.png`);
+    const metadata = {
+      type: 'retrowatch-font',
+      // Not a TrueType face: rasterising a 3x5 glyph from an outline at 5px
+      // would antialias it and slide it off the pixel grid.
+      source: 'bitmap',
+      sourceAtlasPath: pngPath,
+      fontFamily: 'pico8',
+      fontSize: atlas.base,
+      outputPixelFormat: 'd2_mode_alpha8',
+      lineHeight: atlas.lineHeight,
+      base: atlas.base,
+      padding: 0,
+      spacing: 0,
+      atlas: {
+        columns: atlas.columns,
+        cellWidth: atlas.cellWidth,
+        cellHeight: atlas.cellHeight,
+        firstCode: atlas.firstCode,
+      },
+      ranges: atlas.ranges,
+      metadata: {
+        sourceAtlasPath: pngPath,
+        sourceCart: sourceFile,
+      },
+    };
+
+    await this.addTextFile(draft, folder, `${baseName}.font`, JSON.stringify(metadata, null, 2));
+
+    return {
+      pngFile: `${baseName}.png`,
+      fontFile: `${baseName}.font`,
+      fontPath: this.toProjectRelativePath(`${folder}/${baseName}.font`),
+      width: atlas.width,
+      height: atlas.height,
+      glyphCount: atlas.glyphs.length,
+    };
+  }
+
+  /**
    * Write the cart's sprite sheet as a PNG plus the `.texture` metadata the
    * build pipeline needs to emit a Dave2D texture.
    */
@@ -946,42 +1063,81 @@ class Pico8ImportService {
   }
 
   async showImportSummaryModal(summary) {
-    const warningLines = (summary?.warnings || []).length
-      ? summary.warnings.map((w, i) => `${i + 1}. ${w}`).join('\n')
-      : 'None';
+    const includes = summary?.includes || [];
+    const warnings = summary?.warnings || [];
+    const graphics = summary?.convertedGraphics;
 
-    const includeLines = (summary?.includes || []).length
-      ? summary.includes.map((inc) => `- ${inc.directive} -> ${inc.path} (${inc.lines} lines)`).join('\n')
-      : null;
+    const assets = [
+      ['Sprite sheet', graphics ? `${graphics.textureFile} (${graphics.width}x${graphics.height})` : null],
+      ['Sprite asset', graphics?.spriteFile ? `${graphics.spriteFile} (${graphics.frameCount} frames)` : null],
+      ['Font', summary?.convertedFont ? `${summary.convertedFont.fontFile} (${summary.convertedFont.glyphCount} glyphs)` : null],
+      ['Tilemap', summary?.convertedMap ? `${summary.convertedMap.file} (${summary.convertedMap.width}x${summary.convertedMap.height} tiles)` : null],
+      ['SFX slots', (summary?.convertedSfx || []).length || null],
+      ['Music songs', (summary?.convertedMusic || []).length || null],
+    ];
 
-    const message = [
+    const lifecycle = [
+      ['Setup from _init', summary.transformed.setupFromInit ? 'yes' : 'no'],
+      ['Update synthesized', summary.transformed.synthesizedUpdate ? 'yes' : 'no'],
+    ];
+
+    // The plain text form is what the alert() fallback shows, and it doubles as
+    // the accessible reading of the dialog.
+    const text = [
       `Project: ${summary.projectName}`,
       `Source: ${summary.sourceFile}`,
       '',
-      ...(includeLines ? ['Expanded #include files:', includeLines, ''] : []),
-      'Lifecycle transforms:',
-      `- Setup synthesized from _init: ${summary.transformed.setupFromInit ? 'yes' : 'no'}`,
-      `- Update synthesized: ${summary.transformed.synthesizedUpdate ? 'yes' : 'no'}`,
+      ...(includes.length
+        ? ['Expanded #include files:', ...includes.map((inc) => `- ${inc.directive} -> ${inc.path} (${inc.lines} lines)`), '']
+        : []),
+      'Assets',
+      ...assets.map(([label, value]) => `- ${label}: ${value ?? 'none'}`),
       '',
-      `Converted SFX slots: ${(summary?.convertedSfx || []).length}`,
-      `Converted music songs: ${(summary?.convertedMusic || []).length}`,
-      `Sprite sheet: ${summary?.convertedGraphics ? `${summary.convertedGraphics.textureFile} (${summary.convertedGraphics.width}x${summary.convertedGraphics.height})` : 'none'}`,
-      `Sprite asset: ${summary?.convertedGraphics?.spriteFile ? `${summary.convertedGraphics.spriteFile} (${summary.convertedGraphics.frameCount} frames)` : 'none'}`,
-      `Tilemap: ${summary?.convertedMap ? `${summary.convertedMap.file} (${summary.convertedMap.width}x${summary.convertedMap.height} tiles)` : 'none'}`,
+      'Lifecycle transforms',
+      ...lifecycle.map(([label, value]) => `- ${label}: ${value}`),
       '',
-      'Compatibility warnings:',
-      warningLines,
+      'Compatibility warnings',
+      ...(warnings.length ? warnings.map((w, i) => `${i + 1}. ${w}`) : ['None']),
     ].join('\n');
 
     if (window.ModalUtils?.showConfirm) {
-      await window.ModalUtils.showConfirm('PICO-8 Import Summary', message, {
+      const esc = (v) => window.ModalUtils.escapeHtml(v);
+      const heading = (label) => `<div style="color:#4CAF50;font-weight:600;text-transform:uppercase;letter-spacing:.06em;font-size:11px;margin:14px 0 6px;">${esc(label)}</div>`;
+      const rows = (pairs) => `<dl style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;">${
+        pairs.map(([label, value]) => `
+          <dt style="color:#8b8b8b;">${esc(label)}</dt>
+          <dd style="margin:0;color:${value == null ? '#6f6f6f' : '#e0e0e0'};font-style:${value == null ? 'italic' : 'normal'};">${esc(value ?? 'none')}</dd>
+        `).join('')
+      }</dl>`;
+      const list = (items, ordered) => `<${ordered ? 'ol' : 'ul'} style="margin:0;padding-left:18px;color:#e0e0e0;">${
+        items.map((item) => `<li style="margin-bottom:3px;">${item}</li>`).join('')
+      }</${ordered ? 'ol' : 'ul'}>`;
+
+      const bodyHtml = `
+        <div style="color:#cccccc;line-height:1.5;font-size:13px;max-height:55vh;overflow-y:auto;">
+          ${rows([['Project', summary.projectName], ['Source', summary.sourceFile]])}
+          ${includes.length ? heading(`Expanded #include files (${includes.length})`) : ''}
+          ${includes.length ? list(includes.map((inc) => `<code style="color:#dcdcaa;">${esc(inc.directive)}</code> &rarr; ${esc(inc.path)} <span style="color:#8b8b8b;">(${esc(inc.lines)} lines)</span>`), false) : ''}
+          ${heading('Assets')}
+          ${rows(assets)}
+          ${heading('Lifecycle transforms')}
+          ${rows(lifecycle)}
+          ${heading(`Compatibility warnings (${warnings.length})`)}
+          ${warnings.length
+            ? list(warnings.map((w) => esc(w)), true)
+            : '<div style="color:#6f6f6f;font-style:italic;">None</div>'}
+        </div>
+      `;
+
+      await window.ModalUtils.showConfirm('PICO-8 Import Summary', text, {
         okText: 'Done',
         cancelText: 'Close',
+        bodyHtml,
       });
       return;
     }
 
-    alert(message);
+    alert(text);
   }
 
   async addTextFile(draft, folderPath, fileName, content) {
@@ -1550,6 +1706,10 @@ class Pico8ImportService {
     const gfx = this.parseP8GfxSection(parsed.sections.gfx || []);
     const convertedGraphics = await this.importSpriteSheet(draft, projectName, gfx, bundle.cartName);
 
+    // Unconditional: unlike the sections above there is nothing in the cart to
+    // key off, and any cart may call print() at any point.
+    const convertedFont = await this.importFont(draft, projectName, bundle.cartName);
+
     const map = this.parseP8MapSection(parsed.sections.map || []);
     const sharedRows = this.extractSharedMapRows(gfx);
     const usesHighSprites = this.cartUsesHighSprites(cartLua);
@@ -1614,6 +1774,7 @@ class Pico8ImportService {
       convertedSfx,
       convertedMusic,
       convertedGraphics,
+      convertedFont,
       convertedMap,
       warnings,
     };
