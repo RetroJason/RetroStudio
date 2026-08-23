@@ -1538,9 +1538,9 @@
           "name": "pset",
           "description": "Set pixel color at (x, y) to c",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "description": "Screen x in pixels, 0-127."},
+            {"name": "y", "type": "number", "description": "Screen y in pixels, 0-127."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "pset(10, 20, 7)"
         },
@@ -1548,27 +1548,27 @@
           "name": "pget",
           "description": "Get pixel color at (x, y)",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"}
+            {"name": "x", "type": "number", "description": "Screen x in pixels, 0-127."},
+            {"name": "y", "type": "number", "description": "Screen y in pixels, 0-127."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Palette index 0-15 at that pixel, or 0 if the coordinates are off screen."},
           "example": "local c = pget(10, 20)"
         },
         {
           "name": "color",
           "description": "Set pen color",
-          "parameters": [{"name": "c", "type": "number"}],
+          "parameters": [{"name": "c", "type": "number", "description": "Palette index 0-15 to draw with until changed."}],
           "example": "color(3)"
         },
         {
           "name": "line",
           "description": "Draw line from (x0,y0) to (x1,y1)",
           "parameters": [
-            {"name": "x0", "type": "number"},
-            {"name": "y0", "type": "number"},
-            {"name": "x1", "type": "number"},
-            {"name": "y1", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x0", "type": "number", "description": "Start x in pixels."},
+            {"name": "y0", "type": "number", "description": "Start y in pixels."},
+            {"name": "x1", "type": "number", "description": "End x in pixels."},
+            {"name": "y1", "type": "number", "description": "End y in pixels."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "line(0, 0, 128, 128, 7)"
         },
@@ -1576,11 +1576,11 @@
           "name": "rect",
           "description": "Draw rectangle outline",
           "parameters": [
-            {"name": "x0", "type": "number"},
-            {"name": "y0", "type": "number"},
-            {"name": "x1", "type": "number"},
-            {"name": "y1", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x0", "type": "number", "description": "Left edge x in pixels."},
+            {"name": "y0", "type": "number", "description": "Top edge y in pixels."},
+            {"name": "x1", "type": "number", "description": "Right edge x in pixels, inclusive."},
+            {"name": "y1", "type": "number", "description": "Bottom edge y in pixels, inclusive."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "rect(10, 10, 50, 50, 2)"
         },
@@ -1588,11 +1588,11 @@
           "name": "rectfill",
           "description": "Draw filled rectangle",
           "parameters": [
-            {"name": "x0", "type": "number"},
-            {"name": "y0", "type": "number"},
-            {"name": "x1", "type": "number"},
-            {"name": "y1", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x0", "type": "number", "description": "Left edge x in pixels."},
+            {"name": "y0", "type": "number", "description": "Top edge y in pixels."},
+            {"name": "x1", "type": "number", "description": "Right edge x in pixels, inclusive."},
+            {"name": "y1", "type": "number", "description": "Bottom edge y in pixels, inclusive."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "rectfill(10, 10, 50, 50, 3)"
         },
@@ -1600,10 +1600,10 @@
           "name": "circ",
           "description": "Draw circle outline",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "r", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "description": "Centre x in pixels."},
+            {"name": "y", "type": "number", "description": "Centre y in pixels."},
+            {"name": "r", "type": "number", "description": "Radius in pixels. A radius below 1 draws a single pixel."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "circ(64, 64, 10, 4)"
         },
@@ -1611,10 +1611,10 @@
           "name": "circfill",
           "description": "Draw filled circle",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "r", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "description": "Centre x in pixels."},
+            {"name": "y", "type": "number", "description": "Centre y in pixels."},
+            {"name": "r", "type": "number", "description": "Radius in pixels. A radius below 1 draws a single pixel."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
           ],
           "example": "circfill(64, 64, 10, 5)"
         },
@@ -1622,53 +1622,53 @@
           "name": "btn",
           "description": "Is button i held this frame? Omit i to get a bitfield of all buttons. Buttons: 0 left, 1 right, 2 up, 3 down, 4 O, 5 X. Only player 0 is wired to a device.",
           "parameters": [
-            {"name": "i", "type": "number", "optional": true},
-            {"name": "p", "type": "number", "optional": true}
+            {"name": "i", "type": "number", "optional": true, "description": "Button index 0-5. Omit to receive a bitfield of every button."},
+            {"name": "p", "type": "number", "optional": true, "description": "Player index. Only player 0 is wired to a device; other players always read as not pressed."}
           ],
-          "returns": {"type": "boolean"},
+          "returns": {"type": "boolean", "description": "True while the button is held. With no index, a bitfield with one bit set per held button."},
           "example": "if btn(0) then x -= 1 end"
         },
         {
           "name": "btnp",
           "description": "Was button i pressed this frame? Omit i to get a bitfield of all buttons. Buttons: 0 left, 1 right, 2 up, 3 down, 4 O, 5 X. Only player 0 is wired to a device.",
           "parameters": [
-            {"name": "i", "type": "number", "optional": true},
-            {"name": "p", "type": "number", "optional": true}
+            {"name": "i", "type": "number", "optional": true, "description": "Button index 0-5. Omit to receive a bitfield of every button."},
+            {"name": "p", "type": "number", "optional": true, "description": "Player index. Only player 0 is wired to a device; other players always read as not pressed."}
           ],
-          "returns": {"type": "boolean"},
+          "returns": {"type": "boolean", "description": "True on the frame the button went down. With no index, a bitfield with one bit set per newly pressed button."},
           "example": "if btnp(4) then jump() end"
         },
         {
           "name": "cls",
           "description": "Clear screen",
-          "parameters": [{"name": "c", "type": "number", "optional": true}],
+          "parameters": [{"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15 to fill with. Defaults to 0 (black)."}],
           "example": "cls(0)"
         },
         {
           "name": "pico_mode",
           "description": "Set Pico framebuffer presentation scale (0 or omitted = full canvas, >0 = fixed scale centered)",
-          "parameters": [{"name": "scale", "type": "number", "optional": true}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "scale", "type": "number", "optional": true, "description": "Integer pixel scale. 0 stretches the 128x128 framebuffer over the whole canvas. Omit to query without changing."}],
+          "returns": {"type": "number", "description": "The scale now in effect."},
           "example": "pico_mode(2)"
         },
         {
           "name": "pico_fps",
           "description": "Set how often the cart's update runs, in frames per second (30 for _update carts, 60 for _update60, 0 = every display frame). Drawing is unaffected.",
-          "parameters": [{"name": "rate", "type": "number", "optional": true}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "rate", "type": "number", "optional": true, "description": "Updates per second. 0 restores one update per display frame. Omit to query without changing."}],
+          "returns": {"type": "number", "description": "The rate now in effect, or 0 when updating every display frame."},
           "example": "pico_fps(30)"
         },
         {
           "name": "spr",
           "description": "Draw sprite",
           "parameters": [
-            {"name": "n", "type": "number"},
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "w", "type": "number", "optional": true},
-            {"name": "h", "type": "number", "optional": true},
-            {"name": "fx", "type": "number", "optional": true},
-            {"name": "fy", "type": "number", "optional": true}
+            {"name": "n", "type": "number", "description": "Sprite index 0-255 in the sprite sheet."},
+            {"name": "x", "type": "number", "description": "Screen x of the sprite's left edge."},
+            {"name": "y", "type": "number", "description": "Screen y of the sprite's top edge."},
+            {"name": "w", "type": "number", "optional": true, "description": "Width in sprite cells (8 pixels each). Defaults to 1."},
+            {"name": "h", "type": "number", "optional": true, "description": "Height in sprite cells (8 pixels each). Defaults to 1."},
+            {"name": "fx", "type": "number", "optional": true, "description": "Flip horizontally. Accepts a boolean or 0/1."},
+            {"name": "fy", "type": "number", "optional": true, "description": "Flip vertically. Accepts a boolean or 0/1."}
           ],
           "example": "spr(1, 10, 20)"
         },
@@ -1676,16 +1676,16 @@
           "name": "sspr",
           "description": "Draw a stretched rectangle of the sprite sheet",
           "parameters": [
-            {"name": "sx", "type": "number"},
-            {"name": "sy", "type": "number"},
-            {"name": "sw", "type": "number"},
-            {"name": "sh", "type": "number"},
-            {"name": "dx", "type": "number"},
-            {"name": "dy", "type": "number"},
-            {"name": "dw", "type": "number", "optional": true},
-            {"name": "dh", "type": "number", "optional": true},
-            {"name": "fx", "type": "number", "optional": true},
-            {"name": "fy", "type": "number", "optional": true}
+            {"name": "sx", "type": "number", "description": "Source x in sprite sheet pixels."},
+            {"name": "sy", "type": "number", "description": "Source y in sprite sheet pixels."},
+            {"name": "sw", "type": "number", "description": "Source width in pixels."},
+            {"name": "sh", "type": "number", "description": "Source height in pixels."},
+            {"name": "dx", "type": "number", "description": "Destination x on screen."},
+            {"name": "dy", "type": "number", "description": "Destination y on screen."},
+            {"name": "dw", "type": "number", "optional": true, "description": "Destination width in pixels. Defaults to sw."},
+            {"name": "dh", "type": "number", "optional": true, "description": "Destination height in pixels. Defaults to sh."},
+            {"name": "fx", "type": "number", "optional": true, "description": "Flip horizontally. Accepts a boolean or 0/1."},
+            {"name": "fy", "type": "number", "optional": true, "description": "Flip vertically. Accepts a boolean or 0/1."}
           ],
           "example": "sspr(0, 0, 8, 8, 10, 20, 16, 16)"
         },
@@ -1693,13 +1693,13 @@
           "name": "map",
           "description": "Draw map cells as sprites",
           "parameters": [
-            {"name": "cx", "type": "number", "optional": true},
-            {"name": "cy", "type": "number", "optional": true},
-            {"name": "sx", "type": "number", "optional": true},
-            {"name": "sy", "type": "number", "optional": true},
-            {"name": "cw", "type": "number", "optional": true},
-            {"name": "ch", "type": "number", "optional": true},
-            {"name": "layer", "type": "number", "optional": true}
+            {"name": "cx", "type": "number", "optional": true, "description": "First map cell column to draw. Defaults to 0."},
+            {"name": "cy", "type": "number", "optional": true, "description": "First map cell row to draw. Defaults to 0."},
+            {"name": "sx", "type": "number", "optional": true, "description": "Screen x to draw the first cell at. Defaults to 0."},
+            {"name": "sy", "type": "number", "optional": true, "description": "Screen y to draw the first cell at. Defaults to 0."},
+            {"name": "cw", "type": "number", "optional": true, "description": "Number of cell columns to draw. Defaults to the rest of the map."},
+            {"name": "ch", "type": "number", "optional": true, "description": "Number of cell rows to draw. Defaults to the rest of the map."},
+            {"name": "layer", "type": "number", "optional": true, "description": "Only draw cells whose sprite flags include all of these bits. Defaults to drawing every non-zero cell."}
           ],
           "example": "map(0, 0, 0, 0, 16, 16)"
         },
@@ -1707,19 +1707,19 @@
           "name": "mget",
           "description": "Get the sprite index stored in a map cell",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"}
+            {"name": "x", "type": "number", "description": "Map cell column."},
+            {"name": "y", "type": "number", "description": "Map cell row."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Sprite index in that cell, or 0 when the cell is outside the map."},
           "example": "local tile = mget(3, 4)"
         },
         {
           "name": "mset",
           "description": "Set the sprite index stored in a map cell",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "v", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "description": "Map cell column."},
+            {"name": "y", "type": "number", "description": "Map cell row."},
+            {"name": "v", "type": "number", "optional": true, "description": "Sprite index to store. Defaults to 0."}
           ],
           "example": "mset(3, 4, 17)"
         },
@@ -1727,19 +1727,19 @@
           "name": "sget",
           "description": "Read a pixel from the sprite sheet",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"}
+            {"name": "x", "type": "number", "description": "Sprite sheet x in pixels, 0-127."},
+            {"name": "y", "type": "number", "description": "Sprite sheet y in pixels, 0-127."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Palette index 0-15 at that pixel, or 0 when off sheet."},
           "example": "local c = sget(8, 8)"
         },
         {
           "name": "sset",
           "description": "Write a pixel to the sprite sheet",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "y", "type": "number"},
-            {"name": "c", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "description": "Sprite sheet x in pixels, 0-127."},
+            {"name": "y", "type": "number", "description": "Sprite sheet y in pixels, 0-127."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15 to write. Defaults to the current pen colour."}
           ],
           "example": "sset(8, 8, 7)"
         },
@@ -1747,19 +1747,19 @@
           "name": "fget",
           "description": "Read sprite flags. fget(n) returns the whole byte, fget(n, f) returns flag f as a boolean",
           "parameters": [
-            {"name": "n", "type": "number"},
-            {"name": "f", "type": "number", "optional": true}
+            {"name": "n", "type": "number", "description": "Sprite index 0-255."},
+            {"name": "f", "type": "number", "optional": true, "description": "Flag bit 0-7. Omit to read the whole flag byte."}
           ],
-          "returns": {"type": "any"},
+          "returns": {"type": "any", "description": "The flag byte as a number, or a boolean when a flag index is given. Never 0 for a clear flag, because Lua treats 0 as true."},
           "example": "if fget(tile, 0) then solid = true end"
         },
         {
           "name": "fset",
           "description": "Write sprite flags. fset(n, v) sets the whole byte, fset(n, f, v) sets flag f",
           "parameters": [
-            {"name": "n", "type": "number"},
-            {"name": "f", "type": "number", "optional": true},
-            {"name": "v", "type": "any", "optional": true}
+            {"name": "n", "type": "number", "description": "Sprite index 0-255."},
+            {"name": "f", "type": "number", "optional": true, "description": "Flag bit 0-7. Omit to write the whole flag byte."},
+            {"name": "v", "type": "any", "optional": true, "description": "Boolean when setting a single flag, or the whole byte value when no flag index is given."}
           ],
           "example": "fset(3, 0, true)"
         },
@@ -1767,31 +1767,31 @@
           "name": "pico_flags",
           "description": "Install the cart's __gff__ sprite flags from a hex string, or read them back. Emitted by the PICO-8 importer; carts do not normally call this",
           "parameters": [
-            {"name": "hex", "type": "string", "optional": true}
+            {"name": "hex", "type": "string", "optional": true, "description": "The cart's __gff__ section as hex, two characters per sprite. Omit to read the current flags back."}
           ],
-          "returns": {"type": "string"},
+          "returns": {"type": "string", "description": "The sprite flag table as a hex string."},
           "example": "pico_flags(\"0001030000\")"
         },
         {
           "name": "cartdata",
           "description": "Claim a 64-number persistent save area. Returns false if saved data already existed",
-          "parameters": [{"name": "id", "type": "string"}],
-          "returns": {"type": "boolean"},
+          "parameters": [{"name": "id", "type": "string", "description": "Save area name. Must be filename safe: letters, digits, underscore and hyphen."}],
+          "returns": {"type": "boolean", "description": "True if the area was newly created, false if saved data already existed."},
           "example": "cartdata(\"my_game\")"
         },
         {
           "name": "dget",
           "description": "Read a value from persistent cart data (index 0-63)",
-          "parameters": [{"name": "index", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "index", "type": "number", "description": "Slot index 0-63."}],
+          "returns": {"type": "number", "description": "The stored value, or 0 if the slot was never written."},
           "example": "local hiscore = dget(0)"
         },
         {
           "name": "dset",
           "description": "Write a value to persistent cart data (index 0-63)",
           "parameters": [
-            {"name": "index", "type": "number"},
-            {"name": "value", "type": "number"}
+            {"name": "index", "type": "number", "description": "Slot index 0-63."},
+            {"name": "value", "type": "number", "description": "Value to store. Calling this before cartdata() is an error."}
           ],
           "example": "dset(0, score)"
         },
@@ -1799,9 +1799,9 @@
           "name": "menuitem",
           "description": "Add or remove a pause-menu entry (index 1-5). Omit the label to remove the entry",
           "parameters": [
-            {"name": "index", "type": "number"},
-            {"name": "label", "type": "string", "optional": true},
-            {"name": "callback", "type": "function", "optional": true}
+            {"name": "index", "type": "number", "description": "Menu slot 1-5."},
+            {"name": "label", "type": "string", "optional": true, "description": "Text shown in the pause menu. Omit to remove the entry."},
+            {"name": "callback", "type": "function", "optional": true, "description": "Called when the entry is chosen."}
           ],
           "example": "menuitem(1, \"save game\", savegame)"
         },
@@ -1809,50 +1809,50 @@
           "name": "peek",
           "description": "Read one or more bytes of memory",
           "parameters": [
-            {"name": "addr", "type": "number"},
-            {"name": "n", "type": "number", "optional": true}
+            {"name": "addr", "type": "number", "description": "Base address in cart memory."},
+            {"name": "n", "type": "number", "optional": true, "description": "How many consecutive bytes to return. Defaults to 1."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The byte at addr, or n values when a count is given."},
           "example": "local b = peek(0x3000)"
         },
         {
           "name": "poke",
           "description": "Write one or more bytes of memory",
           "parameters": [
-            {"name": "addr", "type": "number"},
-            {"name": "value", "type": "number", "optional": true}
+            {"name": "addr", "type": "number", "description": "Base address in cart memory."},
+            {"name": "value", "type": "number", "optional": true, "description": "Byte value to write. Extra values are written to consecutive addresses."}
           ],
           "example": "poke(0x3000, 0x01)"
         },
         {
           "name": "peek2",
           "description": "Read a signed 16-bit little-endian value",
-          "parameters": [{"name": "addr", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "addr", "type": "number", "description": "Address of the low byte."}],
+          "returns": {"type": "number", "description": "Signed 16-bit value, -32768 to 32767."},
           "example": "local v = peek2(0x4300)"
         },
         {
           "name": "poke2",
           "description": "Write a 16-bit little-endian value",
           "parameters": [
-            {"name": "addr", "type": "number"},
-            {"name": "value", "type": "number"}
+            {"name": "addr", "type": "number", "description": "Address of the low byte."},
+            {"name": "value", "type": "number", "description": "Value to write; wrapped to 16 bits."}
           ],
           "example": "poke2(0x4300, 1000)"
         },
         {
           "name": "peek4",
           "description": "Read a 32-bit 16.16 fixed-point value",
-          "parameters": [{"name": "addr", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "addr", "type": "number", "description": "Address of the low byte."}],
+          "returns": {"type": "number", "description": "The value as a 16.16 fixed-point number."},
           "example": "local v = peek4(0x4300)"
         },
         {
           "name": "poke4",
           "description": "Write a 32-bit 16.16 fixed-point value",
           "parameters": [
-            {"name": "addr", "type": "number"},
-            {"name": "value", "type": "number"}
+            {"name": "addr", "type": "number", "description": "Address of the low byte."},
+            {"name": "value", "type": "number", "description": "Value to store as 16.16 fixed point."}
           ],
           "example": "poke4(0x4300, 1.5)"
         },
@@ -1860,9 +1860,9 @@
           "name": "memcpy",
           "description": "Copy a block of memory (overlapping ranges are safe)",
           "parameters": [
-            {"name": "dest", "type": "number"},
-            {"name": "src", "type": "number"},
-            {"name": "len", "type": "number"}
+            {"name": "dest", "type": "number", "description": "Destination address."},
+            {"name": "src", "type": "number", "description": "Source address."},
+            {"name": "len", "type": "number", "description": "Number of bytes to copy."}
           ],
           "example": "memcpy(0x0, 0x1000, 0x1000)"
         },
@@ -1870,9 +1870,9 @@
           "name": "memset",
           "description": "Fill a block of memory with a byte value",
           "parameters": [
-            {"name": "dest", "type": "number"},
-            {"name": "value", "type": "number"},
-            {"name": "len", "type": "number"}
+            {"name": "dest", "type": "number", "description": "Destination address."},
+            {"name": "value", "type": "number", "description": "Byte value to write into every address."},
+            {"name": "len", "type": "number", "description": "Number of bytes to fill."}
           ],
           "example": "memset(0x4300, 0, 256)"
         },
@@ -1880,9 +1880,9 @@
           "name": "reload",
           "description": "Restore a block of memory from cart ROM. With no arguments, restores the whole cart",
           "parameters": [
-            {"name": "dest", "type": "number", "optional": true},
-            {"name": "src", "type": "number", "optional": true},
-            {"name": "len", "type": "number", "optional": true}
+            {"name": "dest", "type": "number", "optional": true, "description": "Destination address in RAM."},
+            {"name": "src", "type": "number", "optional": true, "description": "Source address in the cart ROM image."},
+            {"name": "len", "type": "number", "optional": true, "description": "Number of bytes to restore."}
           ],
           "example": "reload(0x0, 0x0, 0x2000)"
         },
@@ -1895,332 +1895,332 @@
         {
           "name": "cocreate",
           "description": "Create a coroutine from a function",
-          "parameters": [{"name": "f", "type": "function"}],
-          "returns": {"type": "thread"},
+          "parameters": [{"name": "f", "type": "function", "description": "Function to run as a coroutine."}],
+          "returns": {"type": "thread", "description": "A suspended coroutine, ready for coresume."},
           "example": "local co = cocreate(myloop)"
         },
         {
           "name": "coresume",
           "description": "Resume a coroutine, returning success plus any yielded values",
           "parameters": [
-            {"name": "c", "type": "thread"},
-            {"name": "...", "type": "any", "optional": true}
+            {"name": "c", "type": "thread", "description": "Coroutine to resume."},
+            {"name": "...", "type": "any", "optional": true, "description": "Values passed to the coroutine, returned from its yield."}
           ],
-          "returns": {"type": "any"},
+          "returns": {"type": "any", "description": "True plus any yielded values, or false plus an error message."},
           "example": "coresume(co, button)"
         },
         {
           "name": "costatus",
           "description": "Return a coroutine's status: running, suspended or dead",
-          "parameters": [{"name": "c", "type": "thread"}],
-          "returns": {"type": "string"},
+          "parameters": [{"name": "c", "type": "thread", "description": "Coroutine to inspect."}],
+          "returns": {"type": "string", "description": "One of running, suspended or dead."},
           "example": "if costatus(co) == \"dead\" then co = nil end"
         },
         {
           "name": "cowrap",
           "description": "Create a coroutine wrapped as a callable function",
-          "parameters": [{"name": "f", "type": "function"}],
-          "returns": {"type": "function"},
+          "parameters": [{"name": "f", "type": "function", "description": "Function to run as a coroutine."}],
+          "returns": {"type": "function", "description": "A function that resumes the coroutine and raises any error it throws."},
           "example": "local step = cowrap(myloop)"
         },
         {
           "name": "yield",
           "description": "Suspend the running coroutine, returning any values passed to the next resume",
-          "parameters": [{"name": "...", "type": "any", "optional": true}],
-          "returns": {"type": "any"},
+          "parameters": [{"name": "...", "type": "any", "optional": true, "description": "Values handed back to whoever resumed the coroutine."}],
+          "returns": {"type": "any", "description": "The values passed to the next coresume."},
           "example": "local cmd = yield()"
         },
         {
           "name": "sin",
           "description": "Sine function (takes 0.0-1.0, not radians)",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."}],
+          "returns": {"type": "number", "description": "Sine of the angle. Note PICO-8 inverts the sign relative to standard sine."},
           "example": "local y = sin(0.25)"
         },
         {
           "name": "cos",
           "description": "Cosine function (takes 0.0-1.0, not radians)",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."}],
+          "returns": {"type": "number", "description": "Cosine of the angle, -1.0 to 1.0."},
           "example": "local x = cos(0.25)"
         },
         {
           "name": "atan2",
           "description": "Arc tangent 2",
           "parameters": [
-            {"name": "y", "type": "number"},
-            {"name": "x", "type": "number"}
+            {"name": "y", "type": "number", "description": "Vertical component."},
+            {"name": "x", "type": "number", "description": "Horizontal component."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."},
           "example": "local angle = atan2(10, 10)"
         },
         {
           "name": "sqrt",
           "description": "Square root",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to take the square root of. Negative input returns 0."}],
+          "returns": {"type": "number", "description": "The square root."},
           "example": "local root = sqrt(16)"
         },
         {
           "name": "abs",
           "description": "Absolute value",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to take the magnitude of."}],
+          "returns": {"type": "number", "description": "The value without its sign."},
           "example": "local positive = abs(-5)"
         },
         {
           "name": "sgn",
           "description": "Sign function (-1, 0, or 1)",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to take the sign of."}],
+          "returns": {"type": "number", "description": "-1, 0 or 1."},
           "example": "local sign = sgn(-5)"
         },
         {
           "name": "flr",
           "description": "Floor function",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to round down."}],
+          "returns": {"type": "number", "description": "The largest integer not greater than x."},
           "example": "local floored = flr(3.7)"
         },
         {
           "name": "ceil",
           "description": "Ceiling function",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to round up."}],
+          "returns": {"type": "number", "description": "The smallest integer not less than x."},
           "example": "local ceiled = ceil(3.2)"
         },
         {
           "name": "min",
           "description": "Minimum of two values",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"}
+            {"name": "a", "type": "number", "description": "First value."},
+            {"name": "b", "type": "number", "description": "Second value."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The smaller of the two."},
           "example": "local smallest = min(5, 3)"
         },
         {
           "name": "max",
           "description": "Maximum of two values",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"}
+            {"name": "a", "type": "number", "description": "First value."},
+            {"name": "b", "type": "number", "description": "Second value."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The larger of the two."},
           "example": "local largest = max(5, 3)"
         },
         {
           "name": "mid",
           "description": "Median/clamp of three values",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"},
-            {"name": "c", "type": "number"}
+            {"name": "a", "type": "number", "description": "First value."},
+            {"name": "b", "type": "number", "description": "Second value."},
+            {"name": "c", "type": "number", "description": "Third value."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The middle of the three, which clamps b between a and c."},
           "example": "local middle = mid(1, 5, 3)"
         },
         {
           "name": "rnd",
           "description": "Random number (0 to x)",
-          "parameters": [{"name": "x", "type": "number", "optional": true}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "optional": true, "description": "Exclusive upper bound, defaulting to 1. Given a table, one of its elements is picked instead."}],
+          "returns": {"type": "number", "description": "A random value in [0, x), or a random element when passed a table."},
           "example": "local rand = rnd(10)"
         },
         {
           "name": "srand",
           "description": "Seed random",
-          "parameters": [{"name": "x", "type": "number"}],
+          "parameters": [{"name": "x", "type": "number", "description": "Seed value. The same seed replays the same sequence."}],
           "example": "srand(12345)"
         },
         {
           "name": "band",
           "description": "Bitwise AND",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"}
+            {"name": "a", "type": "number", "description": "First operand."},
+            {"name": "b", "type": "number", "description": "Second operand."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Bits set in both operands."},
           "example": "local result = band(12, 10)"
         },
         {
           "name": "bor",
           "description": "Bitwise OR",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"}
+            {"name": "a", "type": "number", "description": "First operand."},
+            {"name": "b", "type": "number", "description": "Second operand."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Bits set in either operand."},
           "example": "local result = bor(12, 10)"
         },
         {
           "name": "bxor",
           "description": "Bitwise XOR",
           "parameters": [
-            {"name": "a", "type": "number"},
-            {"name": "b", "type": "number"}
+            {"name": "a", "type": "number", "description": "First operand."},
+            {"name": "b", "type": "number", "description": "Second operand."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Bits set in exactly one operand."},
           "example": "local result = bxor(12, 10)"
         },
         {
           "name": "bnot",
           "description": "Bitwise NOT",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Value to invert."}],
+          "returns": {"type": "number", "description": "The value with every bit flipped."},
           "example": "local result = bnot(5)"
         },
         {
           "name": "shl",
           "description": "Shift left",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to shift."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The shifted value."},
           "example": "local result = shl(8, 2)"
         },
         {
           "name": "shr",
           "description": "Shift right",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to shift."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The shifted value, preserving the sign bit."},
           "example": "local result = shr(32, 2)"
         },
         {
           "name": "lshl",
           "description": "Logical shift left",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to shift."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The shifted value."},
           "example": "local result = lshl(8, 2)"
         },
         {
           "name": "lshr",
           "description": "Logical shift right",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to shift."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The shifted value, filling with zero rather than the sign bit."},
           "example": "local result = lshr(32, 2)"
         },
         {
           "name": "rotl",
           "description": "Rotate left",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to rotate."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The rotated value; bits shifted off the top re-enter at the bottom."},
           "example": "local result = rotl(8, 2)"
         },
         {
           "name": "rotr",
           "description": "Rotate right",
           "parameters": [
-            {"name": "x", "type": "number"},
-            {"name": "n", "type": "number"}
+            {"name": "x", "type": "number", "description": "Value to rotate."},
+            {"name": "n", "type": "number", "description": "Number of bit positions."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "The rotated value; bits shifted off the bottom re-enter at the top."},
           "example": "local result = rotr(32, 2)"
         },
         {
           "name": "sub",
           "description": "Substring function",
           "parameters": [
-            {"name": "s", "type": "string"},
-            {"name": "i", "type": "number"},
-            {"name": "j", "type": "number", "optional": true}
+            {"name": "s", "type": "string", "description": "Source string."},
+            {"name": "i", "type": "number", "description": "First character position, 1-based. Negative counts back from the end."},
+            {"name": "j", "type": "number", "optional": true, "description": "Last character position, inclusive. Defaults to the end of the string."}
           ],
-          "returns": {"type": "string"},
+          "returns": {"type": "string", "description": "The selected characters."},
           "example": "local part = sub('hello', 2, 4)"
         },
         {
           "name": "tostr",
           "description": "Convert value to string",
           "parameters": [
-            {"name": "x", "type": "any"},
-            {"name": "show_decimal", "type": "number", "optional": true}
+            {"name": "x", "type": "any", "description": "Value to convert."},
+            {"name": "show_decimal", "type": "number", "optional": true, "description": "When truthy, format the number as hexadecimal 16.16 fixed point."}
           ],
-          "returns": {"type": "string"},
+          "returns": {"type": "string", "description": "The value as text."},
           "example": "local str = tostr(42)"
         },
         {
           "name": "tonum",
           "description": "Convert string to number",
-          "parameters": [{"name": "s", "type": "string"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "s", "type": "string", "description": "Text to parse."}],
+          "returns": {"type": "number", "description": "The parsed number, or nil when the text is not numeric."},
           "example": "local num = tonum('42')"
         },
         {
           "name": "chr",
           "description": "Build a string from one or more character ordinals",
-          "parameters": [{"name": "val", "type": "number"}],
-          "returns": {"type": "string"},
+          "parameters": [{"name": "val", "type": "number", "description": "Character ordinal 0-255. Extra arguments append more characters."}],
+          "returns": {"type": "string", "description": "A string built from the ordinals."},
           "example": "local s = chr(104, 105)"
         },
         {
           "name": "ord",
           "description": "Read character ordinals out of a string. The third argument is a count, not an end index",
           "parameters": [
-            {"name": "str", "type": "string"},
-            {"name": "index", "type": "number", "optional": true},
-            {"name": "num_results", "type": "number", "optional": true}
+            {"name": "str", "type": "string", "description": "Source string."},
+            {"name": "index", "type": "number", "optional": true, "description": "Character position to start at, 1-based. Defaults to 1."},
+            {"name": "num_results", "type": "number", "optional": true, "description": "How many ordinals to return. Defaults to 1."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "One ordinal per requested character, or nil when the position is out of range."},
           "example": "local a, b = ord('abc', 1, 2)"
         },
         {
           "name": "add",
           "description": "Add value to table",
           "parameters": [
-            {"name": "t", "type": "table"},
-            {"name": "v", "type": "any"},
-            {"name": "i", "type": "number", "optional": true}
+            {"name": "t", "type": "table", "description": "Table to append to."},
+            {"name": "v", "type": "any", "description": "Value to append."},
+            {"name": "i", "type": "number", "optional": true, "description": "Position to insert at. Defaults to the end."}
           ],
-          "returns": {"type": "any"},
+          "returns": {"type": "any", "description": "The value that was inserted."},
           "example": "add(items, 42)"
         },
         {
           "name": "del",
           "description": "Delete first matching value from table",
           "parameters": [
-            {"name": "t", "type": "table"},
-            {"name": "v", "type": "any"}
+            {"name": "t", "type": "table", "description": "Table to remove from."},
+            {"name": "v", "type": "any", "description": "Value to find and remove."}
           ],
-          "returns": {"type": "any"},
+          "returns": {"type": "any", "description": "The removed value, or nil when no element matched."},
           "example": "del(items, 42)"
         },
         {
           "name": "count",
           "description": "Count table elements",
           "parameters": [
-            {"name": "t", "type": "table"}
+            {"name": "t", "type": "table", "description": "Table to measure."}
           ],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Number of elements in the array part of the table."},
           "example": "local n = count(items)"
         },
         {
           "name": "all",
           "description": "Return iterator over table elements",
           "parameters": [
-            {"name": "t", "type": "table"}
+            {"name": "t", "type": "table", "description": "Table to iterate."}
           ],
-          "returns": {"type": "function"},
+          "returns": {"type": "function", "description": "An iterator yielding each element in order, for use in a for loop."},
           "example": "for v in all(items) do print(v) end"
         },
         {
           "name": "foreach",
           "description": "Apply callback function to each table element",
           "parameters": [
-            {"name": "t", "type": "table"},
-            {"name": "f", "type": "function"}
+            {"name": "t", "type": "table", "description": "Table to walk."},
+            {"name": "f", "type": "function", "description": "Called once per element with the element as its argument."}
           ],
           "example": "foreach(items, function(v) print(v) end)"
         },
@@ -2228,10 +2228,10 @@
           "name": "print",
           "description": "Draw text with the built-in font. With no x/y it prints at the cursor and drops a line, scrolling the screen at the bottom. Returns the x position after the last character.",
           "parameters": [
-            {"name": "text", "type": "string"},
-            {"name": "x", "type": "number", "optional": true},
-            {"name": "y", "type": "number", "optional": true},
-            {"name": "color", "type": "number", "optional": true}
+            {"name": "text", "type": "string", "description": "Text to draw. Non-string values are converted first."},
+            {"name": "x", "type": "number", "optional": true, "description": "Screen x of the first character. Omit to use the cursor."},
+            {"name": "y", "type": "number", "optional": true, "description": "Screen y of the top of the text. Omit to use the cursor."},
+            {"name": "color", "type": "number", "optional": true, "description": "Palette index 0-15. Also becomes the pen colour for later draws."}
           ],
           "returns": {"type": "number", "description": "X position after the last character"},
           "example": "print('hello', 10, 20, 7)"
@@ -2240,9 +2240,9 @@
           "name": "cursor",
           "description": "Set the text cursor used by print() when no coordinates are given, and optionally the pen colour. Returns the previous cursor position.",
           "parameters": [
-            {"name": "x", "type": "number", "optional": true},
-            {"name": "y", "type": "number", "optional": true},
-            {"name": "col", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "optional": true, "description": "New cursor x. Defaults to 0."},
+            {"name": "y", "type": "number", "optional": true, "description": "New cursor y. Defaults to 0."},
+            {"name": "col", "type": "number", "optional": true, "description": "Palette index 0-15 to adopt as the pen colour."}
           ],
           "returns": {"type": "number", "description": "Previous cursor x, y"},
           "example": "cursor(0, 0, 7)"
@@ -2251,8 +2251,8 @@
           "name": "camera",
           "description": "Set camera position",
           "parameters": [
-            {"name": "x", "type": "number", "optional": true},
-            {"name": "y", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "optional": true, "description": "Amount subtracted from every draw x. Defaults to 0."},
+            {"name": "y", "type": "number", "optional": true, "description": "Amount subtracted from every draw y. Defaults to 0."}
           ],
           "example": "camera(0, 0)"
         },
@@ -2260,10 +2260,10 @@
           "name": "clip",
           "description": "Set clipping region",
           "parameters": [
-            {"name": "x", "type": "number", "optional": true},
-            {"name": "y", "type": "number", "optional": true},
-            {"name": "w", "type": "number", "optional": true},
-            {"name": "h", "type": "number", "optional": true}
+            {"name": "x", "type": "number", "optional": true, "description": "Left edge of the drawable region. Omit all arguments to reset to the full screen."},
+            {"name": "y", "type": "number", "optional": true, "description": "Top edge of the drawable region."},
+            {"name": "w", "type": "number", "optional": true, "description": "Width in pixels. Defaults to the rest of the screen."},
+            {"name": "h", "type": "number", "optional": true, "description": "Height in pixels. Defaults to the rest of the screen."}
           ],
           "example": "clip(10, 10, 100, 100)"
         },
@@ -2271,8 +2271,8 @@
           "name": "pal",
           "description": "Set palette mapping",
           "parameters": [
-            {"name": "c0", "type": "number", "optional": true},
-            {"name": "c1", "type": "number", "optional": true}
+            {"name": "c0", "type": "number", "optional": true, "description": "Palette index to remap. Omit all arguments to reset the palette."},
+            {"name": "c1", "type": "number", "optional": true, "description": "Palette index to draw in its place."}
           ],
           "example": "pal(1, 2)"
         },
@@ -2280,8 +2280,8 @@
           "name": "palt",
           "description": "Set transparent color",
           "parameters": [
-            {"name": "c", "type": "number", "optional": true},
-            {"name": "t", "type": "boolean", "optional": true}
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index to change. Omit all arguments to reset so only colour 0 is transparent."},
+            {"name": "t", "type": "boolean", "optional": true, "description": "True to skip this colour when drawing sprites."}
           ],
           "example": "palt(0, true)"
         },
@@ -2289,9 +2289,9 @@
           "name": "music",
           "description": "Play music track",
           "parameters": [
-            {"name": "n", "type": "number"},
-            {"name": "fade", "type": "number", "optional": true},
-            {"name": "mask", "type": "number", "optional": true}
+            {"name": "n", "type": "number", "description": "Music pattern index, or -1 to stop."},
+            {"name": "fade", "type": "number", "optional": true, "description": "Fade-in time in milliseconds."},
+            {"name": "mask", "type": "number", "optional": true, "description": "Bitfield of channels to reserve for music."}
           ],
           "example": "music(1)"
         },
@@ -2299,38 +2299,38 @@
           "name": "sfx",
           "description": "Play sound effect",
           "parameters": [
-            {"name": "n", "type": "number"},
-            {"name": "channel", "type": "number", "optional": true},
-            {"name": "offset", "type": "number", "optional": true},
-            {"name": "length", "type": "number", "optional": true}
+            {"name": "n", "type": "number", "description": "Sound effect index, or -1 to stop."},
+            {"name": "channel", "type": "number", "optional": true, "description": "Channel 0-3, or -1 to pick a free one."},
+            {"name": "offset", "type": "number", "optional": true, "description": "Note index to start from."},
+            {"name": "length", "type": "number", "optional": true, "description": "How many notes to play."}
           ],
           "example": "sfx(10)"
         },
         {
           "name": "stat",
           "description": "Get statistics",
-          "parameters": [{"name": "x", "type": "number"}],
-          "returns": {"type": "number"},
+          "parameters": [{"name": "x", "type": "number", "description": "Statistic index, for example 4 for the clipboard or 7 for the frame rate."}],
+          "returns": {"type": "number", "description": "The requested statistic, or 0 when it is not tracked."},
           "example": "local fps = stat(4)"
         },
         {
           "name": "printh",
           "description": "Print to console (debug)",
-          "parameters": [{"name": "text", "type": "string"}],
+          "parameters": [{"name": "text", "type": "string", "description": "Message to write to the developer console. Never drawn on screen."}],
           "example": "printh('debug message')"
         },
         {
           "name": "time",
           "description": "Seconds the cart has been running, counted in frames",
           "parameters": [],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Elapsed seconds since the cart started."},
           "example": "local elapsed = time()"
         },
         {
           "name": "t",
           "description": "Short alias for time()",
           "parameters": [],
-          "returns": {"type": "number"},
+          "returns": {"type": "number", "description": "Elapsed seconds since the cart started."},
           "example": "local elapsed = t()"
         }
       ]
