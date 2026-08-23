@@ -835,6 +835,46 @@ const tests = [
     },
   },
   {
+    name: 'map floors negative fractional screen offsets so tiles align with spr',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      sheet[(0 * 128) + 8] = 7; // sprite 1 top-left pixel
+      pico8.setSpriteSheet(sheet, 128, 128);
+      pico8.setMapData(new Uint8Array([1]), 1, 1);
+
+      // Scrolling levels pass a negative fractional offset. parseInt truncated
+      // toward zero (-0.014 -> 0) while spr floors (-0.014 -> -1), so map tiles
+      // sat a pixel right of anything drawn over them - a seam down the middle
+      // of scenery like Mario's pipes.
+      const blits = [];
+      const origBlit = pico8._blitSheet.bind(pico8);
+      pico8._blitSheet = (sheetX, sheetY, w, h, dx, dy) => {
+        blits.push({ dx, dy });
+        return origBlit(sheetX, sheetY, w, h, dx, dy);
+      };
+      pico8.map(0, 0, -0.014, -0.014, 1, 1);
+      pico8._blitSheet = origBlit;
+
+      assert.deepStrictEqual(
+        blits[0],
+        { dx: -1, dy: -1 },
+        'map must floor negative fractional screen offsets like PICO-8 flr()',
+      );
+
+      // spr must agree, or the two drift apart by a pixel.
+      pico8.cls(0);
+      pico8.spr(1, 48 - 0.014, 0);
+      assert.strictEqual(
+        pico8._framebuffer[47],
+        7,
+        'spr should floor 47.986 to 47, matching map',
+      );
+    },
+  },
+  {
     name: 'initGpu does not wipe transparency the cart chose in _init',
     fn: () => {
       const { pico8 } = makePico8();

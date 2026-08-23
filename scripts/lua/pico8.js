@@ -1109,8 +1109,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
   map(...args) {
     const cx = this._optionalIntegerArg(args, 0, 0, 'map', 'cx');
     const cy = this._optionalIntegerArg(args, 1, 0, 'map', 'cy');
-    const sx = this._optionalIntegerArg(args, 2, 0, 'map', 'sx');
-    const sy = this._optionalIntegerArg(args, 3, 0, 'map', 'sy');
+    // Screen coordinates must be floored, exactly as PICO-8's flr() and our
+    // own spr()/_blitSheet do. _optionalIntegerArg truncates toward zero, so a
+    // negative scroll offset such as -794.01 became -794 here but -795 for
+    // sprites - putting map tiles one pixel right of anything drawn over them
+    // and leaving a seam down the middle of scenery like Mario's pipes.
+    const sx = Math.floor(this._optionalNumberArg(args, 2, 0, 'map', 'sx'));
+    const sy = Math.floor(this._optionalNumberArg(args, 3, 0, 'map', 'sy'));
     const cw = this._optionalIntegerArg(args, 4, this._map?.width ?? 128, 'map', 'cw');
     const ch = this._optionalIntegerArg(args, 5, this._map?.height ?? 64, 'map', 'ch');
     const layer = this._optionalIntegerArg(args, 6, 0, 'map', 'layer');
