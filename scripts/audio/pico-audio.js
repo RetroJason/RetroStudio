@@ -225,6 +225,23 @@
   }
 
   /**
+   * The channel indices a pattern actually plays on.
+   *
+   * PICO-8 gives a song the channels its pattern needs, which cuts off any sfx
+   * still sounding on them. A cart can rely on that: dinky_kong's title fires a
+   * long noise sfx and a short tonal one, then starts a song that occupies the
+   * noise's channel, so on real hardware the noise is silenced almost at once.
+   */
+  function patternChannels(pattern, slots) {
+    const channels = (pattern && pattern.channels) || [];
+    const used = [];
+    channels.forEach((channel, index) => {
+      if (channelSlot(channel, slots)) used.push(index);
+    });
+    return used;
+  }
+
+  /**
    * Work out which channels play and how long a pattern lasts. Looping
    * channels repeat to fill; the length is set by the first non-looping
    * channel, falling back to the longest channel.
@@ -553,6 +570,7 @@
     slotDuration,
     renderSfxSlot,
     channelSlot,
+    patternChannels,
     patternPlan,
     renderPattern,
     renderSong,

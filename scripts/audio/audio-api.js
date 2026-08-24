@@ -823,6 +823,14 @@ class AudioEngine extends EventTarget {
 
     this.stopPicoMusic(0);
 
+    // Starting a song takes the channels its first pattern needs away from
+    // sfx(). Skipping this leaves a long sfx sounding underneath the music:
+    // dinky_kong's title fires a 1.2s noise and a short tonal sfx, then starts
+    // a song on the noise's channel, so on hardware only the tonal one is
+    // heard. Rendering the song as one pre-mixed buffer loses the per-channel
+    // arbitration, so it has to be applied here instead.
+    this._stopPicoSfxOnChannels(rendered.startChannels);
+
     const buffer = this.audioContext.createBuffer(1, rendered.samples.length, rendered.sampleRate);
     buffer.copyToChannel(rendered.samples, 0);
 
@@ -992,6 +1000,19 @@ class AudioEngine extends EventTarget {
     return entry;
   }
 
+  /**
+   * Release PICO-8 sfx channels, the way starting a song does.
+   */
+  _stopPicoSfxOnChannels(channels) {
+    if (!this._picoChannels || !Array.isArray(channels)) return;
+    for (const channel of channels) {
+      const entry = this._picoChannels.get(channel);
+      if (!entry) continue;
+      this.stopSound(entry.instanceId);
+      this._picoChannels.delete(channel);
+    }
+  }
+
   _picoSfxDurationMs(resourceId) {
     const seconds = this.resources.get(resourceId)?.audioBuffer?.duration;
     return Number.isFinite(seconds) ? seconds * 1000 : 0;
@@ -1067,6 +1088,9 @@ class AudioEngine extends EventTarget {
       song.slots,
       this.audioContext.sampleRate
     );
+    // renderSong mixes every channel down to one buffer, so the channels the
+    // song claims have to be recorded separately for playMusic to honour them.
+    rendered.startChannels = PicoAudio.patternChannels(song.patterns[0], song.slots);
     this.picoMusicCache.set(n, rendered);
     return rendered;
   }
