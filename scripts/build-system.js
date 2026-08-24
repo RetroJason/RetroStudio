@@ -1121,26 +1121,29 @@ class SfxBuilder extends BaseBuilder {
    * every noise SFX as the same flat hiss.
    *
    * Constants come from zepto8's reverse-engineered synth: the filter
-   * coefficient is the phase advance scaled by 22050 / freq(key 63), and the
-   * output is boosted for low keys to compensate for the heavier filtering.
+   * coefficient is the phase advance scaled by 22050 / freq(key 63).
    *
-   * That 22050 is zepto8's synth rate, so the raw coefficient is only correct
-   * when rendering at 22050 Hz. The phase advance per sample is freq/rate, so
-   * at any other rate the coefficient has to be renormalised by rate/22050 or
-   * the filter ends up proportionally darker and quieter.
+   * The coefficient must NOT be renormalised by the sample rate. For a one
+   * pole filter y = (y + s*x) / (1 + s), the cutoff in Hz is s * rate / 2pi.
+   * The phase advance is freq / rate, so s = (freq / rate) * K already gives a
+   * cutoff of freq * K / 2pi - the same audible filter at any render rate.
+   * Multiplying s by rate / 22050 cancels the division and makes the cutoff
+   * proportional to the render rate instead, so at 44100 the noise came out an
+   * octave too bright and far too loud: a low thump turned into white noise.
    *
-   * The 1.5 gain is also zepto8's, and zepto8 normalises its waveforms to a
-   * +/-0.25 square. picoWaveSample above normalises to a +/-1 square, so the
-   * noise has to be lifted by that same factor of 4 to sit at the right level
-   * relative to the tonal waveforms.
+   * The 1.5 gain is zepto8's and is relative to its own waveforms. It must
+   * match pico-audio.js, which renders these same slots inside music patterns.
+   * Lifting it to compensate for zepto8's +/-0.25 waveforms double counts,
+   * because picoWaveSample already emits the tonal waveforms at +/-1 - the
+   * ratio of noise to tone is what has to be preserved, and that ratio is 1.5.
    */
   picoNoiseSample(phase, noise) {
-    const state = noise || { lastPhase: phase, lastSample: 0, key: 0, rateScale: 1 };
-    const scale = Math.max(0, phase - state.lastPhase) * 8.858923 * (state.rateScale || 1);
+    const state = noise || { lastPhase: phase, lastSample: 0, key: 0 };
+    const scale = Math.max(0, phase - state.lastPhase) * 8.858923;
     const sample = (state.lastSample + (scale * ((Math.random() * 2) - 1))) / (1 + scale);
     state.lastSample = sample;
     const factor = 1 - (Math.max(0, Math.min(63, state.key)) / 63);
-    return sample * 6 * (1 + (factor * factor));
+    return sample * 1.5 * (1 + (factor * factor));
   }
 
   renderPicoSamples(pico, sampleRate = 44100, tickRate = 120) {
@@ -1157,7 +1160,7 @@ class SfxBuilder extends BaseBuilder {
     const totalSamples = stepSamples * ((end - start) + 1);
     const out = new Float32Array(totalSamples);
     let phase = 0;
-    const noise = { lastPhase: 0, lastSample: 0, key: 0, rateScale: sampleRate / 22050 };
+    const noise = { lastPhase: 0, lastSample: 0, key: 0 };
 
     for (let si = start; si <= end; si += 1) {
       const step = steps[si] || {};
