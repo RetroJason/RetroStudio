@@ -3084,8 +3084,18 @@ class GameEmulator {
       // scripts/external/lua-vm/byte-strings.patch.
       script.src = 'scripts/external/lua-vm/lua.vm.js?v=2-lua53';
       script.onload = () => {
-        console.log('[GameEditor] Lua engine loaded successfully');
-        resolve();
+        // The built VM can only compile chunks that fit the 64KB emscripten
+        // stack. Large carts need this shim. See large-chunk-load.js.
+        const patch = document.createElement('script');
+        patch.src = 'scripts/external/lua-vm/large-chunk-load.js?v=1';
+        patch.onload = () => {
+          console.log('[GameEditor] Lua engine loaded successfully');
+          resolve();
+        };
+        patch.onerror = () => {
+          reject(new Error('Failed to load the Lua chunk-loading patch'));
+        };
+        document.head.appendChild(patch);
       };
       script.onerror = (error) => {
         console.error('[GameEditor] Failed to load Lua engine:', error);

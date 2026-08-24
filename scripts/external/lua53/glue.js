@@ -195,6 +195,11 @@ var Lua = exports.Lua = {
 		// gsub
 		// len
 		"loadbufferx":       emscripten.cwrap('luaL_loadbufferx',      "number", ["number", "array", "number", "string", "string"]),
+		// Same C function, but taking the chunk as a heap pointer instead of a JS
+		// array. cwrap's "array" type stack-allocates, and the stack is 64KB, so
+		// the call above cannot load a chunk bigger than that. See
+		// Lua.State.prototype.load.
+		"loadbufferptr":     emscripten.cwrap('luaL_loadbufferx',      "number", ["number", "number", "number", "string", "string"]),
 		// loadfilex
 		// loadstring
 		"newmetatable":      emscripten.cwrap('luaL_newmetatable',     "number", ["number", "string"]),
@@ -605,10 +610,35 @@ Lua.State.prototype.push = function(ob) {
 			return this.pushjs(ob);
 	}
 };
+// The chunk is copied to the HEAP, not the stack.
+//
+// The obvious spelling of this - loadbufferx(chars, chars.length, ...) - hands
+// the source to cwrap's "array" argument type, which stack-allocates it. The
+// emscripten stack is 64KB, so any chunk larger than that died inside
+// writeArrayToMemory with "RangeError: offset is out of bounds" before Lua ever
+// saw a byte of it. The error surfaced as "Script Loading Error ... this usually
+// indicates a syntax error in your Lua code", which is exactly the wrong place
+// to go looking. Big PICO-8 carts hit this easily: POOM's title cart alone
+// transpiles to ~102KB of Lua.
+//
+// malloc/free and HEAPU8 are already exported by build.sh, so this needs no
+// change to the build flags.
 Lua.State.prototype.load = function(code, name, mode) {
 	var chars = emscripten.intArrayFromString(code, true);
-	if (this.loadbufferx(chars, chars.length, name, mode) !== 0) {
-		throw new Lua.Error(this, -1);
+	var len = chars.length;
+	var ptr = emscripten._malloc(len);
+	if (ptr === 0) {
+		throw new Error("Lua.State.load: out of memory for a " + len + " byte chunk");
+	}
+	try {
+		// Read HEAPU8 after the malloc: growing the heap replaces the view.
+		emscripten.HEAPU8.set(chars, ptr);
+		if (this.loadbufferptr(ptr, len, name, mode) !== 0) {
+			throw new Lua.Error(this, -1);
+		}
+	} finally {
+		// Lua has copied everything it needs by now, on both paths.
+		emscripten._free(ptr);
 	}
 	var r = new Lua.Proxy(this, -1);
 	this.pop(1);

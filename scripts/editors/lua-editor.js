@@ -402,8 +402,18 @@ class LuaEditor extends EditorBase {
                 // submodule upstream is unmaintained and we cannot push to it.
                 script.src = 'scripts/external/lua-vm/lua.vm.js?v=2-lua53';
                 script.onload = () => {
-                    console.log('[LuaEditor] Lua engine loaded successfully');
-                    resolve();
+                    // The built VM can only compile chunks that fit the 64KB
+                    // emscripten stack. See large-chunk-load.js.
+                    const patch = document.createElement('script');
+                    patch.src = 'scripts/external/lua-vm/large-chunk-load.js?v=1';
+                    patch.onload = () => {
+                        console.log('[LuaEditor] Lua engine loaded successfully');
+                        resolve();
+                    };
+                    patch.onerror = () => {
+                        reject(new Error('Failed to load the Lua chunk-loading patch'));
+                    };
+                    document.head.appendChild(patch);
                 };
                 script.onerror = (error) => {
                     console.error('[LuaEditor] Failed to load Lua engine:', error);
