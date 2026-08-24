@@ -348,25 +348,7 @@ class BaseLuaExtension {
 
     // Register as part of a class/namespace using Lua script
     this.luaState.execute(`
-    -- A JS function can only return one value, so multi-return API functions
-    -- (Image.GetSize, Sprite.GetXY, ...) hand back a JS array. That arrives in
-    -- Lua as a single 0-indexed userdata proxy, so "local w, h = ..." used to
-    -- put the proxy in w and nil in h. Expand array-like results back into
-    -- real Lua multiple returns.
-    if not __retroExpandJsResult then
-        -- table.unpack, not the bare unpack: that global is a 5.1 leftover that
-        -- only exists under LUA_COMPAT_UNPACK, and the VM is now 5.3 built to
-        -- match the firmware, where it is nil.
-        local __unpack = table.unpack or unpack
-        function __retroExpandJsResult(result)
-            if type(result) ~= 'userdata' then return result end
-            local length = result.length
-            if type(length) ~= 'number' then return result end
-            local values = {}
-            for i = 1, length do values[i] = result[i - 1] end
-            return __unpack(values, 1, length)
-        end
-    end
+    ${BaseLuaExtension.JS_RESULT_LUA}
 
     -- Ensure class table exists
     if not ${className} then
@@ -395,6 +377,52 @@ class BaseLuaExtension {
     `);
    }
 }
+
+// Everything a JS return value has to go through on its way into Lua.
+//
+// Kept as a constant rather than inlined in the template above so a test can
+// run this exact source through a real Lua VM. A mock luaState only records
+// the string, so a syntax error in it would otherwise surface as a broken cart.
+BaseLuaExtension.JS_RESULT_LUA = `
+    if not __retroExpandJsResult then
+        -- table.unpack, not the bare unpack: that global is a 5.1 leftover that
+        -- only exists under LUA_COMPAT_UNPACK, and the VM is now 5.3 built to
+        -- match the firmware, where it is nil.
+        local __unpack = table.unpack or unpack
+
+        -- 32-bit because the VM is built with LUA_32BITS to match the firmware.
+        local __intMin, __intMax = -2147483648, 2147483647
+
+        -- A JS function can only return one value, so multi-return API functions
+        -- (Image.GetSize, Sprite.GetXY, ...) hand back a JS array. That arrives in
+        -- Lua as a single 0-indexed userdata proxy, so "local w, h = ..." used to
+        -- put the proxy in w and nil in h. Expand array-like results back into
+        -- real Lua multiple returns.
+        function __retroExpandJsResult(result)
+            local kind = type(result)
+
+            -- Every JS number crosses as a Lua float, so flr(7/2) stringified
+            -- as "3.0" and a cart writing "lv"..flr(n) drew a stray .0 on
+            -- screen. PICO-8 has no integer/float split to reproduce, so fold
+            -- whole numbers back to the integer subtype. The range test runs
+            -- first because it also rejects inf and nan, which have no integer
+            -- representation for | to convert to.
+            if kind == 'number' then
+                if result >= __intMin and result <= __intMax and result % 1 == 0 then
+                    return result | 0
+                end
+                return result
+            end
+
+            if kind ~= 'userdata' then return result end
+            local length = result.length
+            if type(length) ~= 'number' then return result end
+            local values = {}
+            for i = 1, length do values[i] = result[i - 1] end
+            return __unpack(values, 1, length)
+        end
+    end
+`;
 
 // Export for module system
 if (typeof module !== 'undefined' && module.exports) {

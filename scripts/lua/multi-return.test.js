@@ -166,7 +166,51 @@ function checkRndTableAdapter() {
   );
 }
 
-// 4. A freshly created image should report its real size, not 0, 0.
+// 4. Whole numbers must arrive as integers, not floats.
+function checkBridgeFoldsWholeNumbers() {
+  // Run the bridge's own Lua through the VM the editor uses. A mock luaState
+  // only records the source, so neither a syntax error nor the wrong numeric
+  // result would show up until a cart ran.
+  const { Lua } = require(repoPath('..', 'external', 'lua-vm', 'lua.vm.js'));
+  const L = new Lua.State();
+  L.execute(global.BaseLuaExtension.JS_RESULT_LUA);
+
+  const fold = (expression) => {
+    L.execute(`__folded = tostring(__retroExpandJsResult(${expression}))`);
+    L.getglobal('__folded');
+    const value = L.raw_tostring(-1);
+    L.pop(1);
+    return value;
+  };
+
+  // Every JS number crosses the bridge as a float, so this is what flr(),
+  // max() and friends really hand back. A cart concatenating one used to get
+  // "3.0" printed on screen, because PICO-8 has no float subtype to show.
+  assert.strictEqual(fold('3.0'), '3', 'a whole number must lose its .0');
+  assert.strictEqual(fold('-7.0'), '-7', 'a negative whole number must fold too');
+  assert.strictEqual(fold('0.0'), '0');
+  assert.strictEqual(fold('3.5'), '3.5', 'a fractional number must keep its fraction');
+
+  // Outside 32-bit there is no integer to fold to, so | would raise rather
+  // than convert: the guard has to reject the value first. 2^31 is used
+  // because lua_Number here is a single-precision float, which cannot hold
+  // 2147483647 exactly in the first place.
+  assert.strictEqual(fold('16777216.0'), '16777216', 'the largest exact float32 integer still folds');
+  assert.notStrictEqual(fold('2147483648.0'), '2147483648', 'past int32 the value must stay a float');
+  assert.notStrictEqual(fold('-4294967296.0'), '-4294967296');
+
+  // | has no integer representation for these, so the range test has to reject
+  // them before it runs rather than raising.
+  assert.strictEqual(fold('1/0'), 'inf');
+  assert.strictEqual(fold('0/0'), fold('0/0'), 'nan must pass through rather than raise');
+
+  // Non-numbers are untouched.
+  assert.strictEqual(fold('"7.0"'), '7.0', 'a string that looks numeric must not be folded');
+  assert.strictEqual(fold('nil'), 'nil');
+  assert.strictEqual(fold('true'), 'true');
+}
+
+// 5. A freshly created image should report its real size, not 0, 0.
 function checkImageGetSizeUsesFrameDimensions() {
   const LuaImageExtensions = loadExtensionClass('Image');
   assert.ok(LuaImageExtensions, 'Failed to load LuaImageExtensions');
@@ -190,6 +234,7 @@ function run() {
 
   const checked = checkMultiReturnImplementations();
   checkBridgeExpandsArrays();
+  checkBridgeFoldsWholeNumbers();
   checkRndTableAdapter();
   checkImageGetSizeUsesFrameDimensions();
 

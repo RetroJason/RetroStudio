@@ -188,7 +188,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const layerBase = layerChunkOffset + 4; // skip the chunk's own count field
     const width = view.getUint16(layerBase + 4, true);
     const height = view.getUint16(layerBase + 6, true);
-    const dataOffset = layerChunkOffset + view.getUint32(layerBase + 8, true);
+    // Absolute file offset, per the D2M spec and what tilemap-builder writes.
+    // Adding layerChunkOffset to it again landed the read one chunk header plus
+    // one tileset record too far in, which slid the whole map 17 cells left.
+    const dataOffset = view.getUint32(layerBase + 8, true);
     const cellCount = Math.min(width * height, view.getUint32(layerBase + 12, true) / 4);
 
     const tiles = new Uint8Array(width * height);

@@ -89,8 +89,33 @@ function loadTileMapRuntime() {
   return new TileMap({ allocateRenderOrder: () => 1, getService: () => null });
 }
 
+/**
+ * pico8.js carries a SECOND, independent D2M reader: an imported cart's map is
+ * decoded to sprite indices there rather than through lua/tilemap.js. Nothing
+ * tested that one, and it resolved the layer's cell offset as chunk-relative
+ * when the builder writes it absolute - which slid every imported PICO-8 map
+ * 17 cells to the left and left the cart drawing mostly empty tiles.
+ */
+function loadPico8Runtime() {
+  global.window = global.window || {};
+  const basePath = path.resolve(__dirname, '..', 'lua', 'base-lua-extension.js');
+  delete require.cache[basePath];
+  global.BaseLuaExtension = require(basePath) || global.window.BaseLuaExtension;
+
+  const fontPath = path.resolve(__dirname, '..', 'lua', 'pico8-font.js');
+  delete require.cache[fontPath];
+  require(fontPath);
+
+  const pico8Path = path.resolve(__dirname, '..', 'lua', 'pico8.js');
+  delete require.cache[pico8Path];
+  require(pico8Path);
+
+  return new global.window.LuaPico8Extensions({ allocateRenderOrder: () => 1, getService: () => null });
+}
+
 const TilemapBuilder = loadTilemapBuilder();
 const runtime = loadTileMapRuntime();
+const pico8 = loadPico8Runtime();
 
 /**
  * A map with deliberately awkward shape: two layers so the second layer's cell
@@ -189,8 +214,8 @@ test('tileset records survive the round trip', () => {
 });
 
 // This is the test that matters. The builder stores each layer's cell offset
-// relative to the start of the layer chunk; the parser has to resolve it the
-// same way or it reads whatever bytes happen to live at that file offset.
+// as an absolute file offset; the parser has to resolve it the same way or it
+// reads whatever bytes happen to live at the offset it computes instead.
 test('layer cell data survives the round trip', () => {
   const source = makeSourceMap();
   const { bytes } = buildD2m(source);
@@ -205,6 +230,25 @@ test('layer cell data survives the round trip', () => {
 
   assert.deepStrictEqual(Array.from(layers[0].cellData), expectedGround);
   assert.deepStrictEqual(Array.from(layers[1].cellData), expectedOverlay);
+});
+
+// The same offset, read by the other parser. This one decodes to PICO-8 sprite
+// indices, so gid 1 becomes sprite 0 and an empty cell stays 0.
+test('the pico-8 map reader lands on the same cells as the tilemap reader', () => {
+  const source = makeSourceMap();
+  const { bytes } = buildD2m(source);
+  const decoded = pico8._decodeD2M(bytes);
+
+  assert.ok(decoded, 'pico8 could not decode a map the builder just wrote');
+  assert.strictEqual(decoded.width, 5);
+  assert.strictEqual(decoded.height, 4);
+
+  const expected = source.mapData.layers[0].data.map((gid) => (gid > 0 ? (gid - 1) & 0xff : 0));
+  assert.deepStrictEqual(Array.from(decoded.tiles), expected);
+
+  // Spelt out as well, because an offset error shifts every cell by the same
+  // amount and a whole-array compare does not say which way it slid.
+  assert.strictEqual(decoded.tiles[0], 0, 'the first cell must be the first cell');
 });
 
 test('layer visibility flag survives the round trip', () => {
