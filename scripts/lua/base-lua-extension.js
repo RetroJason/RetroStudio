@@ -126,8 +126,19 @@ class BaseLuaExtension {
     //    yield cannot cross a C/JS boundary ("attempt to yield across a
     //    C-call boundary").
     // Both are implemented directly in Lua instead.
+    //
+    // sub() and ord() are here for a different reason: SPEED. Every Lua string
+    // argument is copied out of the VM and decoded into a JS string on its way
+    // across the bridge, so a call that inspects one byte still costs time
+    // proportional to the whole string. Measured: ord() on a 4-char string is
+    // 2.9us, on an 8KB string 30.8us. Carts pack data into long strings and
+    // unpack them a byte at a time, which turns that into whole frames -
+    // POOM's title screen spent 250ms of a 300ms frame inside 8192 ord() calls
+    // on one 8KB string. string.byte/string.sub do the same job without
+    // leaving the VM, and cost the same whatever the string's length.
     const isPico8LuaNative = className === 'Pico8'
       && ['add', 'del', 'deli', 'count', 'all', 'foreach', 'inext', 'split', 'pack', 'unpack',
+        'sub', 'ord',
         'cocreate', 'coresume', 'costatus', 'cowrap', 'yield'].includes(luaFunctionName);
 
     if (isPico8LuaNative) {
@@ -265,6 +276,46 @@ class BaseLuaExtension {
       end
     end
     split = Pico8.split
+      `,
+      sub: `
+    -- Lua's own string.sub already has PICO-8's index rules, negative offsets
+    -- from the end included, so this is a thin argument-tidying wrapper.
+    -- No math.floor: the firmware does not register the math library, and
+    -- Lua's % is a floored modulo, so v - v % 1 is exactly floor(v).
+    function Pico8.sub(s, i, j)
+      if s == nil then return "" end
+      if type(s) ~= "string" then s = tostring(s) end
+      if i == nil then i = 1 end
+      i = i - i % 1
+      if j == nil then return string.sub(s, i) end
+      j = j - j % 1
+      return string.sub(s, i, j)
+    end
+    sub = Pico8.sub
+      `,
+      ord: `
+    -- Note the third argument is a COUNT, not an end index as in Lua's
+    -- string.byte(s, i, j): ord("abc", 2, 2) yields 98, 99.
+    function Pico8.ord(s, index, num)
+      if s == nil then return nil end
+      if type(s) ~= "string" then s = tostring(s) end
+      if index == nil then index = 1 end
+      index = index - index % 1
+      -- Out of range reads are nil in PICO-8, not an error. Index 0 and below
+      -- are out of range rather than counting from the end, which is where
+      -- this parts company with string.byte. The upper bound is checked here
+      -- too: string.byte would return NO values, and zero values is not the
+      -- same as nil to a caller that passes the result straight on.
+      if index < 1 or index > #s then return nil end
+      -- A bare ord() is single-valued even when more characters are available.
+      if num == nil then return string.byte(s, index) end
+      num = num - num % 1
+      if num < 1 then return nil end
+      -- string.byte clamps the end index to #s, so a short tail returns fewer
+      -- values rather than padding with nil.
+      return string.byte(s, index, index + num - 1)
+    end
+    ord = Pico8.ord
       `,
       pack: `
     function Pico8.pack(...)

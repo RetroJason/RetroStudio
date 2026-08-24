@@ -3115,16 +3115,24 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Substring function
    * Lua: sub(s, i, [j]) -> result
+   *
+   * Implemented in Lua at runtime (see base-lua-extension.js) so that a long
+   * string is not copied across the JS bridge on every call. This copy is what
+   * the tests exercise, so the two have to agree: PICO-8's indices are Lua's,
+   * which means a negative i or j counts back from the end of the string and
+   * an empty range yields "".
    */
   sub(...args) {
     const s = args[0]?.toString() ?? '';
-    const i = this._requireIntegerArg(args, 1, 'sub', 'i');
-    const j = this._optionalIntegerArg(args, 2, -1, 'sub', 'j');
-    
-    const startIdx = i - 1; // Lua uses 1-based indexing
-    const endIdx = j >= 0 ? j : s.length;
-    
-    return s.substring(startIdx, endIdx);
+    const i = this._optionalIntegerArg(args, 1, 1, 'sub', 'i');
+    const j = this._optionalIntegerArg(args, 2, s.length, 'sub', 'j');
+
+    const start = i < 0 ? Math.max(s.length + i + 1, 1) : Math.max(i, 1);
+    const end = j < 0 ? s.length + j + 1 : Math.min(j, s.length);
+    if (start > end) return '';
+
+    // Lua indices are 1-based; String.slice is 0-based and half-open.
+    return s.slice(start - 1, end);
   }
 
   /**
@@ -3201,6 +3209,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    *
    * Note the third argument is a COUNT, not an end index as in Lua's
    * string.byte(s, i, j): ord("abc", 2, 2) yields 98, 99.
+   *
+   * Implemented in Lua at runtime for the same reason as sub(); this copy is
+   * what the tests exercise.
    */
   ord(...args) {
     const s = args[0]?.toString() ?? '';

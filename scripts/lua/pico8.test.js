@@ -1759,6 +1759,86 @@ const tests = [
     },
   },
   {
+    // PICO-8's sub() has Lua's index rules, so a negative offset counts back
+    // from the end. Treating a negative j as "to the end" instead swallowed
+    // whole strings, and String.substring silently swaps a reversed range
+    // rather than yielding "".
+    name: 'sub handles negative offsets and empty ranges like Lua',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.sub('hello', 2), 'ello', 'no j runs to the end');
+      assert.strictEqual(pico8.sub('hello', -3), 'llo', 'negative i counts from the end');
+      assert.strictEqual(pico8.sub('hello', 2, -2), 'ell', 'negative j counts from the end');
+      assert.strictEqual(pico8.sub('hello', 4, 2), '', 'a reversed range is empty, not swapped');
+      assert.strictEqual(pico8.sub('hello', 0, 2), 'he', 'index 0 clamps to the first character');
+      assert.strictEqual(pico8.sub('hello', 2, 99), 'ello', 'j past the end clamps');
+    },
+  },
+  {
+    // sub() and ord() ship as Lua source so that a long string is not copied
+    // across the JS bridge on every call (ord() on an 8KB string cost 30us
+    // against 2.9us on a short one, and POOM's title screen burnt 250ms of a
+    // 300ms frame in 8192 of them). A mock proves nothing about Lua source:
+    // run it in the VM the editor really uses and hold it to the same answers
+    // as the JS implementations above.
+    name: 'the Lua-native sub/ord agree with the JS implementations',
+    fn: () => {
+      const source = fs.readFileSync(path.resolve(__dirname, 'base-lua-extension.js'), 'utf8');
+      const helper = (name) => {
+        const body = new RegExp(`\\n {6}${name}: \`([\\s\\S]*?)\`,\\n`).exec(source);
+        assert.ok(body, `${name} is no longer a Lua-native helper in base-lua-extension.js`);
+        return body[1];
+      };
+
+      const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
+      const L = new Lua.State();
+      L.execute(`Pico8 = {}\n${helper('sub')}\n${helper('ord')}`);
+
+      const evalLua = (expression) => {
+        L.execute(`__str_result = tostring(${expression})`);
+        L.getglobal('__str_result');
+        const value = L.raw_tostring(-1);
+        L.pop(1);
+        return value;
+      };
+
+      const { pico8 } = makePico8();
+      for (const [expr, jsValue] of [
+        ['sub("hello", 2, 4)', pico8.sub('hello', 2, 4)],
+        ['sub("hello", 2)', pico8.sub('hello', 2)],
+        ['sub("hello", -3)', pico8.sub('hello', -3)],
+        ['sub("hello", 2, -2)', pico8.sub('hello', 2, -2)],
+        ['sub("hello", 4, 2)', pico8.sub('hello', 4, 2)],
+        ['sub("hello", 0, 2)', pico8.sub('hello', 0, 2)],
+        ['ord("@")', pico8.ord('@')],
+        ['ord("123", 2)', pico8.ord('123', 2)],
+      ]) {
+        assert.strictEqual(evalLua(expr), String(jsValue), expr);
+      }
+
+      // Out of range is nil, matching the JS undefined.
+      for (const expr of ['ord("abc", 5)', 'ord("abc", 0)', 'ord("", 1)', 'ord(nil)']) {
+        assert.strictEqual(evalLua(expr), 'nil', expr);
+      }
+
+      // The third argument is a COUNT, and it produces real Lua multiple
+      // returns rather than one value or a table.
+      L.execute('__str_result = table.concat({ord("123", 2, 2)}, ",")');
+      L.getglobal('__str_result');
+      const counted = L.raw_tostring(-1);
+      L.pop(1);
+      assert.strictEqual(counted, pico8.ord('123', 2, 2).join(','));
+
+      // A count running past the end stops there rather than padding with nil,
+      // which would truncate the value list at the first hole.
+      L.execute('__str_result = table.concat({ord("ab", 1, 5)}, ",")');
+      L.getglobal('__str_result');
+      const clamped = L.raw_tostring(-1);
+      L.pop(1);
+      assert.strictEqual(clamped, pico8.ord('ab', 1, 5).join(','));
+    },
+  },
+  {
     name: 'chr builds a string from ordinals and stays in byte range',
     fn: () => {
       const { pico8 } = makePico8();
