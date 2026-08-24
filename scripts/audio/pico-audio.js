@@ -202,7 +202,15 @@
     return normalizeSlot(raw);
   }
 
-  /** Resolve one pattern channel, accepting both the numeric and object forms. */
+  /**
+   * Resolve one pattern channel, accepting both the numeric and object forms.
+   *
+   * A slot whose every step is silent is kept, not dropped. Composers use an
+   * empty SFX with a chosen speed as a rest, and because a pattern's length is
+   * taken from its channels, that rest is often the only thing setting the
+   * length. Dropping it does not just lose silence - it collapses the pattern
+   * to nothing, and renderSong() then treats the song as finished.
+   */
   function channelSlot(channel, slots) {
     if (channel === null || channel === undefined) return null;
     let index = channel;
@@ -213,8 +221,7 @@
     index = toNumber(index, -1);
     if (index < 0) return null;
 
-    const slot = lookupSlot(slots, index);
-    return slotIsAudible(slot) ? slot : null;
+    return lookupSlot(slots, index);
   }
 
   /**
@@ -314,6 +321,9 @@
       if (flags & FLAG_LOOP_START) loopStartSample = total;
 
       const samples = renderPattern(pattern, slots, sampleRate, tickRate, cache);
+      // Only a pattern with no channels at all is zero length, and that is how
+      // the cart separates one song from the next. A pattern that is merely
+      // silent still has a duration and must not stop playback.
       if (samples.length === 0) break;
 
       chunks.push(samples);

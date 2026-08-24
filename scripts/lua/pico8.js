@@ -2909,7 +2909,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: music(n, [fade, mask])
    */
   music(...args) {
-    const n = this._requireIntegerArg(args, 0, 'music', 'n');
+    // PICO-8 reads a missing or nil track number as 0 rather than refusing the
+    // call, and carts lean on it. dinky_kong's intro runs
+    // music(split"5,23,-1,22"[stg]) with stg 0, so the index is out of range
+    // and the argument arrives nil - and song 0, the intro theme, is reachable
+    // by no other call in the cart. Erroring here stopped the whole update.
+    const n = this._optionalIntegerArg(args, 0, 0, 'music', 'n');
     const fade = this._optionalIntegerArg(args, 1, 0, 'music', 'fade');
     const mask = this._optionalIntegerArg(args, 2, 0xFF, 'music', 'mask');
     

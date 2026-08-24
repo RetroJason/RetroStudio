@@ -196,11 +196,10 @@ class MusicBuilder extends BaseBuilder {
       return -1;
     }
 
-    // An entirely silent slot is dropped rather than carried. Carts leave these
-    // behind routinely, so this is normal and not worth warning about.
-    const audible = steps.some((step) => this.clamp3(step && step.volume) > 0);
-    if (!audible) return -1;
-
+    // A slot whose every step is silent is carried, not dropped. It is how a
+    // cart writes a rest: an empty SFX at a chosen speed, used to give the
+    // pattern a length. Dropping it is the tempo bug this function warns about
+    // above, and when the rest is the only channel it silences the song.
     return index;
   }
 

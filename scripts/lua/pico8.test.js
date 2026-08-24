@@ -1408,6 +1408,24 @@ const tests = [
     },
   },
   {
+    name: 'music() with a nil track plays song 0 instead of erroring',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      // Indexing a split() list out of range is how carts reach song 0, so this
+      // has to behave like PICO-8 and not stop the caller's update.
+      assert.doesNotThrow(() => pico8.music(undefined));
+      assert.deepStrictEqual(emulator.audioEngine._lastMusic, { n: 0, fade: 0, mask: 0xFF });
+
+      emulator.audioEngine._lastMusic = null;
+      assert.doesNotThrow(() => pico8.music());
+      assert.deepStrictEqual(emulator.audioEngine._lastMusic, { n: 0, fade: 0, mask: 0xFF });
+
+      // A real track still gets through untouched.
+      pico8.music(19);
+      assert.strictEqual(emulator.audioEngine._lastMusic.n, 19);
+    },
+  },
+  {
     name: 'printh and stat are callable with expected stat behavior',
     fn: () => {
       const { pico8 } = makePico8();

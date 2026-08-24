@@ -407,18 +407,21 @@ test('a slot number never appears twice', () => {
   assert.strictEqual(slots.length, 2);
 });
 
-test('an entirely silent slot becomes a silent channel and is not emitted', () => {
+test('an entirely silent slot is kept, because it carries the pattern length', () => {
   const song = makeSong();
   song.sfx[27].steps = makeSteps(32, { volume: 0 });
 
   const { bytes } = buildD2mu(song);
   const { patterns, slots } = parseD2mu(bytes);
 
-  // pico-audio.js drops these in channelSlot(), and a pattern's length comes
-  // from its channels - carrying one would make the pattern the wrong length.
-  assert.deepStrictEqual(patterns[0].channels, [7, -1, -1, -1]);
-  assert.strictEqual(slots.length, 1);
-  assert.strictEqual(slots[0].cartSlot, 7);
+  // A silent slot is a rest, not a blank. A pattern's length comes from its
+  // channels, so dropping the rest shortens the pattern - and when the rest is
+  // the only channel, it collapses the pattern to nothing and the player takes
+  // that as the end of the song. dinky_kong's ending music is exactly this: a
+  // lead-in pattern whose sole channel is an empty slot at speed 25.
+  assert.deepStrictEqual(patterns[0].channels, [7, 27, -1, -1]);
+  assert.strictEqual(slots.length, 2);
+  assert.deepStrictEqual(slots.map((s) => s.cartSlot).sort((a, b) => a - b), [7, 27]);
 });
 
 test('a channel referencing an undefined slot becomes silence', () => {
@@ -481,8 +484,6 @@ test('a slot speed of zero is raised to 1 rather than stalling the player', () =
 
 test('out-of-range step fields are clamped into their bit widths', () => {
   const song = makeSong();
-  // The second step keeps the slot audible; a slot whose every step is silent
-  // is dropped entirely, which is a different rule tested above.
   song.sfx[7].steps = [
     { pitch: 999, waveform: 99, volume: 99, effect: 42 },
     { pitch: -7, waveform: -1, volume: 4, effect: -3 },
@@ -583,7 +584,7 @@ test('the player rejects a truncated or corrupt .d2mu rather than playing noise'
   assert.throws(() => PicoAudio.parseD2mu(badVersion), /Unsupported .d2mu version/);
 });
 
-test('a silent slot dropped by the builder is dropped by the player too', () => {
+test('a silent slot keeps its length through the builder and the player alike', () => {
   const source = makeSong();
   source.sfx[27].steps = makeSteps(32, { volume: 0 });
   const { bytes } = buildD2mu(source);
@@ -591,12 +592,35 @@ test('a silent slot dropped by the builder is dropped by the player too', () => 
   const fromJson = PicoAudio.parseP8Mus(JSON.stringify(source));
   const fromBinary = PicoAudio.parseD2mu(bytes);
 
-  // pico-audio drops the silent channel itself; the builder drops it at build
-  // time. Both paths must agree, or the pattern comes out a different length.
+  // Neither path may drop the rest, or the pattern comes out a different
+  // length on the watch than it does in the Studio.
   const jsonPlan = PicoAudio.patternPlan(fromJson.patterns[0], fromJson.slots, 22050);
   const binaryPlan = PicoAudio.patternPlan(fromBinary.patterns[0], fromBinary.slots, 22050);
 
   assert.strictEqual(binaryPlan.totalSamples, jsonPlan.totalSamples);
+  assert.strictEqual(jsonPlan.entries.length, 2, 'the rest must still be a channel');
+});
+
+test('a pattern whose only channel is a rest still plays, and does not end the song', () => {
+  // dinky_kong pattern 24: one channel holding an empty slot at speed 25,
+  // followed by the patterns that actually carry the tune. Reading the rest as
+  // "nothing" made renderSong() stop before a single note of the song.
+  const source = makeSong();
+  source.sfx[63] = { speed: 25, loopStart: 0, loopEnd: 0, steps: makeSteps(32, { volume: 0 }) };
+  source.song.patterns = [
+    { index: 0, flags: 0, channels: [63, -1, -1, -1] },
+    { index: 1, flags: 4, channels: [7, -1, -1, -1] },
+  ];
+  source.song.start = 0;
+  source.song.end = 1;
+
+  const song = PicoAudio.parseD2mu(buildD2mu(source, 'Resources/Music/music_00.p8mus').bytes);
+  const rendered = PicoAudio.renderSong(song.patterns, 0, song.slots, 22050);
+
+  // 32 steps at speed 25, 120 ticks a second, is the rest on its own.
+  const restSamples = Math.floor((25 / 120) * 22050) * 32;
+  assert.ok(rendered.samples.length > restSamples, 'the song stopped at the rest');
+  assert.strictEqual(rendered.timeline.length, 2, 'both patterns must play');
 });
 
 /* ── wiring ─────────────────────────────────────────────────────────────
