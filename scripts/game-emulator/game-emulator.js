@@ -2167,6 +2167,23 @@ class GameEmulator {
         return;
       }
       
+      // A PICO-8 cart's _init() typically scans the map with mget() to place
+      // entities, so the sprite sheet and map have to be in memory before
+      // Setup() runs. These are CPU-side arrays and do not need the GPU, which
+      // is why this does not wait for gpuInit. Loading it there instead left
+      // _init() reading an all-zero map, and carts that derive the player from
+      // a map tile ended up with a nil player.
+      try {
+        const pico8Ext = this.getLuaExtension('Pico8');
+        if (pico8Ext && typeof pico8Ext.loadCartAssets === 'function') {
+          await pico8Ext.loadCartAssets();
+          logRunPhase('pico8CartAssets');
+        }
+      } catch (assetError) {
+        console.warn('[GameEmulator] PICO-8 cart asset load failed:', assetError);
+        logRunPhase('pico8CartAssets (failed)');
+      }
+
       // Try to run Setup() function (optional)
       console.log('[GameEmulator] Attempting to run Setup() function...');
       try {
@@ -2269,9 +2286,8 @@ class GameEmulator {
           if (pico8Ext && typeof pico8Ext.initGpu === 'function') {
             pico8Ext.initGpu(this._gpu);
           }
-          if (pico8Ext && typeof pico8Ext.loadCartAssets === 'function') {
-            await pico8Ext.loadCartAssets();
-          }
+          // Cart assets are loaded before Setup(), not here: _init() reads the
+          // map, and reloading now would also discard any sset() it performed.
           logRunPhase('gpuInit');
         } else {
           console.warn('[GameEmulator] D2Canvas not available — sprite rendering disabled');
