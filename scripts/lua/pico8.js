@@ -2876,6 +2876,29 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
+   * Stateless sequence iterator
+   * Lua: inext(t, [i]) -> i+1, t[i+1]
+   *
+   * Lua-native at runtime, like split(); see base-lua-extension.js. PICO-8
+   * exposes ipairs' underlying iterator as a global, and carts use it directly
+   * as `for i,v in inext,t do`. Stock Lua does not, so without this the loop
+   * fails with "attempt to call a nil value".
+   */
+  inext(...args) {
+    const t = args[0];
+    if (!this._isTableLike(t)) return undefined;
+
+    // The generic for passes nil as the initial control value.
+    const i = this._optionalIntegerArg(args, 1, 0, 'inext', 'i') + 1;
+    const value = Array.isArray(t) ? t[i - 1] : t[i];
+    if (value === undefined || value === null) return undefined;
+
+    // A JS array becomes multiple returns across the bridge, which is what the
+    // two-value contract of an iterator needs.
+    return [i, value];
+  }
+
+  /**
    * Apply function to all table elements
    * Lua: foreach(t, f)
    */

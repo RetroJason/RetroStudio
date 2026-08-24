@@ -48,7 +48,7 @@ const EXPECTED_FUNCTIONS = [
   // String
   'sub', 'tostr', 'tonum', 'chr', 'ord', 'split',
   // Table
-  'add', 'del', 'deli', 'count', 'all', 'foreach', 'pack', 'unpack',
+  'add', 'del', 'deli', 'count', 'all', 'foreach', 'inext', 'pack', 'unpack',
   // Coroutines (implemented in Lua; the JS stubs only satisfy the loader)
   'cocreate', 'coresume', 'costatus', 'cowrap', 'yield',
   // Memory
@@ -179,7 +179,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 92);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 93);
     },
   },
   {
@@ -1331,6 +1331,46 @@ const tests = [
       let sum = 0;
       pico8.foreach(t, (v) => { sum += v; });
       assert.strictEqual(sum, 6);
+    },
+  },
+  {
+    name: 'inext walks a sequence and returns index and value together',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const t = ['a', 'b'];
+      // Two values, as an array, because that is how the bridge makes Lua
+      // multiple returns - a single value would break the for loop.
+      assert.deepStrictEqual(pico8.inext(t), [1, 'a']);
+      assert.deepStrictEqual(pico8.inext(t, 1), [2, 'b']);
+      assert.strictEqual(pico8.inext(t, 2), undefined, 'past the end stops the loop');
+      assert.strictEqual(pico8.inext(undefined), undefined, 'inext(nil) must not throw');
+    },
+  },
+  {
+    name: 'the Lua-native inext drives a real for loop',
+    fn: () => {
+      // inext ships as Lua source, so a mock proves nothing: a syntax error or
+      // a wrong return arity stays invisible until a cart runs. dinky_kong uses
+      // it as "for i,p in inext,split(st) do", so run exactly that shape in the
+      // VM the editor really uses.
+      const source = fs.readFileSync(path.resolve(__dirname, 'base-lua-extension.js'), 'utf8');
+      const body = /\n {6}inext: `([\s\S]*?)`,\n/.exec(source);
+      assert.ok(body, 'inext is no longer a Lua-native helper in base-lua-extension.js');
+
+      const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
+      const L = new Lua.State();
+      L.execute(`Pico8 = {}\n${body[1]}`);
+      L.execute(`
+        local out = {}
+        for i, v in inext, {'a', 'b', 'c'} do out[#out + 1] = i .. v end
+        -- A hole ends the sequence, and an empty table yields nothing at all.
+        for i, v in inext, {} do out[#out + 1] = 'empty' end
+        __inext_result = table.concat(out, ',')
+      `);
+      L.getglobal('__inext_result');
+      const result = L.raw_tostring(-1);
+      L.pop(1);
+      assert.strictEqual(result, '1a,2b,3c');
     },
   },
 

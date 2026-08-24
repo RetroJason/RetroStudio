@@ -2270,6 +2270,16 @@
           "example": "foreach(items, function(v) print(v) end)"
         },
         {
+          "name": "inext",
+          "description": "Stateless sequence iterator, the one behind ipairs. Returns the next index and value, or nil at the end. Used directly in a for loop as a cheaper ipairs.",
+          "parameters": [
+            {"name": "t", "type": "table", "description": "Table to iterate."},
+            {"name": "i", "type": "number", "optional": true, "description": "Previous index. Omit to start from the beginning."}
+          ],
+          "returns": {"type": "number, any", "description": "The next index and the value at it, or nil once the sequence ends."},
+          "example": "for i, v in inext, items do print(i..': '..v) end"
+        },
+        {
           "name": "print",
           "description": "Draw text with the built-in font. With no x/y it prints at the cursor and drops a line, scrolling the screen at the bottom. Returns the x position after the last character.",
           "parameters": [

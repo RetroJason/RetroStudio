@@ -127,7 +127,7 @@ class BaseLuaExtension {
     //    C-call boundary").
     // Both are implemented directly in Lua instead.
     const isPico8LuaNative = className === 'Pico8'
-      && ['add', 'del', 'deli', 'count', 'all', 'foreach', 'split', 'pack', 'unpack',
+      && ['add', 'del', 'deli', 'count', 'all', 'foreach', 'inext', 'split', 'pack', 'unpack',
         'cocreate', 'coresume', 'costatus', 'cowrap', 'yield'].includes(luaFunctionName);
 
     if (isPico8LuaNative) {
@@ -198,6 +198,20 @@ class BaseLuaExtension {
       end
     end
     foreach = Pico8.foreach
+      `,
+      inext: `
+    -- The stateless iterator behind ipairs, exposed as a global by PICO-8 but
+    -- not by stock Lua. Carts use it directly as "for i,v in inext,t do", which
+    -- is a token cheaper than ipairs(t) and skips a closure per loop.
+    function Pico8.inext(t, i)
+      if t == nil then return nil end
+      -- The generic for passes nil as the initial control value.
+      i = (i or 0) + 1
+      local v = t[i]
+      if v == nil then return nil end
+      return i, v
+    end
+    inext = Pico8.inext
       `,
       split: `
     -- Elements convert to numbers by default, so split("1,2,3") gives numbers
