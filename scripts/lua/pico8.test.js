@@ -890,6 +890,32 @@ const tests = [
     },
   },
   {
+    name: 'the map layer mask selects tiles carrying any of its flags, not all of them',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      sheet[(0 * 128) + 8] = 4; // sprite 1 top-left
+      sheet[(0 * 128) + 16] = 5; // sprite 2 top-left
+      sheet[(0 * 128) + 24] = 6; // sprite 3 top-left
+      pico8.setSpriteSheet(sheet, 128, 128);
+      pico8.setMapData(new Uint8Array([0, 1, 2, 3]), 4, 1);
+
+      pico8.fset(1, 0b00010); // flag 1 only
+      pico8.fset(2, 0b00100); // flag 2 only
+      pico8.fset(3, 0b100000); // outside the mask
+
+      // A cart asking for several gameplay layers at once, e.g.
+      // map(0, 0, 0, 0, 128, 64, 30), expects every tile flagged with any one
+      // of them. Demanding all of them drew nothing at all.
+      pico8.map(0, 0, 0, 0, 4, 1, 0b11110);
+      assert.strictEqual(pico8._framebuffer[8], 4, 'flag 1 is in the mask');
+      assert.strictEqual(pico8._framebuffer[16], 5, 'flag 2 is in the mask');
+      assert.strictEqual(pico8._framebuffer[24], 0, 'flag 5 is not in the mask');
+    },
+  },
+  {
     name: 'fset/fget toggles sprite flags',
     fn: () => {
       const { pico8 } = makePico8();
@@ -1009,6 +1035,80 @@ const tests = [
     },
   },
   {
+    name: 'memcpy into 0x1800 updates map rows 48-63, as bank-switching carts expect',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      pico8.setMapData(new Uint8Array(128 * 64), 128, 64);
+
+      // Stage two tile indices in general-purpose RAM, then bank them into the
+      // shared gfx/map window the way "UFO Swamp Odyssey" swaps its parallax
+      // backdrops with memcpy(0x1800, 0x4e00, 2048).
+      pico8.poke(0x4e00, 0x2a, 0x3b);
+      pico8.memcpy(0x1800, 0x4e00, 2);
+
+      assert.strictEqual(pico8.mget(0, 48), 0x2a);
+      assert.strictEqual(pico8.mget(1, 48), 0x3b);
+      // The same bytes are the bottom of the sprite sheet: low nibble first.
+      assert.strictEqual(pico8.sget(0, 96), 0xa);
+      assert.strictEqual(pico8.sget(1, 96), 0x2);
+    },
+  },
+  {
+    name: 'memcpy out of 0x1800 reads the current map rows 48-63',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      pico8.setMapData(new Uint8Array(128 * 64), 128, 64);
+
+      pico8.mset(0, 48, 0xc4);
+      pico8.memcpy(0x5600, 0x1800, 1);
+      assert.strictEqual(pico8.peek(0x5600), 0xc4);
+    },
+  },
+  {
+    name: 'writes below 0x1000 leave the map alone',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      pico8.setMapData(new Uint8Array(128 * 64), 128, 64);
+
+      pico8.poke(0x0fff, 0x77);
+      assert.strictEqual(pico8.mget(0, 32), 0);
+      assert.strictEqual(pico8.mget(127, 31), 0);
+    },
+  },
+  {
+    name: 'sset in the shared region rewrites only its own nibble of the map byte',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      pico8.setMapData(new Uint8Array(128 * 64), 128, 64);
+
+      pico8.mset(0, 48, 0x2a);
+      pico8.sset(1, 96, 0x5); // high nibble
+      assert.strictEqual(pico8.mget(0, 48), 0x5a);
+      pico8.sset(0, 96, 0x1); // low nibble
+      assert.strictEqual(pico8.mget(0, 48), 0x51);
+    },
+  },
+  {
+    name: 'tonum parses 0x and 0b literals, as carts packing data into strings expect',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.tonum('0xa'), 10);
+      assert.strictEqual(pico8.tonum('0XFF'), 255);
+      assert.strictEqual(pico8.tonum('0b1010'), 10);
+      assert.strictEqual(pico8.tonum('0x1.8'), 1.5);
+      assert.strictEqual(pico8.tonum('-0x10'), -16);
+      // Still decimal by default, and still 0 for anything unparseable.
+      assert.strictEqual(pico8.tonum('42'), 42);
+      assert.strictEqual(pico8.tonum('0x'), 0);
+      assert.strictEqual(pico8.tonum('0xzz'), 0);
+      assert.strictEqual(pico8.tonum('nope'), 0);
+    },
+  },
+  {
     name: 'memset fills a block',
     fn: () => {
       const { pico8 } = makePico8();
@@ -1080,6 +1180,77 @@ const tests = [
       for (const name of ['cocreate', 'coresume', 'costatus', 'cowrap', 'yield']) {
         assert.throws(() => pico8[name](), /Lua-native/, `${name} should not be callable in JS`);
       }
+    },
+  },
+  {
+    name: 'pal with p=1 sets the screen palette without touching the draw palette',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.pal(14, 3, 1);
+      assert.strictEqual(pico8.currentPalette.size, 0, 'screen palette must not leak into the draw palette');
+      assert.strictEqual(pico8._screenPalette[14], 3);
+
+      const rgba = pico8._buildPicoPaletteRGBA();
+      assert.deepStrictEqual(
+        [rgba[14 * 4], rgba[14 * 4 + 1], rgba[14 * 4 + 2]],
+        [0, 135, 81],
+        'colour 14 should now display as colour 3',
+      );
+    },
+  },
+  {
+    name: 'the screen palette reaches the extended 128-143 colours',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.pal(14, 131, 1);
+      const rgba = pico8._buildPicoPaletteRGBA();
+      assert.deepStrictEqual(
+        [rgba[14 * 4], rgba[14 * 4 + 1], rgba[14 * 4 + 2]],
+        [18, 83, 89],
+        'colour 131 is the extended dark teal',
+      );
+    },
+  },
+  {
+    name: 'poking 0x5f10 sets the screen palette, as memcpy-driven carts do',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // "UFO Swamp Odyssey" installs its palettes with memcpy(0x5f10, ...)
+      // rather than calling pal(), so the registers have to be live state.
+      pico8.poke(0x4300, 131, 12);
+      pico8.memcpy(0x5f10, 0x4300, 2);
+      assert.strictEqual(pico8._screenPalette[0], 131);
+      assert.strictEqual(pico8._screenPalette[1], 12);
+      assert.deepStrictEqual(pico8.peek(0x5f10, 2), [131, 12]);
+    },
+  },
+  {
+    name: 'the draw palette registers at 0x5f00 read back what pal and palt set',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.peek(0x5f00), 0x10, 'colour 0 starts transparent');
+      assert.strictEqual(pico8.peek(0x5f07), 7, 'unmapped colours read as themselves');
+
+      pico8.pal(7, 2);
+      assert.strictEqual(pico8.peek(0x5f07), 2);
+
+      pico8.poke(0x5f03, 9);
+      assert.strictEqual(pico8.currentPalette.get(3), 9);
+
+      pico8.poke(0x5f05, 0x15);
+      assert.ok(pico8._isTransparentColor(5), 'bit 0x10 marks the colour transparent');
+      assert.strictEqual(pico8.peek(0x5f05), 0x15, 'colour 5 still draws as itself');
+    },
+  },
+  {
+    name: 'pal() with no arguments resets the screen palette too',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.pal(14, 131, 1);
+      pico8.pal(1, 2);
+      pico8.pal();
+      assert.strictEqual(pico8.currentPalette.size, 0);
+      assert.strictEqual(pico8._screenPalette[14], 14);
     },
   },
   {

@@ -2183,8 +2183,8 @@
         },
         {
           "name": "tonum",
-          "description": "Convert string to number",
-          "parameters": [{"name": "s", "type": "string", "description": "Text to parse."}],
+          "description": "Convert string to number, accepting 0x hexadecimal and 0b binary literals",
+          "parameters": [{"name": "s", "type": "string", "description": "Text to parse. Decimal, or a 0x/0b literal such as '0xff' or '0b1010'."}],
           "returns": {"type": "number", "description": "The parsed number, or nil when the text is not numeric."},
           "example": "local num = tonum('42')"
         },
@@ -2351,7 +2351,8 @@
           "description": "Set palette mapping",
           "parameters": [
             {"name": "c0", "type": "number", "optional": true, "description": "Palette index to remap. Omit all arguments to reset the palette."},
-            {"name": "c1", "type": "number", "optional": true, "description": "Palette index to draw in its place."}
+            {"name": "c1", "type": "number", "optional": true, "description": "Palette index to draw in its place. May be an extended colour 128-143 when p is 1."},
+            {"name": "p", "type": "number", "optional": true, "description": "0 (default) for the draw palette, 1 for the screen palette, which also recolours pixels already drawn."}
           ],
           "example": "pal(1, 2)"
         },

@@ -15,6 +15,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._fillPattern = 0;
     this._fillPatternTransparent = false;
     this.currentPalette = new Map();
+    // The screen palette (0x5f10-0x5f1f): what each of the 16 colour indices
+    // actually displays as. Unlike the draw palette this is applied when the
+    // framebuffer reaches the screen, so it recolours everything already
+    // drawn. Entries may name an extended colour (128-143).
+    this._screenPalette = new Uint8Array(16);
+    for (let i = 0; i < 16; i += 1) this._screenPalette[i] = i;
+    this._paletteRGBADirty = true;
     this.randomSeed = 0;
     // PICO-8 stores sprite flags as one byte per sprite at 0x3000; keep the
     // same layout so fget/fset and peek/poke see the same bits.
@@ -229,6 +236,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     // print attribute defaults at 0x5f58 among them.
     this._drawStateRam = null;
     this.currentPalette.clear();
+    this._resetScreenPalette();
     this._transparent = new Set([0]);
     this._clearFb(0, false);
   }
@@ -305,36 +313,46 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return { x0, x1, y0, y1 };
   }
 
+  static PICO8_RGB = [
+    [0, 0, 0], [29, 43, 83], [126, 37, 83], [0, 135, 81],
+    [171, 82, 54], [95, 87, 79], [194, 195, 199], [255, 241, 232],
+    [255, 0, 77], [255, 163, 0], [255, 236, 39], [0, 228, 54],
+    [41, 173, 255], [131, 118, 156], [255, 119, 168], [255, 204, 170],
+  ];
+
+  // PICO-8's second bank of 16 colours, addressed as 128-143. Carts reach them
+  // through the screen palette, e.g. pal(14, 141, 1).
+  static PICO8_EXTENDED_RGB = [
+    [41, 24, 20], [17, 29, 53], [66, 33, 54], [18, 83, 89],
+    [116, 47, 41], [73, 51, 59], [162, 136, 121], [243, 239, 125],
+    [190, 18, 80], [255, 108, 36], [168, 231, 46], [0, 181, 67],
+    [6, 90, 181], [117, 70, 101], [255, 110, 89], [255, 157, 129],
+  ];
+
   _buildPicoPaletteRGBA() {
     const palette = new Uint8Array(1024);
-    const pico16 = [
-      [0, 0, 0],
-      [29, 43, 83],
-      [126, 37, 83],
-      [0, 135, 81],
-      [171, 82, 54],
-      [95, 87, 79],
-      [194, 195, 199],
-      [255, 241, 232],
-      [255, 0, 77],
-      [255, 163, 0],
-      [255, 236, 39],
-      [0, 228, 54],
-      [41, 173, 255],
-      [131, 118, 156],
-      [255, 119, 168],
-      [255, 204, 170],
-    ];
 
     for (let i = 0; i < 256; i += 1) {
-      const p = pico16[i & 0x0f];
+      // The screen palette only redirects the 16 drawable indices; anything
+      // else keeps its own colour so a framebuffer byte outside 0-15 still
+      // renders as something rather than black.
+      const source = i < 16 ? this._screenPalette[i] : i;
+      const p = LuaPico8Extensions._colorRGB(source);
       const o = i * 4;
       palette[o] = p[0];
       palette[o + 1] = p[1];
       palette[o + 2] = p[2];
       palette[o + 3] = 255;
     }
+    this._paletteRGBADirty = false;
     return palette;
+  }
+
+  /** Resolve a PICO-8 colour number, including the extended 128-143 range. */
+  static _colorRGB(n) {
+    const c = n & 0xff;
+    if (c >= 128 && c <= 143) return LuaPico8Extensions.PICO8_EXTENDED_RGB[c - 128];
+    return LuaPico8Extensions.PICO8_RGB[c & 0x0f];
   }
 
   _getFallbackEngine() {
@@ -774,6 +792,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
       this._ensureFramebufferTexture(activeGpu);
       if (!this._fbTexture) {
         return;
+      }
+      if (this._paletteRGBADirty) {
+        this._paletteRGBA = this._buildPicoPaletteRGBA();
       }
       activeGpu.setPalette(this._paletteRGBA);
       activeGpu.setPaletteOffset(0);
@@ -1385,7 +1406,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
       for (let col = 0; col < cw; col += 1) {
         const tile = this._mapTile(cx + col, cy + row);
         if (tile === 0) continue; // PICO-8 skips sprite 0
-        if (layer !== 0 && (this._spriteFlagByte(tile) & layer) !== layer) continue;
+        // The layer mask selects tiles carrying ANY of its flags, not tiles
+        // carrying all of them. Requiring all of them meant a cart asking for
+        // several gameplay layers at once - "UFO Swamp Odyssey" draws its
+        // level with map(0, 0, 0, 0, 128, 64, 30), flags 1 through 4 - got an
+        // empty screen, because no single sprite sets every flag in the mask.
+        if (layer !== 0 && (this._spriteFlagByte(tile) & layer) === 0) continue;
 
         this._blitSheet(
           (tile % 16) * 8,
@@ -1427,7 +1453,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const map = this._map;
     if (!map) return;
     if (x < 0 || y < 0 || x >= map.width || y >= map.height) return;
-    map.tiles[y * map.width + x] = v & 0xff;
+    const offset = y * map.width + x;
+    map.tiles[offset] = v & 0xff;
+    if (map.width === 128) this._mirrorMapByteToSheet(offset, v);
   }
 
   /**
@@ -1454,6 +1482,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (!sheet) return;
     if (x < 0 || y < 0 || x >= sheet.width || y >= sheet.height) return;
     sheet.pixels[y * sheet.width + x] = Math.floor(c) & 0x0f;
+    this._mirrorSheetPixelToMap(x, y);
   }
 
   /**
@@ -1627,7 +1656,58 @@ class LuaPico8Extensions extends BaseLuaExtension {
   //   0x5f00-0x5f7f draw state registers
   // Everything else reads 0 and ignores writes rather than throwing, because
   // carts poke hardware registers speculatively and a throw would kill them.
+  //
+  // 0x1000-0x1fff is shared: those bytes are BOTH the bottom half of the
+  // sprite sheet (sprites 128-255, pixel rows 64-127) and map rows 32-63. We
+  // keep two decoded stores - _sheet holds one pixel per entry and _map holds
+  // one tile index per entry - so a write through either view has to be
+  // mirrored into the other or they drift apart. Carts rely on this: "UFO
+  // Swamp Odyssey" bank-switches its parallax backdrops with
+  // memcpy(0x1800, 0x4e00, 2048), which is a write to map rows 48-63, and
+  // without the mirror map(...,48,...) kept drawing the tiles that shipped in
+  // the cart while the sprite sheet filled up with tile indices.
+  //
+  // A map cell's offset within _map.tiles is y * 128 + x, and for rows 32-63
+  // that is exactly the same number as the PICO-8 address, so the two views
+  // share an index in this range and need no further translation.
   // ---------------------------------------------------------------------------
+
+  static SHARED_GFX_MAP_START = 0x1000;
+
+  static SHARED_GFX_MAP_END = 0x2000;
+
+  /** Mirror a byte written through the sprite-sheet view into map rows 32-63. */
+  _mirrorSheetByteToMap(addr, value) {
+    const map = this._map;
+    if (!map || map.width !== 128) return;
+    if (addr < LuaPico8Extensions.SHARED_GFX_MAP_START || addr >= LuaPico8Extensions.SHARED_GFX_MAP_END) return;
+    if (addr < map.tiles.length) map.tiles[addr] = value & 0xff;
+  }
+
+  /** Mirror a byte written through the map view into the sprite sheet. */
+  _mirrorMapByteToSheet(offset, value) {
+    const sheet = this._sheet;
+    if (!sheet) return;
+    if (offset < LuaPico8Extensions.SHARED_GFX_MAP_START || offset >= LuaPico8Extensions.SHARED_GFX_MAP_END) return;
+    const y = offset >> 6;
+    const x = (offset & 0x3f) * 2;
+    if (y >= sheet.height || x + 1 >= sheet.width) return;
+    const row = y * sheet.width + x;
+    sheet.pixels[row] = value & 0x0f;
+    sheet.pixels[row + 1] = (value >> 4) & 0x0f;
+  }
+
+  /** Mirror a single sprite-sheet pixel change into map rows 32-63. */
+  _mirrorSheetPixelToMap(x, y) {
+    const sheet = this._sheet;
+    if (!sheet) return;
+    const addr = (y * (sheet.width >> 1)) + (x >> 1);
+    if (addr < LuaPico8Extensions.SHARED_GFX_MAP_START || addr >= LuaPico8Extensions.SHARED_GFX_MAP_END) return;
+    const even = x & ~1;
+    const row = y * sheet.width + even;
+    const byte = (sheet.pixels[row] & 0x0f) | ((sheet.pixels[row + 1] & 0x0f) << 4);
+    this._mirrorSheetByteToMap(addr, byte);
+  }
 
   _readByte(addr, useRom = false) {
     const a = addr | 0;
@@ -1663,7 +1743,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
 
     if (a >= 0x5f00 && a < 0x5f80) {
-      if (useRom || !this._drawStateRam) return 0;
+      if (useRom) return 0;
+      // The palettes live in their own state, not in the scratch register
+      // block, so read them back from there or a cart that saves and restores
+      // them with memcpy() would get stale bytes.
+      if (a < 0x5f10) return this._readDrawPaletteByte(a - 0x5f00);
+      if (a < 0x5f20) return this._screenPalette[a - 0x5f10];
+      if (!this._drawStateRam) return 0;
       return this._drawStateRam[a - 0x5f00];
     }
 
@@ -1684,6 +1770,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
       const row = y * sheet.width + x;
       sheet.pixels[row] = v & 0x0f;
       sheet.pixels[row + 1] = (v >> 4) & 0x0f;
+      this._mirrorSheetByteToMap(a, v);
       return;
     }
 
@@ -1707,6 +1794,14 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
 
     if (a >= 0x5f00 && a < 0x5f80) {
+      if (a < 0x5f10) {
+        this._writeDrawPaletteByte(a - 0x5f00, v);
+        return;
+      }
+      if (a < 0x5f20) {
+        this._setScreenPaletteEntry(a - 0x5f10, v);
+        return;
+      }
       if (!this._drawStateRam) this._drawStateRam = new Uint8Array(0x80);
       this._drawStateRam[a - 0x5f00] = v;
     }
@@ -1865,16 +1960,60 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Set palette mapping
    * Lua: pal([c0, c1, [p]])
+   *
+   * p selects which palette to change: 0 (default) is the draw palette, which
+   * remaps colours as they are drawn, and 1 is the screen palette, which
+   * remaps them on the way to the display and so also recolours pixels that
+   * are already in the framebuffer. Carts lean on the screen palette for fades
+   * and for reaching the extended colours, so treating p as decoration left
+   * whole scenes in the wrong hue.
    */
   pal(...args) {
     const c0 = this._optionalIntegerArg(args, 0, -1, 'pal', 'c0');
     const c1 = this._optionalIntegerArg(args, 1, -1, 'pal', 'c1');
-    
+    const p = this._optionalIntegerArg(args, 2, 0, 'pal', 'p');
+
     if (c0 >= 0 && c1 >= 0) {
-      this.currentPalette.set(c0, c1);
-    } else {
-      this.currentPalette.clear();
+      if (p === 1) this._setScreenPaletteEntry(c0 & 0x0f, c1 & 0xff);
+      else this.currentPalette.set(c0, c1);
+      return;
     }
+
+    this.currentPalette.clear();
+    if (args.length === 0 || p === 1) this._resetScreenPalette();
+  }
+
+  _setScreenPaletteEntry(index, color) {
+    if (this._screenPalette[index] === color) return;
+    this._screenPalette[index] = color;
+    this._paletteRGBADirty = true;
+  }
+
+  _resetScreenPalette() {
+    for (let i = 0; i < 16; i += 1) {
+      if (this._screenPalette[i] !== i) {
+        this._screenPalette[i] = i;
+        this._paletteRGBADirty = true;
+      }
+    }
+  }
+
+  /**
+   * Read back a draw palette register (0x5f00-0x5f0f): the low nibble is the
+   * colour this index draws as, and bit 0x10 marks it transparent for spr().
+   */
+  _readDrawPaletteByte(index) {
+    const mapped = this.currentPalette.get(index) ?? index;
+    return (mapped & 0x0f) | (this._transparent.has(index) ? 0x10 : 0);
+  }
+
+  _writeDrawPaletteByte(index, value) {
+    const mapped = value & 0x0f;
+    if (mapped === index) this.currentPalette.delete(index);
+    else this.currentPalette.set(index, mapped);
+
+    if (value & 0x10) this._transparent.add(index);
+    else this._transparent.delete(index);
   }
 
   _isTransparentColor(c) {
@@ -2715,9 +2854,35 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Convert string to number
    * Lua: tonum(s) -> result
+   *
+   * PICO-8 accepts the same 0x and 0b literals here that the Lua lexer does,
+   * including a fractional part such as "0x1.8". Number.parseFloat stops at
+   * the "x" and quietly returns 0, so carts that unpack packed data this way
+   * got a table of zeroes instead: "UFO Swamp Odyssey" builds its parallax
+   * background tile table with tonum("0x"..digit) and every tile came out as
+   * sprite 0, leaving the backdrop empty.
    */
   tonum(...args) {
-    const s = args[0]?.toString() ?? '';
+    const raw = args[0];
+    if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
+
+    const s = (raw?.toString() ?? '').trim();
+    const prefixed = /^([-+]?)0([xb])(.*)$/is.exec(s);
+    if (prefixed) {
+      const radix = prefixed[2].toLowerCase() === 'x' ? 16 : 2;
+      const digits = radix === 16 ? /^[0-9a-f]*$/i : /^[01]*$/;
+      const [intPart, fracPart = '', ...rest] = prefixed[3].split('.');
+      if (rest.length || (!intPart && !fracPart)) return 0;
+      if (!digits.test(intPart) || !digits.test(fracPart)) return 0;
+
+      let value = intPart ? Number.parseInt(intPart, radix) : 0;
+      for (let i = 0; i < fracPart.length; i += 1) {
+        value += Number.parseInt(fracPart[i], radix) / radix ** (i + 1);
+      }
+      if (!Number.isFinite(value)) return 0;
+      return prefixed[1] === '-' ? -value : value;
+    }
+
     const value = Number.parseFloat(s);
     return Number.isFinite(value) ? value : 0;
   }
