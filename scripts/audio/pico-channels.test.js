@@ -74,13 +74,14 @@ test('a pattern with no channels claims nothing', () => {
   assert(JSON.stringify(PicoAudio.patternChannels(null, slots)) === '[]', 'expected no channels');
 });
 
-/** The smallest object _stopPicoSfxOnChannels needs to work against. */
+/** A real engine carrying sfx on the given channels, and nothing else. */
 function engineWithSfxOn(channels) {
   const stopped = [];
-  const engine = {
-    _picoChannels: new Map(channels.map(c => [c, { instanceId: `inst${c}`, sfxNumber: c }])),
-    stopSound(id) { stopped.push(id); },
-  };
+  const engine = Object.create(AudioEngine.prototype);
+  engine._picoChannels = new Map(
+    channels.map(c => [c, { instanceId: `inst${c}`, sfxNumber: c }])
+  );
+  engine.stopSound = id => { stopped.push(id); };
   return { engine, stopped };
 }
 
@@ -240,6 +241,115 @@ test('playMusic leaves sfx alone on channels the song does not use', async () =>
 
   assert(stopped.length === 0, `no sfx should have been cut, got ${JSON.stringify(stopped)}`);
   assert(engine._picoChannels.size === 2, 'both sfx channels must survive');
+});
+
+/**
+ * An engine whose startSound resolves asynchronously, like the real one.
+ *
+ * Lua cannot await, so a cart line such as `sfx"1" sfx"9" music"24"` fires all
+ * three synchronously. Awaiting each call in a test hides every ordering bug
+ * that pattern causes, so these tests deliberately do not await between calls.
+ */
+function engineForSfx() {
+  const engine = Object.create(AudioEngine.prototype);
+  engine.audioContext = { state: 'running', sampleRate: 44100, currentTime: 0 };
+  engine.masterVolume = { left: 1, right: 1 };
+  engine.activeSounds = new Map();
+  engine._picoChannels = new Map();
+  engine.picoResourceProvider = { getSfxResourceId: n => `res${n}` };
+  engine._wavLoopPoints = () => null;
+  engine._picoSfxDurationMs = () => 1200;
+  engine.stopSound = id => { engine.activeSounds.delete(id); };
+  engine.startSound = async resourceId => {
+    await Promise.resolve();
+    const id = `${resourceId}-inst`;
+    engine.activeSounds.set(id, {});
+    return id;
+  };
+  return engine;
+}
+
+function channelMap(engine) {
+  const out = {};
+  engine._picoChannels.forEach((entry, ch) => { out[ch] = entry.sfxNumber; });
+  return out;
+}
+
+test('sfx() calls fired back-to-back take separate channels', async () => {
+  const engine = engineForSfx();
+  await Promise.all([engine.playSfx(1), engine.playSfx(9)]);
+
+  const map = channelMap(engine);
+  assert(
+    JSON.stringify(map) === '{"0":1,"1":9}',
+    `each sfx needs its own channel, got ${JSON.stringify(map)}`
+  );
+});
+
+test('a third and fourth simultaneous sfx keep filling channels', async () => {
+  const engine = engineForSfx();
+  await Promise.all([
+    engine.playSfx(1), engine.playSfx(2), engine.playSfx(3), engine.playSfx(4),
+  ]);
+
+  const map = channelMap(engine);
+  assert(
+    JSON.stringify(map) === '{"0":1,"1":2,"2":3,"3":4}',
+    `four sfx should occupy all four channels, got ${JSON.stringify(map)}`
+  );
+});
+
+test('every simultaneous sfx stays tracked, so it can be stopped later', async () => {
+  const engine = engineForSfx();
+  await Promise.all([engine.playSfx(1), engine.playSfx(9)]);
+
+  // The real defect was not the channel numbering but the lost handle: an
+  // overwritten entry left its sound playing with nothing able to stop it.
+  const tracked = new Set();
+  engine._picoChannels.forEach(entry => tracked.add(entry.instanceId));
+  for (const id of engine.activeSounds.keys()) {
+    assert(tracked.has(id), `sound ${id} is playing but no channel tracks it`);
+  }
+});
+
+test('music started in the same frame silences the right sfx', async () => {
+  const engine = engineForSfx();
+  const source = JSON.stringify({
+    type: 'pico_music',
+    song: { start: 24, end: 24, loopTo: null, patterns: [{ index: 24, flags: 1, channels: [63, -1, -1, -1] }] },
+    sfx: { 63: slot() },
+  });
+  engine.picoResourceProvider.getMusicSource = () => source;
+  engine.ensureInitialized = async () => true;
+  engine._isOutputMuted = () => false;
+  engine.stopPicoMusic = () => {};
+  engine.audioContext = fakeAudioContext();
+
+  // dinky_kong's title line, in its real order and without awaiting.
+  const calls = [engine.playSfx(1), engine.playSfx(9), engine.playMusic(24)];
+  await Promise.all(calls);
+
+  const map = channelMap(engine);
+  assert(!engine._picoChannels.has(0), `the song must own channel 0, got ${JSON.stringify(map)}`);
+  assert(
+    engine._picoChannels.get(1)?.sfxNumber === 9,
+    `the tonal sfx must survive on channel 1, got ${JSON.stringify(map)}`
+  );
+  // The noise must be genuinely stopped, not merely untracked.
+  assert(
+    !engine.activeSounds.has('res1-inst'),
+    'the noise sfx is still playing after the song took its channel'
+  );
+});
+
+test('a channel taken while its sfx is still starting does not leak the sound', async () => {
+  const engine = engineForSfx();
+  const pending = engine.playSfx(1);
+  engine._releasePicoChannel(0);
+  await pending;
+
+  assert(engine.activeSounds.size === 0, 'the cancelled sfx should not be left playing');
+  assert(!engine._picoChannels.has(0), 'the released channel should stay free');
 });
 
 async function main() {

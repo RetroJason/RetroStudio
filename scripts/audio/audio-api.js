@@ -920,11 +920,7 @@ class AudioEngine extends EventTarget {
     if (n < 0) {
       // sfx(-1) stops the given channel, sfx(-2) releases a looping sfx.
       if (requested >= 0) {
-        const entry = this._picoChannels.get(requested);
-        if (entry) {
-          this.stopSound(entry.instanceId);
-          this._picoChannels.delete(requested);
-        }
+        this._releasePicoChannel(requested);
         return null;
       }
       for (const [instanceId, playback] of Array.from(this.activeSounds.entries())) {
@@ -932,6 +928,9 @@ class AudioEngine extends EventTarget {
           this.stopSound(instanceId);
         }
       }
+      // Flag reservations still starting, so they stop instead of coming back
+      // to life on a channel map that has already been cleared.
+      this._picoChannels.forEach(entry => { entry.cancelled = true; });
       this._picoChannels.clear();
       return null;
     }
@@ -958,24 +957,64 @@ class AudioEngine extends EventTarget {
       return playing.instanceId;
     }
     if (playing) {
-      this.stopSound(playing.instanceId);
+      this._releasePicoChannel(target);
     }
 
     const loop = this._wavLoopPoints(resourceId);
+
+    // Claim the channel now, before the await. Lua cannot await, so a cart line
+    // like `sfx"1" sfx"9" music"24"` runs all three synchronously; a channel
+    // claimed only once startSound resolves is still free to the next call, so
+    // every sfx in the frame picks channel 0 and the last one overwrites the
+    // rest. The overwritten sounds keep playing with nothing tracking them, so
+    // neither a later sfx() nor music() can ever stop them.
+    const reservation = {
+      instanceId: null,
+      sfxNumber: n,
+      // A looping sfx runs until something replaces it, so it must never be
+      // aged out; a one-shot has to be, because the worklet never reports
+      // completion back to us.
+      endsAt: loop ? 0 : Date.now() + this._picoSfxDurationMs(resourceId),
+      cancelled: false,
+    };
+    this._picoChannels.set(target, reservation);
+
     const instanceId = await this.startSound(resourceId, this._picoMasterGain(), { loop });
-    if (instanceId) {
-      const playback = this.activeSounds.get(instanceId);
-      if (playback) playback.isPicoSfx = true;
-      this._picoChannels.set(target, {
-        instanceId,
-        sfxNumber: n,
-        // A looping sfx runs until something replaces it, so it must never be
-        // aged out; a one-shot has to be, because the worklet never reports
-        // completion back to us.
-        endsAt: loop ? 0 : Date.now() + this._picoSfxDurationMs(resourceId),
-      });
+
+    if (!instanceId) {
+      if (this._picoChannels.get(target) === reservation) {
+        this._picoChannels.delete(target);
+      }
+      return null;
     }
+
+    const playback = this.activeSounds.get(instanceId);
+    if (playback) playback.isPicoSfx = true;
+
+    // Something took this channel while the sound was starting, so this
+    // playback is already obsolete - stop it rather than leaving it untracked.
+    if (reservation.cancelled || this._picoChannels.get(target) !== reservation) {
+      this.stopSound(instanceId);
+      return null;
+    }
+
+    reservation.instanceId = instanceId;
     return instanceId;
+  }
+
+  /**
+   * Free a PICO-8 channel, stopping whatever holds it.
+   *
+   * A reservation that has not finished starting is flagged rather than
+   * stopped, because there is no instance to stop yet; playSfx sees the flag
+   * when startSound resolves and drops the sound then.
+   */
+  _releasePicoChannel(channel) {
+    const entry = this._picoChannels?.get(channel);
+    if (!entry) return;
+    entry.cancelled = true;
+    if (entry.instanceId) this.stopSound(entry.instanceId);
+    this._picoChannels.delete(channel);
   }
 
   /**
@@ -987,6 +1026,9 @@ class AudioEngine extends EventTarget {
   _picoChannelPlaying(channel) {
     const entry = this._picoChannels?.get(channel);
     if (!entry) return null;
+
+    // Still starting: busy, so the next sfx() this frame picks another channel.
+    if (!entry.instanceId) return entry;
 
     if (!this.activeSounds.has(entry.instanceId)) {
       this._picoChannels.delete(channel);
@@ -1006,10 +1048,7 @@ class AudioEngine extends EventTarget {
   _stopPicoSfxOnChannels(channels) {
     if (!this._picoChannels || !Array.isArray(channels)) return;
     for (const channel of channels) {
-      const entry = this._picoChannels.get(channel);
-      if (!entry) continue;
-      this.stopSound(entry.instanceId);
-      this._picoChannels.delete(channel);
+      this._releasePicoChannel(channel);
     }
   }
 
