@@ -67,6 +67,10 @@ class BuildSystem {
       case '.tilemap':
       case '.tmj':
         return 'tilemap';
+      // Without this case an unknown extension resolves to 'copy', which is a
+      // registered builder, so the extension lookup never runs and the song
+      // JSON is copied into the archive verbatim. The firmware cannot read it.
+      case '.p8mus': return 'music';
       default: return 'copy';
     }
   }

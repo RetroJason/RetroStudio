@@ -376,6 +376,139 @@
     };
   }
 
+  /**
+   * Parse a built `.d2mu` song into the same shape `parseP8Mus` returns, so
+   * everything downstream is unaware of which one it came from.
+   *
+   * This is the format the watch plays. Reading it here as well means the
+   * simulator exercises the real build output rather than the source JSON,
+   * so a builder bug is audible in the Studio instead of only on the device.
+   * The layout is DocsSource/music_format.md; the C++ twin is
+   * libretrostudio/src/PicoMusic.cpp.
+   */
+  function parseD2mu(source, name = null) {
+    let bytes = source;
+    if (bytes instanceof ArrayBuffer) {
+      bytes = new Uint8Array(bytes);
+    } else if (ArrayBuffer.isView(bytes)) {
+      bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    }
+    if (!(bytes instanceof Uint8Array)) {
+      throw new Error('.d2mu source must be binary');
+    }
+
+    const HEADER_BYTES = 32;
+    const CHUNK_HEADER_BYTES = 4;
+
+    if (bytes.length < HEADER_BYTES) {
+      throw new Error('Too small to be a .d2mu');
+    }
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x32 || bytes[2] !== 0x4D || bytes[3] !== 0x55) {
+      throw new Error('Not a .d2mu resource (bad magic)');
+    }
+
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const version = view.getUint8(4);
+    if (version !== 1) {
+      throw new Error(`Unsupported .d2mu version ${version}`);
+    }
+
+    const channelCount = view.getUint8(5);
+    const stepsPerSlot = view.getUint8(6);
+    const patternChunk = view.getUint32(16, true);
+    const slotChunk = view.getUint32(20, true);
+
+    if (patternChunk + CHUNK_HEADER_BYTES > bytes.length
+      || slotChunk + CHUNK_HEADER_BYTES > bytes.length) {
+      throw new Error('.d2mu chunk offset past end of file');
+    }
+
+    const patternCount = view.getUint16(patternChunk, true);
+    // Stride by the size in the file, not our own, so a later minor version
+    // that grows a record still loads.
+    const patternStride = view.getUint16(patternChunk + 2, true);
+    const slotCount = view.getUint16(slotChunk, true);
+    const slotStride = view.getUint16(slotChunk + 2, true);
+
+    if (patternChunk + CHUNK_HEADER_BYTES + (patternCount * patternStride) > bytes.length
+      || slotChunk + CHUNK_HEADER_BYTES + (slotCount * slotStride) > bytes.length) {
+      throw new Error('.d2mu chunk data past end of file');
+    }
+    if (patternCount === 0) {
+      throw new Error('.d2mu resource contains no patterns');
+    }
+
+    const slots = {};
+    for (let i = 0; i < slotCount; i += 1) {
+      const base = slotChunk + CHUNK_HEADER_BYTES + (i * slotStride);
+      const steps = [];
+      for (let s = 0; s < stepsPerSlot; s += 1) {
+        const packed = view.getUint16(base + 4 + (s * 2), true);
+        steps.push({
+          pitch: packed & 0x3F,
+          waveform: (packed >> 6) & 0x07,
+          volume: (packed >> 9) & 0x07,
+          effect: (packed >> 12) & 0x07,
+        });
+      }
+      slots[view.getUint8(base)] = {
+        speed: view.getUint8(base + 1),
+        loopStart: view.getUint8(base + 2),
+        loopEnd: view.getUint8(base + 3),
+        steps,
+      };
+    }
+
+    const patterns = [];
+    for (let i = 0; i < patternCount; i += 1) {
+      const base = patternChunk + CHUNK_HEADER_BYTES + (i * patternStride);
+      const channels = [];
+      for (let c = 0; c < channelCount; c += 1) {
+        channels.push(view.getInt8(base + 2 + c));
+      }
+      const flags = view.getUint8(base + 1) & 0x07;
+      patterns.push({
+        index: view.getUint8(base),
+        flags,
+        loopStart: Boolean(flags & FLAG_LOOP_START),
+        loopEnd: Boolean(flags & FLAG_LOOP_BACK),
+        stop: Boolean(flags & FLAG_STOP),
+        channels,
+      });
+    }
+
+    const loopTo = view.getInt8(12);
+
+    return {
+      name,
+      sourceFile: null,
+      start: view.getUint8(10),
+      end: view.getUint8(11),
+      loopTo: loopTo < 0 ? null : loopTo,
+      tickRate: view.getUint16(8, true) || DEFAULT_TICK_RATE,
+      patterns,
+      slots,
+    };
+  }
+
+  /** True when a buffer carries the `.d2mu` magic. */
+  function isD2mu(source) {
+    let bytes = source;
+    if (bytes instanceof ArrayBuffer) bytes = new Uint8Array(bytes);
+    else if (ArrayBuffer.isView(bytes)) bytes = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (!(bytes instanceof Uint8Array) || bytes.length < 4) return false;
+    return bytes[0] === 0x44 && bytes[1] === 0x32 && bytes[2] === 0x4D && bytes[3] === 0x55;
+  }
+
+  /**
+   * Parse either a `.p8mus` source or a built `.d2mu`, whichever it is.
+   * Callers that just want to play a song should use this.
+   */
+  function parseSong(source, name = null) {
+    if (isD2mu(source)) return parseD2mu(source, name);
+    return parseP8Mus(source);
+  }
+
   /** Render a `.p8mus` file body straight to samples. */
   function renderP8Mus(source, sampleRate = 44100, tickRate = DEFAULT_TICK_RATE, options = {}) {
     const parsed = parseP8Mus(source);
@@ -414,6 +547,9 @@
     renderPattern,
     renderSong,
     parseP8Mus,
+    parseD2mu,
+    parseSong,
+    isD2mu,
     renderP8Mus,
     estimateP8MusDuration,
   };

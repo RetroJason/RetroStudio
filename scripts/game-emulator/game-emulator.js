@@ -373,7 +373,7 @@ class GameEmulator {
         summary.palettes++;
       } else if (lowerPath.match(/\.(wav|sfx)$/)) {
         summary.sfx++;
-      } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm|p8mus)$/)) {
+      } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm|p8mus|d2mu)$/)) {
         summary.music++;
       } else {
         summary.other++;
@@ -1132,7 +1132,7 @@ class GameEmulator {
     // Determine resource type and supported extensions
     const resourceTypeMap = {
       'SFX': ['wav'],
-      'MUSIC': ['mod', 'xm', 's3m', 'it', 'p8mus'],
+      'MUSIC': ['mod', 'xm', 's3m', 'it', 'p8mus', 'd2mu'],
       'GRAPHICS': ['png', 'jpg', 'jpeg', 'gif', 'bmp'],
       'DATA': ['json', 'txt', 'xml'],
       'SHADERS': ['glsl', 'frag', 'vert'],
@@ -1176,11 +1176,15 @@ class GameEmulator {
       if (!resource.loaded) {
         console.log(`[GameEmulator] Preloading ${resource.type} resource: ${resourceId}`);
         
-        // Handle audio resources (SFX and MUSIC). `.p8mus` songs are JSON pattern
-        // data interpreted by the PICO-8 music player, not decodable audio, so they
-        // skip the audio engine preload and are simply marked available.
+        // Handle audio resources (SFX and MUSIC). PICO-8 songs are pattern data
+        // interpreted by the PICO-8 music player, not decodable audio, so they
+        // skip the audio engine preload and are simply marked available. A built
+        // project carries `.d2mu` (the binary the watch plays); an unbuilt one
+        // carries the `.p8mus` source.
+        const extension = String(resource.extension || '').toLowerCase();
+        const isPicoSong = extension === 'p8mus' || extension === 'd2mu';
         const isDecodableAudio = (resource.type === 'SFX' || resource.type === 'MUSIC')
-          && String(resource.extension || '').toLowerCase() !== 'p8mus';
+          && !isPicoSong;
         if (isDecodableAudio) {
           const loadPromise = this.preloadAudioResource(resource)
             .then((audioResourceId) => {
@@ -1195,12 +1199,12 @@ class GameEmulator {
             });
           
           preloadPromises.push(loadPromise);
-        } else if (String(resource.extension || '').toLowerCase() === 'p8mus') {
-          // Keep the song JSON in memory so the synchronous Lua music() call can
+        } else if (isPicoSong) {
+          // Keep the song in memory so the synchronous Lua music() call can
           // reach it without awaiting storage.
           const loadPromise = this.preloadPicoMusicResource(resource)
-            .then((text) => {
-              resource.picoMusicSource = text;
+            .then((songSource) => {
+              resource.picoMusicSource = songSource;
               resource.loaded = true;
             })
             .catch((error) => {
@@ -1229,10 +1233,11 @@ class GameEmulator {
   }
 
   /**
-   * Read a `.p8mus` song body as text. Unlike MOD/WAV resources these stay as
-   * JSON pattern data and are synthesized on demand by the PICO-8 music player.
+   * Read a PICO-8 song body. Unlike MOD/WAV resources these are not decodable
+   * audio: they are pattern data synthesized on demand by the PICO-8 music
+   * player. A built `.d2mu` stays binary; a `.p8mus` source is decoded to text.
    * @param {Object} resource - Resource entry from resourceMap
-   * @returns {Promise<string>} Song JSON text
+   * @returns {Promise<string|Uint8Array>} Song JSON text, or .d2mu bytes
    */
   async preloadPicoMusicResource(resource) {
     const fileManager = this.getActiveFileManager();
@@ -1244,16 +1249,26 @@ class GameEmulator {
     const fileData = await fileManager.loadFile(storagePath);
     const content = fileData && (fileData.fileContent || fileData.content);
 
+    const toBytes = (value) => (value instanceof ArrayBuffer
+      ? new Uint8Array(value)
+      : new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+
+    // A `.d2mu` is the built binary and must not be run through TextDecoder.
+    if (String(resource.extension || '').toLowerCase() === 'd2mu') {
+      if (!(content instanceof ArrayBuffer) && !ArrayBuffer.isView(content)) {
+        throw new Error(`Expected binary content for ${storagePath}`);
+      }
+      console.log(`[GameEmulator] Loaded PICO-8 music binary: ${resource.id}`);
+      return toBytes(content);
+    }
+
     // Studio has two file managers with different conventions: the editor's
     // IndexedDB store hands back text, while the runtime archive player hands
     // back an ArrayBuffer for anything it classifies as binary. Decode rather
     // than reject so a song loads the same way down either path.
     let text = content;
     if (content instanceof ArrayBuffer || ArrayBuffer.isView(content)) {
-      const bytes = content instanceof ArrayBuffer
-        ? new Uint8Array(content)
-        : new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
-      text = new TextDecoder('utf-8').decode(bytes);
+      text = new TextDecoder('utf-8').decode(toBytes(content));
     }
 
     if (typeof text !== 'string') {

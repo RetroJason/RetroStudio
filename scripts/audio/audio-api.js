@@ -1058,7 +1058,9 @@ class AudioEngine extends EventTarget {
       return this.picoMusicCache.get(n);
     }
 
-    const song = PicoAudio.parseP8Mus(source);
+    // A built project supplies the `.d2mu` binary the watch plays; an unbuilt
+    // one supplies the `.p8mus` source. parseSong takes either.
+    const song = PicoAudio.parseSong(source);
     const rendered = PicoAudio.renderSong(
       song.patterns,
       0,
