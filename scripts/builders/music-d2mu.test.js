@@ -659,6 +659,28 @@ test('index.html loads the music builder', () => {
   );
 });
 
+/* ── the emulator's binary read path ───────────────────────────────────
+   The editor's IndexedDB store does NOT hand back an ArrayBuffer. It keeps
+   binaries as base64 text with a `binaryData` flag, the same convention
+   preloadAudioResource follows. A reader that only accepts ArrayBuffer throws
+   on every built song in the Studio, which no amount of round-trip testing of
+   the format itself would catch.
+   ────────────────────────────────────────────────────────────────────── */
+
+test('the emulator reads a .d2mu the way the editor actually stores it', () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, '..', 'game-emulator', 'game-emulator.js'), 'utf8'
+  );
+  const start = source.indexOf('async preloadPicoMusicResource(');
+  assert.notStrictEqual(start, -1, 'preloadPicoMusicResource not found');
+  const body = source.slice(start, start + 2500);
+  assert.ok(
+    /binaryData/.test(body) && /atob\(/.test(body),
+    'the d2mu branch must decode the base64 + binaryData form the editor stores, ' +
+    'not assume an ArrayBuffer'
+  );
+});
+
 /* ══════════════════════════════════════════════════════════════════════
    Runner
    ══════════════════════════════════════════════════════════════════════ */

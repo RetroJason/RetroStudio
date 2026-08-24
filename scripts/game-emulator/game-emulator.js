@@ -1255,11 +1255,23 @@ class GameEmulator {
 
     // A `.d2mu` is the built binary and must not be run through TextDecoder.
     if (String(resource.extension || '').toLowerCase() === 'd2mu') {
-      if (!(content instanceof ArrayBuffer) && !ArrayBuffer.isView(content)) {
-        throw new Error(`Expected binary content for ${storagePath}`);
+      if (content instanceof ArrayBuffer || ArrayBuffer.isView(content)) {
+        console.log(`[GameEmulator] Loaded PICO-8 music binary: ${resource.id}`);
+        return toBytes(content);
       }
-      console.log(`[GameEmulator] Loaded PICO-8 music binary: ${resource.id}`);
-      return toBytes(content);
+      // The editor's IndexedDB store keeps binaries as base64 text and flags
+      // them with `binaryData`, the same convention preloadAudioResource
+      // follows. Only the runtime archive player hands back an ArrayBuffer.
+      if (fileData && fileData.binaryData && typeof content === 'string') {
+        const binaryString = atob(content);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        console.log(`[GameEmulator] Loaded PICO-8 music binary: ${resource.id}`);
+        return bytes;
+      }
+      throw new Error(`Expected binary content for ${storagePath}`);
     }
 
     // Studio has two file managers with different conventions: the editor's
