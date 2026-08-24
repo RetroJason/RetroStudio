@@ -130,12 +130,13 @@ function checkRndTableAdapter() {
 
   // A Lua table reaches a bridged JS function as the string "table: 0x...",
   // never as an object, so a JS-side `typeof x === 'object'` branch can never
-  // fire. rnd(t) has to be answered in Lua or the cart dies with
-  // "[Pico8] rnd invalid numeric argument x: table: 0x...".
+  // fire. rnd(t) has to be answered in Lua, or the cart silently gets a random
+  // number in [0, 1) where it asked for one of the table's elements - the JS
+  // side coerces the unreadable argument to 0, the way PICO-8 does.
   assert.ok(
     /if type\(x\) == "table" then/.test(rndLua),
     'Pico8.rnd is registered without a Lua-side table branch, so rnd(t) will '
-    + 'reach the JS implementation as a string and throw',
+    + 'reach the JS implementation as a string and be coerced to a number',
   );
 
   // The adapter rebinds Pico8.rnd, so the global alias has to be assigned

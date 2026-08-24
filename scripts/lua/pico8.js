@@ -50,6 +50,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
     // menuitem() entries, keyed by 1-based slot.
     this.menuItems = new Map();
 
+    // Arguments already reported by _warnCoercedArg, so a cart that passes nil
+    // every frame warns once rather than 60 times a second.
+    this._coercedArgWarnings = new Set();
+
     // print()/cursor() text cursor, in logical (128x128) pixels.
     this._cursorX = 0;
     this._cursorY = 0;
@@ -319,6 +323,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
     [255, 0, 77], [255, 163, 0], [255, 236, 39], [0, 228, 54],
     [41, 173, 255], [131, 118, 156], [255, 119, 168], [255, 204, 170],
   ];
+
+  // 0x7fff.ffff, the largest number 16.16 fixed point can hold. PICO-8 has no
+  // NaN or infinity, and division by zero lands here (negated when negative).
+  static NUMBER_MAX = 0x7fffffff / 0x10000;
 
   // PICO-8's second bank of 16 colours, addressed as 128-143. Carts reach them
   // through the screen palette, e.g. pal(14, 141, 1).
@@ -860,60 +868,130 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   _optionalNumberArg(args, index, defaultValue, methodName, argName) {
     const hasExplicitArgs = !!args && args.length > 0;
-    if (!hasExplicitArgs) {
+    if (!hasExplicitArgs || index >= args.length) {
       return defaultValue;
     }
-    const raw = this._readArg(args, index, false);
-    if (raw === undefined || raw === null || raw === '') {
+    const raw = args[index];
+    if (raw === undefined || raw === null) {
+      return this._nilOptionalArg(defaultValue);
+    }
+    if (raw === '') {
       return defaultValue;
     }
-    const value = Number.parseFloat(raw);
-    if (!Number.isFinite(value)) {
-      throw new Error(`[Pico8] ${methodName} invalid numeric argument ${argName}: ${raw}`);
-    }
-    return value;
+    return this._coerceNumberArg(raw, methodName, argName);
+  }
+
+  /**
+   * What an optional argument means when the cart passed it, but passed nil.
+   *
+   * PICO-8's optional parameters are optional by COUNT, not by value: the
+   * manual writes them as PRINT(STR, X, Y, [COL]), and "not specified" means
+   * the argument was left off. Handing one an explicit nil is an ordinary
+   * numeric argument that happens to be nil, so it coerces to 0 like every
+   * other builtin argument does.
+   *
+   * galaxis.p8 depends on this. Its outline helper is
+   *
+   *   function oprint(t,x,y,c,o)
+   *     for _x=-1,1 do for _y=-1,1 do print(t,x+_x,y+_y,o) end end
+   *     print(t,x,y,c)
+   *   end
+   *
+   * and the title screen calls it without `o`, so the outline passes print a
+   * nil colour. Treating that as "keep the current pen" made each outline
+   * inherit the previous line's fill colour, and since oprint dilates the text
+   * by a pixel in all eight directions, same-coloured outlines closed up the
+   * gaps between glyphs and turned whole words into solid bars.
+   */
+  _nilOptionalArg() {
+    return 0;
   }
 
   _requireNumberArg(args, index, methodName, argName) {
     const hasExplicitArgs = !!args && args.length > 0;
     const raw = this._readArg(args, index, !hasExplicitArgs);
-    if (raw === undefined || raw === null || raw === '') {
-      throw new Error(`[Pico8] ${methodName} missing required argument: ${argName}`);
-    }
-    const value = Number.parseFloat(raw);
-    if (!Number.isFinite(value)) {
-      throw new Error(`[Pico8] ${methodName} invalid numeric argument ${argName}: ${raw}`);
-    }
-    return value;
+    return this._coerceNumberArg(raw, methodName, argName);
   }
 
   _requireIntegerArg(args, index, methodName, argName) {
     const hasExplicitArgs = !!args && args.length > 0;
     const raw = this._readArg(args, index, !hasExplicitArgs);
-    if (raw === undefined || raw === null || raw === '') {
-      throw new Error(`[Pico8] ${methodName} missing required argument: ${argName}`);
-    }
-    const value = Number.parseInt(raw, 10);
-    if (!Number.isFinite(value)) {
-      throw new Error(`[Pico8] ${methodName} invalid integer argument ${argName}: ${raw}`);
-    }
-    return value;
+    return Math.trunc(this._coerceNumberArg(raw, methodName, argName));
   }
 
   _optionalIntegerArg(args, index, defaultValue, methodName, argName) {
     const hasExplicitArgs = !!args && args.length > 0;
-    if (!hasExplicitArgs) {
+    if (!hasExplicitArgs || index >= args.length) {
       return defaultValue;
     }
-    const raw = this._readArg(args, index, false);
+    const raw = args[index];
+    if (raw === undefined || raw === null) {
+      return Math.trunc(this._nilOptionalArg(defaultValue));
+    }
+    if (raw === '') {
+      return defaultValue;
+    }
+    return Math.trunc(this._coerceNumberArg(raw, methodName, argName));
+  }
+
+  /**
+   * Coerce an argument the way a PICO-8 builtin does.
+   *
+   * These used to throw, which is friendlier to someone writing a cart but is
+   * not what the console does, and real carts rely on the console's behaviour.
+   * starfox.p8 calls generate_cam_matrix_transform(cam_ax, cam_ay, cam_az)
+   * every frame while only ever assigning cam_az, so sin() is handed nil twice
+   * per frame and PICO-8 runs it happily. The manual is explicit about this
+   * where it contrasts the bitwise operators with their function forms: "if any
+   * operands are not numbers the result is a runtime error (the function
+   * versions instead default to a value of 0)".
+   *
+   * PICO-8 also has no NaN or infinity - every number is 16.16 fixed point in
+   * -32768 .. 32767.99998 - and the manual states that dividing by zero
+   * "evaluates to 0x7fff.ffff if positive, or -0x7fff.ffff if negative". Our
+   * Lua VM divides in doubles, so galaxis.p8's particle age/max_age of 0/0
+   * reached min() as NaN. Zero is not negative, so NaN saturates positive.
+   */
+  _coerceNumberArg(raw, methodName, argName) {
     if (raw === undefined || raw === null || raw === '') {
-      return defaultValue;
+      this._warnCoercedArg(methodName, argName, raw);
+      return 0;
     }
-    const value = Number.parseInt(raw, 10);
-    if (!Number.isFinite(value)) {
-      throw new Error(`[Pico8] ${methodName} invalid integer argument ${argName}: ${raw}`);
-    }
-    return value;
+
+    if (typeof raw === 'number') return this._toPico8Number(raw);
+
+    // The stack fallback in _readArg hands back Lua's tostring of the value.
+    const text = String(raw).trim();
+    const max = LuaPico8Extensions.NUMBER_MAX;
+    if (/^-?inf/i.test(text)) return text.startsWith('-') ? -max : max;
+    if (/nan$/i.test(text)) return max;
+
+    const value = Number.parseFloat(text);
+    if (Number.isFinite(value)) return value;
+
+    this._warnCoercedArg(methodName, argName, raw);
+    return 0;
+  }
+
+  /** Saturate the values PICO-8 cannot represent. */
+  _toPico8Number(value) {
+    if (Number.isFinite(value)) return value;
+    if (Number.isNaN(value)) return LuaPico8Extensions.NUMBER_MAX;
+    return value > 0 ? LuaPico8Extensions.NUMBER_MAX : -LuaPico8Extensions.NUMBER_MAX;
+  }
+
+  /**
+   * PICO-8 says nothing when it coerces, but a cart author almost never means
+   * to pass nil. Warn once per argument so the hint is there without spamming a
+   * cart that does it every frame.
+   */
+  _warnCoercedArg(methodName, argName, raw) {
+    if (!methodName || !argName) return;
+    const key = `${methodName}.${argName}`;
+    if (this._coercedArgWarnings.has(key)) return;
+    this._coercedArgWarnings.add(key);
+    const shown = raw === undefined || raw === null ? 'nil' : JSON.stringify(String(raw));
+    console.warn(`[Pico8] ${methodName}(${argName}) got ${shown}; using 0, as PICO-8 does.`);
   }
 
   /**
@@ -2740,13 +2818,26 @@ class LuaPico8Extensions extends BaseLuaExtension {
   // ============================================================
 
   /**
-   * Sine function (takes 0.0-1.0, not radians like standard Lua)
+   * Sine, over a full turn of 0..1 rather than radians.
+   *
+   * PICO-8's sine is INVERTED. The manual lists it under "Quirks of PICO-8" -
+   * "COS() and SIN() take 0..1 instead of 0..PI*2, and SIN() is inverted" - and
+   * documents `SIN(0.25)` as -1, because screen space has y running down while
+   * mathematical diagrams have it running up. The snippet the manual gives for
+   * getting conventional trig back is `RETURN -P8SIN(ANGLE/(3.1415*2))`, so the
+   * negation belongs here. Without it every cart that steers by sin() moves the
+   * wrong way vertically: galaxis.p8 fired its bullets backwards.
+   *
+   * COS() is not inverted.
+   *
    * Lua: sin(x) -> result
    */
   sin(...args) {
     const x = this._requireNumberArg(args, 0, 'sin', 'x');
-    // Pico-8 sin takes 0.0-1.0 where 1.0 = 2π
-    return Math.sin(x * 2 * Math.PI);
+    const value = -Math.sin(x * 2 * Math.PI);
+    // Negating rounds 0 to -0, which 16.16 fixed point has no bit pattern for
+    // and which tostr() would happily print back to the cart author.
+    return value === 0 ? 0 : value;
   }
 
   /**
@@ -2760,14 +2851,25 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
-   * Arc tangent 2 (returns 0.0-1.0)
-   * Lua: atan2(y, x) -> result
+   * Angle of the vector (dx, dy), as a full turn of 0..1.
+   *
+   * Three things here are not the standard library's atan2. The arguments are
+   * (dx, dy), not (y, x); the angle runs anticlockwise in screen space, which
+   * means dy is negated to undo the same y inversion sin() applies; and the
+   * result is wrapped into 0..1 rather than allowed to go negative. The manual
+   * pins it down with `ATAN(0,-1)` returning 0.25 - straight up is a quarter
+   * turn.
+   *
+   * Lua: atan2(dx, dy) -> result
    */
   atan2(...args) {
-    const y = this._requireNumberArg(args, 0, 'atan2', 'y');
-    const x = this._requireNumberArg(args, 1, 'atan2', 'x');
-    // Return result in 0.0-1.0 range
-    return Math.atan2(y, x) / (2 * Math.PI);
+    const dx = this._requireNumberArg(args, 0, 'atan2', 'dx');
+    const dy = this._requireNumberArg(args, 1, 'atan2', 'dy');
+    const turns = Math.atan2(-dy, dx) / (2 * Math.PI);
+    // -0.5..0.5 comes back from atan2; a negative turn is the same direction.
+    // Negating dy also means dy 0 arrives as -0, so normalise that too.
+    if (turns < 0) return turns + 1;
+    return turns === 0 ? 0 : turns;
   }
 
   /**

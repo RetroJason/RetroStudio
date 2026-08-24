@@ -1549,18 +1549,83 @@ const tests = [
 
   // Math
   {
-    name: 'sin/cos use pico8 domain (0.0-1.0)',
+    // The manual documents SIN(0.25) as -1: PICO-8's sine is inverted so that a
+    // positive angle turns anticlockwise on a screen whose y runs down. COS is
+    // not inverted. Asserting +1 here is what let galaxis.p8 fire backwards.
+    name: 'sin/cos use the pico8 domain of 0..1, and sin is inverted',
     fn: () => {
       const { pico8 } = makePico8();
-      assert.ok(Math.abs(pico8.sin(0.25) - 1.0) < 0.001);
+      assert.ok(Math.abs(pico8.sin(0.25) - -1.0) < 0.001, 'sin(0.25) should be -1');
+      assert.ok(Math.abs(pico8.sin(0.75) - 1.0) < 0.001, 'sin(0.75) should be 1');
+      assert.ok(Math.abs(pico8.sin(0)) < 0.001);
       assert.ok(Math.abs(pico8.cos(0.0) - 1.0) < 0.001);
+      assert.ok(Math.abs(pico8.cos(0.5) - -1.0) < 0.001);
+
+      // Negating turns 0 into -0, which the console has no way to represent.
+      assert.ok(Object.is(pico8.sin(0), 0), 'sin(0) should be +0, not -0');
+      assert.ok(Object.is(pico8.atan2(1, 0), 0), 'atan2(1,0) should be +0, not -0');
+
+      // sin/cos have to agree with each other, or anything that builds a
+      // rotation matrix shears instead of rotating.
+      for (const turn of [0, 0.1, 0.25, 0.5, 0.7, 0.99]) {
+        const magnitude = pico8.sin(turn) ** 2 + pico8.cos(turn) ** 2;
+        assert.ok(Math.abs(magnitude - 1) < 0.001, `unit circle at ${turn}`);
+      }
     },
   },
   {
-    name: 'atan2/sqrt/abs/sgn/flr/ceil/min/max/mid produce expected values',
+    // atan2 takes (dx, dy), returns 0..1, and has to round-trip through cos/sin.
+    // The manual's worked example is ATAN(0,-1) -> 0.25, i.e. straight up.
+    name: 'atan2 returns a 0..1 turn that round-trips through cos/sin',
     fn: () => {
       const { pico8 } = makePico8();
-      assert.ok(Math.abs(pico8.atan2(1, 1) - 0.125) < 0.01);
+      assert.ok(Math.abs(pico8.atan2(0, -1) - 0.25) < 0.001, 'up is a quarter turn');
+      assert.ok(Math.abs(pico8.atan2(1, 0)) < 0.001, 'right is zero');
+      assert.ok(Math.abs(pico8.atan2(0, 1) - 0.75) < 0.001, 'down is three quarters');
+      assert.ok(Math.abs(pico8.atan2(-1, 0) - 0.5) < 0.001, 'left is half');
+
+      // Never negative: carts index tables and lerp with this.
+      for (const [dx, dy] of [[1, 1], [-1, 1], [-1, -1], [1, -1]]) {
+        const turn = pico8.atan2(dx, dy);
+        assert.ok(turn >= 0 && turn < 1, `atan2(${dx},${dy}) = ${turn} out of 0..1`);
+        // Walking back out along the angle has to land on the input direction.
+        const length = Math.sqrt(dx * dx + dy * dy);
+        assert.ok(Math.abs(pico8.cos(turn) * length - dx) < 0.001, `cos round trip ${dx},${dy}`);
+        assert.ok(Math.abs(pico8.sin(turn) * length - dy) < 0.001, `sin round trip ${dx},${dy}`);
+      }
+    },
+  },
+  {
+    // galaxis.p8's oprint() outlines text by printing it nine times:
+    //   for _x=-1,1 do for _y=-1,1 do print(t,x+_x,y+_y,o) end end
+    //   print(t,x,y,c)
+    // and the title screen calls it without `o`, so the outline passes a nil
+    // colour. PICO-8's optional arguments are optional by count, so that nil
+    // is a real colour argument and reads as 0. We used to treat it as "keep
+    // the current pen", which made each outline inherit the previous line's
+    // fill colour; because oprint dilates by a pixel in all directions, the
+    // gaps between glyphs closed up and words rendered as solid bars.
+    name: 'an optional argument passed as nil reads as 0, but omitting it keeps the default',
+    fn: () => {
+      const { pico8 } = makePico8();
+
+      pico8.color(9);
+      pico8.print('a', 0, 0);
+      assert.strictEqual(pico8.currentColor, 9, 'omitting the colour keeps the pen');
+
+      pico8.color(9);
+      pico8.print('a', 0, 0, undefined);
+      assert.strictEqual(pico8.currentColor, 0, 'an explicit nil colour is colour 0');
+
+      pico8.color(9);
+      pico8.print('a', 0, 0, 12);
+      assert.strictEqual(pico8.currentColor, 12, 'a real colour still sets the pen');
+    },
+  },
+  {
+    name: 'sqrt/abs/sgn/flr/ceil/min/max/mid produce expected values',
+    fn: () => {
+      const { pico8 } = makePico8();
       assert.strictEqual(pico8.sqrt(16), 4);
       assert.strictEqual(pico8.abs(-7), 7);
       assert.strictEqual(pico8.sgn(-3), -1);
@@ -1569,6 +1634,49 @@ const tests = [
       assert.strictEqual(pico8.min(3, 5), 3);
       assert.strictEqual(pico8.max(3, 5), 5);
       assert.strictEqual(pico8.mid(1, 9, 4), 4);
+    },
+  },
+  {
+    // starfox.p8 calls generate_cam_matrix_transform(cam_ax, cam_ay, cam_az)
+    // every frame but only ever assigns cam_az, so sin() and cos() are handed
+    // nil twice a frame. PICO-8 runs the cart; we used to stop it with
+    // "[Pico8] sin missing required argument: x". The manual is explicit that
+    // the builtins, unlike the operators, "default to a value of 0".
+    name: 'a missing or unreadable argument reads as 0, as it does on the console',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.sin(), 0);
+      assert.strictEqual(pico8.cos(), 1);
+      assert.strictEqual(pico8.sin(undefined), 0);
+      assert.strictEqual(pico8.flr(null), 0);
+      assert.strictEqual(pico8.min(4, undefined), 0);
+      assert.strictEqual(pico8.max(-4, undefined), 0);
+
+      // A table cannot cross the bridge, so it arrives as Lua's tostring.
+      assert.strictEqual(pico8.abs('table: 0x1234'), 0);
+    },
+  },
+  {
+    // PICO-8 numbers are 16.16 fixed point, so there is no NaN and no infinity:
+    // the manual says dividing by zero "evaluates to 0x7fff.ffff if positive,
+    // or -0x7fff.ffff if negative". Our Lua VM divides in doubles, so
+    // galaxis.p8's particle with max_age 0 reached min() as 0/0 = NaN and threw
+    // "[Pico8] min invalid numeric argument a: NaN". Zero is not negative, so
+    // that division saturates positive and min(0/0, 1) has to come back as 1.
+    name: 'NaN and infinity saturate to the largest number 16.16 can hold',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const max = 0x7fffffff / 0x10000;
+
+      assert.strictEqual(pico8.min(0 / 0, 1), 1);
+      assert.strictEqual(pico8.max(NaN, 1), max);
+      assert.strictEqual(pico8.abs(1 / 0), max);
+      assert.strictEqual(pico8.min(-1 / 0, 0), -max);
+      assert.strictEqual(pico8.mid(NaN, 1, -1 / 0), 1);
+
+      // The same values arriving as text off the Lua stack.
+      assert.strictEqual(pico8.abs('-nan'), max);
+      assert.strictEqual(pico8.abs('-inf'), max);
     },
   },
   {

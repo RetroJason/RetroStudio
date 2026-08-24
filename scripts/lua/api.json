@@ -1978,27 +1978,27 @@
         },
         {
           "name": "sin",
-          "description": "Sine function (takes 0.0-1.0, not radians)",
+          "description": "Sine, over a full turn of 0.0-1.0 rather than radians. Inverted to suit screen space, so sin(0.25) is -1",
           "parameters": [{"name": "x", "type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."}],
-          "returns": {"type": "number", "description": "Sine of the angle. Note PICO-8 inverts the sign relative to standard sine."},
-          "example": "local y = sin(0.25)"
+          "returns": {"type": "number", "description": "Sine of the angle, -1.0 to 1.0, negated relative to standard sine because screen y runs down."},
+          "example": "local y = sin(0.25) -- -1"
         },
         {
           "name": "cos",
-          "description": "Cosine function (takes 0.0-1.0, not radians)",
+          "description": "Cosine, over a full turn of 0.0-1.0 rather than radians. Not inverted, unlike sin",
           "parameters": [{"name": "x", "type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."}],
           "returns": {"type": "number", "description": "Cosine of the angle, -1.0 to 1.0."},
           "example": "local x = cos(0.25)"
         },
         {
           "name": "atan2",
-          "description": "Arc tangent 2",
+          "description": "Angle of the vector dx,dy, running anticlockwise in screen space",
           "parameters": [
-            {"name": "y", "type": "number", "description": "Vertical component."},
-            {"name": "x", "type": "number", "description": "Horizontal component."}
+            {"name": "dx", "type": "number", "description": "Horizontal component."},
+            {"name": "dy", "type": "number", "description": "Vertical component, positive downwards."}
           ],
-          "returns": {"type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0."},
-          "example": "local angle = atan2(10, 10)"
+          "returns": {"type": "number", "description": "Angle as a fraction of a full turn, 0.0-1.0. Straight up is 0.25."},
+          "example": "local angle = atan2(0, -1) -- 0.25"
         },
         {
           "name": "sqrt",
