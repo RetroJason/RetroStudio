@@ -1209,6 +1209,14 @@ class Pico8ImportService {
 
   /**
    * PICO-8 carts conventionally open with `-- title` then `-- by author`.
+   *
+   * Carts also label their editor tabs with a dash-wrapped banner comment, and
+   * the first tab's banner sits exactly where the title convention expects the
+   * title: train_09.p8 opens `-- main --` and went in titled "main --" while its
+   * project was named train_09. A trailing dash is decoration and never part of
+   * a title, so those entries are dropped and the caller's filename fallback
+   * wins. Positions are kept so `-- my game --` / `-- by someone` still reads
+   * the author.
    */
   readCartHeaderComment(lua, index) {
     if (typeof lua !== 'string') return '';
@@ -1216,7 +1224,8 @@ class Pico8ImportService {
     for (const line of lua.split('\n', 8)) {
       const match = line.match(/^\s*--\s*(.+?)\s*$/);
       if (!match) break;
-      comments.push(match[1].replace(/^by\s+/i, ''));
+      const text = match[1].replace(/^by\s+/i, '');
+      comments.push(/-$/.test(text) ? '' : text);
     }
     return comments[index] || '';
   }

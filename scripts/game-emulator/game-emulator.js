@@ -1461,24 +1461,13 @@ class GameEmulator {
   }
   
   updateSaveButtonState() {
-    // Update ribbon toolbar save button state
+    // #saveBtn is the ribbon's project save, and RibbonToolbar owns its enabled
+    // state. This used to also reach for the same element by id and re-gate it on
+    // the active tab, back when the button meant "save the open editor". The two
+    // owners then clobbered each other and the project save could not be reached
+    // with no tab open. Saving the active editor is saveActiveEditor()'s job.
     if (window.ribbonToolbar) {
       window.ribbonToolbar.onTabChanged();
-    }
-    
-    // Legacy support for old button (if still present)
-    const saveBtn = document.getElementById('saveBtn');
-    if (!saveBtn) return;
-    
-    const activeTab = this.tabManager.getActiveTab();
-    const canSave = activeTab && activeTab.viewer && typeof activeTab.viewer.save === 'function';
-    
-    saveBtn.disabled = !canSave;
-    if (canSave) {
-      const tabTitle = activeTab.title || activeTab.viewer.file?.name || 'current file';
-      saveBtn.title = `Save ${tabTitle} (Ctrl+S)`;
-    } else {
-      saveBtn.title = 'No active editor to save';
     }
   }
   

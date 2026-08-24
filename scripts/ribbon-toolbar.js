@@ -29,6 +29,10 @@ class RibbonToolbar {
       window.eventBus?.on?.('project.focus.changed', () => {
         try {
           this.setupDynamicCreateButtons();
+          // Save follows the focused project, so it has to be re-evaluated here
+          // as well as on tab changes - opening a project without opening a file
+          // is otherwise left with the button still greyed out.
+          this.updateSaveButton();
         } catch (_) {}
       });
       window.eventBus?.on?.('components.loaded', () => {
@@ -1779,41 +1783,21 @@ class RibbonToolbar {
   }
   
   updateSaveButton() {
-    // Update save button based on whether there are any modified tabs
-    let hasModifiedTabs = false;
-    
-    if (window.gameEmulator && window.gameEmulator.tabManager) {
-      const tabManager = window.gameEmulator.tabManager;
-      
-      // Check if preview tab is modified
-      if (tabManager.previewViewer && 
-          typeof tabManager.previewViewer.isModified === 'function' && 
-          tabManager.previewViewer.isModified()) {
-        hasModifiedTabs = true;
-      }
-      
-      // Check dedicated tabs for modifications
-      if (!hasModifiedTabs) {
-        for (const [tabId, tabInfo] of tabManager.dedicatedTabs.entries()) {
-          if (tabInfo.viewer && 
-              typeof tabInfo.viewer.isModified === 'function' && 
-              tabInfo.viewer.isModified()) {
-            hasModifiedTabs = true;
-            break;
-          }
-        }
-      }
-    }
-    
-    this.updateButtonState('saveBtn', hasModifiedTabs);
-    
+    // The Save button uploads the whole project to Retrowww, so the only thing
+    // that gates it is whether a project is open. It used to be gated on an
+    // editor tab holding unsaved edits, which left a freshly imported cart
+    // permanently unsaveable: an import writes its files straight to storage and
+    // so leaves no modified buffer behind, and every tab change re-ran this and
+    // greyed the button out again.
+    const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.() || '';
+
+    this.updateButtonState('saveBtn', Boolean(projectName));
+
     const saveBtn = this.buttons['saveBtn'];
     if (saveBtn) {
-      if (hasModifiedTabs) {
-        saveBtn.title = 'Save All Modified Files';
-      } else {
-        saveBtn.title = 'No modified files to save';
-      }
+      saveBtn.title = projectName
+        ? `Save ${projectName} to your account`
+        : 'No project open to save';
     }
   }
   
