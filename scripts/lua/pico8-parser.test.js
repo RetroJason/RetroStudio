@@ -1,7 +1,7 @@
 /**
  * Tests for the PICO-8 dialect parser.
  *
- * The parser reads PICO-8's extended Lua and emits stock Lua 5.2, which is what
+ * The parser reads PICO-8's extended Lua and emits stock Lua, which is what
  * lua.vm.js actually understands. Operator precedence follows Lua 5.3, which is
  * where PICO-8 took its bitwise operators from.
  *
@@ -50,7 +50,7 @@ test('lexer: binary literals with a fractional part', () => {
   assert.deepStrictEqual(kinds('0b1.11'), ['number:1.75']);
 });
 
-test('lexer: hex literals with a fractional part are stock Lua 5.2 and survive', () => {
+test('lexer: hex literals with a fractional part are stock Lua and survive', () => {
   assert.strictEqual(c('x = 0x11.4'), 'x = 17.25');
 });
 
@@ -412,7 +412,7 @@ test('# is still the length operator everywhere else', () => {
 });
 
 // ===========================================================================
-// Stock Lua 5.2 must survive untouched
+// Stock Lua must survive untouched
 // ===========================================================================
 
 test('plain Lua statements round-trip', () => {
@@ -435,7 +435,7 @@ test('plain Lua statements round-trip', () => {
   assert.strictEqual(c('while true do break end'), 'while true do break end');
 });
 
-test('goto and labels are Lua 5.2 features and survive', () => {
+test('goto and labels are stock Lua features and survive', () => {
   assert.strictEqual(c('::top:: goto top'), '::top:: goto top');
 });
 
@@ -476,7 +476,7 @@ test('escapes inside strings survive', () => {
 });
 
 // ===========================================================================
-// P8SCII string escapes - Lua 5.2 rejects these outright
+// P8SCII string escapes - stock Lua rejects these outright
 // ===========================================================================
 
 test('P8SCII escapes decode to their control characters', () => {
@@ -520,7 +520,7 @@ test('a glyph is read the same with or without its variation selector', () => {
   assert.strictEqual(tokenize('\u2B05')[0].value, tokenize('\u2B05\uFE0F')[0].value);
 });
 
-test('a glyph compiles to the plain number, so Lua 5.2 never sees it', () => {
+test('a glyph compiles to the plain number, so the VM never sees it', () => {
   assert.strictEqual(c('if btnp(\uD83C\uDD7E\uFE0F) then x = 1 end'), 'if btnp(4) then x = 1 end');
   assert.strictEqual(c('x = btn(\u2B05\uFE0F)'), 'x = btn(0)');
 });
@@ -556,7 +556,7 @@ test('a glyph is mapped the same with or without its variation selector', () => 
   assert.strictEqual(tokenize('"\u274E"')[0].value, tokenize('"\u274E\uFE0F"')[0].value);
 });
 
-test('compiled strings stay ASCII so Lua 5.2 never sees a raw high byte', () => {
+test('compiled strings stay ASCII so the VM never sees a raw high byte', () => {
   const out = c('print("press \u274E")');
   assert.strictEqual(out, 'print("press \\151")');
   assert.ok(!/[^\x00-\x7f]/.test(out));

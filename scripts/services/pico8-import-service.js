@@ -952,7 +952,7 @@ class Pico8ImportService {
 
   buildRuntimeLua(luaSource, options = {}) {
     // PICO-8 ships a patched Lua, so the cart source has to be lowered to plain
-    // Lua 5.2 before lua.vm.js will even compile it.
+    // Lua before lua.vm.js will even compile it.
     const parser = (typeof window !== 'undefined' && window.Pico8Parser)
       || (typeof globalThis !== 'undefined' && globalThis.Pico8Parser);
     if (!parser) throw new Error('Pico8Parser unavailable; cannot convert cart Lua.');

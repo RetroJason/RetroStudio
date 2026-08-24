@@ -400,7 +400,7 @@ class LuaEditor extends EditorBase {
                 // string comes back as the bytes it holds rather than being re-read
                 // as UTF-8. See scripts/external/lua-vm/byte-strings.patch. The
                 // submodule upstream is unmaintained and we cannot push to it.
-                script.src = 'scripts/external/lua-vm/lua.vm.js?v=1';
+                script.src = 'scripts/external/lua-vm/lua.vm.js?v=2-lua53';
                 script.onload = () => {
                     console.log('[LuaEditor] Lua engine loaded successfully');
                     resolve();

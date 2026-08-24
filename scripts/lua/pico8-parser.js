@@ -1,7 +1,7 @@
 /**
  * PICO-8 dialect parser.
  *
- * PICO-8 ships a patched Lua, so cart source has to be lowered to stock Lua 5.2
+ * PICO-8 ships a patched Lua, so cart source has to be lowered to stock Lua
  * before lua.vm.js will compile it. This does that with a real lexer and
  * recursive-descent parser rather than text substitution, because most of the
  * dialect is grammar rather than spelling: `x += 1`, `if (c) a=1 b=2` and the
@@ -9,8 +9,26 @@
  * exactly what a regex cannot see.
  *
  * Operator precedence follows Lua 5.3, which is where PICO-8 took its bitwise
- * operators from. Lua 5.2 has no bitwise operators at all, so those lower to the
- * runtime functions in pico8.js (band, bor, shl, ...).
+ * operators from. The operators still lower to the runtime functions in pico8.js
+ * (band, bor, shl, ...) even though the VM is now 5.3 and has `&`, `|`, `<<`,
+ * `>>` and unary `~` of its own. Two reasons, both checked:
+ *
+ *   - Four of the eight have no Lua spelling at all: `^^` (xor - Lua spells it
+ *     `~`, which PICO-8 uses for bnot), `>>>` (logical shift), and the rotates
+ *     `<<>` and `>><`. Those have to be calls whatever the VM version.
+ *   - The four that do exist do not behave the same, in three ways that were
+ *     checked against this VM:
+ *       * `0.5 & 1` is 0 here (pico8.js coerces with parseInt) but raises
+ *         "number has no integer representation" in Lua.
+ *       * Lua's `>>` is a LOGICAL shift: `-1 >> 1` is 2147483647. PICO-8's `>>`
+ *         is arithmetic and gives -1. Lua's `>>` is really PICO-8's `>>>`.
+ *       * Lua returns 0 for a shift wider than the type (`1 << 40`), while the
+ *         JS runtime shifts modulo 32 and returns 256.
+ *     Swapping in the native operators would silently change cart behaviour.
+ *
+ * So do not "simplify" these away on the grounds that 5.3 understands the
+ * syntax. (Neither behaviour is true PICO-8, which works on 16.16 fixed point -
+ * that is a separate, pre-existing gap and is not what this lowering is about.)
  *
  * Output preserves line numbers: every token is emitted on the line it came
  * from, so runtime errors point at the author's line and not ours.
@@ -65,7 +83,7 @@
 
   const UNARY_OPERATORS = new Set(['-', 'not', '#', '~', '@', '%', '$']);
 
-  /** Binary operators Lua 5.2 does not have; these become runtime calls. */
+  /** Bitwise operators; these become runtime calls. See the header note. */
   const BINARY_TO_CALL = {
     '&': 'band', '|': 'bor', '^^': 'bxor',
     '<<': 'shl', '>>': 'shr', '>>>': 'lshr', '<<>': 'rotl', '>><': 'rotr',
@@ -77,7 +95,7 @@
 
   /**
    * PICO-8 adds its own string escapes for P8SCII control codes, filling the
-   * character slots below Lua's own \a=7 .. \r=13. Lua 5.2 rejects these
+   * character slots below Lua's own \a=7 .. \r=13. Stock Lua rejects these
    * outright, so they are decoded here and re-emitted as plain \ddd escapes.
    */
   const P8SCII_ESCAPES = {

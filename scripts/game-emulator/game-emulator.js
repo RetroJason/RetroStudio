@@ -2106,7 +2106,7 @@ class GameEmulator {
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
 
-      // Scripts reach here as plain Lua 5.2. PICO-8 carts are lowered once at
+      // Scripts reach here as plain Lua. PICO-8 carts are lowered once at
       // import time by Pico8Parser, so there is nothing to rewrite at run time.
       console.log('[GameEmulator] Loading script into Lua engine...');
       try {
@@ -3050,7 +3050,7 @@ class GameEmulator {
       // comes back as the bytes it holds rather than being re-read as UTF-8,
       // which is what lets PICO-8 characters survive. See
       // scripts/external/lua-vm/byte-strings.patch.
-      script.src = 'scripts/external/lua-vm/lua.vm.js?v=1';
+      script.src = 'scripts/external/lua-vm/lua.vm.js?v=2-lua53';
       script.onload = () => {
         console.log('[GameEditor] Lua engine loaded successfully');
         resolve();

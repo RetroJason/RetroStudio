@@ -250,7 +250,11 @@ class BaseLuaExtension {
           if type(x) == "table" then
             local n = #x
             if n == 0 then return nil end
-            return x[math.floor(__rndNative(n)) + 1]
+            -- Floored without math.floor: the firmware's linit.c does not
+            -- register the math library, so it is nil here too. Lua's % is a
+            -- floored modulo, which makes v - v % 1 exactly floor(v).
+            local v = __rndNative(n)
+            return x[(v - v % 1) + 1]
           end
           return __rndNative(x)
         end
@@ -269,13 +273,17 @@ class BaseLuaExtension {
     -- put the proxy in w and nil in h. Expand array-like results back into
     -- real Lua multiple returns.
     if not __retroExpandJsResult then
+        -- table.unpack, not the bare unpack: that global is a 5.1 leftover that
+        -- only exists under LUA_COMPAT_UNPACK, and the VM is now 5.3 built to
+        -- match the firmware, where it is nil.
+        local __unpack = table.unpack or unpack
         function __retroExpandJsResult(result)
             if type(result) ~= 'userdata' then return result end
             local length = result.length
             if type(length) ~= 'number' then return result end
             local values = {}
             for i = 1, length do values[i] = result[i - 1] end
-            return unpack(values, 1, length)
+            return __unpack(values, 1, length)
         end
     end
 
