@@ -38,7 +38,7 @@ if (!LuaPico8Extensions) {
 
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
-  'pset', 'pget', 'color', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'pico_mode', 'spr',
+  'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'pico_mode', 'spr',
   'sspr', 'map', 'mget', 'mset',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print', 'cursor',
   // Math
@@ -154,11 +154,32 @@ function makeD2Texture(format, width, height, payload) {
   return bytes;
 }
 
+// The string-index behaviour is installed as Lua source, so a mock luaState
+// proves nothing about it - a syntax error in an embedded Lua string stays
+// invisible until a cart runs. Evaluate it in the VM the editor really uses.
+// One state, built on first use, because each one costs a full luaL_openlibs.
+let stringIndexEval = null;
+function evalWithStringIndex(expression) {
+  if (!stringIndexEval) {
+    const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
+    const L = new Lua.State();
+    L.execute(LuaPico8Extensions.STRING_INDEX_LUA);
+    stringIndexEval = (source) => {
+      L.execute(`__string_index_result = tostring(${source})`);
+      L.getglobal('__string_index_result');
+      const value = L.raw_tostring(-1);
+      L.pop(1);
+      return value;
+    };
+  }
+  return stringIndexEval(expression);
+}
+
 const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 91);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 92);
     },
   },
   {
@@ -208,6 +229,99 @@ const tests = [
       const { pico8 } = makePico8();
       pico8.color(255);
       assert.strictEqual(pico8.currentColor, 255);
+    },
+  },
+  {
+    // 0xA5A5 is a checkerboard: rows 1010 / 0101 / 1010 / 0101, read from the
+    // most significant bit. Clear bits take the pen colour, set bits the
+    // secondary colour from the high nibble.
+    name: 'fillp stipples shape fills with the two-colour pen',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.fillp(0xA5A5);
+      pico8.color(0x21);
+      pico8.rectfill(0, 0, 3, 3);
+      assert.strictEqual(px(pico8, 0, 0), 2);
+      assert.strictEqual(px(pico8, 1, 0), 1);
+      assert.strictEqual(px(pico8, 0, 1), 1);
+      assert.strictEqual(px(pico8, 1, 1), 2);
+    },
+  },
+  {
+    name: 'fillp is keyed on screen position, not on the shape',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.fillp(0xA5A5);
+      pico8.color(0x21);
+      // A shape-relative pattern would put the secondary colour at the shape's
+      // own top-left corner; a screen-aligned one keeps it on even columns.
+      pico8.rectfill(1, 0, 4, 3);
+      assert.strictEqual(px(pico8, 1, 0), 1);
+      assert.strictEqual(px(pico8, 2, 0), 2);
+    },
+  },
+  {
+    name: 'fillp fraction bit 0b0.1 makes the set bits transparent',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.cls(5);
+      pico8.fillp(0xA5A5 + 0.5);
+      assert.strictEqual(pico8._fillPattern, 0xA5A5);
+      assert.strictEqual(pico8._fillPatternTransparent, true);
+      pico8.color(0x21);
+      pico8.rectfill(0, 0, 3, 3);
+      assert.strictEqual(px(pico8, 0, 0), 5, 'a set bit must leave the pixel alone');
+      assert.strictEqual(px(pico8, 1, 0), 1);
+    },
+  },
+  {
+    name: 'fillp with no argument returns to a solid fill',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.fillp(0xA5A5);
+      pico8.fillp();
+      pico8.color(0x21);
+      pico8.rectfill(0, 0, 3, 3);
+      // Solid means the pen colour everywhere, never the secondary nibble.
+      assert.strictEqual(px(pico8, 0, 0), 1);
+      assert.strictEqual(px(pico8, 1, 1), 1);
+    },
+  },
+  {
+    name: 'fillp applies to line, rect, circ, circfill and pset',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.fillp(0xA5A5);
+      pico8.color(0x21);
+      pico8.line(0, 0, 3, 0);
+      assert.strictEqual(px(pico8, 0, 0), 2);
+      assert.strictEqual(px(pico8, 1, 0), 1);
+      pico8.pset(0, 4, 0x21);
+      assert.strictEqual(px(pico8, 0, 4), 2);
+      pico8.rect(8, 8, 12, 12);
+      assert.strictEqual(px(pico8, 8, 8), 2);
+      assert.strictEqual(px(pico8, 9, 8), 1);
+      pico8.circfill(40, 40, 3);
+      assert.strictEqual(px(pico8, 40, 40), 2);
+      assert.strictEqual(px(pico8, 41, 40), 1);
+      pico8.circ(80, 80, 4);
+      assert.strictEqual(px(pico8, 84, 80), 2);
+    },
+  },
+  {
+    name: 'fillp leaves sprites and text alone',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.cls(0);
+      // Every bit set and transparent, so anything honouring the pattern would
+      // draw nothing at all.
+      pico8.fillp(0xFFFF + 0.5);
+      pico8.print('a', 0, 0, 7);
+      assert.ok(pico8._framebuffer.includes(7), 'print must ignore the fill pattern');
+
+      pico8.color(0x21);
+      pico8.rectfill(100, 100, 103, 103);
+      assert.strictEqual(px(pico8, 100, 100), 0, 'the pattern is still active');
     },
   },
   {
@@ -1300,6 +1414,40 @@ const tests = [
       assert.doesNotThrow(() => pico8.printh('hello'));
       assert.strictEqual(pico8.stat(4), 60);
       assert.strictEqual(pico8.stat(999), 0);
+    },
+  },
+  {
+    name: 'initialize installs the string index metamethod',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const executed = [];
+      pico8.initialize({ execute: (source) => executed.push(source) });
+      assert.deepStrictEqual(executed, [LuaPico8Extensions.STRING_INDEX_LUA]);
+    },
+  },
+  {
+    name: 'a string indexes like an array of characters',
+    fn: () => {
+      // Carts walk a string with for i=1,#s do local c=s[i] end. Stock Lua
+      // points the string metatable at the string library, so every one of
+      // those reads is nil.
+      assert.strictEqual(evalWithStringIndex('("hello")[1]'), 'h');
+      assert.strictEqual(evalWithStringIndex('("hello")[5]'), 'o');
+      assert.strictEqual(evalWithStringIndex('("hello")[-1]'), 'o',
+        'a negative index counts back from the end, like sub');
+      assert.strictEqual(evalWithStringIndex('("hello")[2.7]'), 'e',
+        'a fixed-point index floors instead of raising');
+      assert.strictEqual(evalWithStringIndex('("hello")[0]'), 'nil',
+        'out of range reads nil');
+      assert.strictEqual(evalWithStringIndex('("hello")[6]'), 'nil');
+    },
+  },
+  {
+    name: 'string methods still resolve once string indexing is installed',
+    fn: () => {
+      assert.strictEqual(evalWithStringIndex('("hello"):sub(2, 3)'), 'el');
+      assert.strictEqual(evalWithStringIndex('("hello"):upper()'), 'HELLO');
+      assert.strictEqual(evalWithStringIndex('string.rep("ab", 2)'), 'abab');
     },
   },
   {

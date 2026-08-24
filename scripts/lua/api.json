@@ -1556,9 +1556,15 @@
         },
         {
           "name": "color",
-          "description": "Set pen color",
-          "parameters": [{"name": "c", "type": "number", "description": "Palette index 0-15 to draw with until changed."}],
+          "description": "Set pen color. The high nibble is the secondary colour used by the set bits of the fillp() pattern, so color(0x21) draws in 1 and patterns in 2.",
+          "parameters": [{"name": "c", "type": "number", "description": "Palette index 0-15 to draw with until changed, optionally plus a secondary index in the high nibble."}],
           "example": "color(3)"
+        },
+        {
+          "name": "fillp",
+          "description": "Set the 4x4 fill pattern used by pset, line, rect, rectfill, circ and circfill. Sprites, the map and text are unaffected.",
+          "parameters": [{"name": "p", "type": "number", "optional": true, "description": "16-bit pattern read left to right and top to bottom starting at the most significant bit. A clear bit draws the pen colour and a set bit draws the secondary colour, or nothing when the 0b0.1 fraction bit is set. Omit or pass nil for a solid fill."}],
+          "example": "fillp(0b1010010110100101)"
         },
         {
           "name": "line",

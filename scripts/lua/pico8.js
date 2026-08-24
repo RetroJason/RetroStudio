@@ -10,6 +10,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
     super();
     this.gameEmulator = gameEmulator;
     this.currentColor = 0;
+    // fillp(): a 4x4 tile of bits applied to the shape drawing functions.
+    // 0 is solid, which is what a cart starts with.
+    this._fillPattern = 0;
+    this._fillPatternTransparent = false;
     this.currentPalette = new Map();
     this.randomSeed = 0;
     // PICO-8 stores sprite flags as one byte per sprite at 0x3000; keep the
@@ -196,8 +200,19 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return { tiles, width, height };
   }
 
+  /**
+   * Run once by the extension loader, before any PICO-8 function is
+   * registered. Installs the language-level behaviour a cart expects but that
+   * no single API function can provide.
+   */
+  initialize(luaState) {
+    (luaState || this.luaState)?.execute(LuaPico8Extensions.STRING_INDEX_LUA);
+  }
+
   resetRuntimeState() {
     this.currentColor = 0;
+    this._fillPattern = 0;
+    this._fillPatternTransparent = false;
     this._cameraX = 0;
     this._cameraY = 0;
     this._cursorX = 0;
@@ -295,7 +310,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
   _getFallbackEngine() {
     return {
       setPixel: (x, y, c) => {
-        this._plot(x, y, c, false);
+        // pset() is one of the shape functions the fill pattern applies to.
+        this._plot(x, y, c, false, true);
       },
       getPixel: (x, y) => this._readPixel(x, y),
       line: (x0, y0, x1, y1, c) => this._lineToFb(x0, y0, x1, y1, c),
@@ -341,17 +357,53 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return x >= 0 && y >= 0 && x < this._fbWidth && y < this._fbHeight;
   }
 
-  _plot(x, y, color, useCamera = true) {
+  /**
+   * Resolve the pen colour for one pixel of a shape draw.
+   *
+   * The fill pattern is a 4x4 tile taken from the low 16 bits of the fillp()
+   * argument, read left to right and top to bottom starting at the most
+   * significant bit. A clear bit draws the colour's low nibble; a set bit
+   * draws the high nibble, or nothing at all in transparent mode.
+   *
+   * Keyed on the screen position rather than the shape, so a moving shape
+   * slides across a fixed grid the way PICO-8 does it.
+   *
+   * Returns -1 when the pixel must be left untouched.
+   */
+  _fillPatternColorAt(screenX, screenY, color) {
+    const value = color & 0xff;
+    if (this._fillPattern === 0) {
+      // Solid: the pen colour only, never the secondary nibble.
+      return value & 0x0f;
+    }
+
+    const bit = ((screenY & 3) * 4) + (screenX & 3);
+    if (((this._fillPattern >> (15 - bit)) & 1) === 0) {
+      return value & 0x0f;
+    }
+    return this._fillPatternTransparent ? -1 : (value >> 4) & 0x0f;
+  }
+
+  _plot(x, y, color, useCamera = true, applyFillPattern = false) {
     const drawX = (x | 0) - (useCamera ? this._cameraX : 0);
     const drawY = (y | 0) - (useCamera ? this._cameraY : 0);
     if (!this._inClip(drawX, drawY)) {
       return;
     }
 
+    // Only the shape functions carry the fill pattern; spr() and print() draw
+    // their own pixels and must not be stippled.
+    const pen = applyFillPattern
+      ? this._fillPatternColorAt(drawX, drawY, color)
+      : color;
+    if (pen < 0) {
+      return;
+    }
+
     // pal() draw-palette remap applies to every draw operation.
     const c = this.currentPalette.size > 0
-      ? (this.currentPalette.get(color & 0x0f) ?? color)
-      : color;
+      ? (this.currentPalette.get(pen & 0x0f) ?? pen)
+      : pen;
 
     if (!this._isFullResolutionMode()) {
       if (!this._inBounds(drawX, drawY)) {
@@ -430,7 +482,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
         const metric = (dx * dx) / rxSq + (dy * dy) / rySq;
 
         if (filled ? metric <= 1 : Math.abs(metric - 1) <= edge) {
-          this._framebuffer[row + px] = c & 0xff;
+          // Keyed on the logical position so the pattern stays a 4x4 tile in
+          // cart pixels rather than shrinking as the framebuffer scales up.
+          const pen = this._fillPatternColorAt(logicalX, logicalY, c);
+          if (pen < 0) {
+            continue;
+          }
+          this._framebuffer[row + px] = pen & 0xff;
         }
       }
     }
@@ -451,7 +509,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     let err = dx + dy;
 
     while (true) {
-      this._plot(ax, ay, c, false);
+      this._plot(ax, ay, c, false, true);
       if (ax === bx && ay === by) {
         break;
       }
@@ -501,14 +559,14 @@ class LuaPico8Extensions extends BaseLuaExtension {
     let err = 1 - dx;
 
     while (dx >= dy) {
-      this._plot(cx + dx, cy + dy, c, false);
-      this._plot(cx + dy, cy + dx, c, false);
-      this._plot(cx - dy, cy + dx, c, false);
-      this._plot(cx - dx, cy + dy, c, false);
-      this._plot(cx - dx, cy - dy, c, false);
-      this._plot(cx - dy, cy - dx, c, false);
-      this._plot(cx + dy, cy - dx, c, false);
-      this._plot(cx + dx, cy - dy, c, false);
+      this._plot(cx + dx, cy + dy, c, false, true);
+      this._plot(cx + dy, cy + dx, c, false, true);
+      this._plot(cx - dy, cy + dx, c, false, true);
+      this._plot(cx - dx, cy + dy, c, false, true);
+      this._plot(cx - dx, cy - dy, c, false, true);
+      this._plot(cx - dy, cy - dx, c, false, true);
+      this._plot(cx + dy, cy - dx, c, false, true);
+      this._plot(cx + dx, cy - dy, c, false, true);
       dy += 1;
       if (err < 0) {
         err += 2 * dy + 1;
@@ -787,11 +845,35 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /**
    * Set pen color
+   *
+   * The high nibble is the secondary colour used by the set bits of the
+   * fillp() pattern, so color(0x21) draws in 1 and patterns in 2.
+   *
    * Lua: color(c)
    */
   color(...args) {
     const c = this._requireNumberArg(args, 0, 'color', 'c');
     this.currentColor = Math.floor(c) & 0xFF;
+  }
+
+  /**
+   * Set the 4x4 fill pattern used by pset, line, rect, rectfill, circ and
+   * circfill. Sprites, the map and text are unaffected.
+   *
+   * Lua: fillp([p])
+   */
+  fillp(...args) {
+    // fillp() and fillp(nil) both mean "solid again". Carts lean on the nil
+    // form, writing fillp(cond and pattern or unset_global) to clear it.
+    const p = this._optionalNumberArg(args, 0, 0, 'fillp', 'p');
+
+    // PICO-8 numbers are 16.16 fixed point: the pattern is the integer part
+    // and the 0b0.1 fraction bit asks for transparency instead of a second
+    // colour. Taken apart by hand because the fixed-point value overflows the
+    // 32-bit ints that JavaScript bit operators use.
+    const whole = Math.floor(p);
+    this._fillPattern = whole & 0xffff;
+    this._fillPatternTransparent = (Math.round((p - whole) * 65536) & 0x8000) !== 0;
   }
 
   /**
@@ -2595,6 +2677,37 @@ class LuaPico8Extensions extends BaseLuaExtension {
     }
   }
 }
+
+// PICO-8 lets a string be indexed like an array of characters: s[3] is the
+// third one. Plain Lua points the string metatable's __index straight at the
+// string library, so a numeric key reads as nil and the cart then compares a
+// number with nil a line or two later.
+//
+// Kept as a constant rather than inlined so the test can run this exact source
+// through a real Lua VM - a syntax error in an embedded Lua string is
+// otherwise invisible until a cart runs.
+LuaPico8Extensions.STRING_INDEX_LUA = `
+  do
+    local meta = getmetatable("")
+    -- Captured before the swap so installing twice cannot chain the wrappers.
+    local library = string
+    meta.__index = function(s, key)
+      if type(key) ~= "number" then
+        return library[key]
+      end
+      -- PICO-8 numbers are fixed point, so an index can arrive fractional.
+      -- Floor it rather than let string.sub raise "no integer representation".
+      key = key - key % 1
+      -- Negative indices count back from the end, matching sub().
+      local c = string.sub(s, key, key)
+      -- Out of range reads nil, the way indexing past a table's end does.
+      if c == "" then
+        return nil
+      end
+      return c
+    end
+  end
+`;
 
 // Register the extension with the Lua system
 if (typeof window !== 'undefined') {
