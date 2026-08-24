@@ -53,6 +53,11 @@ class GameEmulator {
     // Studio projects want. PICO-8 carts ask for 30 (see setUpdateRate).
     this._updateIntervalMs = 0;
     this._updateAccumulatorMs = 0;
+    // A cart swap requested by PICO-8's load(), honoured between frames, and
+    // the details of the swap in progress while the new cart starts up.
+    this.pico8PendingLoad = null;
+    this.pico8LoadContext = null;
+    this._lastScriptData = null;
     this.compileOverlayHidden = true;
     this.compileOverlayShownAt = 0;
     this.extensionLoader = null; // Lua extension loader
@@ -2036,6 +2041,13 @@ class GameEmulator {
     console.log('[GameEmulator] Loading and executing Lua script...');
     this.updateStatus('Loading Lua script...', 'info');
     this._renderOrderCounter = 1;
+    // Kept so a PICO-8 load() can restart the project's own cart without the
+    // manifest having to carry a second copy of main.lua. A cart swap must not
+    // overwrite it - it is precisely the project's own script that a load()
+    // back to the title cart needs to find here.
+    if (!this.pico8LoadContext) {
+      this._lastScriptData = scriptData;
+    }
 
     const runStart = performance.now();
     let runPhaseStart = runStart;
@@ -2118,7 +2130,39 @@ class GameEmulator {
       // again from Setup(), which runs below; without this reset a Studio
       // project opened after a PICO-8 cart would inherit the slower rate.
       this.setUpdateRate(0);
-      
+
+      // A PICO-8 cart's ROM has to be in memory before its code is loaded, not
+      // just before Setup(). Carts run statements at the top of the chunk, and
+      // those read the ROM: POOM opens with memcpy(0x4300, 0x0, 4096) to lift
+      // its light-ramp palettes out of the sprite sheet, and with the sheet
+      // still blank it copied zeroes and then drew its whole 3D view through
+      // an all-black palette. Loading the map late had the same effect on
+      // carts whose _init() places entities with mget(). These are CPU-side
+      // arrays and do not need the GPU, which is why this does not wait for
+      // gpuInit.
+      try {
+        if (pico8Ext && typeof pico8Ext.loadCartAssets === 'function') {
+          await pico8Ext.loadCartAssets();
+          logRunPhase('pico8CartAssets');
+        }
+
+        // Arriving here from a cart's own load() rather than from Play: the
+        // parameter has to be readable by stat(6) before _init() runs, and a
+        // sibling cart brings its own graphics, map and sound data with it.
+        // The main cart is left alone - the built assets above are already its
+        // own, and they went through conversions the raw image did not.
+        const loadContext = this.pico8LoadContext;
+        if (pico8Ext && loadContext) {
+          pico8Ext._loadParam = loadContext.param;
+          if (loadContext.cart !== pico8Ext._mainCartName) {
+            pico8Ext.applyCartImage(loadContext.cart);
+          }
+        }
+      } catch (assetError) {
+        console.warn('[GameEmulator] PICO-8 cart asset load failed:', assetError);
+        logRunPhase('pico8CartAssets (failed)');
+      }
+
       console.log('[GameEmulator] Concatenated Lua script:');
       console.log(scriptData.content);
 
@@ -2156,23 +2200,6 @@ class GameEmulator {
         return;
       }
       
-      // A PICO-8 cart's _init() typically scans the map with mget() to place
-      // entities, so the sprite sheet and map have to be in memory before
-      // Setup() runs. These are CPU-side arrays and do not need the GPU, which
-      // is why this does not wait for gpuInit. Loading it there instead left
-      // _init() reading an all-zero map, and carts that derive the player from
-      // a map tile ended up with a nil player.
-      try {
-        const pico8Ext = this.getLuaExtension('Pico8');
-        if (pico8Ext && typeof pico8Ext.loadCartAssets === 'function') {
-          await pico8Ext.loadCartAssets();
-          logRunPhase('pico8CartAssets');
-        }
-      } catch (assetError) {
-        console.warn('[GameEmulator] PICO-8 cart asset load failed:', assetError);
-        logRunPhase('pico8CartAssets (failed)');
-      }
-
       // Try to run Setup() function (optional)
       console.log('[GameEmulator] Attempting to run Setup() function...');
       try {
@@ -2436,6 +2463,16 @@ class GameEmulator {
         if (stepGame) {
           // Call Update(deltaTime) in Lua
           this.luaState.execute(`Update(${updateDelta})`);
+
+          // A PICO-8 cart can call load() to hand over to another cart of the
+          // same game. That cannot happen inside the VM it is running in, so
+          // load() only queues the request and it is honoured here, between
+          // frames. Nothing else in this frame should run: the state it would
+          // draw is about to be thrown away.
+          if (this.pico8PendingLoad) {
+            this.performPico8CartLoad();
+            return;
+          }
         }
         
         // ── Render pass ──────────────────────────────────────────────
@@ -2574,6 +2611,39 @@ class GameEmulator {
 
     // Update button appearance
     this.updatePlayPauseButton();
+  }
+
+  /**
+   * Carry out a cart swap queued by PICO-8's load().
+   *
+   * Everything is rebuilt: a fresh Lua state, fresh extensions, the incoming
+   * cart's memory image, then its Setup(). PICO-8's load() is a reboot with a
+   * different cartridge in the slot, and rebuilding is also the only way to be
+   * sure nothing survives from the outgoing cart for the new one to trip over.
+   */
+  async performPico8CartLoad() {
+    const request = this.pico8PendingLoad;
+    this.pico8PendingLoad = null;
+    if (!request) return;
+
+    this.stopGameLoop();
+
+    // A null script means the main cart, whose code is the project's own
+    // main.lua rather than a copy in the manifest.
+    const base = this._lastScriptData;
+    if (!base) {
+      console.error('[GameEmulator] load() had no script to fall back on.');
+      return;
+    }
+    const scriptData = request.lua === null ? base : { ...base, content: request.lua };
+
+    console.log(`[GameEmulator] Loading cart ${request.cart}...`);
+    this.pico8LoadContext = { cart: request.cart, param: request.param };
+    try {
+      await this.loadAndExecuteScript(scriptData);
+    } finally {
+      this.pico8LoadContext = null;
+    }
   }
 
   /**

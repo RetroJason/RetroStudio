@@ -54,6 +54,8 @@ const EXPECTED_FUNCTIONS = [
   'cocreate', 'coresume', 'costatus', 'cowrap', 'yield',
   // Memory
   'peek', 'poke', 'peek2', 'poke2', 'peek4', 'poke4', 'memcpy', 'memset', 'reload',
+  // Multi-cart games
+  'load',
   // Persistent storage
   'cartdata', 'dget', 'dset',
   // Audio
@@ -109,6 +111,9 @@ function makeMockEmulator() {
       isKeyHeld(mask) { return (this._held & mask) !== 0; },
       isKeyPressed(mask) { return (this._pressed & mask) !== 0; },
     },
+    // Mirrors GameEmulator: load() queues a cart swap here for the game loop
+    // to perform once the current frame is out of the way.
+    pico8PendingLoad: null,
     // Mirrors GameEmulator.setUpdateRate so pico_fps can be exercised without
     // standing up the whole emulator.
     _updateIntervalMs: 0,
@@ -138,6 +143,34 @@ function makePico8() {
   }
 
   return { pico8, emulator };
+}
+
+/**
+ * A cart image with specific bytes set, for the multi-cart tests.
+ * @param {Record<number, number[]>} patches Address -> bytes to write there.
+ */
+function makeCartRom(patches) {
+  const rom = new Uint8Array(0x4300);
+  for (const [address, bytes] of Object.entries(patches)) {
+    rom.set(bytes, Number(address));
+  }
+  return rom;
+}
+
+/**
+ * Stand in for the carts the importer copies into the project.
+ *
+ * The images are handed over already parsed, so these tests exercise the cart
+ * lookup and memory swap rather than the .p8 text they are stored as.
+ */
+function installCartFamily(pico8, carts, mainCart = '') {
+  pico8._cartFamily = new Map(
+    Object.entries(carts).map(([name, cart]) => [
+      name,
+      { text: '', rom: cart.rom, lua: cart.lua || null },
+    ])
+  );
+  pico8._mainCartName = mainCart;
 }
 
 /** Read a framebuffer pixel by logical coordinate. */
@@ -182,7 +215,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 96);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 97);
     },
   },
   {
@@ -964,6 +997,82 @@ const tests = [
     },
   },
   {
+    name: 'tline with a single argument sets the precision instead of drawing',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // Sprite 1 is a horizontal ramp: pixel column i holds colour i + 1.
+      const sheet = new Uint8Array(128 * 128);
+      for (let i = 0; i < 8; i += 1) sheet[(0 * 128) + 8 + i] = i + 1;
+      pico8.setSpriteSheet(sheet, 128, 128);
+      pico8.setMapData(new Uint8Array([1, 0, 0, 0]), 4, 1);
+
+      assert.strictEqual(pico8._tlineBits, 13, 'one unit is a cell by default');
+      pico8.tline(16);
+      assert.strictEqual(pico8._tlineBits, 16);
+      assert.ok(pico8._framebuffer.every((c) => c === 0), 'setting precision draws nothing');
+
+      // At 16 bits one unit is a map pixel rather than a cell, so a step of 1
+      // now walks the sprite a pixel at a time.
+      pico8.tline(0, 0, 7, 0, 0, 0, 1, 0);
+      for (let i = 0; i < 8; i += 1) {
+        assert.strictEqual(pico8._framebuffer[i], i + 1, `screen x ${i}`);
+      }
+
+      // POOM raises the precision for its wall spans and puts it back after,
+      // so the reset has to restore the default rather than keep the last set.
+      pico8.tline(13);
+      assert.strictEqual(pico8._tlineBits, 13);
+      pico8.resetRuntimeState();
+      assert.strictEqual(pico8._tlineBits, 13);
+    },
+  },
+  {
+    name: 'tline repeats and offsets the sampled cells through 0x5f38-0x5f3b',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // Sprites 1 and 2 are solid colours, so which cell was sampled is
+      // readable straight off the framebuffer.
+      const sheet = new Uint8Array(128 * 128);
+      for (let i = 0; i < 8; i += 1) {
+        sheet[(0 * 128) + 8 + i] = 3;
+        sheet[(0 * 128) + 16 + i] = 12;
+      }
+      pico8.setSpriteSheet(sheet, 128, 128);
+      // Cells 0-1 are empty; the texture is the two cells at x = 2.
+      pico8.setMapData(new Uint8Array([0, 0, 1, 2]), 4, 1);
+
+      // Repeat every 2 cells, starting at cell 2. Walking four cells then
+      // covers the two texture cells twice.
+      pico8.poke(0x5f38, 2);
+      pico8.poke(0x5f39, 1);
+      pico8.poke(0x5f3a, 2);
+      pico8.poke(0x5f3b, 0);
+      pico8.tline(0, 0, 3, 0, 0, 0, 1, 0);
+      assert.deepStrictEqual(
+        Array.from(pico8._framebuffer.slice(0, 4)),
+        [3, 12, 3, 12],
+        'the two texture cells repeat'
+      );
+
+      // Cleared registers mean no repeat inside the map and no offset, which
+      // is the plain behaviour every single-texture cart relies on.
+      pico8.poke(0x5f38, 0);
+      pico8.poke(0x5f39, 0);
+      pico8.poke(0x5f3a, 0);
+      pico8.poke(0x5f3b, 0);
+      pico8.tline(0, 1, 3, 1, 0, 0, 1, 0);
+      assert.deepStrictEqual(
+        Array.from(pico8._framebuffer.slice(128, 132)),
+        [0, 0, 3, 12],
+        'cells 0 and 1 are empty again'
+      );
+    },
+  },
+  {
     name: 'fset/fget toggles sprite flags',
     fn: () => {
       const { pico8 } = makePico8();
@@ -1082,9 +1191,219 @@ const tests = [
       assert.strictEqual(pico8.fget(0), 0x11);
     },
   },
+
+  // -------------------------------------------------------------------------
+  // Music and SFX memory
+  //
+  // Nothing plays from these bytes - the importer turns those sections into
+  // audio resources - but carts read and write them anyway. Some retune a sound
+  // effect by poking its speed byte; a multi-cart game uses the whole region as
+  // storage for level data and never makes a sound with it at all.
+  // -------------------------------------------------------------------------
   {
-    name: 'memcpy into 0x1800 updates map rows 48-63, as bank-switching carts expect',
+    name: 'peek/poke round-trip through the music and SFX region',
     fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.peek(0x3100), 0, 'music memory starts empty');
+
+      pico8.poke(0x3100, 0x41);
+      pico8.poke(0x3200, 0x42);
+      // 0x3200 + 68*1 + 65 is sfx slot 1's note duration, which is the byte
+      // carts poke to change a sound effect's speed.
+      pico8.poke(0x3200 + 68 + 65, 0x0c);
+      pico8.poke(0x42ff, 0x43);
+
+      assert.strictEqual(pico8.peek(0x3100), 0x41);
+      assert.strictEqual(pico8.peek(0x3200), 0x42);
+      assert.strictEqual(pico8.peek(0x3200 + 68 + 65), 0x0c);
+      assert.strictEqual(pico8.peek(0x42ff), 0x43, 'the region runs up to general purpose RAM');
+    },
+  },
+  {
+    name: 'the music and SFX region is distinct from the sprite flags and user RAM either side of it',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.poke(0x30ff, 0x11);
+      pico8.poke(0x3100, 0x22);
+      pico8.poke(0x42ff, 0x33);
+      pico8.poke(0x4300, 0x44);
+
+      assert.strictEqual(pico8.peek(0x30ff), 0x11);
+      assert.strictEqual(pico8.peek(0x3100), 0x22);
+      assert.strictEqual(pico8.peek(0x42ff), 0x33);
+      assert.strictEqual(pico8.peek(0x4300), 0x44);
+    },
+  },
+
+  // -------------------------------------------------------------------------
+  // Multi-cart games
+  //
+  // A PICO-8 game too big for one cart ships as a folder of them and reads the
+  // rest of itself at run time. reload() with a filename pulls data across
+  // without disturbing the running cart; load() hands over to another cart
+  // entirely, passing it a string that only stat(6) can retrieve.
+  // -------------------------------------------------------------------------
+  {
+    name: 'reload copies from a named sibling cart',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      installCartFamily(pico8, {
+        'main.p8': { rom: makeCartRom({ 0x2000: [1, 2, 3, 4] }) },
+        'data_1.p8': { rom: makeCartRom({ 0x2000: [9, 8, 7, 6] }) },
+      });
+
+      pico8.reload(0x4300, 0x2000, 4, 'data_1.p8');
+      assert.deepStrictEqual(pico8.peek(0x4300, 4), [9, 8, 7, 6]);
+    },
+  },
+  {
+    name: 'reload accepts a cart named without its extension',
+    fn: () => {
+      const { pico8 } = makePico8();
+      installCartFamily(pico8, { 'data_1.p8': { rom: makeCartRom({ 0x2000: [5] }) } });
+
+      pico8.reload(0x4300, 0x2000, 1, 'data_1');
+      assert.strictEqual(pico8.peek(0x4300), 5);
+    },
+  },
+  {
+    name: 'reload from a cart that was never imported writes zeroes rather than leaving stale bytes',
+    fn: () => {
+      const { pico8 } = makePico8();
+      installCartFamily(pico8, {});
+      pico8.poke(0x4300, 1, 2, 3);
+
+      // PICO-8 would read a missing cart as zeroes rather than fail, and a game
+      // streaming its levels would otherwise die partway through one.
+      pico8.reload(0x4300, 0x2000, 3, 'absent.p8');
+      assert.deepStrictEqual(pico8.peek(0x4300, 3), [0, 0, 0]);
+    },
+  },
+  {
+    name: 'reload without a filename still reads the running cart, not a sibling',
+    fn: () => {
+      const { pico8 } = makePico8();
+      installCartFamily(pico8, { 'data_1.p8': { rom: makeCartRom({ 0x3100: [9] }) } });
+      pico8.poke(0x3100, 4);
+
+      pico8.reload(0x4300, 0x3100, 1);
+      assert.strictEqual(pico8.peek(0x4300), 0, 'the running cart has no audio ROM behind it here');
+    },
+  },
+  {
+    name: 'reload from a sibling cart reads past the sprite sheet into its sound data',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // The whole point of the extra carts: the level data runs off the end of
+      // one section and straight into the next.
+      installCartFamily(pico8, {
+        'data_1.p8': { rom: makeCartRom({ 0x30fe: [1, 2, 3, 4] }) },
+      });
+
+      pico8.reload(0x4300, 0x30fe, 4, 'data_1.p8');
+      assert.deepStrictEqual(pico8.peek(0x4300, 4), [1, 2, 3, 4]);
+    },
+  },
+  {
+    name: 'applyCartImage swaps in a sibling cart and re-bases what reload() restores',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+      pico8.setMapData(new Uint8Array(128 * 64), 128, 64);
+      installCartFamily(pico8, {
+        'level2.p8': {
+          rom: makeCartRom({ 0x0000: [0x21], 0x2000: [7], 0x3000: [0x88], 0x3200: [0x5a] }),
+        },
+      });
+
+      assert.strictEqual(pico8.applyCartImage('level2.p8'), true);
+      assert.strictEqual(pico8.sget(0, 0), 1, 'the new cart brings its own sprites');
+      assert.strictEqual(pico8.sget(1, 0), 2);
+      assert.strictEqual(pico8.mget(0, 0), 7, 'and its own map');
+      assert.strictEqual(pico8.fget(0), 0x88, 'and its own sprite flags');
+      assert.strictEqual(pico8.peek(0x3200), 0x5a, 'and its own sound data');
+
+      // A reload() now has to restore the cart that is running, not the one it
+      // replaced.
+      pico8.sset(0, 0, 5);
+      pico8.reload();
+      assert.strictEqual(pico8.sget(0, 0), 1);
+    },
+  },
+  {
+    name: 'applyCartImage reports a cart it does not have rather than half-applying one',
+    fn: () => {
+      const { pico8 } = makePico8();
+      installCartFamily(pico8, {});
+      assert.strictEqual(pico8.applyCartImage('nope.p8'), false);
+    },
+  },
+  {
+    name: 'load queues a cart swap for the emulator to perform between frames',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      installCartFamily(pico8, {
+        'main.p8': { rom: makeCartRom({}) },
+        'level2.p8': { rom: makeCartRom({}), lua: 'function Setup() end' },
+      }, 'main.p8');
+
+      pico8.load('level2.p8', 'back to menu', 'skill=3,map=1');
+
+      assert.deepStrictEqual(emulator.pico8PendingLoad, {
+        cart: 'level2.p8',
+        param: 'skill=3,map=1',
+        lua: 'function Setup() end',
+      });
+    },
+  },
+  {
+    name: 'load of the main cart restarts the project script rather than a stale copy',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      installCartFamily(pico8, {
+        'main.p8': { rom: makeCartRom({}) },
+        'level2.p8': { rom: makeCartRom({}), lua: 'function Setup() end' },
+      }, 'main.p8');
+
+      pico8.load('main.p8');
+
+      // null means "the project's own main.lua", which is the only copy that
+      // reflects edits made in the Studio since the cart was imported.
+      assert.strictEqual(emulator.pico8PendingLoad.lua, null);
+      assert.strictEqual(emulator.pico8PendingLoad.param, '');
+    },
+  },
+  {
+    name: 'load ignores a cart that was never imported or carries no code',
+    fn: () => {
+      const { pico8, emulator } = makePico8();
+      installCartFamily(pico8, {
+        'main.p8': { rom: makeCartRom({}) },
+        'data_1.p8': { rom: makeCartRom({}) },
+      }, 'main.p8');
+
+      pico8.load('absent.p8');
+      assert.strictEqual(emulator.pico8PendingLoad, null, 'a cart that is not there is not loadable');
+
+      // data_1.p8 exists but is pure storage. Swapping to it would leave the
+      // game with no code at all.
+      pico8.load('data_1.p8');
+      assert.strictEqual(emulator.pico8PendingLoad, null);
+    },
+  },
+  {
+    name: 'stat(6) returns the string the previous cart passed to load',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.stat(6), '', 'a cart started from Play was given nothing');
+
+      pico8._loadParam = '2,1';
+      assert.strictEqual(pico8.stat(6), '2,1');
+    },
+  },
+  {
+    name: 'memcpy into 0x1800 updates map rows 48-63, as bank-switching carts expect',    fn: () => {
       const { pico8 } = makePico8();
       pico8.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
       pico8.setMapData(new Uint8Array(128 * 64), 128, 64);

@@ -830,7 +830,7 @@ class CopyBuilder extends BaseBuilder {
       // Read file content - check persistent storage first for saved edits
       let content;
   const fileExtension = (file.path.split('.').pop() || '').toLowerCase();
-  const textExtensions = ['pal', 'lua', 'txt', 'json', 'xml', 'csv', 'md', 'p8mus'];
+  const textExtensions = ['pal', 'lua', 'txt', 'json', 'xml', 'csv', 'md', 'p8mus', 'p8'];
   const isTextFile = textExtensions.includes(fileExtension);
       
       // First try to load from persistent storage (for saved edits)

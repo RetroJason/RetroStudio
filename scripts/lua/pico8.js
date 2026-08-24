@@ -28,6 +28,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.spriteFlags = new Uint8Array(256);
     // Colour indices skipped when blitting sprite-sheet pixels (palt).
     this._transparent = new Set([0]);
+    // How many of the 16 fractional bits of tline()'s map coordinates count as
+    // sub-pixel. 13 leaves three bits for the pixel within an 8x8 cell, which
+    // is what makes the default unit one map cell. tline(n) changes it.
+    this._tlineBits = 13;
     // Decoded sprite sheet / map, installed from the built cart assets.
     this._sheet = null;
     this._map = null;
@@ -36,6 +40,19 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._romSheet = null;
     this._romSpriteFlags = new Uint8Array(256);
     this._romMap = null;
+    // 0x3100-0x42ff music (64 patterns) and SFX (64 slots of 68 bytes).
+    // Playback does not read these - music()/sfx() go to the converted audio
+    // resources - but the bytes still have to be here, because carts treat the
+    // whole 0x0000-0x42ff ROM as a data store and stream it back with peek().
+    // POOM packs its level geometry there and unpacks it a byte at a time.
+    this._audioRam = null;
+    this._romAudioRam = null;
+    // Multi-cart games: the sibling carts' .p8 text, parsed on first use and
+    // keyed by bare filename, which is how carts name each other.
+    this._cartFamily = null;
+    this._mainCartName = '';
+    // The string a load() handed to the cart it started, returned by stat(6).
+    this._loadParam = '';
     // 0x4300-0x5dff general-purpose RAM. Allocated lazily; most carts never
     // touch it and 6.9KB per run is pure waste when they do not.
     // 0x5600-0x5dff of it doubles as the custom font, see _getCustomFont().
@@ -123,9 +140,265 @@ class LuaPico8Extensions extends BaseLuaExtension {
           console.log(`[LuaPico8] Map loaded: ${map.width}x${map.height} from ${mapPath}`);
         }
       }
+
+      await this._loadCartFamily(files);
     } catch (error) {
       console.warn('[LuaPico8] Failed to load cart assets:', error);
     }
+  }
+
+  /**
+   * Index the game's carts from the .p8 files the importer copied into
+   * Import/pico8/carts.
+   *
+   * They are stored as the plain text they arrived as, so the parsing happens
+   * here rather than at import time. Only the text is read up front; turning a
+   * cart into its 0x4300 byte image waits until something asks for it, because
+   * a big game ships thirty carts and touches two or three per level.
+   *
+   * The main cart is identified by matching cart-original.p8 rather than by a
+   * recorded name: it is written out as the same flattened text, and a name
+   * would have to live in a manifest that nothing else needs.
+   */
+  async _loadCartFamily(files) {
+    const cartPaths = files.filter(p => /(^|\/)carts\/[^/]+\.p8$/i.test(p));
+    if (cartPaths.length === 0) return;
+
+    this._cartFamily = new Map();
+    for (const path of cartPaths) {
+      const text = await this._loadTextFile(path);
+      if (text == null) continue;
+      const name = this._normalizeCartName(path);
+      this._cartFamily.set(name, { text, rom: null, lua: null });
+    }
+
+    const originalPath = files.find(p => /(^|\/)cart-original\.p8$/i.test(p));
+    const original = originalPath ? await this._loadTextFile(originalPath) : null;
+    if (original) {
+      for (const [name, entry] of this._cartFamily) {
+        if (entry.text === original) { this._mainCartName = name; break; }
+      }
+      // Fall back to the project's own cart image for the audio region, so a
+      // single-cart game still gets the bytes behind 0x3100-0x42ff. The
+      // importer turns those sections into playable audio resources and the raw
+      // bytes are lost on the way, but carts read them back directly.
+      this._seedAudioRam(this._parseCartRom(original));
+    } else if (this._mainCartName) {
+      this._seedAudioRam(this._getCartRom(this._mainCartName));
+    }
+
+    console.log(`[LuaPico8] Cart family loaded: ${this._cartFamily.size} carts`
+      + (this._mainCartName ? `, main ${this._mainCartName}` : ''));
+  }
+
+  /**
+   * PICO-8 lets a cart be named with or without its extension, and a cart in a
+   * subfolder is still referred to by its bare name.
+   */
+  _normalizeCartName(name) {
+    const text = String(name ?? '').trim().replace(/\\/g, '/').split('/').pop().toLowerCase();
+    if (!text) return '';
+    return /\.p8$/.test(text) ? text : `${text}.p8`;
+  }
+
+  /** Fill the music and SFX region from a cart image. */
+  _seedAudioRam(rom) {
+    if (!rom) return;
+    this._romAudioRam = rom.slice(0x3100, 0x4300);
+    this._audioRam = new Uint8Array(this._romAudioRam);
+  }
+
+  /** The 0x4300 byte image of a named cart, parsed on first use. */
+  _getCartRom(name) {
+    const entry = this._cartFamily?.get(this._normalizeCartName(name));
+    if (!entry) return null;
+    if (!entry.rom) entry.rom = this._parseCartRom(entry.text);
+    return entry.rom;
+  }
+
+  /**
+   * Split a .p8 file into its `__name__` sections.
+   *
+   * Everything before the first section header is the format banner, and the
+   * `__label__` screenshot is of no interest to anything here, but it costs
+   * nothing to keep and the caller simply never asks for it.
+   */
+  _splitCartSections(text) {
+    const sections = {};
+    let current = null;
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+      const header = /^__(\w+)__\s*$/.exec(rawLine);
+      if (header) {
+        current = header[1].toLowerCase();
+        sections[current] = sections[current] || [];
+        continue;
+      }
+      if (current) sections[current].push(rawLine);
+    }
+    return sections;
+  }
+
+  /**
+   * Lay a cart's data sections out as the 0x0000-0x42ff bytes PICO-8 holds them
+   * in, which is neither the order nor the encoding the .p8 text uses.
+   *
+   * Multi-cart games use their sibling carts as flat storage. The extra carts
+   * carry no code at all: the level data is simply poured across every section
+   * until it runs out, and the running cart pulls it back with reload() and
+   * peek(). That only works if every byte lands exactly where PICO-8 would have
+   * put it, so the layout here follows picotool's, which is derived from real
+   * cart images rather than from the .p8 text format.
+   *
+   * A section that stops early leaves the rest of its region as zeroes. PICO-8
+   * writes all 64 sfx and music lines when it saves, so this only comes up for
+   * hand-edited carts, and zero is a better guess there than PICO-8's blank-cart
+   * note-duration defaults would be - those would corrupt a slot being used as
+   * data.
+   *
+   * @param {string} text The .p8 file's contents.
+   * @returns {Uint8Array} 0x4300 bytes.
+   */
+  _parseCartRom(text) {
+    const sections = this._splitCartSections(text);
+    const rom = new Uint8Array(0x4300);
+    const nibble = (ch) => {
+      const v = Number.parseInt(ch, 16);
+      return Number.isFinite(v) ? v : 0;
+    };
+
+    // __gfx__ writes one hex character per 4-bit pixel, left to right, but a
+    // byte holds the LEFT pixel in its LOW nibble, so each character pair is
+    // stored the other way round.
+    let gfxRow = 0;
+    for (const rawLine of sections.gfx || []) {
+      if (gfxRow >= 128) break;
+      const line = String(rawLine || '').trim();
+      if (!line) continue;
+      for (let i = 0; i + 1 < line.length && i < 128; i += 2) {
+        rom[gfxRow * 64 + (i >> 1)] = nibble(line[i]) | (nibble(line[i + 1]) << 4);
+      }
+      gfxRow += 1;
+    }
+
+    // __map__ and __gff__ are plain hex bytes filling their regions in order.
+    const writeHexBytes = (lines, base, limit) => {
+      let out = base;
+      for (const rawLine of lines || []) {
+        const hex = String(rawLine || '').trim();
+        for (let i = 0; i + 1 < hex.length && out < limit; i += 2) {
+          rom[out] = (nibble(hex[i]) << 4) | nibble(hex[i + 1]);
+          out += 1;
+        }
+      }
+    };
+    writeHexBytes(sections.map, 0x2000, 0x3000);
+    writeHexBytes(sections.gff, 0x3000, 0x3100);
+
+    // __music__ is `FF CCCCCCCC` per pattern. In memory each pattern is only
+    // four bytes, one per channel, so the flags have no byte of their own: each
+    // flag bit rides in the top bit of its channel's byte, leaving seven bits
+    // for the pattern number. That is why this cannot go through writeHexBytes,
+    // and why a cart using the region as storage still round-trips - 4 flags
+    // plus 4 x 7 channel bits is exactly the 32 bits memory holds.
+    let pattern = 0;
+    for (const rawLine of sections.music || []) {
+      if (pattern >= 64) break;
+      const match = /^([0-9a-f]{2})\s+([0-9a-f]{8})$/i.exec(String(rawLine || '').trim());
+      if (!match) continue;
+      const flags = Number.parseInt(match[1], 16) || 0;
+      const channels = match[2];
+      const base = 0x3100 + pattern * 4;
+      for (let c = 0; c < 4; c += 1) {
+        const value = Number.parseInt(channels.slice(c * 2, c * 2 + 2), 16) || 0;
+        rom[base + c] = value | ((flags >> c) & 1 ? 0x80 : 0);
+      }
+      pattern += 1;
+    }
+
+    // __sfx__ is 8 header characters then 32 notes of PPWVE. In memory a
+    // pattern is 68 bytes: the 32 note words first, little endian, then the
+    // four header bytes. A note packs as w2w1-pppppp / c-eee-vvv-w3, so the
+    // waveform is split across three places.
+    let slot = 0;
+    for (const rawLine of sections.sfx || []) {
+      if (slot >= 64) break;
+      const line = String(rawLine || '').trim();
+      if (line.length < 8) continue;
+      const base = 0x3200 + slot * 68;
+      for (let note = 0; note < 32; note += 1) {
+        const at = 8 + note * 5;
+        if (at + 5 > line.length) break;
+        const pitch = Number.parseInt(line.slice(at, at + 2), 16) || 0;
+        const waveform = nibble(line[at + 2]);
+        const volume = nibble(line[at + 3]);
+        const effect = nibble(line[at + 4]);
+        rom[base + note * 2] = (pitch & 0x3f) | ((waveform & 3) << 6);
+        rom[base + note * 2 + 1] = ((waveform & 4) >> 2)
+          | ((volume & 7) << 1)
+          | ((effect & 7) << 4)
+          | ((waveform & 8) << 4);
+      }
+      for (let i = 0; i < 4; i += 1) {
+        rom[base + 64 + i] = Number.parseInt(line.slice(i * 2, i * 2 + 2), 16) || 0;
+      }
+      slot += 1;
+    }
+
+    return rom;
+  }
+
+  /**
+   * The runnable Lua behind a load() target, built the same way the importer
+   * built the project's main.lua.
+   *
+   * The cart is stored as its original text, so the PICO-8 dialect and the
+   * Setup/Update wrappers have to be applied here. That work belongs to the
+   * import service, which is the one place that knows how a cart becomes a
+   * project script; borrowing it keeps the two from drifting apart.
+   */
+  _getCartScript(name) {
+    const entry = this._cartFamily?.get(this._normalizeCartName(name));
+    if (!entry) return null;
+    if (entry.lua != null) return entry.lua || null;
+
+    entry.lua = '';
+    const sections = this._splitCartSections(entry.text);
+    const cartLua = (sections.lua || []).join('\n').trim();
+    if (!cartLua) return null;
+
+    const importer = typeof window !== 'undefined' ? window.pico8ImportService : null;
+    if (!importer?.buildRuntimeLua) {
+      this._warnOnce(
+        'load-no-importer',
+        'load() needs the PICO-8 import service to convert a cart into runnable code, and it is not available here.'
+      );
+      return null;
+    }
+
+    try {
+      entry.lua = importer.buildRuntimeLua(cartLua, {
+        spriteFlags: (sections.gff || []).join('').replace(/\s+/g, ''),
+      });
+    } catch (error) {
+      this._warnOnce(`load-badcode-${name}`, `load("${name}") could not convert the cart's code: ${error.message}`);
+      return null;
+    }
+    return entry.lua;
+  }
+
+  async _loadTextFile(path) {
+    const fileManager = this._getService?.('fileManager');
+    if (!fileManager) return null;
+
+    const pathResolver = this._getService?.('pathResolver');
+    const normPath = pathResolver?.normalizeStoragePath?.(path) || path;
+    const obj = await fileManager.loadFile(normPath);
+    const content = obj?.content ?? obj?.fileContent ?? obj?.data;
+
+    if (typeof content === 'string') return content;
+    if (content instanceof ArrayBuffer) return new TextDecoder().decode(content);
+    if (ArrayBuffer.isView(content)) return new TextDecoder().decode(content);
+    return null;
   }
 
   async _listBuildFiles(prefix) {
@@ -242,6 +515,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this.currentPalette.clear();
     this._resetScreenPalette();
     this._transparent = new Set([0]);
+    this._tlineBits = 13;
     this._clearFb(0, false);
   }
 
@@ -994,6 +1268,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
     console.warn(`[Pico8] ${methodName}(${argName}) got ${shown}; using 0, as PICO-8 does.`);
   }
 
+  /** Warn about a runtime gap once, for the same reason as _warnCoercedArg. */
+  _warnOnce(key, message) {
+    if (this._coercedArgWarnings.has(key)) return;
+    this._coercedArgWarnings.add(key);
+    console.warn(`[Pico8] ${message}`);
+  }
+
   /**
    * Read an optional PICO-8 flag argument.
    * PICO-8 passes real booleans (palt(0, true)), but 0/1 is also idiomatic,
@@ -1512,28 +1793,67 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Draw a line textured with the map.
    * Lua: tline(x0, y0, x1, y1, mx, my, [mdx], [mdy], [layers])
+   *      tline(bits)
    *
    * Walks the screen line one pixel at a time while a second cursor walks the
-   * map in cell space, advancing by (mdx, mdy) per pixel - so the fractional
-   * part of (mx, my) picks the pixel within the 8x8 cell and the integer part
-   * picks the cell. That indirection is what makes tline() a texture mapper:
-   * carts rotate and scale sprites with it, e.g. "Sonic 2.5" draws every
-   * rotated sprite as a stack of tlines through a rotation matrix.
+   * map, advancing by (mdx, mdy) per pixel - so part of (mx, my) picks the
+   * pixel within an 8x8 cell and the rest picks the cell. That indirection is
+   * what makes tline() a texture mapper: carts rotate and scale sprites with
+   * it, e.g. "Sonic 2.5" draws every rotated sprite as a stack of tlines
+   * through a rotation matrix.
    *
-   * mdx/mdy default to 1/8, one map pixel per screen pixel along x.
+   * Where the split falls is not fixed. PICO-8 numbers are 16.16 fixed point,
+   * and a precision register says how many of those bits are sub-pixel, so the
+   * map position is `raw(mx) >> bits` in map pixels. The default 13 makes one
+   * unit a whole cell; calling tline with a single argument changes it, which
+   * a perspective texture mapper needs because its step per screen pixel can be
+   * far smaller than a cell. POOM raises it to 17 for wall spans and puts it
+   * back to 13 for the floors.
+   *
+   * mdx/mdy default to 1/8 and 0 - one map pixel per screen pixel along x at
+   * the default precision.
    */
   tline(...args) {
+    // The single-argument form is a register write, not a draw.
+    if (args.length === 1) {
+      const bits = this._optionalIntegerArg(args, 0, 13, 'tline', 'bits');
+      this._tlineBits = Math.max(0, Math.min(31, bits));
+      return;
+    }
+
     const x0 = Math.floor(this._requireNumberArg(args, 0, 'tline', 'x0'));
     const y0 = Math.floor(this._requireNumberArg(args, 1, 'tline', 'y0'));
     const x1 = Math.floor(this._requireNumberArg(args, 2, 'tline', 'x1'));
     const y1 = Math.floor(this._requireNumberArg(args, 3, 'tline', 'y1'));
-    let mx = this._requireNumberArg(args, 4, 'tline', 'mx');
-    let my = this._requireNumberArg(args, 5, 'tline', 'my');
+    const mx = this._requireNumberArg(args, 4, 'tline', 'mx');
+    const my = this._requireNumberArg(args, 5, 'tline', 'my');
     const mdx = this._optionalNumberArg(args, 6, 1 / 8, 'tline', 'mdx');
     const mdy = this._optionalNumberArg(args, 7, 0, 'tline', 'mdy');
     const layers = this._optionalIntegerArg(args, 8, 0, 'tline', 'layers');
 
     if (!this._map || !this._sheet) return;
+
+    // The map cursor is stepped as the 32-bit fixed-point value the cart is
+    // really working in. Adding mdx as a float would drift over a long span,
+    // and wrapping is PICO-8's own behaviour when a coordinate runs past its
+    // range rather than something to be avoided.
+    const toRaw = (v) => Math.round(v * 65536) | 0;
+    let rawX = toRaw(mx);
+    let rawY = toRaw(my);
+    const rawDx = toRaw(mdx);
+    const rawDy = toRaw(mdy);
+    const bits = this._tlineBits;
+
+    // 0x5f38-0x5f3b wrap and place the sampled region: the size bytes make the
+    // texture repeat (0 means 256 cells, so no repeat within the map) and the
+    // offset bytes say where in the map it starts. A cart with several
+    // textures packed into one map picks between them by poking these rather
+    // than by moving mx/my, which is why POOM writes all four with one poke4
+    // before every wall span.
+    const maskX = (this._readByte(0x5f38) - 1) & 0xff;
+    const maskY = (this._readByte(0x5f39) - 1) & 0xff;
+    const offsetX = this._readByte(0x5f3a);
+    const offsetY = this._readByte(0x5f3b);
 
     // Bresenham along the screen line, the same walk line() uses, so a tline
     // and a line between the same endpoints cover exactly the same pixels.
@@ -1549,15 +1869,18 @@ class LuaPico8Extensions extends BaseLuaExtension {
     // is the screen diagonal, which is all a real tline can ever cover.
     const budget = (dx - dy) + 1;
     for (let i = 0; i < budget; i += 1) {
-      const cellX = Math.floor(mx);
-      const cellY = Math.floor(my);
-      const tile = this._mapTile(cellX, cellY);
+      const mapX = rawX >> bits;
+      const mapY = rawY >> bits;
+      const tile = this._mapTile(
+        (((mapX >> 3) & maskX) + offsetX) & 0xff,
+        (((mapY >> 3) & maskY) + offsetY) & 0xff
+      );
       // Sprite 0 is empty, and the layer mask selects any of its flags.
       if (tile !== 0 && (layers === 0 || (this._spriteFlagByte(tile) & layers) !== 0)) {
-        // The fraction of the map coordinate is the offset inside the cell.
-        const px = Math.floor((mx - cellX) * 8);
-        const py = Math.floor((my - cellY) * 8);
-        const c = this._sheetPixel(((tile % 16) * 8) + px, (Math.floor(tile / 16) * 8) + py);
+        const c = this._sheetPixel(
+          ((tile % 16) * 8) + (mapX & 7),
+          (Math.floor(tile / 16) * 8) + (mapY & 7)
+        );
         if (!this._isTransparentColor(c)) this._plot(x, y, c);
       }
 
@@ -1565,8 +1888,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
       const e2 = 2 * error;
       if (e2 >= dy) { error += dy; x += stepX; }
       if (e2 <= dx) { error += dx; y += stepY; }
-      mx += mdx;
-      my += mdy;
+      rawX = (rawX + rawDx) | 0;
+      rawY = (rawY + rawDy) | 0;
     }
   }
 
@@ -1922,6 +2245,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
       return flags[a - 0x3000] || 0;
     }
 
+    if (a < 0x4300) {
+      const ram = useRom ? this._romAudioRam : this._audioRam;
+      return ram ? ram[a - 0x3100] : 0;
+    }
+
     if (a >= 0x4300 && a < 0x5e00) {
       // ROM has no user RAM; reload() of this region yields zeroes, as it does
       // on hardware for a cart that never stored anything there.
@@ -1976,6 +2304,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
     if (a < 0x3100) {
       this.spriteFlags[a - 0x3000] = v;
+      return;
+    }
+
+    if (a < 0x4300) {
+      if (!this._audioRam) this._audioRam = new Uint8Array(0x4300 - 0x3100);
+      this._audioRam[a - 0x3100] = v;
       return;
     }
 
@@ -2097,16 +2431,25 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /**
    * Restore a block of memory from cart ROM.
-   * Lua: reload(dest, src, len)
+   * Lua: reload(dest, src, len, [filename])
    *
    * With no arguments PICO-8 reloads the whole cart; here that means restoring
    * every ROM-backed region to its imported state.
+   *
+   * The filename form is how a game bigger than one cart reads the rest of
+   * itself. The named cart is not loaded or run - only the bytes are copied,
+   * so the caller can pull a level out of a sibling cart's sprite and sound
+   * regions without disturbing anything that is currently on screen.
    */
   reload(...args) {
     if (args.length === 0) {
       if (this._romSheet && this._sheet) this._sheet.pixels.set(this._romSheet.pixels);
       if (this._romMap && this._map) this._map.tiles.set(this._romMap.tiles);
       this.spriteFlags.set(this._romSpriteFlags);
+      if (this._romAudioRam) {
+        if (!this._audioRam) this._audioRam = new Uint8Array(0x4300 - 0x3100);
+        this._audioRam.set(this._romAudioRam);
+      }
       return;
     }
 
@@ -2116,8 +2459,116 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (len <= 0) return;
 
     const buffer = new Uint8Array(len);
-    for (let i = 0; i < len; i += 1) buffer[i] = this._readByte(src + i, true);
+    const rom = args.length > 3 && args[3] != null ? this._getCartRom(args[3]) : null;
+
+    if (args.length > 3 && args[3] != null && !rom) {
+      this._warnOnce(
+        `reload-missing-${this._normalizeCartName(args[3])}`,
+        `reload() asked for "${args[3]}", which was not imported with this game. `
+        + 'Reading zeroes instead. Import the whole folder or .zip a multi-cart game came in.'
+      );
+      // Fall through: PICO-8 reads a missing cart as zeroes rather than failing,
+      // and a game that streams level data would otherwise die on level one.
+      for (let i = 0; i < len; i += 1) this._writeByte(dest + i, 0);
+      return;
+    }
+
+    // Read the whole source before writing any of it: PICO-8 copies through the
+    // cart image, so an overlapping reload() must not see its own output.
+    for (let i = 0; i < len; i += 1) {
+      const addr = src + i;
+      buffer[i] = rom
+        ? (addr >= 0 && addr < rom.length ? rom[addr] : 0)
+        : this._readByte(addr, true);
+    }
     for (let i = 0; i < len; i += 1) this._writeByte(dest + i, buffer[i]);
+  }
+
+  /**
+   * Make a named cart the one that is running: its graphics, map, sprite flags
+   * and sound data become both live memory and the ROM that reload() restores.
+   *
+   * PICO-8's load() swaps the whole cartridge, not just the code, so a game
+   * split across several carts expects the new one's sprites to be in place by
+   * the time its _init() runs.
+   */
+  applyCartImage(name) {
+    const rom = this._getCartRom(name);
+    if (!rom) return false;
+
+    // The regions have to exist before bytes can land in them: the project may
+    // have been built from a cart with no map while the one arriving has one.
+    if (!this._sheet) this.setSpriteSheet(new Uint8Array(128 * 128), 128, 128);
+    if (!this._map) this.setMapData(new Uint8Array(128 * 64), 128, 64);
+    if (!this._audioRam) this._audioRam = new Uint8Array(0x4300 - 0x3100);
+
+    for (let addr = 0; addr < 0x4300; addr += 1) this._writeByte(addr, rom[addr]);
+
+    // Re-snapshot the ROM side, or a later reload() would restore the cart this
+    // one just replaced.
+    this._romSheet.pixels.set(this._sheet.pixels);
+    this._romMap.tiles.set(this._map.tiles);
+    this._romSpriteFlags.set(this.spriteFlags);
+    this._romAudioRam = new Uint8Array(this._audioRam);
+    this._dirty = true;
+    return true;
+  }
+
+  /**
+   * Swap in another cart of the same game.
+   * Lua: load(filename, [breadcrumb], [param])
+   *
+   * PICO-8 never returns from load(): the cart it was called from stops where
+   * it stands. That cannot be reproduced here, because this is running inside
+   * the Lua VM that is about to be discarded, so the request is queued and the
+   * game loop performs the swap between frames. Any statements after the call
+   * therefore still run, which is harmless in practice - carts call load() as
+   * the last thing they do.
+   *
+   * The breadcrumb is the label PICO-8 puts on the "back to previous cart" menu
+   * entry. It is accepted and ignored: there is no cart shell here to go back
+   * to.
+   */
+  load(...args) {
+    const requested = args[0];
+    const cart = this._normalizeCartName(requested);
+    if (!cart) {
+      this._warnOnce('load-no-cart', 'load() was called without a cart name; ignoring it.');
+      return;
+    }
+
+    const entry = this._cartFamily?.get(cart);
+    if (!entry) {
+      this._warnOnce(
+        `load-missing-${cart}`,
+        `load("${requested}") names a cart that was not imported with this game, so it was ignored. `
+        + 'Import the whole folder or .zip that a multi-cart game came in.'
+      );
+      return;
+    }
+
+    const isMainCart = cart === this._mainCartName;
+    // The main cart's code is the project's own main.lua, which the user may
+    // have edited since the import; the archived copy is only for the others.
+    const lua = isMainCart ? null : this._getCartScript(cart);
+    if (!isMainCart && !lua) {
+      this._warnOnce(
+        `load-nocode-${cart}`,
+        `load("${requested}") names a cart that carries no runnable code, so it was ignored.`
+      );
+      return;
+    }
+
+    const emulator = this.gameEmulator;
+    if (!emulator) return;
+
+    emulator.pico8PendingLoad = {
+      cart,
+      // stat(6) is a string even when the cart passes a number.
+      param: args[2] == null ? '' : String(args[2]),
+      // null means "restart the project script".
+      lua,
+    };
   }
 
   /**
@@ -3697,6 +4148,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
         return 60; // Default pico-8 target fps
       case 5:
         return (performance.memory?.usedJSHeapSize || 0) / 1024 / 1024; // MB
+      case 6:
+        // The string the previous cart passed to load(). This is the only
+        // channel a multi-cart game has for telling the cart it just started
+        // what to do - which episode and difficulty, say - because everything
+        // else is wiped by the swap.
+        return this._loadParam || '';
       default:
         return 0;
     }

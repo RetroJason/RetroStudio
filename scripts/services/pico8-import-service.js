@@ -379,6 +379,83 @@ class Pico8ImportService {
   // ============================================================
 
   /**
+   * Write every cart the archive held into the project, so that reload() and
+   * load() have something to name.
+   *
+   * A PICO-8 game too big for one cart ships as a folder of them. One holds the
+   * code, most are pure data - level geometry poured across the gfx, map and
+   * sound regions - and a few carry code of their own for separate chapters.
+   * The importer only turns the cart the user picked into a project, so without
+   * this the siblings are dropped and every reload() naming one reads zeroes.
+   *
+   * The carts are written out as the .p8 text they arrived as, under
+   * Import/pico8/carts, and the runtime parses them when the game starts. They
+   * are not converted to a packed image here: a cart is a plain text file that
+   * any tool - or the watch firmware - can read, whereas a decoded image would
+   * have to be carried in some container of our own invention.
+   *
+   * The one edit made is flattening #include: a cart whose code pulls in a
+   * sibling .lua would otherwise be unrunnable on its own, and the .lua files
+   * cannot be shipped alongside it because the project's Lua build compiles
+   * every .lua it finds and raw PICO-8 source does not compile.
+   *
+   * The main cart is written out too, under its own name. Carts refer to each
+   * other by filename, and a game that load()s back to its title screen names
+   * the cart the project was made from. Its copy is byte-identical to
+   * cart-original.p8, which is how the runtime tells which cart that is without
+   * a manifest to consult - and knowing that matters, because a load() of the
+   * main cart has to re-run the project's own main.lua rather than the archived
+   * copy, or the user's edits would be silently thrown away.
+   *
+   * @returns {Promise<{count: number, warnings: string[]}>}
+   */
+  async writeCartFamily(draft, importFolder, bundle, archivedCart) {
+    const warnings = [];
+    const seen = new Set();
+    const folder = `${importFolder}/carts`;
+
+    const write = async (cartPath, text) => {
+      const name = String(cartPath || '').split('/').pop().toLowerCase();
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      await this.addTextFile(draft, folder, name, text);
+    };
+
+    await write(bundle.cartName, archivedCart);
+
+    for (const entry of bundle.sources?.byPath?.values() || []) {
+      if (!this.isCartName(entry.path)) continue;
+
+      const parsed = this.parseP8Text(entry.text);
+      let text = parsed.raw;
+
+      if (/^\s*#include\b/im.test(parsed.lua)) {
+        // A failure here is not fatal: the cart's data is still worth keeping,
+        // and only a load() of this particular cart would notice.
+        try {
+          const slash = entry.path.lastIndexOf('/');
+          const includes = this.resolveIncludes(parsed.lua, bundle.sources, {
+            baseDir: slash >= 0 ? entry.path.slice(0, slash) : '',
+          });
+          if (includes.problems.length > 0) {
+            throw new Error(this.describeIncludeProblems(entry.path, includes.problems));
+          }
+          text = this.flattenCartText(parsed.raw, includes.lua);
+        } catch (error) {
+          warnings.push(
+            `${entry.path} includes source that could not be resolved, so load("${entry.path.split('/').pop()}") `
+            + `will fail. Its data is still available to reload(). ${error.message}`
+          );
+        }
+      }
+
+      await write(entry.path, text);
+    }
+
+    return { count: seen.size, warnings };
+  }
+
+  /**
    * Decode __gfx__ into the 128x128 sprite sheet. Each character is one pixel
    * as a PICO-8 palette index (0-15).
    */
@@ -970,6 +1047,22 @@ class Pico8ImportService {
 
     chunks.push('');
     chunks.push('-- Imported by Pico8ImportService');
+
+    // PICO-8 iterates nil as an empty table, and carts lean on it: POOM builds
+    // its per-subsector thing list lazily and then walks it every frame with
+    // "for thing in pairs(segs.things)", commented "if any". Stock Lua raises
+    // there. all() already tolerates nil in the Pico8 extension; pairs() is
+    // plain Lua, so it is shimmed here, where the change stays scoped to
+    // imported carts.
+    chunks.push('do');
+    chunks.push('  local _lua_pairs = pairs');
+    chunks.push('  local _no_pairs = function() return nil end');
+    chunks.push('  pairs = function(t)');
+    chunks.push('    if t == nil then return _no_pairs, nil, nil end');
+    chunks.push('    return _lua_pairs(t)');
+    chunks.push('  end');
+    chunks.push('end');
+    chunks.push('');
 
     // In a cart, print() draws text into the framebuffer; it is not logging.
     // The emulator otherwise replaces the global print() with its debug-console
@@ -1735,6 +1828,8 @@ class Pico8ImportService {
       await this.addTextFile(draft, importFolder, `${name}.txt`, sectionContent);
     }
 
+    const cartFamily = await this.writeCartFamily(draft, importFolder, bundle, archivedCart);
+
     const convertedSfxSlots = this.parseP8SfxSection(parsed.sections.sfx || []);
     const convertedSfx = await this.importSfxSlots(draft, projectName, convertedSfxSlots);
     const convertedMusic = await this.importMusicSongs(
@@ -1793,6 +1888,14 @@ class Pico8ImportService {
         );
       }
     }
+
+    if (cartFamily.count > 1) {
+      warnings.unshift(
+        `Kept ${cartFamily.count - 1} extra cart(s) from the archive under Import/pico8/carts so that `
+        + 'reload() and load() can reach their data.'
+      );
+    }
+    warnings.push(...cartFamily.warnings);
 
     const importSummary = {
       sourceFile: bundle.archiveName || bundle.cartName,

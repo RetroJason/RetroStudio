@@ -1735,15 +1735,15 @@
         },
         {
           "name": "tline",
-          "description": "Draw a line textured with the map. The map coordinate advances by (mdx, mdy) per screen pixel, so its fraction picks the pixel inside an 8x8 cell and its whole part picks the cell",
+          "description": "Draw a line textured with the map. The map coordinate advances by (mdx, mdy) per screen pixel. Called with a single argument instead, tline(bits) sets how many of the 16 fractional bits of a map coordinate are sub-pixel: 13 (the default) makes one unit a cell, 16 makes one unit a map pixel. Bytes 0x5f38-0x5f3b give the sampled region a repeat size and an origin in cells",
           "parameters": [
-            {"name": "x0", "type": "number", "description": "Screen x of the line's start."},
+            {"name": "x0", "type": "number", "description": "Screen x of the line's start, or the fractional bit count when it is the only argument."},
             {"name": "y0", "type": "number", "description": "Screen y of the line's start."},
             {"name": "x1", "type": "number", "description": "Screen x of the line's end."},
             {"name": "y1", "type": "number", "description": "Screen y of the line's end."},
-            {"name": "mx", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells."},
-            {"name": "my", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells."},
-            {"name": "mdx", "type": "number", "optional": true, "description": "Map x step per screen pixel. Defaults to 1/8, one map pixel per screen pixel."},
+            {"name": "mx", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells at the default precision."},
+            {"name": "my", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells at the default precision."},
+            {"name": "mdx", "type": "number", "optional": true, "description": "Map x step per screen pixel. Defaults to 1/8, one map pixel per screen pixel at the default precision."},
             {"name": "mdy", "type": "number", "optional": true, "description": "Map y step per screen pixel. Defaults to 0."},
             {"name": "layers", "type": "number", "optional": true, "description": "Only sample cells whose sprite flags include at least one of these bits. Defaults to sampling every non-zero cell."}
           ],
@@ -1928,9 +1928,20 @@
           "parameters": [
             {"name": "dest", "type": "number", "optional": true, "description": "Destination address in RAM."},
             {"name": "src", "type": "number", "optional": true, "description": "Source address in the cart ROM image."},
-            {"name": "len", "type": "number", "optional": true, "description": "Number of bytes to restore."}
+            {"name": "len", "type": "number", "optional": true, "description": "Number of bytes to restore."},
+            {"name": "filename", "type": "string", "optional": true, "description": "Another cart of the same game to read from, by filename. The cart is not run; only its bytes are copied."}
           ],
           "example": "reload(0x0, 0x0, 0x2000)"
+        },
+        {
+          "name": "load",
+          "description": "Swap in another cart of the same game. The breadcrumb is accepted and ignored; the param is what the new cart reads back from stat(6). Unlike PICO-8 the call returns, and the swap happens after the current frame",
+          "parameters": [
+            {"name": "filename", "type": "string", "description": "Cart to load, by filename."},
+            {"name": "breadcrumb", "type": "string", "optional": true, "description": "Label PICO-8 would put on its back menu entry. Ignored here."},
+            {"name": "param", "type": "string", "optional": true, "description": "String handed to the new cart, which reads it with stat(6)."}
+          ],
+          "example": "load(\"level2.p8\", nil, \"skill=3\")"
         },
         {
           "name": "flip",
@@ -2406,10 +2417,10 @@
         },
         {
           "name": "stat",
-          "description": "Get statistics",
-          "parameters": [{"name": "x", "type": "number", "description": "Statistic index, for example 4 for the clipboard or 7 for the frame rate."}],
-          "returns": {"type": "number", "description": "The requested statistic, or 0 when it is not tracked."},
-          "example": "local fps = stat(4)"
+          "description": "Get statistics. Tracked here: 0 clock, 4 frame rate, 5 memory in KB, 6 the parameter string passed to load(). Anything else reads 0",
+          "parameters": [{"name": "x", "type": "number", "description": "Statistic index."}],
+          "returns": {"type": "any", "description": "The requested statistic, a string for index 6, or 0 when it is not tracked."},
+          "example": "local params = stat(6)"
         },
         {
           "name": "printh",
