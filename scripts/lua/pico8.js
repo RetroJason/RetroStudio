@@ -269,6 +269,26 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return this._picoRenderScale <= 0;
   }
 
+  /**
+   * Horizontal and vertical divisors from the screen mode register, 0x5f2c.
+   *
+   * PICO-8 keeps a full 128x128 framebuffer in every mode; the stretch modes
+   * only magnify its top-left corner, so a cart that pokes mode 3 draws to a
+   * 64x64 area and the hardware doubles it. Carts written for LOWREZ jams rely
+   * on this, and without it they render into one quarter of the screen.
+   *
+   * Only the stretch modes are reproduced. The mirror and flip modes share the
+   * register but are left alone rather than guessed at.
+   */
+  _screenModeDivisors() {
+    switch (this._readByte(0x5f2c)) {
+      case 1: return [2, 1];
+      case 2: return [1, 2];
+      case 3: return [2, 2];
+      default: return [1, 1];
+    }
+  }
+
   _logicalToRenderX(x) {
     return Math.floor((x * this._fbWidth) / this._logicalWidth);
   }
@@ -329,6 +349,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
       rectfill: (x0, y0, x1, y1, c) => this._rectFillToFb(x0, y0, x1, y1, c),
       circ: (x, y, r, c) => this._circToFb(x, y, r, c),
       circfill: (x, y, r, c) => this._circFillToFb(x, y, r, c),
+      oval: (x0, y0, x1, y1, c) => this._ovalToFb(x0, y0, x1, y1, c),
+      ovalfill: (x0, y0, x1, y1, c) => this._ovalFillToFb(x0, y0, x1, y1, c),
       clear: (c) => this._clearFb(c),
       setCamera: (x, y) => {
         this._cameraX = x | 0;
@@ -459,16 +481,27 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   _drawCircleHighRes(x, y, r, c, filled) {
+    const logicalR = Math.max(0, r | 0);
+    this._drawEllipseHighRes(x | 0, y | 0, logicalR, logicalR, c, filled);
+  }
+
+  /**
+   * Rasterise an ellipse into the scaled framebuffer.
+   *
+   * Takes the centre and the two radii in logical (cart) pixels. A circle is
+   * just the case where both radii match, so circ()/circfill() come through
+   * here too rather than keeping a second copy of the same scan.
+   */
+  _drawEllipseHighRes(x, y, radiusX, radiusY, c, filled) {
     const logicalCx = (x | 0) - this._cameraX;
     const logicalCy = (y | 0) - this._cameraY;
-    const logicalR = Math.max(0, r | 0);
 
     const sx = this._fbWidth / this._logicalWidth;
     const sy = this._fbHeight / this._logicalHeight;
     const cx = (logicalCx + 0.5) * sx;
     const cy = (logicalCy + 0.5) * sy;
-    const rx = Math.max(0.5, logicalR * sx);
-    const ry = Math.max(0.5, logicalR * sy);
+    const rx = Math.max(0.5, Math.max(0, radiusX) * sx);
+    const ry = Math.max(0.5, Math.max(0, radiusY) * sy);
     const rxSq = rx * rx;
     const rySq = ry * ry;
 
@@ -593,8 +626,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
       return;
     }
 
-    const cx = (x | 0) - this._cameraX;
-    const cy = (y | 0) - this._cameraY;
+    // Logical coordinates throughout: _lineToFb applies the camera itself, so
+    // subtracting it here as well would offset the fill from circ()'s outline.
+    const cx = x | 0;
+    const cy = y | 0;
     let dx = Math.max(0, r | 0);
     let dy = 0;
     let err = 1 - dx;
@@ -611,6 +646,63 @@ class LuaPico8Extensions extends BaseLuaExtension {
         dx -= 1;
         err += 2 * (dy - dx) + 1;
       }
+    }
+  }
+
+  /**
+   * Ellipse outline into the unscaled framebuffer, from a bounding box.
+   *
+   * Scanned on both axes: sweeping rows alone leaves gaps across the flat top
+   * and bottom of a wide ellipse, where one row spans many columns.
+   */
+  _ovalToFb(x0, y0, x1, y1, c) {
+    const left = Math.min(x0, x1) | 0;
+    const top = Math.min(y0, y1) | 0;
+    const right = Math.max(x0, x1) | 0;
+    const bottom = Math.max(y0, y1) | 0;
+
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const rx = Math.max(0.5, (right - left) / 2);
+    const ry = Math.max(0.5, (bottom - top) / 2);
+
+    for (let py = top; py <= bottom; py += 1) {
+      const ny = (py - cy) / ry;
+      const span = 1 - (ny * ny);
+      const half = span <= 0 ? 0 : rx * Math.sqrt(span);
+      this._plot(Math.round(cx - half), py, c, true, true);
+      this._plot(Math.round(cx + half), py, c, true, true);
+    }
+    for (let px = left; px <= right; px += 1) {
+      const nx = (px - cx) / rx;
+      const span = 1 - (nx * nx);
+      const half = span <= 0 ? 0 : ry * Math.sqrt(span);
+      this._plot(px, Math.round(cy - half), c, true, true);
+      this._plot(px, Math.round(cy + half), c, true, true);
+    }
+  }
+
+  /** Filled ellipse into the unscaled framebuffer, from a bounding box. */
+  _ovalFillToFb(x0, y0, x1, y1, c) {
+    const left = Math.min(x0, x1) | 0;
+    const top = Math.min(y0, y1) | 0;
+    const right = Math.max(x0, x1) | 0;
+    const bottom = Math.max(y0, y1) | 0;
+
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const rx = Math.max(0.5, (right - left) / 2);
+    const ry = Math.max(0.5, (bottom - top) / 2);
+
+    for (let py = top; py <= bottom; py += 1) {
+      const ny = (py - cy) / ry;
+      const span = 1 - (ny * ny);
+      if (span <= 0) {
+        this._plot(Math.round(cx), py, c, true, true);
+        continue;
+      }
+      const half = rx * Math.sqrt(span);
+      this._lineToFb(Math.round(cx - half), py, Math.round(cx + half), py, c);
     }
   }
 
@@ -687,16 +779,22 @@ class LuaPico8Extensions extends BaseLuaExtension {
       activeGpu.setPaletteOffset(0);
       let drawX = 0;
       let drawY = 0;
-      let scaleX = 1;
-      let scaleY = 1;
+
+      // A stretch mode magnifies the top-left corner of the framebuffer, so it
+      // shows less of it at a larger scale while filling the same output area.
+      const [modeX, modeY] = this._screenModeDivisors();
+      const srcW = Math.max(1, Math.floor(this._fbWidth / modeX));
+      const srcH = Math.max(1, Math.floor(this._fbHeight / modeY));
+      let scaleX = modeX;
+      let scaleY = modeY;
 
       if (this._picoRenderScale > 0) {
-        const drawW = this._fbWidth * this._picoRenderScale;
-        const drawH = this._fbHeight * this._picoRenderScale;
+        const drawW = srcW * this._picoRenderScale * modeX;
+        const drawH = srcH * this._picoRenderScale * modeY;
         drawX = Math.floor((canvasWidth - drawW) * 0.5);
         drawY = Math.floor((canvasHeight - drawH) * 0.5);
-        scaleX = this._picoRenderScale;
-        scaleY = this._picoRenderScale;
+        scaleX = this._picoRenderScale * modeX;
+        scaleY = this._picoRenderScale * modeY;
       }
 
       activeGpu.blit(this._fbTexture, {
@@ -704,8 +802,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
         y: drawY,
         srcX: 0,
         srcY: 0,
-        srcW: this._fbWidth,
-        srcH: this._fbHeight,
+        srcW,
+        srcH,
         scaleX,
         scaleY,
         filter: 'nearest',
@@ -983,6 +1081,48 @@ class LuaPico8Extensions extends BaseLuaExtension {
       engine.circfill(
         Math.floor(x), Math.floor(y),
         Math.floor(r),
+        Math.floor(c) & 0xFF
+      );
+    }
+  }
+
+  /**
+   * Draw ellipse outline inside the bounding box (x0,y0)-(x1,y1)
+   * Lua: oval(x0, y0, x1, y1, [c])
+   */
+  oval(...args) {
+    const x0 = this._requireNumberArg(args, 0, 'oval', 'x0');
+    const y0 = this._requireNumberArg(args, 1, 'oval', 'y0');
+    const x1 = this._requireNumberArg(args, 2, 'oval', 'x1');
+    const y1 = this._requireNumberArg(args, 3, 'oval', 'y1');
+    const c = this._optionalNumberArg(args, 4, this.currentColor, 'oval', 'c');
+
+    const engine = this._getEngine();
+    if (engine?.oval) {
+      engine.oval(
+        Math.floor(x0), Math.floor(y0),
+        Math.floor(x1), Math.floor(y1),
+        Math.floor(c) & 0xFF
+      );
+    }
+  }
+
+  /**
+   * Draw filled ellipse inside the bounding box (x0,y0)-(x1,y1)
+   * Lua: ovalfill(x0, y0, x1, y1, [c])
+   */
+  ovalfill(...args) {
+    const x0 = this._requireNumberArg(args, 0, 'ovalfill', 'x0');
+    const y0 = this._requireNumberArg(args, 1, 'ovalfill', 'y0');
+    const x1 = this._requireNumberArg(args, 2, 'ovalfill', 'x1');
+    const y1 = this._requireNumberArg(args, 3, 'ovalfill', 'y1');
+    const c = this._optionalNumberArg(args, 4, this.currentColor, 'ovalfill', 'c');
+
+    const engine = this._getEngine();
+    if (engine?.ovalfill) {
+      engine.ovalfill(
+        Math.floor(x0), Math.floor(y0),
+        Math.floor(x1), Math.floor(y1),
         Math.floor(c) & 0xFF
       );
     }

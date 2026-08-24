@@ -1625,6 +1625,30 @@
           "example": "circfill(64, 64, 10, 5)"
         },
         {
+          "name": "oval",
+          "description": "Draw ellipse outline touching all four sides of the box (x0,y0)-(x1,y1)",
+          "parameters": [
+            {"name": "x0", "type": "number", "description": "Left edge of the bounding box in pixels."},
+            {"name": "y0", "type": "number", "description": "Top edge of the bounding box in pixels."},
+            {"name": "x1", "type": "number", "description": "Right edge of the bounding box in pixels."},
+            {"name": "y1", "type": "number", "description": "Bottom edge of the bounding box in pixels."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
+          ],
+          "example": "oval(20, 40, 60, 50, 12)"
+        },
+        {
+          "name": "ovalfill",
+          "description": "Draw filled ellipse touching all four sides of the box (x0,y0)-(x1,y1)",
+          "parameters": [
+            {"name": "x0", "type": "number", "description": "Left edge of the bounding box in pixels."},
+            {"name": "y0", "type": "number", "description": "Top edge of the bounding box in pixels."},
+            {"name": "x1", "type": "number", "description": "Right edge of the bounding box in pixels."},
+            {"name": "y1", "type": "number", "description": "Bottom edge of the bounding box in pixels."},
+            {"name": "c", "type": "number", "optional": true, "description": "Palette index 0-15. Defaults to the current pen colour."}
+          ],
+          "example": "ovalfill(20, 40, 60, 50, 12)"
+        },
+        {
           "name": "btn",
           "description": "Is button i held this frame? Omit i to get a bitfield of all buttons. Buttons: 0 left, 1 right, 2 up, 3 down, 4 O, 5 X. Only player 0 is wired to a device.",
           "parameters": [

@@ -38,7 +38,8 @@ if (!LuaPico8Extensions) {
 
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
-  'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'cls', 'pico_mode', 'spr',
+  'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'oval', 'ovalfill',
+  'cls', 'pico_mode', 'spr',
   'sspr', 'map', 'mget', 'mset',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print', 'cursor',
   // Math
@@ -83,6 +84,8 @@ function makeMockEmulator() {
       rectfill() {},
       circ() {},
       circfill() {},
+      oval() {},
+      ovalfill() {},
       clear(c) { this._lastClear = c; },
       drawSprite(n, x, y, w, h, fx, fy) { this._lastSpr = { n, x, y, w, h, fx, fy }; },
       getSpritePixel(x, y) { return this._spritePixels.get(`${x},${y}`) ?? 0; },
@@ -179,7 +182,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 93);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 95);
     },
   },
   {
@@ -371,6 +374,121 @@ const tests = [
 
       const hit = pico8._framebuffer[(121 * 128) + 6];
       assert.strictEqual(hit, 12);
+    },
+  },
+  {
+    name: 'circfill lines up with circ when a camera is set',
+    fn: () => {
+      // circ() and circfill() reached the framebuffer by different routes, and
+      // the filled one subtracted the camera a second time.
+      const topLeft = (pico8) => {
+        for (let y = 0; y < pico8._fbHeight; y += 1) {
+          for (let x = 0; x < pico8._fbWidth; x += 1) {
+            if (pico8._framebuffer[(y * pico8._fbWidth) + x] !== 0) {
+              return { x, y };
+            }
+          }
+        }
+        return null;
+      };
+
+      const outline = makePico8().pico8;
+      outline.resetRuntimeState();
+      outline.pico_mode(1);
+      outline.camera(10, 20);
+      outline.circ(64, 64, 5, 7);
+
+      const filled = makePico8().pico8;
+      filled.resetRuntimeState();
+      filled.pico_mode(1);
+      filled.camera(10, 20);
+      filled.circfill(64, 64, 5, 7);
+
+      assert.deepStrictEqual(topLeft(filled), topLeft(outline));
+    },
+  },
+  {
+    name: 'ovalfill fills its bounding box and oval outlines it',
+    fn: () => {
+      const extent = (pico8) => {
+        let minX = Infinity; let minY = Infinity;
+        let maxX = -1; let maxY = -1; let count = 0;
+        for (let y = 0; y < pico8._fbHeight; y += 1) {
+          for (let x = 0; x < pico8._fbWidth; x += 1) {
+            if (pico8._framebuffer[(y * pico8._fbWidth) + x] !== 0) {
+              count += 1;
+              minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            }
+          }
+        }
+        return { minX, minY, maxX, maxY, count };
+      };
+
+      const filled = makePico8().pico8;
+      filled.resetRuntimeState();
+      filled.ovalfill(20, 40, 60, 50, 12);
+      const fill = extent(filled);
+
+      // The ellipse touches every edge of the box it was given.
+      assert.deepStrictEqual(
+        { minX: fill.minX, minY: fill.minY, maxX: fill.maxX, maxY: fill.maxY },
+        { minX: 20, minY: 40, maxX: 60, maxY: 50 }
+      );
+      assert.strictEqual(filled._framebuffer[(45 * 128) + 40], 12, 'centre is filled');
+
+      const hollow = makePico8().pico8;
+      hollow.resetRuntimeState();
+      hollow.oval(20, 40, 60, 50, 12);
+      const line = extent(hollow);
+
+      assert.strictEqual(hollow._framebuffer[(45 * 128) + 40], 0, 'centre is empty');
+      assert.ok(line.count < fill.count, 'outline uses fewer pixels than the fill');
+
+      // A wide ellipse has near-flat top and bottom rows. Scanning rows alone
+      // leaves those rows blank, so the outline has to scan columns as well.
+      for (let y = line.minY; y <= line.maxY; y += 1) {
+        let drawn = false;
+        for (let x = 0; x < 128; x += 1) {
+          if (hollow._framebuffer[(y * 128) + x] !== 0) { drawn = true; break; }
+        }
+        assert.ok(drawn, `outline row ${y} should not be empty`);
+      }
+    },
+  },
+  {
+    name: 'poking the screen mode register picks the stretch divisors',
+    fn: () => {
+      // LOWREZ carts poke mode 3 and then draw to a 64x64 area, trusting the
+      // hardware to double it up to the full screen.
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      assert.deepStrictEqual(pico8._screenModeDivisors(), [1, 1]);
+      pico8.poke(0x5f2c, 3);
+      assert.deepStrictEqual(pico8._screenModeDivisors(), [2, 2]);
+      pico8.poke(0x5f2c, 1);
+      assert.deepStrictEqual(pico8._screenModeDivisors(), [2, 1]);
+      pico8.poke(0x5f2c, 2);
+      assert.deepStrictEqual(pico8._screenModeDivisors(), [1, 2]);
+      pico8.poke(0x5f2c, 0);
+      assert.deepStrictEqual(pico8._screenModeDivisors(), [1, 1]);
+    },
+  },
+  {
+    name: 'poke writes a long run of values, as font uploads do',
+    fn: () => {
+      // ascent.p8 loads its custom font with a single poke of 1232 values
+      // unpacked from a string.
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const values = Array.from({ length: 1232 }, (_, i) => i % 256);
+      pico8.poke(0x5600, ...values);
+
+      assert.strictEqual(pico8.peek(0x5600), values[0]);
+      assert.strictEqual(pico8.peek(0x5600 + 617), values[617]);
+      assert.strictEqual(pico8.peek(0x5600 + 1231), values[1231]);
     },
   },
 
