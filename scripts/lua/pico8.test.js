@@ -1451,6 +1451,94 @@ const tests = [
     },
   },
   {
+    name: 'P8SCII: "\\*" repeats the next character rather than printing its count',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // "\x01" "4" "0" means "four zeroes". A renderer that drops the control
+      // byte but keeps its arguments draws "40" instead, which is how a score
+      // of 000000 rendered as 4000.
+      const width = pico8.print('\u00014000', 0, 0, 7);
+      const plain = pico8.print('000000', 0, 20, 7);
+      assert.strictEqual(width, plain, 'repeat must expand to six characters');
+    },
+  },
+  {
+    name: 'P8SCII: "\\f" sets the colour and outlives the print that used it',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.print('\u000c8A', 0, 0, 7);
+      assert.ok(pico8._framebuffer.includes(8), 'the glyph must use the new colour');
+      assert.ok(!pico8._framebuffer.includes(7), 'the old colour must not be drawn');
+      assert.strictEqual(pico8.currentColor, 8, 'the colour persists after print');
+    },
+  },
+  {
+    name: 'P8SCII: cursor shifts move the pen without drawing their arguments',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // "\-" takes P0-16, so 'h' (17) is +1 and '0' (0) is -16.
+      assert.strictEqual(pico8.print('\u0003hA', 0, 0, 7), pico8.print('A', 1, 20, 7));
+      // "\|" moves vertically only, leaving the reported width alone.
+      pico8.print('\u0004hA', 40, 0, 7);
+      assert.strictEqual(px(pico8, 40, 0), 0, 'the glyph must have moved down a row');
+    },
+  },
+  {
+    name: 'P8SCII: a control code argument past "f" keeps counting',
+    fn: () => {
+      // Parameters are a superset of hex: 'g' is 16, 'h' is 17, and the
+      // cursor-shift codes bias by 16, so they routinely land past 'f'.
+      assert.strictEqual(LuaPico8Extensions._p8sciiParam('g', 0), 16);
+      assert.strictEqual(LuaPico8Extensions._p8sciiParam('f', 0), 15);
+      assert.strictEqual(LuaPico8Extensions._p8sciiParam('9', 0), 9);
+      assert.strictEqual(LuaPico8Extensions._p8sciiParam('s', 0), 28);
+    },
+  },
+  {
+    name: 'P8SCII: "\\^@" writes raw bytes to memory mid-string',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // "@" takes a 4-digit address then a 4-digit count. This is how a cart
+      // installs a custom font, so a renderer that only draws text never sees
+      // the font at all.
+      pico8.print('\u0006@43000003ABC', 0, 0, 7);
+      assert.strictEqual(pico8.peek(0x4300), 0x41);
+      assert.strictEqual(pico8.peek(0x4301), 0x42);
+      assert.strictEqual(pico8.peek(0x4302), 0x43);
+    },
+  },
+  {
+    name: 'a cart-supplied font at 0x5600 replaces the built-in one',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // Header: 6px wide, 6px wide for high codes, 6px tall.
+      pico8.poke(0x5600, 6, 6, 6);
+      // Character 'A' (65) is a solid 6x6 block.
+      for (let row = 0; row < 6; row += 1) {
+        pico8.poke(0x5600 + (65 * 8) + row, 0x3f);
+      }
+      pico8.poke(0x5f58, 0x81); // observe defaults, use the custom font
+
+      assert.strictEqual(pico8.print('A', 0, 0, 7), 6, 'advance comes from the font header');
+      for (let row = 0; row < 6; row += 1) {
+        for (let col = 0; col < 6; col += 1) {
+          assert.strictEqual(px(pico8, col, row), 7, `pixel ${col},${row} must be filled`);
+        }
+      }
+    },
+  },
+  {
+    name: 'a custom font is ignored until the cart actually defines one',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.poke(0x5f58, 0x81);
+      // 0x5600 is still blank, so falling back to the built-in font is the
+      // only way to avoid drawing 256 empty characters.
+      pico8.print('A', 0, 0, 7);
+      assert.ok(pico8._framebuffer.includes(7), 'the built-in glyph must still draw');
+    },
+  },
+  {
     name: 'Coverage: all required functions were invoked by tests',
     fn: () => {
       const missing = EXPECTED_FUNCTIONS.filter((name) => !coveredFunctions.has(name));

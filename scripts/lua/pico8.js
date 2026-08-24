@@ -31,7 +31,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._romMap = null;
     // 0x4300-0x5dff general-purpose RAM. Allocated lazily; most carts never
     // touch it and 6.9KB per run is pure waste when they do not.
+    // 0x5600-0x5dff of it doubles as the custom font, see _getCustomFont().
     this._userRam = null;
+    // 0x5f00-0x5f7f draw state registers. Stored so a cart can read back what
+    // it wrote; only the print attribute defaults at 0x5f58 are interpreted.
+    this._drawStateRam = null;
     // cartdata()/dget()/dset() persistent storage: 64 numbers, or null until
     // the cart has claimed an id.
     this._cartDataId = null;
@@ -221,6 +225,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._cursorX = 0;
     this._cursorY = 0;
     this._clipRect = { x: 0, y: 0, w: this._logicalWidth, h: this._logicalHeight };
+    // Matches PICO-8's reset(), which clears the draw state registers - the
+    // print attribute defaults at 0x5f58 among them.
+    this._drawStateRam = null;
     this.currentPalette.clear();
     this._transparent = new Set([0]);
     this._clearFb(0, false);
@@ -1476,7 +1483,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
   //   0x0000-0x1fff sprite sheet (two 4-bit pixels per byte, low nibble first)
   //   0x2000-0x2fff map rows 0-31 (one sprite index per byte)
   //   0x3000-0x30ff sprite flags
-  //   0x4300-0x5dff general-purpose RAM
+  //   0x4300-0x5dff general-purpose RAM (0x5600+ doubles as the custom font)
+  //   0x5f00-0x5f7f draw state registers
   // Everything else reads 0 and ignores writes rather than throwing, because
   // carts poke hardware registers speculatively and a throw would kill them.
   // ---------------------------------------------------------------------------
@@ -1512,6 +1520,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
       // on hardware for a cart that never stored anything there.
       if (useRom || !this._userRam) return 0;
       return this._userRam[a - 0x4300];
+    }
+
+    if (a >= 0x5f00 && a < 0x5f80) {
+      if (useRom || !this._drawStateRam) return 0;
+      return this._drawStateRam[a - 0x5f00];
     }
 
     return 0;
@@ -1550,6 +1563,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (a >= 0x4300 && a < 0x5e00) {
       if (!this._userRam) this._userRam = new Uint8Array(0x5e00 - 0x4300);
       this._userRam[a - 0x4300] = v;
+      return;
+    }
+
+    if (a >= 0x5f00 && a < 0x5f80) {
+      if (!this._drawStateRam) this._drawStateRam = new Uint8Array(0x80);
+      this._drawStateRam[a - 0x5f00] = v;
     }
   }
 
@@ -1801,69 +1820,407 @@ class LuaPico8Extensions extends BaseLuaExtension {
   }
 
   /**
+   * The cart-supplied font at 0x5600, or null when the cart has not defined
+   * one.
+   *
+   * Layout, per the PICO-8 manual: 8 bytes per character for 256 characters,
+   * so character N's rows live at 0x5600 + N*8, one byte per row with the low
+   * bit on the left. Characters 0-15 are never drawn, so their 128 bytes are
+   * reused to describe the font itself.
+   *
+   * A cart installs this with a P8SCII raw memory write rather than poke(),
+   * e.g. "\^@56000003" followed by three bytes, then "\^!5680" and the glyphs.
+   */
+  _getCustomFont() {
+    const ram = this._userRam;
+    if (!ram) {
+      return null;
+    }
+
+    const at = (addr) => ram[addr - 0x4300] || 0;
+    const narrow = at(0x5600);
+    const height = at(0x5602);
+    // An all-zero header means nothing was ever written there. Falling back to
+    // the built-in font is much friendlier than drawing 256 blank characters.
+    if (!narrow || !height) {
+      return null;
+    }
+
+    const wide = at(0x5601) || narrow;
+    const flags = at(0x5605);
+    const applyAdjustments = (flags & 0x1) !== 0;
+
+    return {
+      GLYPH_HEIGHT: height,
+      LINE_HEIGHT: height,
+      NARROW_ADVANCE: narrow,
+      WIDE_ADVANCE: wide,
+      offsetX: at(0x5603),
+      offsetY: at(0x5604),
+      tabWidth: at(0x5606),
+
+      advanceFor(code) {
+        let width = code >= 0x80 ? wide : narrow;
+        if (applyAdjustments && code >= 16) {
+          // 120 bytes from 0x5608 hold one nibble per character for 16..255,
+          // low nibble first. Bits 0x7 adjust the width by 0,1,2,3,-4,-3,-2,-1.
+          const index = code - 16;
+          const byte = at(0x5608 + (index >> 1));
+          const nibble = (index & 1) ? (byte >> 4) : (byte & 0x0f);
+          const delta = (nibble & 0x7);
+          width += delta >= 4 ? delta - 8 : delta;
+        }
+        return Math.max(0, width);
+      },
+
+      /** Bit 0x8 of a character's nibble lifts it one pixel, for accents. */
+      liftFor(code) {
+        if (!applyAdjustments || code < 16) return 0;
+        const index = code - 16;
+        const byte = at(0x5608 + (index >> 1));
+        const nibble = (index & 1) ? (byte >> 4) : (byte & 0x0f);
+        return (nibble & 0x8) ? -1 : 0;
+      },
+
+      rowsFor(code) {
+        const base = 0x5600 + (code & 0xff) * 8;
+        const rows = new Uint8Array(8);
+        let any = 0;
+        for (let i = 0; i < 8; i += 1) {
+          rows[i] = at(base + i);
+          any |= rows[i];
+        }
+        return any ? rows : null;
+      },
+    };
+  }
+
+  /**
+   * Read one P8SCII parameter character.
+   *
+   * Parameters use a superset of hexadecimal: '0'..'9' and 'a'..'f' mean 0..15
+   * as usual, but the sequence keeps going, so 'g' is 16, 'h' is 17 and so on.
+   * That matters for the cursor-shift codes, whose arguments are biased by 16
+   * and so routinely land past 'f'.
+   */
+  static _p8sciiParam(text, index) {
+    if (index >= text.length) {
+      return 0;
+    }
+    const c = text.charCodeAt(index);
+    if (c >= 48 && c <= 57) return c - 48;          // '0'-'9'
+    if (c >= 97) return c - 97 + 10;                // 'a' onwards, unbounded
+    if (c >= 65 && c <= 90) return c - 65 + 10;     // 'A'-'Z', same values
+    return 0;
+  }
+
+  /** Read a fixed-length hex field, used by the raw memory write commands. */
+  static _p8sciiHex(text, index, length) {
+    return parseInt(text.slice(index, index + length), 16) || 0;
+  }
+
+  /**
    * Rasterise `text` into the framebuffer one glyph pixel at a time.
    *
    * Goes through _plot() rather than writing _framebuffer directly so text
    * picks up camera(), clip() and the pal() remap exactly like every other
    * draw call, and so it composites in draw order.
    *
+   * Handles the P8SCII control codes (manual appendix A), which carts use for
+   * far more than newlines: colour changes, cursor nudges, character repeats,
+   * and installing a custom font by poking 0x5600 mid-string. A control code's
+   * arguments are ordinary characters, so dropping the code but drawing its
+   * arguments - which is what a naive renderer does - puts visible garbage on
+   * screen.
+   *
    * Returns the pen position after the last character: `right` is the x the
-   * next glyph would occupy (what PICO-8's print() returns) and `bottom` is
-   * the y of the final line.
+   * next glyph would occupy (what PICO-8's print() returns), `bottom` is the y
+   * of the final line, and `color` is the foreground colour left behind, which
+   * PICO-8 keeps as a side effect of printing.
    */
   _drawText(text, x, y, color) {
-    const font = this._getFont();
-    if (!font) {
-      return { right: x, bottom: y };
+    const builtin = this._getFont();
+    if (!builtin) {
+      return { right: x, bottom: y, color };
     }
 
-    const tabStop = font.NARROW_ADVANCE * 4;
+    // 0x5f58 supplies the starting attributes, but only when its low bit says
+    // the rest of the register is meaningful.
+    const defaults = this._readByte(0x5f58);
+    const observeDefaults = (defaults & 0x1) !== 0;
+
+    const state = {
+      color,
+      bgColor: 0,
+      solidBackground: observeDefaults && (defaults & 0x10) !== 0,
+      useCustomFont: observeDefaults && (defaults & 0x80) !== 0,
+      wide: observeDefaults && (defaults & 0x4) !== 0,
+      tall: observeDefaults && (defaults & 0x8) !== 0,
+    };
+
     let penX = x;
     let penY = y;
+    let homeX = x;
+    let homeY = y;
     let right = x;
+
+    const fontFor = () => (state.useCustomFont && this._getCustomFont()) || builtin;
 
     for (let i = 0; i < text.length; i += 1) {
       const code = text.charCodeAt(i);
 
-      if (code === 10) {
-        penY += font.LINE_HEIGHT;
-        penX = x;
-        continue;
-      }
-      if (code === 9) {
-        penX = x + (Math.floor((penX - x) / tabStop) + 1) * tabStop;
-        if (penX > right) {
-          right = penX;
-        }
-        continue;
-      }
-      // Unimplemented P8SCII control codes are consumed without drawing.
-      if (code < 32) {
+      if (code >= 32) {
+        penX = this._drawGlyph(fontFor(), code, penX, penY, state);
+        if (penX > right) right = penX;
         continue;
       }
 
-      const rows = font.rowsFor(code);
-      if (rows) {
-        for (let ry = 0; ry < rows.length; ry += 1) {
-          const bits = rows[ry];
-          if (!bits) {
-            continue;
+      // --- control codes -------------------------------------------------
+      switch (code) {
+        case 0: // "\0" terminate printing
+          return { right, bottom: penY, color: state.color };
+
+        case 1: { // "\*" repeat the next character P0 times
+          const count = LuaPico8Extensions._p8sciiParam(text, i + 1);
+          const repeated = text.charCodeAt(i + 2);
+          i += 2;
+          if (!Number.isNaN(repeated)) {
+            for (let n = 0; n < count; n += 1) {
+              penX = this._drawGlyph(fontFor(), repeated, penX, penY, state);
+            }
+            if (penX > right) right = penX;
           }
-          for (let rx = 0; rx < 8; rx += 1) {
-            if (bits & (1 << rx)) {
-              this._plot(penX + rx, penY + ry, color);
+          break;
+        }
+
+        case 2: // "\#" solid background in colour P0
+          state.bgColor = LuaPico8Extensions._p8sciiParam(text, i + 1);
+          state.solidBackground = true;
+          i += 1;
+          break;
+
+        case 3: // "\-" shift the cursor horizontally by P0-16
+          penX += LuaPico8Extensions._p8sciiParam(text, i + 1) - 16;
+          i += 1;
+          break;
+
+        case 4: // "\|" shift the cursor vertically by P0-16
+          penY += LuaPico8Extensions._p8sciiParam(text, i + 1) - 16;
+          i += 1;
+          break;
+
+        case 5: // "\+" shift the cursor by P0-16, P1-16
+          penX += LuaPico8Extensions._p8sciiParam(text, i + 1) - 16;
+          penY += LuaPico8Extensions._p8sciiParam(text, i + 2) - 16;
+          i += 2;
+          break;
+
+        case 6: { // "\^" special command
+          const consumed = this._p8sciiCommand(text, i + 1, state, {
+            penX, penY, homeX, homeY, originX: x,
+          });
+          i += consumed.length;
+          penX = consumed.penX;
+          penY = consumed.penY;
+          homeX = consumed.homeX;
+          homeY = consumed.homeY;
+          break;
+        }
+
+        case 8: // "\b" backspace
+          penX -= fontFor().advanceFor(32);
+          break;
+
+        case 9: { // "\t" tab
+          const font = fontFor();
+          const stop = font.tabWidth || font.NARROW_ADVANCE * 4;
+          penX = x + (Math.floor((penX - x) / stop) + 1) * stop;
+          if (penX > right) right = penX;
+          break;
+        }
+
+        case 10: // "\n" newline
+          penY += fontFor().LINE_HEIGHT;
+          penX = x;
+          break;
+
+        case 11: // "\v" decorate the previous character at an offset
+          i += 1;
+          break;
+
+        case 12: // "\f" set the foreground colour
+          state.color = LuaPico8Extensions._p8sciiParam(text, i + 1) & 0x0f;
+          i += 1;
+          break;
+
+        case 13: // "\r" carriage return
+          penX = x;
+          break;
+
+        case 14: // switch to the font at 0x5600
+          state.useCustomFont = true;
+          break;
+
+        case 15: // switch back to the built-in font
+          state.useCustomFont = false;
+          break;
+
+        default:
+          // "\a" (7) takes a variable-length note string with no terminator we
+          // can infer, so it is dropped rather than guessed at.
+          break;
+      }
+    }
+
+    return { right, bottom: penY, color: state.color };
+  }
+
+  /**
+   * Draw one character and return the pen x after it.
+   *
+   * Split out of _drawText because "\*" needs to draw the same character
+   * repeatedly, and because the background fill has to happen per character
+   * rather than once for the whole string.
+   */
+  _drawGlyph(font, code, penX, penY, state) {
+    const advance = font.advanceFor(code);
+    const height = font.LINE_HEIGHT;
+    const scaleX = state.wide ? 2 : 1;
+    const scaleY = state.tall ? 2 : 1;
+    const offsetX = font.offsetX || 0;
+    const offsetY = (font.offsetY || 0) + (font.liftFor ? font.liftFor(code) : 0);
+
+    if (state.solidBackground) {
+      for (let by = 0; by < height * scaleY; by += 1) {
+        for (let bx = 0; bx < advance * scaleX; bx += 1) {
+          this._plot(penX + bx, penY + by, state.bgColor);
+        }
+      }
+    }
+
+    const rows = font.rowsFor(code);
+    if (rows) {
+      for (let ry = 0; ry < rows.length; ry += 1) {
+        const bits = rows[ry];
+        if (!bits) continue;
+        for (let rx = 0; rx < 8; rx += 1) {
+          if (!(bits & (1 << rx))) continue;
+          const px = penX + (rx + offsetX) * scaleX;
+          const py = penY + (ry + offsetY) * scaleY;
+          for (let sy = 0; sy < scaleY; sy += 1) {
+            for (let sx = 0; sx < scaleX; sx += 1) {
+              this._plot(px + sx, py + sy, state.color);
             }
           }
         }
       }
-
-      penX += font.advanceFor(code);
-      if (penX > right) {
-        right = penX;
-      }
     }
 
-    return { right, bottom: penY };
+    return penX + advance * scaleX;
+  }
+
+  /**
+   * Handle one "\^" special command starting at `index`, returning how many
+   * characters it consumed alongside any cursor movement it caused.
+   *
+   * The raw memory writes ("@" and "!") are the reason this exists: a cart
+   * installs its custom font by embedding the glyph data in a printed string,
+   * so a renderer that only draws text will never see the font at all.
+   */
+  _p8sciiCommand(text, index, state, cursor) {
+    const result = { ...cursor, length: 1 };
+    const command = text[index];
+
+    switch (command) {
+      case '@': { // "@addrnnnn[data]" poke nnnn bytes to address addr
+        const addr = LuaPico8Extensions._p8sciiHex(text, index + 1, 4);
+        const count = LuaPico8Extensions._p8sciiHex(text, index + 5, 4);
+        const start = index + 9;
+        for (let n = 0; n < count; n += 1) {
+          this._writeByte(addr + n, text.charCodeAt(start + n) & 0xff);
+        }
+        result.length = 9 + count;
+        break;
+      }
+
+      case '!': { // "!addr[data]" poke every remaining character to addr
+        const addr = LuaPico8Extensions._p8sciiHex(text, index + 1, 4);
+        const start = index + 5;
+        for (let n = start; n < text.length; n += 1) {
+          this._writeByte(addr + (n - start), text.charCodeAt(n) & 0xff);
+        }
+        result.length = text.length - index;
+        break;
+      }
+
+      case 'c': // clear the screen to colour P0 and home the cursor
+        this._clearFb(LuaPico8Extensions._p8sciiParam(text, index + 1) & 0x0f, false);
+        result.penX = 0;
+        result.penY = 0;
+        result.length = 2;
+        break;
+
+      case 'g': // move the cursor to home
+        result.penX = result.homeX;
+        result.penY = result.homeY;
+        break;
+
+      case 'h': // set home to the cursor
+        result.homeX = cursor.penX;
+        result.homeY = cursor.penY;
+        break;
+
+      case 'j': // jump to absolute P0*4, P1*4 in screen pixels
+        result.penX = LuaPico8Extensions._p8sciiParam(text, index + 1) * 4;
+        result.penY = LuaPico8Extensions._p8sciiParam(text, index + 2) * 4;
+        result.length = 3;
+        break;
+
+      case 'w': state.wide = true; break;
+      case 't': state.tall = true; break;
+      case 'p': state.wide = true; state.tall = true; break;
+      case '#': state.solidBackground = true; break;
+
+      case '-': { // "-x" disables the mode that "x" enables
+        const mode = text[index + 1];
+        if (mode === 'w') state.wide = false;
+        else if (mode === 't') state.tall = false;
+        else if (mode === 'p') { state.wide = false; state.tall = false; }
+        else if (mode === '#') state.solidBackground = false;
+        result.length = 2;
+        break;
+      }
+
+      // Commands whose arguments must be stepped over so they are not drawn as
+      // text, but whose effects are not reproduced here.
+      case 'd': // per-character print delay
+      case 'r': // right-hand wrap boundary
+      case 's': // tab stop width
+      case 'x': // character width override
+      case 'y': // character height override
+        result.length = 2;
+        break;
+
+      case 'o': // outline: colour then a two-digit neighbour bitfield
+        result.length = 4;
+        break;
+
+      case '.': // one-off character, 8 bytes of raw binary
+      case ',':
+        result.length = 9;
+        break;
+
+      case ':': // one-off character, 16 hex digits
+      case ';':
+        result.length = 17;
+        break;
+
+      default:
+        // "1".."9" skip frames, and anything unrecognised takes no argument.
+        break;
+    }
+
+    return result;
   }
 
   /**
@@ -1901,7 +2258,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
       this.currentColor = Math.floor(col) & 0xFF;
     }
 
-    const font = this._getFont();
+    const font = (((this._readByte(0x5f58) & 0x81) === 0x81) && this._getCustomFont())
+      || this._getFont();
     const lineHeight = font ? font.LINE_HEIGHT : 6;
     const useCursor = x === undefined || y === undefined;
 
@@ -1917,8 +2275,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
       }
     }
 
-    const { right, bottom } = this._drawText(text, penX, penY, this.currentColor);
+    const { right, bottom, color } = this._drawText(text, penX, penY, this.currentColor);
 
+    // A "\f" inside the string outlives the print() that contained it: the
+    // manual lists cursor position and foreground colour as the only draw
+    // state print() is allowed to leave behind.
+    this.currentColor = color;
     this._cursorX = penX;
     this._cursorY = bottom + lineHeight;
     return right;
