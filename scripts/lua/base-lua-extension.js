@@ -120,12 +120,14 @@ class BaseLuaExtension {
     // Some PICO-8 builtins cannot go through the JS bridge at all:
     //  - the table helpers take and return Lua tables, which would have to be
     //    marshalled both ways on every call;
+    //  - split() builds a table too, and pack()/unpack() convert between a
+    //    table and Lua multiple returns, which the bridge cannot express;
     //  - the coroutine helpers must yield across their own call frame, and a
     //    yield cannot cross a C/JS boundary ("attempt to yield across a
     //    C-call boundary").
     // Both are implemented directly in Lua instead.
     const isPico8LuaNative = className === 'Pico8'
-      && ['add', 'del', 'count', 'all', 'foreach',
+      && ['add', 'del', 'deli', 'count', 'all', 'foreach', 'split', 'pack', 'unpack',
         'cocreate', 'coresume', 'costatus', 'cowrap', 'yield'].includes(luaFunctionName);
 
     if (isPico8LuaNative) {
@@ -152,6 +154,17 @@ class BaseLuaExtension {
       return nil
     end
     del = Pico8.del
+      `,
+      deli: `
+    function Pico8.deli(t, i)
+      if t == nil then return nil end
+      -- Defaults to the last element, like table.remove.
+      if i == nil then i = #t end
+      -- table.remove raises on an out of range index; PICO-8 returns nil.
+      if i < 1 or i > #t then return nil end
+      return table.remove(t, i)
+    end
+    deli = Pico8.deli
       `,
       count: `
     function Pico8.count(t)
@@ -185,6 +198,74 @@ class BaseLuaExtension {
       end
     end
     foreach = Pico8.foreach
+      `,
+      split: `
+    -- Elements convert to numbers by default, so split("1,2,3") gives numbers
+    -- and split("1,2,3", ",", false) gives strings. Anything that is not
+    -- wholly numeric stays a string either way.
+    local function __splitElement(text, convert)
+      if convert then
+        local n = tonumber(text)
+        if n ~= nil then return n end
+      end
+      return text
+    end
+
+    function Pico8.split(s, separator, convert)
+      local out = {}
+      if s == nil then return out end
+      s = tostring(s)
+      -- Defaults, but an explicit false must stay false.
+      if convert == nil then convert = true end
+
+      -- A numeric separator means "cut into groups of n characters" rather
+      -- than "look for this delimiter".
+      if type(separator) == "number" then
+        -- No math.floor: the firmware does not register the math library.
+        local size = separator - separator % 1
+        if size < 1 then return out end
+        local i = 1
+        while i <= #s do
+          out[#out + 1] = __splitElement(string.sub(s, i, i + size - 1), convert)
+          i = i + size
+        end
+        return out
+      end
+
+      if separator == nil then separator = "," end
+      separator = tostring(separator)
+      -- An empty delimiter would match at every position and never advance.
+      if separator == "" then return out end
+
+      local start = 1
+      while true do
+        -- Plain find: a delimiter such as "." is a literal, not a pattern.
+        local from, to = string.find(s, separator, start, true)
+        if from == nil then
+          out[#out + 1] = __splitElement(string.sub(s, start), convert)
+          return out
+        end
+        out[#out + 1] = __splitElement(string.sub(s, start, from - 1), convert)
+        start = to + 1
+      end
+    end
+    split = Pico8.split
+      `,
+      pack: `
+    function Pico8.pack(...)
+      -- Sets the field n, so a trailing nil is still counted.
+      return table.pack(...)
+    end
+    pack = Pico8.pack
+      `,
+      unpack: `
+    function Pico8.unpack(t, i, j)
+      -- PICO-8 exposes the 5.1 spelling as a global. This VM is 5.3, where the
+      -- bare global is gone and only table.unpack exists.
+      if t == nil then return end
+      return table.unpack(t, i or 1, j or #t)
+    end
+    unpack = Pico8.unpack
       `,
       cocreate: `
     function Pico8.cocreate(f)

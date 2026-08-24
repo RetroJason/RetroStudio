@@ -2182,6 +2182,79 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return args.length >= 3 ? codes : codes[0];
   }
 
+  /**
+   * Split a string into a table of elements
+   * Lua: split(str, [separator], [convert_numbers]) -> table
+   *
+   * Implemented in Lua at runtime (see base-lua-extension.js) because the
+   * result is a table and a table cannot cross the JS bridge. This copy keeps
+   * the loader's API surface honest and is what the tests exercise.
+   */
+  split(...args) {
+    const s = args[0] === undefined || args[0] === null ? '' : String(args[0]);
+    const separator = args[1] === undefined || args[1] === null ? ',' : args[1];
+    const convert = args[2] === undefined || args[2] === null ? true : Boolean(args[2]);
+
+    const asElement = (text) => {
+      if (!convert) return text;
+      // Only a fully numeric element converts; "1a" stays a string.
+      const trimmed = text.trim();
+      if (trimmed === '') return text;
+      const value = Number(trimmed);
+      return Number.isNaN(value) ? text : value;
+    };
+
+    if (typeof separator === 'number') {
+      const size = Math.floor(separator);
+      if (size < 1) return [];
+      const out = [];
+      for (let i = 0; i < s.length; i += size) {
+        out.push(asElement(s.substr(i, size)));
+      }
+      return out;
+    }
+
+    const sep = String(separator);
+    // An empty delimiter would loop forever rather than splitting anything.
+    if (sep === '') return [];
+    return s.split(sep).map(asElement);
+  }
+
+  /**
+   * Pack arguments into a table
+   * Lua: pack(...) -> table
+   *
+   * Lua-native at runtime, like split(); see base-lua-extension.js.
+   */
+  pack(...args) {
+    // Mirrors table.pack: the count is carried in n so a trailing nil counts.
+    const packed = { n: args.length };
+    for (let i = 0; i < args.length; i += 1) {
+      packed[i + 1] = args[i];
+    }
+    return packed;
+  }
+
+  /**
+   * Unpack a table into separate values
+   * Lua: unpack(t, [i], [j]) -> value, ...
+   *
+   * Lua-native at runtime, like split(); see base-lua-extension.js.
+   */
+  unpack(...args) {
+    const t = args[0];
+    if (!this._isTableLike(t)) return [];
+    const length = this._tableLength(t);
+    const from = this._optionalIntegerArg(args, 1, 1, 'unpack', 'i');
+    const to = this._optionalIntegerArg(args, 2, length, 'unpack', 'j');
+
+    const values = [];
+    for (let i = from; i <= to; i += 1) {
+      values.push(Array.isArray(t) ? t[i - 1] : t[i]);
+    }
+    return values;
+  }
+
   _isTableLike(value) {
     return Array.isArray(value) || (value !== null && typeof value === 'object');
   }
@@ -2276,6 +2349,39 @@ class LuaPico8Extensions extends BaseLuaExtension {
     delete t[tableLength];
 
     return v;
+  }
+
+  /**
+   * Delete the element at an index
+   * Lua: deli(t, [i]) -> value
+   *
+   * Lua-native at runtime, like split(); see base-lua-extension.js.
+   */
+  deli(...args) {
+    const t = args[0];
+
+    if (!this._isTableLike(t)) {
+      throw new Error('[Pico8] deli() requires first argument to be a table');
+    }
+
+    const length = this._tableLength(t);
+    // Defaults to the last element, like table.remove.
+    const index = this._optionalIntegerArg(args, 1, length, 'deli', 'i');
+    // Out of range is nil in PICO-8, not an error.
+    if (index < 1 || index > length) {
+      return undefined;
+    }
+
+    if (Array.isArray(t)) {
+      return t.splice(index - 1, 1)[0];
+    }
+
+    const value = t[index];
+    for (let idx = index; idx < length; idx += 1) {
+      t[idx] = t[idx + 1];
+    }
+    delete t[length];
+    return value;
   }
 
   /**

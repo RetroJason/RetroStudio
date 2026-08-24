@@ -46,9 +46,9 @@ const EXPECTED_FUNCTIONS = [
   // Bitwise
   'band', 'bor', 'bxor', 'bnot', 'shl', 'shr', 'lshl', 'lshr', 'rotl', 'rotr',
   // String
-  'sub', 'tostr', 'tonum', 'chr', 'ord',
+  'sub', 'tostr', 'tonum', 'chr', 'ord', 'split',
   // Table
-  'add', 'del', 'count', 'all', 'foreach',
+  'add', 'del', 'deli', 'count', 'all', 'foreach', 'pack', 'unpack',
   // Coroutines (implemented in Lua; the JS stubs only satisfy the loader)
   'cocreate', 'coresume', 'costatus', 'cowrap', 'yield',
   // Memory
@@ -158,7 +158,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 87);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 91);
     },
   },
   {
@@ -1080,6 +1080,79 @@ const tests = [
 
       // A count running past the end stops there rather than padding.
       assert.deepStrictEqual(pico8.ord('ab', 1, 5), [97, 98]);
+    },
+  },
+  {
+    name: 'split cuts on a delimiter and converts numeric elements by default',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.deepStrictEqual(pico8.split('1,2,3'), [1, 2, 3]);
+      assert.deepStrictEqual(pico8.split('a,b,c'), ['a', 'b', 'c']);
+
+      // A non-default delimiter, and conversion turned off.
+      assert.deepStrictEqual(pico8.split('one:two:3', ':'), ['one', 'two', 3]);
+      assert.deepStrictEqual(pico8.split('one:two:3', ':', false), ['one', 'two', '3']);
+
+      // Empty elements are kept, including a trailing one.
+      assert.deepStrictEqual(pico8.split('1,,2,'), [1, '', 2, '']);
+
+      // Partly numeric text is not a number.
+      assert.deepStrictEqual(pico8.split('1a,2'), ['1a', 2]);
+    },
+  },
+  {
+    name: 'split with a numeric separator cuts fixed-size groups instead',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.deepStrictEqual(pico8.split('abcdef', 3), ['abc', 'def']);
+      assert.deepStrictEqual(pico8.split('12345', 2), [12, 34, 5]);
+
+      // A trailing partial group is kept rather than dropped or padded.
+      assert.deepStrictEqual(pico8.split('abcde', 2), ['ab', 'cd', 'e']);
+
+      // A separator that cannot make progress yields nothing rather than
+      // looping forever.
+      assert.deepStrictEqual(pico8.split('abc', 0), []);
+      assert.deepStrictEqual(pico8.split('abc', ''), []);
+    },
+  },
+  {
+    name: 'deli removes by index and defaults to the last element',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const t = [10, 20, 30];
+      assert.strictEqual(pico8.deli(t, 2), 20);
+      assert.deepStrictEqual(t, [10, 30]);
+
+      // No index means the last element.
+      assert.strictEqual(pico8.deli(t), 30);
+      assert.deepStrictEqual(t, [10]);
+
+      // Out of range is nil rather than an error, and leaves the table alone.
+      assert.strictEqual(pico8.deli(t, 5), undefined);
+      assert.strictEqual(pico8.deli(t, 0), undefined);
+      assert.deepStrictEqual(t, [10]);
+    },
+  },
+  {
+    name: 'pack counts its arguments in n so a trailing nil is not lost',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.deepStrictEqual(pico8.pack(1, 2, 3), { n: 3, 1: 1, 2: 2, 3: 3 });
+      assert.deepStrictEqual(pico8.pack(), { n: 0 });
+    },
+  },
+  {
+    name: 'unpack returns the table range as separate values',
+    fn: () => {
+      const { pico8 } = makePico8();
+      // An array result is what the bridge expands into Lua multiple returns.
+      assert.deepStrictEqual(pico8.unpack([1, 2, 3]), [1, 2, 3]);
+      assert.deepStrictEqual(pico8.unpack([1, 2, 3], 2), [2, 3]);
+      assert.deepStrictEqual(pico8.unpack([1, 2, 3], 2, 2), [2]);
+
+      // Lua-style tables are 1-based objects rather than arrays.
+      assert.deepStrictEqual(pico8.unpack({ 1: 'a', 2: 'b' }), ['a', 'b']);
     },
   },
 

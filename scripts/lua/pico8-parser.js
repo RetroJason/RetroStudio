@@ -222,8 +222,52 @@
 
   const isDigit = (ch) => ch >= '0' && ch <= '9';
   const isHexDigit = (ch) => isDigit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+
   const isNameStart = (ch) => (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch === '_';
   const isNameChar = (ch) => isNameStart(ch) || isDigit(ch);
+
+  const HAS_GLYPH = /[^\x00-\x7f]/;
+
+  /**
+   * PICO-8's Lua counts the high P8SCII characters as name characters, so a
+   * glyph can be a variable. Carts use them as one-character names, and reading
+   * one that was never assigned is simply nil - `fillp(cond and pat or \u25a4)`
+   * relies on that to mean "otherwise clear the pattern".
+   *
+   * Returns the matched spelling, including any trailing variation selector, so
+   * the caller knows how far to advance. Limited to the characters a .p8 can
+   * actually hold, which keeps anything else an error.
+   */
+  function matchGlyph(src, pos) {
+    if (!(src.charCodeAt(pos) >= 0x80)) return null;
+    for (let len = P8SCII_MAX_UNITS; len >= 1; len -= 1) {
+      if (!P8SCII_CODES.has(src.substr(pos, len))) continue;
+      return src[pos + len] === '\uFE0F' ? src.substr(pos, len + 1) : src.substr(pos, len);
+    }
+    return null;
+  }
+
+  /**
+   * Generated output is ordinary Lua, which only accepts ASCII identifiers, so
+   * a glyph name has to be rewritten. Keyed on the PICO-8 character code, which
+   * is stable and cannot collide with an ASCII name from the same cart.
+   */
+  function sanitizeName(name) {
+    if (!HAS_GLYPH.test(name)) return name;
+    let out = '';
+    let i = 0;
+    while (i < name.length) {
+      const glyph = matchGlyph(name, i);
+      if (!glyph) {
+        out += name[i];
+        i += 1;
+        continue;
+      }
+      out += `__p8g${P8SCII_CODES.get(glyph.replace(VARIATION_SELECTOR, '')).toString(16)}_`;
+      i += glyph.length;
+    }
+    return out;
+  }
 
   function tokenize(source) {
     const src = String(source == null ? '' : source);
@@ -430,9 +474,36 @@
         continue;
       }
 
-      if (isNameStart(ch)) {
+      // Must beat the name path: a button glyph is a number literal, not a
+      // variable, even though it is otherwise a legal name character.
+      const button = src.charCodeAt(pos) >= 0x80
+        ? BUTTON_GLYPHS.find(([text]) => src.startsWith(text, pos))
+        : null;
+      if (button) {
+        pos += button[0].length;
+        tokens.push({
+          type: 'number',
+          value: button[1],
+          raw: button[0],
+          line: startLine,
+          column: startColumn,
+        });
+        continue;
+      }
+
+      const nameGlyph = matchGlyph(src, pos);
+      if (isNameStart(ch) || nameGlyph) {
         const start = pos;
-        while (pos < src.length && isNameChar(src[pos])) pos += 1;
+        pos += nameGlyph ? nameGlyph.length : 1;
+        for (;;) {
+          if (isNameChar(src[pos])) {
+            pos += 1;
+            continue;
+          }
+          const more = matchGlyph(src, pos);
+          if (!more) break;
+          pos += more.length;
+        }
         const word = src.slice(start, pos);
         tokens.push({
           type: KEYWORDS.has(word) ? 'keyword' : 'name',
@@ -445,20 +516,6 @@
 
       const op = OPERATORS.find((candidate) => src.startsWith(candidate, pos));
       if (!op) {
-        // Checked only once the ASCII paths have all missed, so the common case
-        // never pays for it.
-        const glyph = BUTTON_GLYPHS.find(([text]) => src.startsWith(text, pos));
-        if (glyph) {
-          pos += glyph[0].length;
-          tokens.push({
-            type: 'number',
-            value: glyph[1],
-            raw: glyph[0],
-            line: startLine,
-            column: startColumn,
-          });
-          continue;
-        }
         fail(`unexpected symbol near '${ch}'`, startLine, startColumn);
       }
       pos += op.length;
@@ -1106,7 +1163,7 @@
       const at = line || node.line;
       switch (node.type) {
         case 'Identifier':
-          writer.put(node.name, at);
+          writer.put(sanitizeName(node.name), at);
           break;
         case 'NumericLiteral':
           writer.put(formatNumber(node.value), at);
@@ -1127,6 +1184,15 @@
           break;
         case 'Member':
           genExpression(node.base, at);
+          if (node.indexer === '.' && HAS_GLYPH.test(node.name)) {
+            // A field name has to stay the key the cart wrote, so `t.\u25a4` and
+            // `t["\u25a4"]` still reach the same entry. Sanitizing would break that,
+            // so index by the PICO-8 string instead.
+            writer.put('[', writer.line, { tight: true, open: true });
+            writer.put(formatString({ value: toP8Scii(node.name), quote: '"' }), writer.line);
+            writer.put(']', writer.line, { tight: true });
+            break;
+          }
           writer.put(node.indexer, writer.line, { tight: true, open: true });
           writer.put(node.name, writer.line);
           break;
@@ -1189,7 +1255,14 @@
           writer.put(']', writer.line, { tight: true });
           writer.put('=', writer.line);
         } else if (field.kind === 'name') {
-          writer.put(field.key, field.value.line);
+          if (HAS_GLYPH.test(field.key)) {
+            // Same reasoning as Member: keep the cart's own key.
+            writer.put('[', field.value.line, { open: true });
+            writer.put(formatString({ value: toP8Scii(field.key), quote: '"' }), writer.line);
+            writer.put(']', writer.line, { tight: true });
+          } else {
+            writer.put(field.key, field.value.line);
+          }
           writer.put('=', writer.line);
         }
         genExpression(field.value);
@@ -1201,7 +1274,7 @@
       writer.put('(', writer.line, { tight: true, open: true });
       node.params.forEach((param, i) => {
         if (i > 0) writer.put(',', writer.line, { tight: true });
-        writer.put(param, writer.line);
+        writer.put(sanitizeName(param), writer.line);
       });
       if (node.hasVararg) {
         if (node.params.length) writer.put(',', writer.line, { tight: true });
@@ -1323,7 +1396,7 @@
           writer.put('local', at);
           node.names.forEach((name, i) => {
             if (i > 0) writer.put(',', writer.line, { tight: true });
-            writer.put(name, writer.line);
+            writer.put(sanitizeName(name), writer.line);
           });
           if (node.values.length) {
             writer.put('=', writer.line);
@@ -1408,7 +1481,7 @@
 
         case 'NumericFor':
           writer.put('for', at);
-          writer.put(node.variable, writer.line);
+          writer.put(sanitizeName(node.variable), writer.line);
           writer.put('=', writer.line);
           genExpression(node.start);
           writer.put(',', writer.line, { tight: true });
@@ -1426,7 +1499,7 @@
           writer.put('for', at);
           node.names.forEach((name, i) => {
             if (i > 0) writer.put(',', writer.line, { tight: true });
-            writer.put(name, writer.line);
+            writer.put(sanitizeName(name), writer.line);
           });
           writer.put('in', writer.line);
           genExpressionList(node.iterators);

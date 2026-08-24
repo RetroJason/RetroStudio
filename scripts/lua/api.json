@@ -2177,6 +2177,35 @@
           "example": "local a, b = ord('abc', 1, 2)"
         },
         {
+          "name": "split",
+          "description": "Split a string into a table of elements. A numeric separator groups the string into fixed-size chunks instead",
+          "parameters": [
+            {"name": "str", "type": "string", "description": "String to split."},
+            {"name": "separator", "type": "any", "optional": true, "description": "Delimiter string, or a number to split into fixed-size groups. Defaults to ','."},
+            {"name": "convert_numbers", "type": "boolean", "optional": true, "description": "Store numeric elements as numbers rather than strings. Defaults to true."}
+          ],
+          "returns": {"type": "table", "description": "A table of the split elements, in order."},
+          "example": "local parts = split('1,2,3')"
+        },
+        {
+          "name": "pack",
+          "description": "Pack arguments into a table, with the count in field n",
+          "parameters": [{"name": "...", "type": "any", "description": "Values to pack."}],
+          "returns": {"type": "table", "description": "A table of the arguments, with the count in field n."},
+          "example": "local args = pack(1, 2, 3)"
+        },
+        {
+          "name": "unpack",
+          "description": "Unpack a table into separate values",
+          "parameters": [
+            {"name": "t", "type": "table", "description": "Table to unpack."},
+            {"name": "i", "type": "number", "optional": true, "description": "First index to return. Defaults to 1."},
+            {"name": "j", "type": "number", "optional": true, "description": "Last index to return. Defaults to #t."}
+          ],
+          "returns": {"type": "any", "description": "One value per table element in the range."},
+          "example": "local a, b = unpack({1, 2})"
+        },
+        {
           "name": "add",
           "description": "Add value to table",
           "parameters": [
@@ -2196,6 +2225,16 @@
           ],
           "returns": {"type": "any", "description": "The removed value, or nil when no element matched."},
           "example": "del(items, 42)"
+        },
+        {
+          "name": "deli",
+          "description": "Delete the element at an index and return it",
+          "parameters": [
+            {"name": "t", "type": "table", "description": "Table to remove from."},
+            {"name": "i", "type": "number", "optional": true, "description": "Index to remove. Defaults to the last element."}
+          ],
+          "returns": {"type": "any", "description": "The removed value, or nil when the index is out of range."},
+          "example": "local last = deli(items)"
         },
         {
           "name": "count",

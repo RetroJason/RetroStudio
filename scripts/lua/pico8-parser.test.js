@@ -535,6 +535,58 @@ test('an unsupported symbol is still reported rather than silently dropped', () 
   assert.throws(() => tokenize('x = \u00A7'), /unexpected symbol/);
 });
 
+// ===========================================================================
+// Glyph names - PICO-8 counts the high characters as name characters, so carts
+// use them as one-character variables. dinky_kong.p8 writes
+// `fillp(flk==0 and 0b1111000011110000.1 or \u25a4)`, where \u25a4 is never
+// assigned, to mean "otherwise clear the fill pattern".
+// ===========================================================================
+
+test('a glyph that is not a button reads as a name, not a syntax error', () => {
+  const [token] = tokenize('\u25a4');
+  assert.strictEqual(token.type, 'name');
+  assert.strictEqual(token.value, '\u25a4');
+});
+
+test('an unassigned glyph name compiles to a plain global, so it evaluates to nil', () => {
+  assert.strictEqual(c('fillp(flk==0 and 0b1010.1 or \u25a4)'), 'fillp(flk == 0 and 10.5 or __p8g98_)');
+});
+
+test('each glyph name gets its own identifier, so two glyphs stay distinct', () => {
+  assert.strictEqual(c('x = \u25a4'), 'x = __p8g98_');
+  assert.strictEqual(c('x = \u2592'), 'x = __p8g81_');
+});
+
+test('a glyph name is an ordinary variable that can be assigned and read back', () => {
+  assert.strictEqual(c('\u25a4 = 1 y = \u25a4'), '__p8g98_ = 1 y = __p8g98_');
+  assert.strictEqual(c('local \u2592 = 2'), 'local __p8g81_ = 2');
+});
+
+test('glyphs combine with ASCII in one name rather than splitting the token', () => {
+  const tokens = tokenize('a\u25a4b = 1');
+  assert.strictEqual(tokens[0].type, 'name');
+  assert.strictEqual(tokens[0].value, 'a\u25a4b');
+  assert.strictEqual(c('a\u25a4b = 1'), 'a__p8g98_b = 1');
+});
+
+test('a button glyph is still a number even though it could spell a name', () => {
+  assert.strictEqual(c('x = \u274E\uFE0F'), 'x = 5');
+  assert.strictEqual(c('x = \u2B05\uFE0F'), 'x = 0');
+});
+
+test('a glyph field keeps the cart key, so dot and bracket access agree', () => {
+  assert.strictEqual(c('x = t.\u25a4'), 'x = t["\\152"]');
+  assert.strictEqual(c('t = {\u25a4 = 1}'), 't = {["\\152"] = 1}');
+});
+
+test('a glyph name is not confused for the same glyph inside a string', () => {
+  assert.strictEqual(c('x = \u25a4 y = "\u25a4"'), 'x = __p8g98_ y = "\\152"');
+});
+
+test('a glyph outside the character set is still rejected as a name', () => {
+  assert.throws(() => tokenize('\u00A7 = 1'), /unexpected symbol/);
+});
+
 // P8SCII strings - a .p8 stores text as UTF-8, PICO-8 runs it as single bytes
 test('each glyph in a string becomes the single byte PICO-8 would hold', () => {
   const cases = [
