@@ -1384,7 +1384,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Draw map cells as sprites.
    * Lua: map(cx, cy, sx, sy, cw, ch, [layer])
    * Sprite 0 is treated as empty. When layer is non-zero only tiles whose
-   * sprite flags contain every bit of layer are drawn.
+   * sprite flags contain at least one bit of layer are drawn.
    */
   map(...args) {
     const cx = this._optionalIntegerArg(args, 0, 0, 'map', 'cx');
@@ -1429,6 +1429,67 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (!map) return 0;
     if (x < 0 || y < 0 || x >= map.width || y >= map.height) return 0;
     return map.tiles[y * map.width + x] & 0xff;
+  }
+
+  /**
+   * Draw a line textured with the map.
+   * Lua: tline(x0, y0, x1, y1, mx, my, [mdx], [mdy], [layers])
+   *
+   * Walks the screen line one pixel at a time while a second cursor walks the
+   * map in cell space, advancing by (mdx, mdy) per pixel - so the fractional
+   * part of (mx, my) picks the pixel within the 8x8 cell and the integer part
+   * picks the cell. That indirection is what makes tline() a texture mapper:
+   * carts rotate and scale sprites with it, e.g. "Sonic 2.5" draws every
+   * rotated sprite as a stack of tlines through a rotation matrix.
+   *
+   * mdx/mdy default to 1/8, one map pixel per screen pixel along x.
+   */
+  tline(...args) {
+    const x0 = Math.floor(this._requireNumberArg(args, 0, 'tline', 'x0'));
+    const y0 = Math.floor(this._requireNumberArg(args, 1, 'tline', 'y0'));
+    const x1 = Math.floor(this._requireNumberArg(args, 2, 'tline', 'x1'));
+    const y1 = Math.floor(this._requireNumberArg(args, 3, 'tline', 'y1'));
+    let mx = this._requireNumberArg(args, 4, 'tline', 'mx');
+    let my = this._requireNumberArg(args, 5, 'tline', 'my');
+    const mdx = this._optionalNumberArg(args, 6, 1 / 8, 'tline', 'mdx');
+    const mdy = this._optionalNumberArg(args, 7, 0, 'tline', 'mdy');
+    const layers = this._optionalIntegerArg(args, 8, 0, 'tline', 'layers');
+
+    if (!this._map || !this._sheet) return;
+
+    // Bresenham along the screen line, the same walk line() uses, so a tline
+    // and a line between the same endpoints cover exactly the same pixels.
+    const dx = Math.abs(x1 - x0);
+    const dy = -Math.abs(y1 - y0);
+    const stepX = x0 < x1 ? 1 : -1;
+    const stepY = y0 < y1 ? 1 : -1;
+    let error = dx + dy;
+    let x = x0;
+    let y = y0;
+
+    // A degenerate mdx/mdy would spin forever on a long line; the pixel budget
+    // is the screen diagonal, which is all a real tline can ever cover.
+    const budget = (dx - dy) + 1;
+    for (let i = 0; i < budget; i += 1) {
+      const cellX = Math.floor(mx);
+      const cellY = Math.floor(my);
+      const tile = this._mapTile(cellX, cellY);
+      // Sprite 0 is empty, and the layer mask selects any of its flags.
+      if (tile !== 0 && (layers === 0 || (this._spriteFlagByte(tile) & layers) !== 0)) {
+        // The fraction of the map coordinate is the offset inside the cell.
+        const px = Math.floor((mx - cellX) * 8);
+        const py = Math.floor((my - cellY) * 8);
+        const c = this._sheetPixel(((tile % 16) * 8) + px, (Math.floor(tile / 16) * 8) + py);
+        if (!this._isTransparentColor(c)) this._plot(x, y, c);
+      }
+
+      if (x === x1 && y === y1) break;
+      const e2 = 2 * error;
+      if (e2 >= dy) { error += dy; x += stepX; }
+      if (e2 <= dx) { error += dx; y += stepY; }
+      mx += mdx;
+      my += mdy;
+    }
   }
 
   /**
@@ -1654,6 +1715,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
   //   0x3000-0x30ff sprite flags
   //   0x4300-0x5dff general-purpose RAM (0x5600+ doubles as the custom font)
   //   0x5f00-0x5f7f draw state registers
+  //   0x6000-0x7fff the screen, packed like the sprite sheet
   // Everything else reads 0 and ignores writes rather than throwing, because
   // carts poke hardware registers speculatively and a throw would kill them.
   //
@@ -1709,6 +1771,53 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._mirrorSheetByteToMap(addr, byte);
   }
 
+  static SCREEN_START = 0x6000;
+
+  static SCREEN_END = 0x8000;
+
+  /**
+   * Read one packed screen byte: two pixels of a 128x128 4bpp image, low nibble
+   * on the left. Sampled through the logical view so a cart still sees the
+   * 128x128 screen it addresses when the framebuffer is running larger.
+   */
+  _readScreenByte(addr) {
+    const offset = addr - LuaPico8Extensions.SCREEN_START;
+    const y = offset >> 6;
+    const x = (offset & 0x3f) * 2;
+    const left = this._framebuffer[
+      this._logicalToRenderY(y) * this._fbWidth + this._logicalToRenderX(x)
+    ] || 0;
+    const right = this._framebuffer[
+      this._logicalToRenderY(y) * this._fbWidth + this._logicalToRenderX(x + 1)
+    ] || 0;
+    return (left & 0x0f) | ((right & 0x0f) << 4);
+  }
+
+  /**
+   * Write one packed screen byte, bypassing clip, camera and the draw palette -
+   * a poke to screen memory is a raw store on hardware, not a draw call.
+   */
+  _writeScreenByte(addr, value) {
+    const offset = addr - LuaPico8Extensions.SCREEN_START;
+    const y = offset >> 6;
+    const x = (offset & 0x3f) * 2;
+    this._setScreenPixel(x, y, value & 0x0f);
+    this._setScreenPixel(x + 1, y, (value >> 4) & 0x0f);
+  }
+
+  /** Store one logical pixel, filling its whole cell when scaled up. */
+  _setScreenPixel(x, y, color) {
+    const bounds = this._logicalCellBounds(x, y);
+    for (let py = bounds.y0; py <= bounds.y1; py += 1) {
+      if (py < 0 || py >= this._fbHeight) continue;
+      const row = py * this._fbWidth;
+      for (let px = bounds.x0; px <= bounds.x1; px += 1) {
+        if (px < 0 || px >= this._fbWidth) continue;
+        this._framebuffer[row + px] = color;
+      }
+    }
+  }
+
   _readByte(addr, useRom = false) {
     const a = addr | 0;
     if (a < 0 || a > 0x7fff) return 0;
@@ -1751,6 +1860,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
       if (a < 0x5f20) return this._screenPalette[a - 0x5f10];
       if (!this._drawStateRam) return 0;
       return this._drawStateRam[a - 0x5f00];
+    }
+
+    if (a >= LuaPico8Extensions.SCREEN_START) {
+      // The cart ROM holds no screen, so reload() of this region is zeroes.
+      return useRom ? 0 : this._readScreenByte(a);
     }
 
     return 0;
@@ -1804,6 +1918,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
       }
       if (!this._drawStateRam) this._drawStateRam = new Uint8Array(0x80);
       this._drawStateRam[a - 0x5f00] = v;
+      return;
+    }
+
+    if (a >= LuaPico8Extensions.SCREEN_START) {
+      this._writeScreenByte(a, v);
     }
   }
 
@@ -1959,7 +2078,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /**
    * Set palette mapping
-   * Lua: pal([c0, c1, [p]])
+   * Lua: pal([c0, c1, [p]]) / pal(tbl, [p]) / pal([p])
    *
    * p selects which palette to change: 0 (default) is the draw palette, which
    * remaps colours as they are drawn, and 1 is the screen palette, which
@@ -1967,20 +2086,63 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * are already in the framebuffer. Carts lean on the screen palette for fades
    * and for reaching the extended colours, so treating p as decoration left
    * whole scenes in the wrong hue.
+   *
+   * Returns the mapping c0 had before the call, which is how a cart saves a
+   * palette it is about to change: "Sonic 2.5" draws its text outline with
+   * `o_pal[i] = pal(i, c)` and puts the old colours back with `pal(o_pal)`.
    */
   pal(...args) {
-    const c0 = this._optionalIntegerArg(args, 0, -1, 'pal', 'c0');
-    const c1 = this._optionalIntegerArg(args, 1, -1, 'pal', 'c1');
-    const p = this._optionalIntegerArg(args, 2, 0, 'pal', 'p');
+    const isTable = this._isTableArg(args[0]);
+    const p = isTable
+      ? this._optionalIntegerArg(args, 1, 0, 'pal', 'p')
+      : this._optionalIntegerArg(args, 2, 0, 'pal', 'p');
 
-    if (c0 >= 0 && c1 >= 0) {
-      if (p === 1) this._setScreenPaletteEntry(c0 & 0x0f, c1 & 0xff);
-      else this.currentPalette.set(c0, c1);
-      return;
+    // pal(tbl) assigns an entry per key. Table keys start at 1, so a plain
+    // 16-element array gives colour 0 last: the manual's greyscale example
+    // pal({1,1,5,5,5,6,7,13,6,7,7,6,13,6,7,1}, 1) leans on that wrap. Key 0 is
+    // read first so that wrap wins when a cart supplies both.
+    if (isTable) {
+      for (let key = 0; key <= 16; key += 1) {
+        const value = this._tableGet(args[0], key);
+        if (typeof value !== 'number') continue;
+        this._setPaletteEntry(key % 16, value, p);
+      }
+      return undefined;
     }
 
+    // pal() resets every palette, pal(p) resets just that one.
+    if (args.length === 0) {
+      this._resetPalette(0);
+      this._resetPalette(1);
+      return undefined;
+    }
+    if (args.length === 1) {
+      this._resetPalette(this._requireIntegerArg(args, 0, 'pal', 'p'));
+      return undefined;
+    }
+
+    const c0 = this._requireIntegerArg(args, 0, 'pal', 'c0') & 0x0f;
+    const c1 = this._requireIntegerArg(args, 1, 'pal', 'c1');
+    const previous = p === 1 ? this._screenPalette[c0] : (this.currentPalette.get(c0) ?? c0);
+    this._setPaletteEntry(c0, c1, p);
+    return previous;
+  }
+
+  _setPaletteEntry(c0, c1, p) {
+    if (p === 1) this._setScreenPaletteEntry(c0, c1 & 0xff);
+    else this.currentPalette.set(c0, c1);
+  }
+
+  /** Restore one palette to its defaults. Palette 0 also clears transparency. */
+  _resetPalette(p) {
+    if (p === 1) {
+      this._resetScreenPalette();
+      return;
+    }
     this.currentPalette.clear();
-    if (args.length === 0 || p === 1) this._resetScreenPalette();
+    // "PAL() resets all palettes to system defaults (including transparency
+    // values)" - so the draw palette reset takes palt() back with it.
+    this._transparent = new Set([0]);
   }
 
   _setScreenPaletteEntry(index, color) {
@@ -2045,15 +2207,23 @@ class LuaPico8Extensions extends BaseLuaExtension {
   /**
    * Set camera position
    * Lua: camera([x, y])
+   *
+   * Returns the position the camera held before the call, as two values. A
+   * cart that shifts the camera for one draw and puts it back relies on that:
+   * "Sonic 2.5" opens its text routine with `local o_pal,camx,camy={},camera()`
+   * and restores it with `camera(camx,camy)`. The JS bridge turns an array
+   * return into Lua multiple returns, so handing back a pair is enough.
    */
   camera(...args) {
     const x = this._optionalNumberArg(args, 0, 0, 'camera', 'x');
     const y = this._optionalNumberArg(args, 1, 0, 'camera', 'y');
-    
+    const previous = [this._cameraX, this._cameraY];
+
     const engine = this._getEngine();
     if (engine?.setCamera) {
       engine.setCamera(Math.floor(x), Math.floor(y));
     }
+    return previous;
   }
 
   /**
@@ -2715,13 +2885,34 @@ class LuaPico8Extensions extends BaseLuaExtension {
   // ============================================================
 
   /**
+   * PICO-8 has no integers: every number is a signed 16.16 fixed point value,
+   * and the bitwise operators work on that 32-bit pattern rather than on a
+   * whole number. Truncating to an integer first threw the fractional half
+   * away, which turned `sin(a) >> 3` - the idiomatic "divide by 8, but faster"
+   * - into a flat 0 for every angle. "Sonic 2.5" builds its sprite rotation
+   * out of `sin(a)>>3` and `cos(a)>>3`, so its tline walk never advanced and
+   * the player came out as one solid block of colour.
+   *
+   * Whole numbers are unaffected: their low 16 bits are zero, so and/or/xor
+   * and shifts by whole amounts give the same answer either way.
+   */
+  _toFixed(value) {
+    // | 0 wraps at 32 bits, which is what PICO-8 does on overflow.
+    return Math.floor(value * 0x10000) | 0;
+  }
+
+  _fromFixed(fixed) {
+    return fixed / 0x10000;
+  }
+
+  /**
    * Bitwise AND
    * Lua: band(a, b) -> result
    */
   band(...args) {
-    const a = this._requireIntegerArg(args, 0, 'band', 'a');
-    const b = this._requireIntegerArg(args, 1, 'band', 'b');
-    return a & b;
+    const a = this._requireNumberArg(args, 0, 'band', 'a');
+    const b = this._requireNumberArg(args, 1, 'band', 'b');
+    return this._fromFixed(this._toFixed(a) & this._toFixed(b));
   }
 
   /**
@@ -2729,9 +2920,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: bor(a, b) -> result
    */
   bor(...args) {
-    const a = this._requireIntegerArg(args, 0, 'bor', 'a');
-    const b = this._requireIntegerArg(args, 1, 'bor', 'b');
-    return a | b;
+    const a = this._requireNumberArg(args, 0, 'bor', 'a');
+    const b = this._requireNumberArg(args, 1, 'bor', 'b');
+    return this._fromFixed(this._toFixed(a) | this._toFixed(b));
   }
 
   /**
@@ -2739,9 +2930,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: bxor(a, b) -> result
    */
   bxor(...args) {
-    const a = this._requireIntegerArg(args, 0, 'bxor', 'a');
-    const b = this._requireIntegerArg(args, 1, 'bxor', 'b');
-    return a ^ b;
+    const a = this._requireNumberArg(args, 0, 'bxor', 'a');
+    const b = this._requireNumberArg(args, 1, 'bxor', 'b');
+    return this._fromFixed(this._toFixed(a) ^ this._toFixed(b));
   }
 
   /**
@@ -2749,8 +2940,8 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: bnot(x) -> result
    */
   bnot(...args) {
-    const x = this._requireIntegerArg(args, 0, 'bnot', 'x');
-    return ~x;
+    const x = this._requireNumberArg(args, 0, 'bnot', 'x');
+    return this._fromFixed(~this._toFixed(x));
   }
 
   /**
@@ -2758,9 +2949,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: shl(x, n) -> result
    */
   shl(...args) {
-    const x = this._requireIntegerArg(args, 0, 'shl', 'x');
+    const x = this._requireNumberArg(args, 0, 'shl', 'x');
     const n = this._requireIntegerArg(args, 1, 'shl', 'n');
-    return x << n;
+    return this._fromFixed(this._toFixed(x) << n);
   }
 
   /**
@@ -2768,9 +2959,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: shr(x, n) -> result
    */
   shr(...args) {
-    const x = this._requireIntegerArg(args, 0, 'shr', 'x');
+    const x = this._requireNumberArg(args, 0, 'shr', 'x');
     const n = this._requireIntegerArg(args, 1, 'shr', 'n');
-    return x >> n;
+    return this._fromFixed(this._toFixed(x) >> n);
   }
 
   /**
@@ -2778,9 +2969,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: lshl(x, n) -> result
    */
   lshl(...args) {
-    const x = this._requireIntegerArg(args, 0, 'lshl', 'x');
+    const x = this._requireNumberArg(args, 0, 'lshl', 'x');
     const n = this._requireIntegerArg(args, 1, 'lshl', 'n');
-    return (x << n) & 0xFFFFFFFF;
+    return this._fromFixed(this._toFixed(x) << n);
   }
 
   /**
@@ -2788,9 +2979,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: lshr(x, n) -> result
    */
   lshr(...args) {
-    const x = this._requireIntegerArg(args, 0, 'lshr', 'x');
+    const x = this._requireNumberArg(args, 0, 'lshr', 'x');
     const n = this._requireIntegerArg(args, 1, 'lshr', 'n');
-    return (x >>> n) & 0xFFFFFFFF;
+    return this._fromFixed(this._toFixed(x) >>> n);
   }
 
   /**
@@ -2798,10 +2989,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: rotl(x, n) -> result
    */
   rotl(...args) {
-    const x = this._requireIntegerArg(args, 0, 'rotl', 'x');
-    const n = this._requireIntegerArg(args, 1, 'rotl', 'n');
-    const mask = 0xFFFFFFFF;
-    return ((x << n) | (x >>> (32 - n))) & mask;
+    const x = this._toFixed(this._requireNumberArg(args, 0, 'rotl', 'x'));
+    const n = this._requireIntegerArg(args, 1, 'rotl', 'n') & 31;
+    if (n === 0) return this._fromFixed(x);
+    return this._fromFixed(((x << n) | (x >>> (32 - n))) | 0);
   }
 
   /**
@@ -2809,10 +3000,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua: rotr(x, n) -> result
    */
   rotr(...args) {
-    const x = this._requireIntegerArg(args, 0, 'rotr', 'x');
-    const n = this._requireIntegerArg(args, 1, 'rotr', 'n');
-    const mask = 0xFFFFFFFF;
-    return ((x >>> n) | (x << (32 - n))) & mask;
+    const x = this._toFixed(this._requireNumberArg(args, 0, 'rotr', 'x'));
+    const n = this._requireIntegerArg(args, 1, 'rotr', 'n') & 31;
+    if (n === 0) return this._fromFixed(x);
+    return this._fromFixed(((x >>> n) | (x << (32 - n))) | 0);
   }
 
   // ============================================================
@@ -2956,20 +3147,21 @@ class LuaPico8Extensions extends BaseLuaExtension {
       return Number.isNaN(value) ? text : value;
     };
 
-    if (typeof separator === 'number') {
-      const size = Math.floor(separator);
-      if (size < 1) return [];
+    // An empty delimiter means the same as a size of 1: carts pack lookup
+    // tables into a string of glyphs and unpack them with split(s, ""), so
+    // returning nothing there loses the whole table.
+    const size = separator === '' ? 1 : separator;
+    if (typeof size === 'number') {
+      const step = Math.floor(size);
+      if (step < 1) return [];
       const out = [];
-      for (let i = 0; i < s.length; i += size) {
-        out.push(asElement(s.substr(i, size)));
+      for (let i = 0; i < s.length; i += step) {
+        out.push(asElement(s.substr(i, step)));
       }
       return out;
     }
 
-    const sep = String(separator);
-    // An empty delimiter would loop forever rather than splitting anything.
-    if (sep === '') return [];
-    return s.split(sep).map(asElement);
+    return s.split(String(size)).map(asElement);
   }
 
   /**
@@ -3009,6 +3201,28 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   _isTableLike(value) {
     return Array.isArray(value) || (value !== null && typeof value === 'object');
+  }
+
+  /**
+   * A Lua table handed to a bridged builtin does not arrive as a JS object.
+   * lua.vm.js wraps it in a Lua.Proxy, which is a *function* carrying the
+   * registry ref plus get/set accessors, so `typeof tbl === 'object'` is false
+   * and indexing it with tbl[k] quietly yields undefined. Anything that can
+   * receive a table across the bridge has to test for the proxy as well.
+   */
+  _isLuaTableRef(value) {
+    return typeof value === 'function' && typeof value.get === 'function' && typeof value.ref === 'number';
+  }
+
+  _isTableArg(value) {
+    return this._isLuaTableRef(value) || this._isTableLike(value);
+  }
+
+  /** Read one entry from a JS array, a plain object or a Lua table proxy. */
+  _tableGet(tableValue, key) {
+    if (this._isLuaTableRef(tableValue)) return tableValue.get(key);
+    if (Array.isArray(tableValue)) return tableValue[key - 1];
+    return tableValue[key];
   }
 
   _getNumericKeys(tableValue) {

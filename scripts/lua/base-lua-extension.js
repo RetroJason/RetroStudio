@@ -233,7 +233,10 @@ class BaseLuaExtension {
       if convert == nil then convert = true end
 
       -- A numeric separator means "cut into groups of n characters" rather
-      -- than "look for this delimiter".
+      -- than "look for this delimiter". An empty delimiter means the same as 1:
+      -- carts pack lookup tables into a string of glyphs and unpack them with
+      -- split(s, ""), so returning nothing there loses the whole table.
+      if separator == "" then separator = 1 end
       if type(separator) == "number" then
         -- No math.floor: the firmware does not register the math library.
         local size = separator - separator % 1
@@ -248,8 +251,6 @@ class BaseLuaExtension {
 
       if separator == nil then separator = "," end
       separator = tostring(separator)
-      -- An empty delimiter would match at every position and never advance.
-      if separator == "" then return out end
 
       local start = 1
       while true do

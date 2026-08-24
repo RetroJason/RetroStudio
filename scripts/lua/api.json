@@ -1729,9 +1729,25 @@
             {"name": "sy", "type": "number", "optional": true, "description": "Screen y to draw the first cell at. Defaults to 0."},
             {"name": "cw", "type": "number", "optional": true, "description": "Number of cell columns to draw. Defaults to the rest of the map."},
             {"name": "ch", "type": "number", "optional": true, "description": "Number of cell rows to draw. Defaults to the rest of the map."},
-            {"name": "layer", "type": "number", "optional": true, "description": "Only draw cells whose sprite flags include all of these bits. Defaults to drawing every non-zero cell."}
+            {"name": "layer", "type": "number", "optional": true, "description": "Only draw cells whose sprite flags include at least one of these bits. Defaults to drawing every non-zero cell."}
           ],
           "example": "map(0, 0, 0, 0, 16, 16)"
+        },
+        {
+          "name": "tline",
+          "description": "Draw a line textured with the map. The map coordinate advances by (mdx, mdy) per screen pixel, so its fraction picks the pixel inside an 8x8 cell and its whole part picks the cell",
+          "parameters": [
+            {"name": "x0", "type": "number", "description": "Screen x of the line's start."},
+            {"name": "y0", "type": "number", "description": "Screen y of the line's start."},
+            {"name": "x1", "type": "number", "description": "Screen x of the line's end."},
+            {"name": "y1", "type": "number", "description": "Screen y of the line's end."},
+            {"name": "mx", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells."},
+            {"name": "my", "type": "number", "description": "Map coordinate to sample at the start of the line, in cells."},
+            {"name": "mdx", "type": "number", "optional": true, "description": "Map x step per screen pixel. Defaults to 1/8, one map pixel per screen pixel."},
+            {"name": "mdy", "type": "number", "optional": true, "description": "Map y step per screen pixel. Defaults to 0."},
+            {"name": "layers", "type": "number", "optional": true, "description": "Only sample cells whose sprite flags include at least one of these bits. Defaults to sampling every non-zero cell."}
+          ],
+          "example": "tline(0, 64, 127, 64, 0, 8, 1/8, 0)"
         },
         {
           "name": "mget",
@@ -2328,12 +2344,13 @@
         },
         {
           "name": "camera",
-          "description": "Set camera position",
+          "description": "Set camera position and return the previous one",
           "parameters": [
             {"name": "x", "type": "number", "optional": true, "description": "Amount subtracted from every draw x. Defaults to 0."},
             {"name": "y", "type": "number", "optional": true, "description": "Amount subtracted from every draw y. Defaults to 0."}
           ],
-          "example": "camera(0, 0)"
+          "returns": {"type": "number", "description": "The x and y the camera held before the call, as two values, so a cart can shift the camera and put it back."},
+          "example": "local cx, cy = camera(0, 0)"
         },
         {
           "name": "clip",
@@ -2348,12 +2365,13 @@
         },
         {
           "name": "pal",
-          "description": "Set palette mapping",
+          "description": "Set palette mapping. pal(c0, c1, [p]) remaps one colour, pal(tbl, [p]) remaps an entry per table key, pal(p) resets one palette and pal() resets them all",
           "parameters": [
-            {"name": "c0", "type": "number", "optional": true, "description": "Palette index to remap. Omit all arguments to reset the palette."},
+            {"name": "c0", "type": "any", "optional": true, "description": "Palette index to remap, or a table of mappings keyed by index. Given alone it is the palette to reset. Omit all arguments to reset every palette, including transparency."},
             {"name": "c1", "type": "number", "optional": true, "description": "Palette index to draw in its place. May be an extended colour 128-143 when p is 1."},
             {"name": "p", "type": "number", "optional": true, "description": "0 (default) for the draw palette, 1 for the screen palette, which also recolours pixels already drawn."}
           ],
+          "returns": {"type": "number", "description": "The mapping c0 had before the call, so a cart can save a palette it is about to change."},
           "example": "pal(1, 2)"
         },
         {

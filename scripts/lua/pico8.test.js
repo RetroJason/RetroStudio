@@ -40,7 +40,7 @@ const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
   'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'oval', 'ovalfill',
   'cls', 'pico_mode', 'spr',
-  'sspr', 'map', 'mget', 'mset',
+  'sspr', 'map', 'tline', 'mget', 'mset',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print', 'cursor',
   // Math
   'sin', 'cos', 'atan2', 'sqrt', 'abs', 'sgn', 'flr', 'ceil', 'min', 'max', 'mid', 'rnd', 'srand',
@@ -182,7 +182,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 95);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 96);
     },
   },
   {
@@ -916,6 +916,54 @@ const tests = [
     },
   },
   {
+    name: 'tline samples the map along a line, one map pixel per screen pixel',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // Sprite 1 is a horizontal ramp: pixel column i holds colour i + 1.
+      const sheet = new Uint8Array(128 * 128);
+      for (let i = 0; i < 8; i += 1) sheet[(0 * 128) + 8 + i] = i + 1;
+      pico8.setSpriteSheet(sheet, 128, 128);
+      pico8.setMapData(new Uint8Array([1, 0, 0, 0]), 4, 1);
+
+      // Start at cell 0, pixel 0, and walk one map pixel per screen pixel.
+      pico8.tline(0, 0, 7, 0, 0, 0, 1 / 8, 0);
+      for (let i = 0; i < 8; i += 1) {
+        assert.strictEqual(pico8._framebuffer[i], i + 1, `screen x ${i}`);
+      }
+      // Cell 1 is sprite 0, which is empty, so the line stops leaving pixels.
+      pico8.tline(20, 1, 27, 1, 1, 0, 1 / 8, 0);
+      assert.strictEqual(pico8._framebuffer[128 + 20], 0);
+    },
+  },
+  {
+    name: 'tline honours the layer mask and the map coordinate fraction',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      const sheet = new Uint8Array(128 * 128);
+      sheet[(0 * 128) + 8 + 4] = 9; // sprite 1, pixel (4, 0)
+      sheet[(0 * 128) + 16] = 11; // sprite 2, pixel (0, 0)
+      pico8.setSpriteSheet(sheet, 128, 128);
+      pico8.setMapData(new Uint8Array([1, 2, 0, 0]), 4, 1);
+      pico8.fset(1, 0b100);
+      pico8.fset(2, 0b1000);
+
+      // mx = 0.5 is halfway across cell 0, i.e. sprite pixel column 4.
+      pico8.tline(0, 0, 0, 0, 0.5, 0, 0, 0);
+      assert.strictEqual(pico8._framebuffer[0], 9);
+
+      // Cell 1 carries flag 3, which is outside this mask, so nothing lands.
+      pico8.tline(5, 0, 5, 0, 1, 0, 0, 0, 0b100);
+      assert.strictEqual(pico8._framebuffer[5], 0);
+      // With its own flag in the mask it draws.
+      pico8.tline(6, 0, 6, 0, 1, 0, 0, 0, 0b1000);
+      assert.strictEqual(pico8._framebuffer[6], 11);
+    },
+  },
+  {
     name: 'fset/fget toggles sprite flags',
     fn: () => {
       const { pico8 } = makePico8();
@@ -1109,6 +1157,52 @@ const tests = [
     },
   },
   {
+    name: 'the screen is readable and writable at 0x6000, as carts that memcpy it expect',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // Low nibble is the left pixel of the pair, as in the sprite sheet.
+      pico8.poke(0x6000, 0x9c);
+      assert.strictEqual(pico8._framebuffer[0], 0x0c);
+      assert.strictEqual(pico8._framebuffer[1], 0x09);
+      assert.strictEqual(pico8.peek(0x6000), 0x9c);
+
+      // Row 1 starts 64 bytes in: 128 pixels at two per byte.
+      pico8.poke(0x6000 + 64, 0x21);
+      assert.strictEqual(pico8._framebuffer[128], 0x01);
+      assert.strictEqual(pico8._framebuffer[129], 0x02);
+
+      // Drawing is visible through the same window, which is how a cart
+      // stashes and restores a rendered screen with memcpy.
+      pico8.rectfill(0, 2, 1, 2, 7);
+      assert.strictEqual(pico8.peek(0x6000 + 128), 0x77);
+      pico8.memcpy(0x4300, 0x6000 + 128, 1);
+      pico8.cls();
+      assert.strictEqual(pico8.peek(0x6000 + 128), 0);
+      pico8.memcpy(0x6000 + 128, 0x4300, 1);
+      assert.strictEqual(pico8._framebuffer[(2 * 128) + 0], 7);
+      assert.strictEqual(pico8._framebuffer[(2 * 128) + 1], 7);
+    },
+  },
+  {
+    name: 'poking the screen ignores clip, camera and the draw palette',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // A raw store to screen memory is not a draw call on hardware.
+      pico8.clip(64, 64, 8, 8);
+      pico8.camera(50, 50);
+      pico8.pal(3, 11);
+      pico8.poke(0x6000, 0x33);
+      pico8.clip();
+      pico8.camera();
+      assert.strictEqual(pico8._framebuffer[0], 3);
+      assert.strictEqual(pico8._framebuffer[1], 3);
+    },
+  },
+  {
     name: 'memset fills a block',
     fn: () => {
       const { pico8 } = makePico8();
@@ -1261,6 +1355,99 @@ const tests = [
       assert.strictEqual(pico8.currentPalette.get(1), 2);
       pico8.pal();
       assert.strictEqual(pico8.currentPalette.size, 0);
+    },
+  },
+  {
+    name: 'pal returns the mapping it replaced, so a cart can put it back',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // An untouched entry maps to itself.
+      assert.strictEqual(pico8.pal(3, 9), 3);
+      assert.strictEqual(pico8.pal(3, 11), 9);
+      assert.strictEqual(pico8.pal(14, 131, 1), 14);
+      assert.strictEqual(pico8.pal(14, 2, 1), 131);
+    },
+  },
+  {
+    name: 'pal with a table assigns an entry per key, wrapping key 16 to colour 0',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // A plain array is keyed 1..16, so colour 0 is given last.
+      pico8.pal([1, 1, 5, 5, 5, 6, 7, 13, 6, 7, 7, 6, 13, 6, 7, 2], 1);
+      assert.strictEqual(pico8._screenPalette[1], 1);
+      assert.strictEqual(pico8._screenPalette[3], 5);
+      assert.strictEqual(pico8._screenPalette[15], 7);
+      assert.strictEqual(pico8._screenPalette[0], 2, 'key 16 wraps to colour 0');
+
+      // A sparse table touches only the keys it carries.
+      pico8.pal({ 12: 9, 14: 8 });
+      assert.strictEqual(pico8.currentPalette.get(12), 9);
+      assert.strictEqual(pico8.currentPalette.get(14), 8);
+      assert.strictEqual(pico8.currentPalette.get(13), undefined);
+    },
+  },
+  {
+    name: 'pal reads a Lua table proxy, which arrives as a function not an object',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // lua.vm.js hands a Lua table to a bridged builtin as a Lua.Proxy: a
+      // callable carrying a registry ref and a get() accessor. typeof is
+      // 'function' and indexing it directly returns undefined, so pal has to
+      // recognise the proxy and read entries through get().
+      const entries = { 0: 7, 1: 13, 2: 1, 3: 0, 4: 14 };
+      const proxy = function () {};
+      proxy.ref = 42;
+      proxy.get = (key) => entries[key];
+
+      pico8.pal(proxy);
+      assert.strictEqual(pico8.currentPalette.get(0), 7);
+      assert.strictEqual(pico8.currentPalette.get(1), 13);
+      assert.strictEqual(pico8.currentPalette.get(4), 14);
+      assert.strictEqual(pico8.currentPalette.get(5), undefined);
+    },
+  },
+  {
+    name: 'camera returns the position it replaced, so a cart can put it back',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      // The bridge expands an array return into Lua multiple returns, which is
+      // how `local camx, camy = camera()` gets both halves.
+      assert.deepStrictEqual(pico8.camera(11, 22), [0, 0]);
+      assert.deepStrictEqual(pico8.camera(3, 4), [11, 22]);
+      assert.deepStrictEqual(pico8.camera(), [3, 4]);
+      assert.strictEqual(pico8._cameraX, 0);
+      assert.strictEqual(pico8._cameraY, 0);
+    },
+  },
+  {
+    name: 'pal(p) resets one palette, and pal() also restores transparency',
+    fn: () => {
+      const { pico8 } = makePico8();
+      pico8.resetRuntimeState();
+
+      pico8.pal(3, 9);
+      pico8.pal(14, 131, 1);
+      pico8.pal(1);
+      assert.strictEqual(pico8._screenPalette[14], 14, 'screen palette reset');
+      assert.strictEqual(pico8.currentPalette.get(3), 9, 'draw palette untouched');
+
+      pico8.pal(0);
+      assert.strictEqual(pico8.currentPalette.size, 0);
+
+      // pal() with no arguments takes palt() back to its default too.
+      pico8.palt(0, false);
+      pico8.palt(7, true);
+      pico8.pal();
+      assert.ok(pico8._isTransparentColor(0));
+      assert.ok(!pico8._isTransparentColor(7));
     },
   },
   {
@@ -1432,13 +1619,24 @@ const tests = [
       assert.strictEqual(pico8.band(12, 10), 8);
       assert.strictEqual(pico8.bor(12, 10), 14);
       assert.strictEqual(pico8.bxor(12, 10), 6);
-      assert.strictEqual(pico8.bnot(0), -1);
       assert.strictEqual(pico8.shl(2, 3), 16);
       assert.strictEqual(pico8.shr(16, 2), 4);
       assert.strictEqual(pico8.lshl(2, 3), 16);
       assert.strictEqual(pico8.lshr(16, 2), 4);
       assert.strictEqual(pico8.rotl(1, 1), 2);
       assert.strictEqual(pico8.rotr(2, 1), 1);
+
+      // Every PICO-8 number is 16.16 fixed point, so ~0 is 0xffff.ffff and
+      // not -1, and shifting is a fixed point divide that keeps the fraction.
+      assert.strictEqual(pico8.bnot(0), -1 / 0x10000);
+      assert.strictEqual(pico8.shr(1, 3), 0.125);
+      assert.strictEqual(pico8.shr(0.5, 1), 0.25);
+      assert.strictEqual(pico8.shl(0.125, 3), 1);
+      assert.strictEqual(pico8.band(0.75, 0.5), 0.5);
+
+      // Arithmetic shift right keeps the sign; the logical one does not.
+      assert.strictEqual(pico8.shr(-1, 1), -0.5);
+      assert.strictEqual(pico8.lshr(-1, 1), 32767.5);
     },
   },
 
@@ -1516,7 +1714,12 @@ const tests = [
       // A separator that cannot make progress yields nothing rather than
       // looping forever.
       assert.deepStrictEqual(pico8.split('abc', 0), []);
-      assert.deepStrictEqual(pico8.split('abc', ''), []);
+
+      // An empty delimiter means the same as a size of 1. Carts pack lookup
+      // tables into a run of glyphs and unpack them with split(s, ""), so
+      // returning nothing here loses the whole table.
+      assert.deepStrictEqual(pico8.split('abc', ''), ['a', 'b', 'c']);
+      assert.deepStrictEqual(pico8.split('\x80\x1e', ''), ['\x80', '\x1e']);
     },
   },
   {
