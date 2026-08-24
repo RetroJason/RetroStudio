@@ -187,9 +187,15 @@ class TilemapGLRenderer {
     for (let ty = minY; ty <= maxY; ty++) {
       for (let tx = minX; tx <= maxX; tx++) {
         const idx = ty * layer.width + tx;
-        const gid = layer.data[idx];
+        const rawGid = layer.data[idx];
 
-        if (gid <= 0) continue; // Empty tile
+        if (rawGid <= 0) continue; // Empty tile
+
+        // Tiled packs three orientation bits into the top of the gid. They must
+        // come off before anything resolves a tileset, or the id looks larger
+        // than every firstGid and the tile samples far outside the texture.
+        const gid = this._gidIndex(rawGid);
+        if (gid <= 0) continue;
 
         // Find which tileset owns this GID
         const tileset = this._findTilesetForGid(gid);
@@ -201,6 +207,7 @@ class TilemapGLRenderer {
 
         // Calculate local tile ID within tileset
         const localId = gid - tileset.firstGid;
+        if (localId < 0) continue;
         const tilesPerRow = Math.ceil(tileset.imageWidth / tileW);
         const col = localId % tilesPerRow;
         const row = Math.floor(localId / tilesPerRow);
@@ -226,6 +233,17 @@ class TilemapGLRenderer {
         });
       }
     }
+  }
+
+  /**
+   * Strip Tiled's orientation bits, leaving a plain global tile id.
+   * Uses the shared helper when it is loaded, so the mask lives in one place.
+   */
+  _gidIndex(rawGid) {
+    if (typeof window !== 'undefined' && window.TileGid) {
+      return window.TileGid.gidIndex(rawGid);
+    }
+    return ((Number(rawGid) >>> 0) & ~0xE0000000) >>> 0;
   }
 
   /**

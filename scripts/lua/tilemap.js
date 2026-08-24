@@ -125,6 +125,29 @@ class LuaTileMapExtensions extends BaseLuaExtension {
   /**
    * Parse D2M file header (40 bytes).
    */
+  /**
+   * Strip Tiled's orientation bits, leaving a plain global tile id.
+   *
+   * Mirrors scripts/tilemap/gid.js, which cannot be imported here: this file is
+   * loaded both as a browser global and through require() by the tests, and the
+   * runtime has no module loader.
+   */
+  _gidIndex(rawGid) {
+    return ((Number(rawGid) >>> 0) & ~0xE0000000) >>> 0;
+  }
+
+  /**
+   * Find the tileset owning a global tile id. Tilesets are ordered by firstGid,
+   * so the last one whose firstGid is not above the id owns it.
+   */
+  _findTilesetForGid(tilesets, gid) {
+    if (!Array.isArray(tilesets)) return null;
+    for (let i = tilesets.length - 1; i >= 0; i--) {
+      if (gid >= tilesets[i].firstGid) return tilesets[i];
+    }
+    return null;
+  }
+
   _parseD2mHeader(data, offset = 0) {
     const view = new DataView(data.buffer || data, data.byteOffset || 0);
     if (offset + 40 > (data.byteLength || data.length)) {
@@ -657,17 +680,21 @@ class LuaTileMapExtensions extends BaseLuaExtension {
     // Draw each visible tile using GPU blit
     for (let ty = startTileY; ty < endTileY; ty++) {
       for (let tx = startTileX; tx < endTileX; tx++) {
-        const gid = layer.cellData[ty * layer.width + tx];
-        if (gid === 0) continue; // Skip empty tiles
+        const rawGid = layer.cellData[ty * layer.width + tx];
+        if (rawGid === 0) continue; // Skip empty tiles
 
-        // Extract tileset index and local tile index
-        const tilesetIdx = (gid >> 16) & 0xFFFF;
-        const localIdx = gid & 0xFFFF;
+        // A cell holds a global tile id with Tiled's three orientation bits in
+        // the high end. Strip those, then find the tileset that owns the id by
+        // its firstGid - the same resolution the builder and editor use.
+        const gid = this._gidIndex(rawGid);
+        if (gid === 0) continue;
 
-        if (tilesetIdx >= map.tilesets.length) continue;
-
-        const tileset = map.tilesets[tilesetIdx];
+        const tileset = this._findTilesetForGid(map.tilesets, gid);
+        if (!tileset) continue;
         if (tileset.textureIndex === 0xFFFF) continue; // No texture
+
+        const localIdx = gid - tileset.firstGid;
+        if (localIdx < 0) continue;
 
         // Get or load the GPU texture handle for this tileset
         if (!this.gpuTextures.has(tileset.textureIndex)) {

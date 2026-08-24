@@ -258,7 +258,9 @@ function makeTileMap() {
 
   // Load() refuses to run without a file manager, then short-circuits on the
   // asset cache. Seeding the cache exercises the handle bookkeeping without
-  // needing a real D2M binary - the binary parser is covered by its own tests.
+  // needing a real D2M binary - the binary itself is covered by
+  // builders/tilemap-d2m.test.js, which round-trips the builder against this
+  // parser.
   tilemap.fileManager = { getFile: () => null };
   tilemap.tilemapAssets.set(MAP_PATH, {
     header: { mapWidth: 40, mapHeight: 30, tileWidth: 16, tileHeight: 16 },

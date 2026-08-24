@@ -215,12 +215,15 @@ class TilemapBuilder extends BaseBuilder {
   buildD2M(normalized) {
     const textEncoder = new TextEncoder();
 
+    const headerSize = 40;
     const stringChunk = this.buildStringChunk(normalized.strings, textEncoder);
     const tilesetChunk = this.buildTilesetChunk(normalized.tilesets);
-    const layerChunk = this.buildLayerChunk(normalized.layers);
+    // Layers are laid out immediately after the tileset chunk, and their cell
+    // offsets are absolute, so the chunk needs its own file position up front.
+    const layersFileOffset = headerSize + tilesetChunk.byteLength;
+    const layerChunk = this.buildLayerChunk(normalized.layers, layersFileOffset);
     const wangChunk = this.buildWangChunk(normalized.wangSource, textEncoder);
 
-    const headerSize = 40;
     const totalSize = headerSize
       + tilesetChunk.byteLength
       + layerChunk.byteLength
@@ -255,9 +258,9 @@ class TilemapBuilder extends BaseBuilder {
     out.set(tilesetChunk, offset);
     offset += tilesetChunk.byteLength;
 
-    view.setUint32(28, offset, true); // layers offset
-    out.set(layerChunk, offset);
-    offset += layerChunk.byteLength;
+    view.setUint32(28, layersFileOffset, true); // layers offset
+    out.set(layerChunk, layersFileOffset);
+    offset = layersFileOffset + layerChunk.byteLength;
 
     view.setUint32(32, offset, true); // strings offset
     out.set(stringChunk, offset);
@@ -299,7 +302,12 @@ class TilemapBuilder extends BaseBuilder {
     return bytes;
   }
 
-  buildLayerChunk(layers) {
+  /**
+   * Cell data offsets in a layer record are absolute file offsets, per the D2M
+   * spec, so the chunk has to know where it will be placed in the file. The
+   * caller passes that in; writes into `bytes` stay chunk-local.
+   */
+  buildLayerChunk(layers, chunkFileOffset) {
     const layerRecordSize = 16;
     const recordsSize = 4 + layers.length * layerRecordSize;
 
@@ -323,7 +331,7 @@ class TilemapBuilder extends BaseBuilder {
       view.setUint16(base + 2, this.toU16(layer.flags, 'layer.flags'), true);
       view.setUint16(base + 4, layer.width, true);
       view.setUint16(base + 6, layer.height, true);
-      view.setUint32(base + 8, dataCursor, true);
+      view.setUint32(base + 8, chunkFileOffset + dataCursor, true);
       view.setUint32(base + 12, layer.data.length * 4, true);
 
       for (let cell = 0; cell < layer.data.length; cell++) {
