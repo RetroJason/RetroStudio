@@ -1229,21 +1229,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * reached min() as NaN. Zero is not negative, so NaN saturates positive.
    */
   /**
-   * Whether the running cart was lowered onto raw 16.16 words, which decides
-   * whether a number arriving from Lua is a value or a scaled word. Reads the
-   * one constant so there is a single thing to flip.
+   * Whether the running cart was lowered onto raw 16.16 words. Read by the
+   * bridge wrapper in base-lua-extension.js, which is where the scaling is
+   * undone; everything inside this class works in ordinary values.
    */
   get fixedPointNumbers() {
     return LuaPico8Extensions.FIXED_POINT;
-  }
-
-  /**
-   * Undo the lowering's scaling on the way in. Everything on the JS side works
-   * in ordinary values, so this is the only place the representation is known.
-   */
-  _fromRawNumber(value) {
-    if (!LuaPico8Extensions.FIXED_POINT) return value;
-    return value / 65536;
   }
 
   _coerceNumberArg(raw, methodName, argName) {
@@ -1252,7 +1243,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
       return 0;
     }
 
-    if (typeof raw === 'number') return this._toPico8Number(this._fromRawNumber(raw));
+    if (typeof raw === 'number') return this._toPico8Number(raw);
 
     // The stack fallback in _readArg hands back Lua's tostring of the value.
     const text = String(raw).trim();
@@ -1261,7 +1252,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (/nan$/i.test(text)) return max;
 
     const value = Number.parseFloat(text);
-    if (Number.isFinite(value)) return this._fromRawNumber(value);
+    if (Number.isFinite(value)) return value;
 
     this._warnCoercedArg(methodName, argName, raw);
     return 0;

@@ -106,16 +106,27 @@ class BaseLuaExtension {
           console.log(`[LuaBridge] ${className}.${luaFunctionName}(${argPreview})`);
         }
 
-        // Get the arguments passed from Lua and call the JavaScript method
-        const result = jsMethod.apply(self, arguments);
+        // An extension whose numbers are a scaled representation has to be
+        // handed ordinary values, because that is what its methods are written
+        // and tested against. Undoing the scaling here rather than inside the
+        // methods keeps the representation a property of the bridge, which is
+        // the only place it actually applies. Only PICO-8 sets this, so no
+        // other extension's arguments change.
+        const scaled = self.fixedPointNumbers === true;
+        let callArgs = arguments;
+        if (scaled) {
+          callArgs = Array.prototype.map.call(arguments, (arg) => (
+            typeof arg === 'number' ? arg / 65536 : arg
+          ));
+        }
 
-        // An extension whose numbers are a scaled representation has to scale
-        // its results back on the way out, because everything inside the JS
-        // method worked in ordinary values. Only PICO-8 sets this, so no other
-        // extension's return path changes. Rounding to an exact integer here is
-        // what lets Lua.State.push hand it over as a lua_Integer, which is the
+        // Get the arguments passed from Lua and call the JavaScript method
+        const result = jsMethod.apply(self, callArgs);
+
+        // Rounding to an exact integer on the way back is what lets
+        // Lua.State.push hand the result over as a lua_Integer, which is the
         // only container that holds all 32 significant bits.
-        if (self.fixedPointNumbers === true && typeof result === 'number') {
+        if (scaled && typeof result === 'number') {
           return Math.round(result * 65536) | 0;
         }
 
