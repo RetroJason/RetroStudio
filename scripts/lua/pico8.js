@@ -93,6 +93,11 @@ class LuaPico8Extensions extends BaseLuaExtension {
     // 0 means stretch Pico framebuffer to full output canvas.
     // >0 means fixed pixel scale (for classic Pico-8 style presentation).
     this._picoRenderScale = 0;
+    // Output size of the stretched screen, centred on the display. 0 means
+    // fill the whole canvas, which is what carts got before pico_screen()
+    // existed and is still the fallback for anything that never calls it.
+    this._picoScreenWidth = 0;
+    this._picoScreenHeight = 0;
     this._paletteRGBA = this._buildPicoPaletteRGBA();
   }
 
@@ -1067,8 +1072,18 @@ class LuaPico8Extensions extends BaseLuaExtension {
       const canvasWidth = activeGpu?.canvas?.width || 448;
       const canvasHeight = activeGpu?.canvas?.height || 368;
 
+      // The screen is drawn at whatever output size pico_screen() asked for,
+      // clamped to the display. A cart that never calls it fills the display,
+      // which is the behaviour every imported cart had before.
+      const screenWidth = this._picoScreenWidth > 0
+        ? Math.min(canvasWidth, this._picoScreenWidth)
+        : canvasWidth;
+      const screenHeight = this._picoScreenHeight > 0
+        ? Math.min(canvasHeight, this._picoScreenHeight)
+        : canvasHeight;
+
       if (this._isFullResolutionMode()) {
-        this._setFramebufferSize(canvasWidth, canvasHeight);
+        this._setFramebufferSize(screenWidth, screenHeight);
       } else {
         this._setFramebufferSize(this._logicalWidth, this._logicalHeight);
       }
@@ -1100,6 +1115,12 @@ class LuaPico8Extensions extends BaseLuaExtension {
         drawY = Math.floor((canvasHeight - drawH) * 0.5);
         scaleX = this._picoRenderScale * modeX;
         scaleY = this._picoRenderScale * modeY;
+      } else {
+        // srcW * scaleX is exactly the framebuffer size, so the picture
+        // occupies the requested rectangle and the rest of the display stays
+        // clear. Centring is what keeps a reduced size off the round corners.
+        drawX = Math.floor((canvasWidth - this._fbWidth) * 0.5);
+        drawY = Math.floor((canvasHeight - this._fbHeight) * 0.5);
       }
 
       activeGpu.blit(this._fbTexture, {
@@ -1568,6 +1589,29 @@ class LuaPico8Extensions extends BaseLuaExtension {
       this._setFramebufferSize(this._logicalWidth, this._logicalHeight);
     }
     return this._picoRenderScale;
+  }
+
+  /**
+   * Set the output size of the PICO-8 screen, centred on the display.
+   *
+   * Lua: pico_screen([width], [height])
+   *
+   * The cart's 128x128 screen is stretched to fill this rectangle, so the two
+   * axes scale independently: 448x366 covers the whole display and distorts a
+   * square cart slightly, while 366x366 keeps the cart square and leaves a
+   * margin that clears the display's rounded corners.
+   *
+   * Passing 0 (or omitting both) restores filling the display. Sizes larger
+   * than the display are clamped to it when the frame is drawn.
+   *
+   * This only applies to the default stretched presentation. pico_mode() with
+   * a fixed pixel scale sizes the picture itself and ignores this.
+   */
+  pico_screen(...args) {
+    const width = this._optionalNumberArg(args, 0, 0, 'pico_screen', 'width');
+    const height = this._optionalNumberArg(args, 1, 0, 'pico_screen', 'height');
+    this._picoScreenWidth = width > 0 ? Math.floor(width) : 0;
+    this._picoScreenHeight = height > 0 ? Math.floor(height) : 0;
   }
 
   /**

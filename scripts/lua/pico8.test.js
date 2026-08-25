@@ -59,7 +59,7 @@ const nativeHelperSource = (...names) => {
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
   'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'oval', 'ovalfill',
-  'cls', 'pico_mode', 'spr',
+  'cls', 'pico_mode', 'pico_screen', 'spr',
   'sspr', 'map', 'tline', 'mget', 'mset',
   'sget', 'sset', 'fget', 'fset', 'pal', 'palt', 'camera', 'clip', 'print', 'cursor',
   // Math
@@ -556,7 +556,7 @@ const tests = [
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
-      assert.strictEqual(EXPECTED_FUNCTIONS.length, 97);
+      assert.strictEqual(EXPECTED_FUNCTIONS.length, 98);
     },
   },
   {
@@ -1087,6 +1087,66 @@ const tests = [
       assert.strictEqual(fakeGpu.blitCall.opts.y, 56);
       assert.strictEqual(fakeGpu.blitCall.opts.scaleX, 2);
       assert.strictEqual(fakeGpu.blitCall.opts.scaleY, 2);
+    },
+  },
+  {
+    name: 'pico_screen centres a reduced screen and clamps to the display',
+    fn: () => {
+      const makeFakeGpu = () => ({
+        canvas: { width: 448, height: 368 },
+        createTextureRaw() { return { id: 'fbtex' }; },
+        deleteTexture() {},
+        setPalette() {},
+        setPaletteOffset() {},
+        blit(tex, opts) {
+          this.blitCall = { tex, opts };
+        },
+      });
+
+      // Default: no call means fill the display, exactly as before.
+      const filled = makePico8().pico8;
+      const filledGpu = makeFakeGpu();
+      filled.initGpu(filledGpu);
+      filled.cls(0);
+      filled.renderFrame(filledGpu, 16);
+      assert.strictEqual(filledGpu.blitCall.opts.x, 0);
+      assert.strictEqual(filledGpu.blitCall.opts.y, 0);
+      assert.strictEqual(filledGpu.blitCall.opts.srcW, 448);
+      assert.strictEqual(filledGpu.blitCall.opts.srcH, 368);
+
+      // Square output: centred, and inset far enough to clear the corners.
+      const square = makePico8().pico8;
+      const squareGpu = makeFakeGpu();
+      square.initGpu(squareGpu);
+      square.pico_screen(366, 366);
+      square.cls(0);
+      square.renderFrame(squareGpu, 16);
+      assert.strictEqual(squareGpu.blitCall.opts.srcW, 366);
+      assert.strictEqual(squareGpu.blitCall.opts.srcH, 366);
+      assert.strictEqual(squareGpu.blitCall.opts.x, 41);
+      assert.strictEqual(squareGpu.blitCall.opts.y, 1);
+      // Stretched to fit means the framebuffer is the output rectangle, so the
+      // blit never magnifies.
+      assert.strictEqual(squareGpu.blitCall.opts.scaleX, 1);
+      assert.strictEqual(squareGpu.blitCall.opts.scaleY, 1);
+
+      // Asking for more than the display gets the display.
+      const huge = makePico8().pico8;
+      const hugeGpu = makeFakeGpu();
+      huge.initGpu(hugeGpu);
+      huge.pico_screen(4000, 4000);
+      huge.cls(0);
+      huge.renderFrame(hugeGpu, 16);
+      assert.strictEqual(hugeGpu.blitCall.opts.srcW, 448);
+      assert.strictEqual(hugeGpu.blitCall.opts.srcH, 368);
+      assert.strictEqual(hugeGpu.blitCall.opts.x, 0);
+      assert.strictEqual(hugeGpu.blitCall.opts.y, 0);
+
+      // 0 restores filling the display.
+      square.pico_screen(0, 0);
+      square.renderFrame(squareGpu, 16);
+      assert.strictEqual(squareGpu.blitCall.opts.srcW, 448);
+      assert.strictEqual(squareGpu.blitCall.opts.srcH, 368);
     },
   },
   {

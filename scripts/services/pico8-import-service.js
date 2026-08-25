@@ -1092,12 +1092,26 @@ class Pico8ImportService {
       chunks.push('');
     }
 
+    // The screen size used to be implicit - the cart simply filled the display,
+    // corners included. Writing it into the imported cart makes it something
+    // the author can edit without touching the engine. Emitted before _init()
+    // so the framebuffer is already the right size for anything it draws.
+    const screenLines = [
+      '-- Output size of the 128x128 PICO-8 screen, centred on the display and',
+      '-- stretched to fit. 448x366 fills the display. 366x366 renders centered,',
+      '-- maintains the aspect ratio, and avoids the corners.',
+      `pico_screen(${luaNumber(448)}, ${luaNumber(366)})`,
+    ];
+
     // Bind the PICO-8 entry points at call time, not import time. Scanning the
     // source for "function _update(" misses the carts that swap entry points to
     // change game state (`_update,_draw = world_update,world_draw`), and those
     // carts then ran with an empty Update() and never advanced.
     if (!hasSetup) {
       chunks.push('function Setup()');
+      for (const line of screenLines) {
+        chunks.push(`  ${line}`);
+      }
       chunks.push('  if type(_init) == "function" then _init() end');
       chunks.push('  -- PICO-8 ticks at 30fps and only runs at 60 for carts that');
       chunks.push('  -- define _update60. Studio updates once per display frame, so');
@@ -1110,6 +1124,11 @@ class Pico8ImportService {
       chunks.push(`    pico_fps(${luaNumber(30)})`);
       chunks.push('  end');
       chunks.push('end');
+      chunks.push('');
+    } else {
+      // The cart brought its own Setup(), so there is no generated one to put
+      // the call in. Chunk scope runs before Setup() either way.
+      chunks.push(...screenLines);
       chunks.push('');
     }
 

@@ -1711,6 +1711,15 @@
           "example": "pico_mode(2)"
         },
         {
+          "name": "pico_screen",
+          "description": "Set the output size of the PICO-8 screen, centred on the display. The 128x128 screen is stretched to fill this rectangle, so 448x366 covers the whole display while 366x366 keeps the cart square and clears the display's rounded corners. Only applies to the default stretched presentation, not to pico_mode() fixed scales.",
+          "parameters": [
+            {"name": "width", "type": "number", "optional": true, "description": "Output width in display pixels, clamped to the display. 0 or omitted fills the display."},
+            {"name": "height", "type": "number", "optional": true, "description": "Output height in display pixels, clamped to the display. 0 or omitted fills the display."}
+          ],
+          "example": "pico_screen(366, 366)"
+        },
+        {
           "name": "pico_fps",
           "description": "Set how often the cart's update runs, in frames per second (30 for _update carts, 60 for _update60, 0 = every display frame). Drawing is unaffected.",
           "parameters": [{"name": "rate", "type": "number", "optional": true, "description": "Updates per second. 0 restores one update per display frame. Omit to query without changing."}],
