@@ -36,6 +36,26 @@ if (!LuaPico8Extensions) {
   throw new Error('Failed to load LuaPico8Extensions from pico8.js');
 }
 
+// The Lua a native helper actually registers. Reading the source file and
+// pulling the template literal out of it gives back the placeholders as text
+// ("unexpected symbol near '$'"), because a helper that deals in cart numbers
+// converts at its own edge and the emitters that do it are chosen when the
+// method is registered. So register the method for real against a Lua state
+// that only records what it is asked to run. The base class does not declare a
+// number representation, so this is the unscaled form - which is the one that
+// has to agree with the JS implementations.
+const nativeHelperSource = (...names) => {
+  const RealBaseLuaExtension = require(path.resolve(__dirname, 'base-lua-extension.js'));
+  const extension = new RealBaseLuaExtension();
+  const chunks = [];
+  extension.setLuaState({ execute: (chunk) => { chunks.push(chunk); } });
+  for (const name of names) {
+    extension.registerMethod(name, () => {}, 'Pico8');
+  }
+  assert.ok(chunks.length === names.length, `${names.join('/')} did not register as Lua-native helpers`);
+  return chunks.join('\n');
+};
+
 const EXPECTED_FUNCTIONS = [
   // Graphics and rendering
   'pset', 'pget', 'color', 'fillp', 'line', 'rect', 'rectfill', 'circ', 'circfill', 'oval', 'ovalfill',
@@ -2365,16 +2385,9 @@ const tests = [
     // as the JS implementations above.
     name: 'the Lua-native sub/ord agree with the JS implementations',
     fn: () => {
-      const source = fs.readFileSync(path.resolve(__dirname, 'base-lua-extension.js'), 'utf8');
-      const helper = (name) => {
-        const body = new RegExp(`\\n {6}${name}: \`([\\s\\S]*?)\`,\\n`).exec(source);
-        assert.ok(body, `${name} is no longer a Lua-native helper in base-lua-extension.js`);
-        return body[1];
-      };
-
       const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
       const L = new Lua.State();
-      L.execute(`Pico8 = {}\n${helper('sub')}\n${helper('ord')}`);
+      L.execute(`Pico8 = {}\n${nativeHelperSource('sub', 'ord')}`);
 
       const evalLua = (expression) => {
         L.execute(`__str_result = tostring(${expression})`);
@@ -2615,13 +2628,9 @@ const tests = [
       // a wrong return arity stays invisible until a cart runs. dinky_kong uses
       // it as "for i,p in inext,split(st) do", so run exactly that shape in the
       // VM the editor really uses.
-      const source = fs.readFileSync(path.resolve(__dirname, 'base-lua-extension.js'), 'utf8');
-      const body = /\n {6}inext: `([\s\S]*?)`,\n/.exec(source);
-      assert.ok(body, 'inext is no longer a Lua-native helper in base-lua-extension.js');
-
       const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
       const L = new Lua.State();
-      L.execute(`Pico8 = {}\n${body[1]}`);
+      L.execute(`Pico8 = {}\n${nativeHelperSource('inext')}`);
       L.execute(`
         local out = {}
         for i, v in inext, {'a', 'b', 'c'} do out[#out + 1] = i .. v end
