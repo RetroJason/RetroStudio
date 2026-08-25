@@ -286,6 +286,87 @@ const tests = [
     },
   },
   {
+    name: 'Fixed point: shifts take a fixed point count and keep PICO-8 semantics',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+      const ev = evalWithFixedPoint;
+
+      // The count is a number too, so it arrives as a fixed point word.
+      assert.strictEqual(ev(`__p8shl(${raw(1)}, ${raw(2)})`), raw(4));
+      assert.strictEqual(ev(`__p8shr(${raw(4)}, ${raw(2)})`), raw(1));
+      // PICO-8's >> keeps the sign where Lua's own operator would not.
+      assert.strictEqual(ev(`__p8shr(${raw(-4)}, ${raw(1)})`), raw(-2));
+      assert.strictEqual(ev(`__p8lshr(-1, ${raw(31)})`), '1');
+      // A count past the word width goes to nothing rather than wrapping.
+      assert.strictEqual(ev(`__p8shl(${raw(1)}, ${raw(64)})`), '0');
+      assert.strictEqual(ev(`__p8shr(${raw(-1)}, ${raw(64)})`), '-1');
+      // A negative count shifts the other way.
+      assert.strictEqual(ev(`__p8shl(${raw(4)}, ${raw(-2)})`), raw(1));
+      // Rotating by zero has to be a no-op, not a shift of 32.
+      assert.strictEqual(ev(`__p8rotl(${raw(1)}, 0)`), raw(1));
+      assert.strictEqual(ev(`__p8rotr(${raw(1)}, 0)`), raw(1));
+      assert.strictEqual(ev(`__p8rotl(0x40000000, ${raw(2)})`), '1');
+    },
+  },
+  {
+    name: 'Fixed point: whole exponents are exact and tostr matches PICO-8',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+      const ev = evalWithFixedPoint;
+
+      assert.strictEqual(ev(`__p8pow(${raw(2)}, ${raw(10)})`), raw(1024));
+      assert.strictEqual(ev(`__p8pow(${raw(3)}, ${raw(0)})`), raw(1));
+      assert.strictEqual(ev(`__p8pow(${raw(2)}, ${raw(-2)})`), raw(0.25));
+
+      assert.strictEqual(ev(`__p8tostr(${raw(3)})`), '3');
+      assert.strictEqual(ev(`__p8tostr(${raw(-3)})`), '-3');
+      assert.strictEqual(ev(`__p8tostr(${raw(0.5)})`), '0.5');
+      // A small negative must not floor its way to the wrong whole part.
+      assert.strictEqual(ev(`__p8tostr(${raw(-0.5)})`), '-0.5');
+      assert.strictEqual(ev(`__p8tostr(${raw(1 / 3)})`), '0.3333');
+      // The one word that cannot be negated.
+      assert.strictEqual(ev(`__p8tostr(0x80000000)`), '-32768');
+      assert.strictEqual(ev(`__p8cat(${raw(1)}, "up")`), '1up');
+    },
+  },
+  {
+    name: 'Fixed point: a cart can keep flags in the low bits of a number',
+    fn: () => {
+      const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
+      const Pico8Parser = require(path.resolve(__dirname, 'pico8-parser.js'));
+      const L = new Lua.State();
+      L.execute(LuaPico8Extensions.FIXED_POINT_LUA);
+
+      // POOM's potential visibility set, written the way the cart writes it:
+      // one 32-bit word per 32 sectors, with 0x0.0001 as the unit bit. This is
+      // the exact shape a float32 lua_Number cannot hold - once a high bit is
+      // set the low ones round away, in_pvs starts answering false and
+      // draw_bsp skips whole subsectors, which is the black wedge.
+      const cart = `
+        pvs = {}
+        function setbit(id)
+          local w = id \\ 32
+          pvs[w] = (pvs[w] or 0) | 0x0.0001 << (id & 31)
+        end
+        function hasbit(id)
+          local w = id \\ 32
+          return pvs[w] and pvs[w] & 0x0.0001 << (id & 31) != 0
+        end
+        setbit(3)
+        setbit(31)
+        result = hasbit(3) .. "," .. hasbit(31) .. "," .. hasbit(5)
+      `;
+
+      L.execute(Pico8Parser.compile(cart, { fixedPoint: true }));
+      L.getglobal('result');
+      const result = L.raw_tostring(-1);
+      L.pop(1);
+
+      // Bit 3 has to survive bit 31 being set alongside it.
+      assert.strictEqual(result, 'true,true,false');
+    },
+  },
+  {
     name: 'Fixed point: table keys stay ordinary Lua keys',
     fn: () => {
       const raw = (v) => String(Math.round(v * 65536) | 0);

@@ -4287,6 +4287,94 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
       return a - __p8mul(__p8idiv(a, b), b)
     end
 
+    -- Only a whole exponent is exact in fixed point, and that one is worth
+    -- doing properly because carts square things. Anything else goes through
+    -- the VM's float, which is as much precision as PICO-8 offers here anyway.
+    function __p8pow(a, b)
+      if b % 0x10000 == 0 then
+        local n = b // 0x10000
+        local negative = n < 0
+        if negative then n = -n end
+        local result, base = 0x10000, a
+        while n > 0 do
+          if n & 1 == 1 then result = __p8mul(result, base) end
+          base = __p8mul(base, base)
+          n = n >> 1
+        end
+        if negative then return __p8div(0x10000, result) end
+        return result
+      end
+      local r = (a / 0x10000) ^ (b / 0x10000) * 0x10000
+      if r ~= r then return 0 end
+      if r >= 2147483647.0 then return 0x7FFFFFFF end
+      if r <= -2147483648.0 then return 0x80000000 end
+      return (r // 1) | 0
+    end
+
+    -- A shift count is a number like any other, so it arrives as a fixed point
+    -- word and its whole part is the real count. PICO-8 shifts a count past the
+    -- word width out to nothing rather than wrapping it the way C does, and a
+    -- negative count shifts the other way.
+    function __p8shl(a, b)
+      local n = b // 0x10000
+      if n < 0 then return __p8shr(a, -n * 0x10000) end
+      if n > 31 then return 0 end
+      return a << n
+    end
+
+    -- PICO-8's >> keeps the sign. Lua's is logical, so floor-divide by the
+    -- power of two instead, which for an integer is an arithmetic shift.
+    function __p8shr(a, b)
+      local n = b // 0x10000
+      if n < 0 then return __p8shl(a, -n * 0x10000) end
+      if n > 31 then
+        if a < 0 then return -1 end
+        return 0
+      end
+      return a // (1 << n)
+    end
+
+    -- >>> is the logical one, which is what Lua's operator already does.
+    function __p8lshr(a, b)
+      local n = b // 0x10000
+      if n < 0 then return __p8shl(a, -n * 0x10000) end
+      if n > 31 then return 0 end
+      return a >> n
+    end
+
+    -- A rotate of zero would ask for a shift of 32, which Lua answers with 0
+    -- rather than a no-op, so the halves are ored back together.
+    function __p8rotl(a, b)
+      local n = (b // 0x10000) & 31
+      return (a << n) | (a >> (32 - n))
+    end
+
+    function __p8rotr(a, b)
+      local n = (b // 0x10000) & 31
+      return (a >> n) | (a << (32 - n))
+    end
+
+    -- PICO-8 shows four decimal places, which is all 1/65536 needs.
+    function __p8tostr(v)
+      if type(v) ~= "number" then return tostring(v) end
+      -- Negating the most negative word cannot work, so spell it out.
+      if v == 0x80000000 then return "-32768" end
+      local sign = ""
+      if v < 0 then sign = "-"; v = -v end
+      local whole = v // 0x10000
+      local frac = v % 0x10000
+      if frac == 0 then return sign .. tostring(whole) end
+      -- frac is under 2^16, so this stays inside the word.
+      local digits = tostring(frac * 10000 // 0x10000)
+      digits = string.rep("0", 4 - #digits) .. digits
+      digits = (digits:gsub("0+$", ""))
+      return sign .. tostring(whole) .. "." .. digits
+    end
+
+    function __p8cat(a, b)
+      return __p8tostr(a) .. __p8tostr(b)
+    end
+
     -- A table subscript stays an ordinary Lua key rather than a raw word, so
     -- that Lua's own sequences keep working and #t, add(), all() and unpack()
     -- behave. A whole number becomes an integer key; anything else becomes the
@@ -4295,6 +4383,12 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
       if type(v) ~= "number" then return v end
       if v % 0x10000 == 0 then return v // 0x10000 end
       return v / 0x10000
+    end
+
+    -- # counts entries, so it hands back a plain integer that has to be scaled
+    -- up into a word before the cart can do arithmetic on it.
+    function __p8len(t)
+      return #t << 16
     end
   end
 `;

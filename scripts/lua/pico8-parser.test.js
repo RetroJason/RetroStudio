@@ -695,3 +695,118 @@ test('empty input compiles to empty output', () => {
 test('leading shebang-style pico header comment is fine', () => {
   assert.strictEqual(c('-- title\n-- by me\nx = 1'), 'x = 1');
 });
+
+// ===========================================================================
+// Group N - the fixed point lowering
+//
+// PICO-8 numbers are signed 16.16 fixed point, so each carries 32 significant
+// bits and a float32 lua_Number cannot hold one. Under this option a number is
+// emitted as its raw word in a Lua integer, which is exact. The option is off
+// by default, so every test above still describes the output.
+// ===========================================================================
+
+/** Compile with the lowering on and normalise. */
+const f = (source) => norm(compile(source, { fixedPoint: true }));
+
+test('fixed point: off by default, so numbers are untouched', () => {
+  assert.strictEqual(c('x = 1'), 'x = 1');
+  assert.strictEqual(norm(compile('x = 1', {})), 'x = 1');
+});
+
+test('fixed point: literals become their raw 16.16 word', () => {
+  assert.strictEqual(f('x = 1'), 'x = 65536');
+  assert.strictEqual(f('x = 0'), 'x = 0');
+  assert.strictEqual(f('x = 0.5'), 'x = 32768');
+  // The smallest number PICO-8 has is one raw unit.
+  assert.strictEqual(f('x = 0x0.0001'), 'x = 1');
+  // Anything finer than that truncates away, as it does on real hardware.
+  assert.strictEqual(f('x = 0.000001'), 'x = 0');
+});
+
+test('fixed point: a word that goes negative is emitted as hex', () => {
+  // 0x8000 scales to 2147483648, which wraps to the most negative word. Written
+  // in decimal Lua would read it as unary minus on a literal that had already
+  // overflowed into a float, undoing the whole point of the lowering.
+  assert.strictEqual(f('x = 0x8000'), 'x = 0x80000000');
+  assert.strictEqual(f('x = 0x8000.0001'), 'x = 0x80000001');
+});
+
+test('fixed point: add, subtract and compare stay native', () => {
+  // The scale factor is common to both sides, so these are already exact.
+  assert.strictEqual(f('x = a + b'), 'x = a + b');
+  assert.strictEqual(f('x = a - 1'), 'x = a - 65536');
+  assert.strictEqual(f('x = a < b'), 'x = a < b');
+  assert.strictEqual(f('x = -a'), 'x = -a');
+});
+
+test('fixed point: multiply and divide go to the runtime helpers', () => {
+  assert.strictEqual(f('x = a * b'), 'x = __p8mul(a, b)');
+  assert.strictEqual(f('x = a / b'), 'x = __p8div(a, b)');
+  assert.strictEqual(f('x = a % b'), 'x = __p8mod(a, b)');
+  assert.strictEqual(f('x = a \\ b'), 'x = __p8idiv(a, b)');
+  assert.strictEqual(f('x = a ^ b'), 'x = __p8pow(a, b)');
+});
+
+test('fixed point: bitwise ops stop being calls and become native Lua', () => {
+  // This is the reason the black wedge appeared: these have to be exact, and
+  // as native operators they are, with one less bridge crossing than before.
+  assert.strictEqual(f('x = a & b'), 'x = a & b');
+  assert.strictEqual(f('x = a | b'), 'x = a | b');
+  assert.strictEqual(f('x = a ^^ b'), 'x = a ~ b');
+  assert.strictEqual(f('x = ~a'), 'x = ~a');
+  // Compare with the default lowering, which routes them through the bridge.
+  assert.strictEqual(c('x = a & b'), 'x = band(a, b)');
+});
+
+test('fixed point: shifts keep their helper because the count is scaled too', () => {
+  assert.strictEqual(f('x = a << b'), 'x = __p8shl(a, b)');
+  assert.strictEqual(f('x = a >> b'), 'x = __p8shr(a, b)');
+  assert.strictEqual(f('x = a >>> b'), 'x = __p8lshr(a, b)');
+  assert.strictEqual(f('x = a <<> b'), 'x = __p8rotl(a, b)');
+  assert.strictEqual(f('x = a >>< b'), 'x = __p8rotr(a, b)');
+});
+
+test('fixed point: concatenation renders words back to digits', () => {
+  assert.strictEqual(f('x = a .. b'), 'x = __p8cat(a, b)');
+  assert.strictEqual(f('x = "hp:" .. 3'), 'x = __p8cat("hp:", 196608)');
+});
+
+test('fixed point: a literal subscript stays a plain key, at no runtime cost', () => {
+  // Most of a cart's indexing is literal, and none of it should pay for the
+  // conversion. t[1] must not become t[65536] or the table stops being a
+  // sequence and #, add(), all() and unpack() change meaning.
+  assert.strictEqual(f('x = v[1]'), 'x = v[1]');
+  assert.strictEqual(f('x = v[0]'), 'x = v[0]');
+  assert.strictEqual(f('x = v["hp"]'), 'x = v["hp"]');
+  assert.strictEqual(f('x = v.hp'), 'x = v.hp');
+  assert.strictEqual(f('t = {[2] = 5}'), 't = {[2] = 327680}');
+});
+
+test('fixed point: a computed subscript is converted while the cart runs', () => {
+  assert.strictEqual(f('x = v[i]'), 'x = v[__p8key(i)]');
+  assert.strictEqual(f('x = v[i + 1]'), 'x = v[__p8key(i + 65536)]');
+  assert.strictEqual(f('v[i] = 1'), 'v[__p8key(i)] = 65536');
+});
+
+test('fixed point: # yields a count, so it has to be scaled up', () => {
+  assert.strictEqual(f('x = #v'), 'x = __p8len(v)');
+  assert.strictEqual(f('x = #v + 1'), 'x = __p8len(v) + 65536');
+});
+
+test('fixed point: a numeric for spells out its implied step', () => {
+  // The control variable counts in raw words, so the default step of one has
+  // to become one whole unit rather than the 1/65536 Lua would use.
+  assert.strictEqual(f('for i = 1, 10 do end'), 'for i = 65536, 655360, 0x10000 do end');
+  // An explicit step is already scaled and is left alone.
+  assert.strictEqual(f('for i = 1, 10, 2 do end'), 'for i = 65536, 655360, 131072 do end');
+});
+
+test('fixed point: precedence still brackets correctly around the helpers', () => {
+  // A helper call is atomic, so it never needs bracketing itself, but what it
+  // replaced did have a precedence and the operands still do.
+  assert.strictEqual(f('x = (a + b) * c'), 'x = __p8mul((a + b), c)');
+  assert.strictEqual(f('x = a * b + c'), 'x = __p8mul(a, b) + c');
+  assert.strictEqual(f('x = a & b | c'), 'x = a & b | c');
+  assert.strictEqual(f('x = (a | b) & c'), 'x = (a | b) & c');
+});
+

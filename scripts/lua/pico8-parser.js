@@ -94,6 +94,30 @@
   const INTEGER_DIVIDE = '\\';
 
   /**
+   * Under the fixed point lowering every number is carried as its raw 16.16
+   * word in a Lua integer, which leaves + - and the comparisons already exact:
+   * the scale factor is common to both sides and simply comes along. These are
+   * the operators where it does not. Multiply and divide need a 64-bit
+   * intermediate the VM has no type for, the shifts take a count that is itself
+   * a scaled word, and .. has to turn a word back into digits.
+   */
+  const FIXED_BINARY_TO_CALL = {
+    '*': '__p8mul', '/': '__p8div', '%': '__p8mod', '^': '__p8pow',
+    '\\': '__p8idiv',
+    '<<': '__p8shl', '>>': '__p8shr', '>>>': '__p8lshr',
+    '<<>': '__p8rotl', '>><': '__p8rotr',
+    '..': '__p8cat',
+  };
+
+  /**
+   * A bitwise op works on the word itself, so under fixed point these stop
+   * being runtime calls and become native Lua operators: exact, and one less
+   * trip across the bridge than the lowering they replace. Only the spelling
+   * differs, PICO-8 writing exclusive or as ^^ where Lua writes ~.
+   */
+  const FIXED_BINARY_NATIVE = { '&': '&', '|': '|', '^^': '~' };
+
+  /**
    * PICO-8 adds its own string escapes for P8SCII control codes, filling the
    * character slots below Lua's own \a=7 .. \r=13. Stock Lua rejects these
    * outright, so they are decoded here and re-emitted as plain \ddd escapes.
@@ -1095,9 +1119,37 @@
     }
   }
 
-  function formatNumber(value) {
-    if (Object.is(value, -0)) return '0';
-    return String(value);
+  function formatNumber(value, fixedPoint) {
+    if (!fixedPoint) {
+      if (Object.is(value, -0)) return '0';
+      return String(value);
+    }
+    // Rounding then truncating to int32 is PICO-8's own conversion: it keeps
+    // 1/65536 of precision and wraps at the ends of the range rather than
+    // saturating or growing into a float.
+    const raw = Math.round(value * 65536) | 0;
+    if (raw >= 0) return String(raw);
+    // A negative word cannot be written in decimal. Lua reads `-2147483648` as
+    // unary minus applied to a literal that has already overflowed into a
+    // float, which would put the number back in the representation this whole
+    // lowering exists to get out of. A hex literal wraps into the integer type,
+    // so it lands on the exact bit pattern instead.
+    return `0x${(raw >>> 0).toString(16)}`;
+  }
+
+  /** Which runtime call an operator lowers to, if any, in this mode. */
+  function binaryCallFor(operator, fixedPoint) {
+    if (fixedPoint) return FIXED_BINARY_TO_CALL[operator] || null;
+    return BINARY_TO_CALL[operator] || null;
+  }
+
+  function unaryCallFor(operator, fixedPoint) {
+    if (!fixedPoint) return UNARY_TO_CALL[operator] || null;
+    // ~ is exact as a native Lua operator on the raw word.
+    if (operator === '~') return null;
+    // # yields a count, not a number the cart can compute with.
+    if (operator === '#') return '__p8len';
+    return UNARY_TO_CALL[operator] || null;
   }
 
   /**
@@ -1129,13 +1181,14 @@
     return out + quote;
   }
 
-  function precedenceOf(node) {
+  function precedenceOf(node, fixedPoint) {
     if (node.type === 'Binary') {
-      if (BINARY_TO_CALL[node.operator] || node.operator === INTEGER_DIVIDE) return ATOMIC_PREC;
+      if (binaryCallFor(node.operator, fixedPoint)) return ATOMIC_PREC;
+      if (node.operator === INTEGER_DIVIDE) return ATOMIC_PREC;
       return BINARY_PREC[node.operator] || ATOMIC_PREC;
     }
     if (node.type === 'Unary') {
-      if (UNARY_TO_CALL[node.operator]) return ATOMIC_PREC;
+      if (unaryCallFor(node.operator, fixedPoint)) return ATOMIC_PREC;
       return [UNARY_PREC, UNARY_PREC];
     }
     return ATOMIC_PREC;
@@ -1156,8 +1209,38 @@
     }
   }
 
-  function generate(ast) {
+  function generate(ast, options) {
+    const fixedPoint = Boolean(options && options.fixedPoint);
     const writer = new Writer();
+
+    const precOf = (node) => precedenceOf(node, fixedPoint);
+
+    /**
+     * A subscript has to end up an ordinary Lua key rather than a raw word, or
+     * the table stops looking like a sequence and #, add(), all(), ipairs() and
+     * unpack() all quietly change meaning. A literal is converted here for
+     * nothing, which covers most of the indexing a cart does; anything else has
+     * to be worked out while it runs.
+     */
+    function genIndexKey(node) {
+      if (!fixedPoint) {
+        genExpression(node);
+        return;
+      }
+      if (node.type === 'NumericLiteral') {
+        writer.put(formatNumber(node.value, false), node.line);
+        return;
+      }
+      // A string or a boolean is already the key it looks like.
+      if (node.type === 'StringLiteral' || node.type === 'Literal') {
+        genExpression(node);
+        return;
+      }
+      writer.put('__p8key', node.line);
+      writer.put('(', writer.line, { tight: true, open: true });
+      genExpression(node);
+      writer.put(')', writer.line, { tight: true });
+    }
 
     function genExpression(node, line) {
       const at = line || node.line;
@@ -1166,7 +1249,7 @@
           writer.put(sanitizeName(node.name), at);
           break;
         case 'NumericLiteral':
-          writer.put(formatNumber(node.value), at);
+          writer.put(formatNumber(node.value, fixedPoint), at);
           break;
         case 'StringLiteral':
           writer.put(formatString(node), at);
@@ -1199,7 +1282,7 @@
         case 'Index':
           genExpression(node.base, at);
           writer.put('[', writer.line, { tight: true, open: true });
-          genExpression(node.index);
+          genIndexKey(node.index);
           writer.put(']', writer.line, { tight: true });
           break;
         case 'Call':
@@ -1251,7 +1334,7 @@
         if (i > 0) writer.put(',', writer.line, { tight: true });
         if (field.kind === 'index') {
           writer.put('[', field.value.line, { open: true });
-          genExpression(field.key);
+          genIndexKey(field.key);
           writer.put(']', writer.line, { tight: true });
           writer.put('=', writer.line);
         } else if (field.kind === 'name') {
@@ -1286,7 +1369,7 @@
     }
 
     function genUnary(node, at) {
-      const call = UNARY_TO_CALL[node.operator];
+      const call = unaryCallFor(node.operator, fixedPoint);
       if (call) {
         writer.put(call, at);
         writer.put('(', writer.line, { tight: true, open: true });
@@ -1296,14 +1379,14 @@
       }
       // `not` is a word, so it needs the space that `-` and `#` must not have.
       writer.put(node.operator, at, { open: node.operator !== 'not' });
-      const needsParens = precedenceOf(node.argument)[1] < UNARY_PREC;
+      const needsParens = precOf(node.argument)[1] < UNARY_PREC;
       if (needsParens) writer.put('(', writer.line, { tight: true, open: true });
       genExpression(node.argument);
       if (needsParens) writer.put(')', writer.line, { tight: true });
     }
 
     function genBinary(node, at) {
-      const call = BINARY_TO_CALL[node.operator];
+      const call = binaryCallFor(node.operator, fixedPoint);
       if (call || node.operator === INTEGER_DIVIDE) {
         writer.put(call || 'flr', at);
         writer.put('(', writer.line, { tight: true, open: true });
@@ -1315,14 +1398,14 @@
       }
 
       const prec = BINARY_PREC[node.operator];
-      const leftParens = precedenceOf(node.left)[1] < prec[0];
+      const leftParens = precOf(node.left)[1] < prec[0];
       if (leftParens) writer.put('(', at, { open: true });
       genExpression(node.left, leftParens ? writer.line : at);
       if (leftParens) writer.put(')', writer.line, { tight: true });
 
-      writer.put(node.operator, writer.line);
+      writer.put((fixedPoint && FIXED_BINARY_NATIVE[node.operator]) || node.operator, writer.line);
 
-      const rightParens = precedenceOf(node.right)[0] <= prec[1];
+      const rightParens = precOf(node.right)[0] <= prec[1];
       if (rightParens) writer.put('(', writer.line, { open: true });
       genExpression(node.right);
       if (rightParens) writer.put(')', writer.line, { tight: true });
@@ -1489,6 +1572,11 @@
           if (node.step) {
             writer.put(',', writer.line, { tight: true });
             genExpression(node.step);
+          } else if (fixedPoint) {
+            // The control variable counts in raw words, so the implied step of
+            // one has to be spelled out as one whole unit rather than 1/65536.
+            writer.put(',', writer.line, { tight: true });
+            writer.put('0x10000', writer.line);
           }
           writer.put('do', writer.line);
           genBlock(node.body);
@@ -1528,8 +1616,8 @@
     return writer.toString();
   }
 
-  function compile(source) {
-    return generate(parse(source));
+  function compile(source, options) {
+    return generate(parse(source), options);
   }
 
   return {
