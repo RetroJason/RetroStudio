@@ -907,11 +907,40 @@
           "description": "Play a music handle",
           "parameters": [
             {"name": "handle", "type": "int32", "description": "Music handle"},
-            {"name": "volume", "type": "float", "description": "Volume level (0.0 to 1.0, optional, default: 1.0)"},
+            {"name": "volume", "type": "float", "description": "Volume scalar (optional, default: 1.0). Values above 1.0 are allowed and can intentionally saturate output."},
             {"name": "loop", "type": "boolean", "description": "Whether to loop the music (optional, default: true)"}
           ],
           "returns": {"type": "boolean", "description": "True if music started playing successfully"},
           "example": "Music.Play(song, 0.8, true)"
+        },
+        {
+          "name": "SetVolume",
+          "description": "Set volume scalar for an existing music handle while it is playing or paused",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle"},
+            {"name": "volume", "type": "float", "description": "Volume scalar. Not clamped; values above 1.0 can intentionally saturate output."}
+          ],
+          "returns": {"type": "boolean", "description": "True if volume was accepted"},
+          "example": "Music.SetVolume(song, 2.5)"
+        },
+        {
+          "name": "SetGain",
+          "description": "Alias of Music.SetVolume for gain-style UIs",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle"},
+            {"name": "volume", "type": "float", "description": "Volume scalar. Not clamped; values above 1.0 can intentionally saturate output."}
+          ],
+          "returns": {"type": "boolean", "description": "True if gain was accepted"},
+          "example": "Music.SetGain(song, 3.0)"
+        },
+        {
+          "name": "GetVolume",
+          "description": "Get current volume scalar for a music handle",
+          "parameters": [
+            {"name": "handle", "type": "int32", "description": "Music handle"}
+          ],
+          "returns": {"type": "float", "description": "Current volume scalar"},
+          "example": "local gain = Music.GetVolume(song)"
         },
         {
           "name": "Stop",
