@@ -537,7 +537,10 @@
 
 .preview-pane {
   padding: 20px;
-  height: 100%;
+  /* min-height rather than height: the welcome tab's project grid can be
+     taller than the pane, and a fixed height clips it instead of letting
+     .tab-pane's overflow scroll it. */
+  min-height: 100%;
   box-sizing: border-box;
   background:
     radial-gradient(circle at top left, rgba(255, 144, 54, 0.12), transparent 24%),
@@ -619,6 +622,36 @@
   color: #ffe4ad;
   font-size: 12px;
   font-weight: 700;
+}
+
+.welcome-projects-pagination {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.welcome-projects-count {
+  color: var(--studio-muted, #d6a78a);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.welcome-projects-pagination button {
+  border: 1px solid var(--studio-line, rgba(255, 145, 52, 0.22));
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 210, 126, 0.08), rgba(31, 11, 8, 0.96));
+  color: var(--studio-foreground, #fff1d6);
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.welcome-projects-pagination button:hover {
+  border-color: var(--studio-accent-strong, #ffcb68);
 }
 
 .welcome-recent-project-card {

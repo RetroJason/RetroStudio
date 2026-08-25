@@ -16,6 +16,13 @@ class TabManager {
     this.previewReadOnly = false;
     this.welcomeViewMode = 'recent';
     this.showDeletedWelcomeProjects = false;
+    // The recent projects list used to render a hard-capped 8 tiles, which
+    // silently hid the rest of a user's projects. It now grows a page at a
+    // time so a large account does not build hundreds of tiles up front.
+    // The grid fits up to 7 tiles per row on a wide pane, so a page is a few
+    // full rows rather than a stub.
+    this.welcomeProjectsPageSize = 24;
+    this.welcomeProjectsVisibleCount = this.welcomeProjectsPageSize;
     this.examplesSearchQuery = '';
     
     // Event system
@@ -314,6 +321,15 @@ class TabManager {
       if (action === 'toggle-deleted-projects') {
         e.preventDefault();
         this.showDeletedWelcomeProjects = !this.showDeletedWelcomeProjects;
+        // Active and deleted are different lists, so paging starts over.
+        this.welcomeProjectsVisibleCount = this.welcomeProjectsPageSize;
+        await this.refreshWelcomePreviewProjects();
+        return;
+      }
+
+      if (action === 'show-more-projects') {
+        e.preventDefault();
+        this.welcomeProjectsVisibleCount += this.welcomeProjectsPageSize;
         await this.refreshWelcomePreviewProjects();
         return;
       }
@@ -1565,6 +1581,9 @@ class TabManager {
   _showWelcomePreview() {
     // Ensure preview tab exists and is visible
     this._ensurePreviewTabExists();
+
+    // A fresh render of the welcome tab starts back at the first page.
+    this.welcomeProjectsVisibleCount = this.welcomeProjectsPageSize;
     
     const previewTab = this.tabBar.querySelector('[data-tab-id="preview"]');
     const previewPane = this.tabContentArea.querySelector('[data-tab-id="preview"]');
@@ -2322,7 +2341,7 @@ class TabManager {
         });
 
       const projectsMarkup = sortedProjects
-        .slice(0, 8)
+        .slice(0, Math.max(this.welcomeProjectsPageSize, this.welcomeProjectsVisibleCount))
         .map((summary) => {
           const project = summary.project || {};
           const revision = summary.currentRevision || {};
@@ -2456,9 +2475,24 @@ class TabManager {
         })
         .join('');
 
-      projectsContainer.innerHTML = showDeletedProjects
+      const shownCount = Math.min(
+        sortedProjects.length,
+        Math.max(this.welcomeProjectsPageSize, this.welcomeProjectsVisibleCount)
+      );
+      const paginationMarkup = sortedProjects.length > this.welcomeProjectsPageSize
+        ? `
+          <div class="welcome-projects-pagination">
+            <span class="welcome-projects-count">Showing ${shownCount} of ${sortedProjects.length}</span>
+            ${shownCount < sortedProjects.length
+              ? '<button type="button" data-welcome-action="show-more-projects">Show more</button>'
+              : ''}
+          </div>
+        `
+        : '';
+
+      projectsContainer.innerHTML = (showDeletedProjects
         ? '<p class="welcome-deleted-projects-warning">Deleted apps will be permanently deleted after 30 days.</p>' + projectsMarkup
-        : projectsMarkup;
+        : projectsMarkup) + paginationMarkup;
 
       for (const projectButton of projectsContainer.querySelectorAll('.welcome-recent-project-button')) {
         projectButton.addEventListener('click', async (event) => {
