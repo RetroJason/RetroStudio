@@ -710,18 +710,18 @@ test('leading shebang-style pico header comment is fine', () => {
 //
 // PICO-8 numbers are signed 16.16 fixed point, so each carries 32 significant
 // bits and a float32 lua_Number cannot hold one. Under this option a number is
-// emitted as its raw word in a Lua integer, which is exact. The option is off
-// by default, so every test above still describes the output.
+// emitted as its raw word in a Lua integer, which is exact. The option is on by
+// default, so the tests above ask for it to be off to describe stock output.
 // ===========================================================================
 
 /** Compile with the lowering on and normalise. */
 const f = (source) => norm(compile(source, { fixedPoint: true }));
 
-test('fixed point: off by default, until the remaining holes are closed', () => {
-  assert.strictEqual(norm(compile('x = 1')), 'x = 1');
-  assert.strictEqual(norm(compile('x = 1', {})), 'x = 1');
-  assert.strictEqual(norm(compile('x = 1', { fixedPoint: false })), 'x = 1');
+test('fixed point: on by default, and still switchable per compile', () => {
+  assert.strictEqual(norm(compile('x = 1')), 'x = 65536');
+  assert.strictEqual(norm(compile('x = 1', {})), 'x = 65536');
   assert.strictEqual(norm(compile('x = 1', { fixedPoint: true })), 'x = 65536');
+  assert.strictEqual(norm(compile('x = 1', { fixedPoint: false })), 'x = 1');
 });
 
 test('fixed point: literals become their raw 16.16 word', () => {
