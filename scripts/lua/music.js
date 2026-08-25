@@ -345,6 +345,51 @@ class LuaMusicExtensions extends BaseLuaExtension {
     const { audioEngine } = this._resolveHandlePlaybackState(music, 'IsPlaying');
     return audioEngine.activeSongs instanceof Map && audioEngine.activeSongs.has(music.resourceId);
   }
+
+  /**
+   * Set playback volume scalar for an existing music handle.
+   * Lua usage: Music.SetVolume(handle, volume)
+   */
+  SetVolume(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'SetVolume');
+    const volume = this._optionalNumberArg(args, 1, music.volume ?? 1.0, 'SetVolume', 'volume');
+
+    music.volume = volume;
+
+    if (music.isPlaying) {
+      const { audioEngine } = this._resolveHandlePlaybackState(music, 'SetVolume');
+
+      if (typeof audioEngine.setSongVolume === 'function') {
+        audioEngine.setSongVolume(music.resourceId, volume);
+      } else if (audioEngine.activeSongs instanceof Map) {
+        const active = audioEngine.activeSongs.get(music.resourceId);
+        if (active) {
+          active.volume = volume;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Gain alias of SetVolume.
+   * Lua usage: Music.SetGain(handle, volume)
+   */
+  SetGain(...rawArgs) {
+    return this.SetVolume(...rawArgs);
+  }
+
+  /**
+   * Get current volume scalar for a music handle.
+   * Lua usage: Music.GetVolume(handle)
+   */
+  GetVolume(...rawArgs) {
+    const args = this._normalizeLuaArgs(rawArgs);
+    const music = this._requireHandleState(args, 0, 'GetVolume');
+    return Number.isFinite(music.volume) ? music.volume : 1.0;
+  }
 }
 
 // Make the class available globally

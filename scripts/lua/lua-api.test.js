@@ -1053,6 +1053,26 @@ test('Music: Stop halts playback and Destroy releases the handle', async () => {
   assert.throws(() => music.Stop(h), /unknown handle/);
 });
 
+test('Music: SetVolume/SetGain update handle volume and active playback state', async () => {
+  const { music, audioEngine } = makeMusic();
+  const h = music.Create('theme');
+
+  assert.strictEqual(music.GetVolume(h), 1);
+  assert.strictEqual(music.SetVolume(h, 1.6), true);
+  assert.strictEqual(music.GetVolume(h), 1.6);
+
+  music.Play(h, 1.6, true);
+  await flushAsync();
+  assert.strictEqual(music.IsPlaying(h), true);
+
+  assert.strictEqual(music.SetGain(h, 2.25), true);
+  assert.strictEqual(music.GetVolume(h), 2.25);
+
+  const active = audioEngine.activeSongs.get('mod-1');
+  assert.ok(active, 'song should still be active');
+  assert.strictEqual(active.volume, 2.25, 'active song volume should be updated in-place');
+});
+
 /* ══════════════════════════════════════════════════════════════════════
    Coverage gate
    ══════════════════════════════════════════════════════════════════════ */
