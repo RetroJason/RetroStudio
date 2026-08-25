@@ -1073,11 +1073,15 @@ class Pico8ImportService {
     // it shims stock library functions and must not be lowered along with the
     // source. That means any number it hands to a PICO-8 builtin has to be
     // written in whatever representation the builtins expect, which is not
-    // necessarily the number as spelt. Asking the parser to lower the literal
-    // keeps the shim in step with the cart by construction: get this wrong and
-    // the value is out by a factor of 65536, which for pico_fps() is the
-    // difference between 30 frames a second and one every thirty-six minutes.
-    const luaNumber = (value) => parser.compile(`return ${value}`).trim().replace(/^return\s+/, '');
+    // necessarily the number as spelt: get this wrong and the value is out by a
+    // factor of 65536, which for pico_fps() is the difference between 30 frames
+    // a second and one every thirty-six minutes.
+    //
+    // The two called below are exempt. pico_screen and pico_fps declare their
+    // arguments opaque, so the bridge hands them over unscaled and they can be
+    // written as the sizes and rates they actually are. That matters because
+    // this is the part of the generated file an author is invited to edit.
+    // Anything else added here does need lowering.
 
     const chunks = [];
     if (source) {
@@ -1129,7 +1133,7 @@ class Pico8ImportService {
       '-- Output size of the 128x128 PICO-8 screen, centred on the display and',
       '-- stretched to fit. 448x366 fills the display. 366x366 renders centered,',
       '-- maintains the aspect ratio, and avoids the corners.',
-      `pico_screen(${luaNumber(448)}, ${luaNumber(366)})`,
+      'pico_screen(448, 366)',
     ];
 
     // Bind the PICO-8 entry points at call time, not import time. Scanning the
@@ -1148,9 +1152,9 @@ class Pico8ImportService {
       chunks.push('  -- the rate when the cart starts, which is why this is decided');
       chunks.push('  -- here rather than per frame.');
       chunks.push('  if type(_update60) == "function" then');
-      chunks.push(`    pico_fps(${luaNumber(60)})`);
+      chunks.push('    pico_fps(60)');
       chunks.push('  else');
-      chunks.push(`    pico_fps(${luaNumber(30)})`);
+      chunks.push('    pico_fps(30)');
       chunks.push('  end');
       chunks.push('end');
       chunks.push('');

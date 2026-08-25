@@ -1704,7 +1704,16 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const emulator = this.gameEmulator;
     if (!args || args.length === 0) {
       const interval = emulator?._updateIntervalMs || 0;
-      return interval > 0 ? (1000 / interval) : 0;
+      if (!(interval > 0)) return 0;
+      // The rate is stored as a frame interval, so deriving it back lands a
+      // hair off the integer that was asked for: 1000 / (1000 / 30) is
+      // 29.999999999999996. That used to be invisible because the bridge
+      // rounded the result on its way into the cart's representation, and
+      // stopped being invisible when this started reporting plain numbers.
+      // A cart comparing pico_fps() against the rate it set should match.
+      const rate = 1000 / interval;
+      const nearest = Math.round(rate);
+      return Math.abs(rate - nearest) < 1e-6 ? nearest : rate;
     }
 
     const rate = this._optionalNumberArg(args, 0, 0, 'pico_fps', 'rate');
@@ -4523,12 +4532,25 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
 // value is not a quantity this side is entitled to rescale, and getting it
 // wrong is invisible at the call site: the number comes back looking fine and
 // only fails later, wherever the cart applies a bitwise operator to it.
+//
+// pico_screen and pico_fps are here for a different reason. They are Studio
+// functions, not PICO-8 ones, so no cart calls them - the only callers are the
+// importer's generated Setup() and whoever edits it afterwards. Scaling their
+// arguments would mean that file had to say pico_screen(29360128, 23986176) to
+// ask for 448x366, which is unreadable in the one part of a generated cart a
+// human is actually meant to tune. Taking them at face value lets it say what
+// it means.
 LuaPico8Extensions.OPAQUE_VALUE_ARGS = {
   add: [1],
   del: [1],
   count: [1],
+  pico_screen: [0, 1],
+  pico_fps: [0],
 };
-LuaPico8Extensions.OPAQUE_VALUE_RESULTS = ['add', 'del', 'deli'];
+// pico_fps() with no argument reports the current rate, and has to report it in
+// the same units it accepts. Scaling only the way out would make pico_fps(60)
+// and pico_fps() disagree by a factor of 65536.
+LuaPico8Extensions.OPAQUE_VALUE_RESULTS = ['add', 'del', 'deli', 'pico_fps'];
 
 // Whether PICO-8 carts are lowered onto raw 16.16 words rather than float32
 // lua_Numbers. This is the runtime half of the representation; the compile half

@@ -1163,7 +1163,7 @@ const tests = [
         Math.abs(emulator._updateIntervalMs - (1000 / 30)) < 1e-9,
         `30fps should ask the emulator for a 33.33ms step, got ${emulator._updateIntervalMs}`
       );
-      assert.strictEqual(Math.round(pico8.pico_fps()), 30, 'the rate reads back');
+      assert.strictEqual(pico8.pico_fps(), 30, 'the rate reads back as the rate that was set');
 
       pico8.pico_fps(60);
       assert.ok(
@@ -1174,6 +1174,55 @@ const tests = [
       pico8.pico_fps(0);
       assert.strictEqual(emulator._updateIntervalMs, 0, 'zero restores per-frame updates');
       assert.strictEqual(pico8.pico_fps(), 0);
+    },
+  },
+  {
+    name: 'pico_screen and pico_fps take plain numbers across the bridge',
+    fn: () => {
+      const RealBaseLuaExtension = require(path.resolve(__dirname, 'base-lua-extension.js'));
+      const { pico8, emulator } = makePico8();
+
+      // This suite stubs the base class, so drive the real bridge directly, and
+      // hand it the representation and the exemption list PICO-8 actually
+      // declares rather than a copy here that could drift out of step with it.
+      const bridge = new RealBaseLuaExtension();
+      bridge.luaState = { execute() {}, getglobal() {}, pushnumber() {}, setglobal() {} };
+      Object.defineProperty(bridge, 'fixedPointNumbers', { value: true });
+      Object.defineProperty(bridge, 'opaqueValueArgs', {
+        value: LuaPico8Extensions.OPAQUE_VALUE_ARGS,
+      });
+      Object.defineProperty(bridge, 'opaqueValueResults', {
+        value: LuaPico8Extensions.OPAQUE_VALUE_RESULTS,
+      });
+      for (const name of ['pico_screen', 'pico_fps', 'camera']) {
+        bridge.registerMethod(name, pico8[name].bind(pico8), 'Pico8');
+      }
+
+      // These two are Studio functions rather than cart ones, and the only Lua
+      // that calls them is the generated Setup() a human is meant to edit. They
+      // declare their arguments opaque so that file can say what it means
+      // instead of pico_screen(29360128, 23986176).
+      window.Pico8_pico_screen_Impl(448, 366);
+      assert.strictEqual(pico8._picoScreenWidth, 448);
+      assert.strictEqual(pico8._picoScreenHeight, 366);
+
+      window.Pico8_pico_fps_Impl(30);
+      assert.ok(
+        Math.abs(emulator._updateIntervalMs - (1000 / 30)) < 1e-9,
+        `30 across the bridge should mean 30fps, got ${emulator._updateIntervalMs}ms`
+      );
+
+      // Reading back has to use the same units as setting, or the two disagree
+      // by a factor of 65536. It also has to come back as the number that was
+      // asked for: deriving the rate from the stored interval lands just off an
+      // integer, which the old scaled return path happened to round away.
+      assert.strictEqual(window.Pico8_pico_fps_Impl(), 30);
+
+      // Every other numeric builtin still expects the cart representation, so
+      // the exemption has not leaked.
+      window.Pico8_camera_Impl(64 * 65536, 32 * 65536);
+      assert.strictEqual(pico8._cameraX, 64);
+      assert.strictEqual(pico8._cameraY, 32);
     },
   },
   {
