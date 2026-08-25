@@ -1844,14 +1844,21 @@ class LuaPico8Extensions extends BaseLuaExtension {
     const rawDy = toRaw(mdy);
     const bits = this._tlineBits;
 
-    // 0x5f38-0x5f3b wrap and place the sampled region: the size bytes make the
-    // texture repeat (0 means 256 cells, so no repeat within the map) and the
-    // offset bytes say where in the map it starts. A cart with several
-    // textures packed into one map picks between them by poking these rather
-    // than by moving mx/my, which is why POOM writes all four with one poke4
-    // before every wall span.
-    const maskX = (this._readByte(0x5f38) - 1) & 0xff;
-    const maskY = (this._readByte(0x5f39) - 1) & 0xff;
+    // 0x5f38-0x5f3b wrap and place the sampled region: the size bytes are how
+    // many cells the map coordinate repeats over, 0 meaning the whole map
+    // width, and the offset bytes say which cell the region starts at. A cart
+    // with several textures packed into one map picks between them by poking
+    // these rather than by moving mx/my, which is why POOM writes all four
+    // with one poke4 before every wall span.
+    //
+    // The wrap is a modulo, not a bit mask, and that difference matters: a
+    // texture mapper's map coordinate goes negative all the time, and only a
+    // modulo brings it back inside the region. Masking left POOM sampling
+    // cell 243 of a 128-wide map, which is nothing, so its walls came out
+    // black wherever the camera put a span behind the map origin.
+    const map = this._map;
+    const loopX = this._readByte(0x5f38) || 128;
+    const loopY = this._readByte(0x5f39) || 128;
     const offsetX = this._readByte(0x5f3a);
     const offsetY = this._readByte(0x5f3b);
 
@@ -1871,9 +1878,13 @@ class LuaPico8Extensions extends BaseLuaExtension {
     for (let i = 0; i < budget; i += 1) {
       const mapX = rawX >> bits;
       const mapY = rawY >> bits;
+      let cellX = (mapX >> 3) % loopX;
+      if (cellX < 0) cellX += loopX;
+      let cellY = (mapY >> 3) % loopY;
+      if (cellY < 0) cellY += loopY;
       const tile = this._mapTile(
-        (((mapX >> 3) & maskX) + offsetX) & 0xff,
-        (((mapY >> 3) & maskY) + offsetY) & 0xff
+        (cellX + offsetX) % map.width,
+        (cellY + offsetY) % map.height
       );
       // Sprite 0 is empty, and the layer mask selects any of its flags.
       if (tile !== 0 && (layers === 0 || (this._spriteFlagByte(tile) & layers) !== 0)) {

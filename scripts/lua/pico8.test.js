@@ -1058,8 +1058,9 @@ const tests = [
         'the two texture cells repeat'
       );
 
-      // Cleared registers mean no repeat inside the map and no offset, which
-      // is the plain behaviour every single-texture cart relies on.
+      // Cleared registers mean the region is the whole map and starts at its
+      // origin, which is the plain behaviour every single-texture cart relies
+      // on.
       pico8.poke(0x5f38, 0);
       pico8.poke(0x5f39, 0);
       pico8.poke(0x5f3a, 0);
@@ -1069,6 +1070,20 @@ const tests = [
         Array.from(pico8._framebuffer.slice(128, 132)),
         [0, 0, 3, 12],
         'cells 0 and 1 are empty again'
+      );
+
+      // A texture mapper's map coordinate goes negative all the time, and the
+      // repeat has to bring it back inside the region. Masking the cell index
+      // instead of wrapping it sent POOM off the end of the map, where there
+      // is nothing to sample, and its walls came out black.
+      pico8.poke(0x5f38, 2);
+      pico8.poke(0x5f39, 1);
+      pico8.poke(0x5f3a, 2);
+      pico8.tline(0, 2, 3, 2, -4, 0, 1, 0);
+      assert.deepStrictEqual(
+        Array.from(pico8._framebuffer.slice(256, 260)),
+        [3, 12, 3, 12],
+        'a negative map coordinate wraps into the region'
       );
     },
   },

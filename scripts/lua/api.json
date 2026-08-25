@@ -1735,7 +1735,7 @@
         },
         {
           "name": "tline",
-          "description": "Draw a line textured with the map. The map coordinate advances by (mdx, mdy) per screen pixel. Called with a single argument instead, tline(bits) sets how many of the 16 fractional bits of a map coordinate are sub-pixel: 13 (the default) makes one unit a cell, 16 makes one unit a map pixel. Bytes 0x5f38-0x5f3b give the sampled region a repeat size and an origin in cells",
+          "description": "Draw a line textured with the map. The map coordinate advances by (mdx, mdy) per screen pixel. Called with a single argument instead, tline(bits) sets how many of the 16 fractional bits of a map coordinate are sub-pixel: 13 (the default) makes one unit a cell, 16 makes one unit a map pixel. Bytes 0x5f38-0x5f3b give the sampled region a repeat size in cells, 0 meaning the whole map, and a start cell",
           "parameters": [
             {"name": "x0", "type": "number", "description": "Screen x of the line's start, or the fractional bit count when it is the only argument."},
             {"name": "y0", "type": "number", "description": "Screen y of the line's start."},
