@@ -1131,9 +1131,9 @@ class Pico8ImportService {
     // so the framebuffer is already the right size for anything it draws.
     const screenLines = [
       '-- Output size of the 128x128 PICO-8 screen, centred on the display and',
-      '-- stretched to fit. 448x366 fills the display. 366x366 renders centered,',
-      '-- maintains the aspect ratio, and avoids the corners.',
-      'pico_screen(448, 366)',
+      '-- stretched to fit. 366x366 keeps the cart square and clears the display',
+      '-- corners. 448x366 fills the display instead, corners and all.',
+      'pico_screen(366, 366)',
     ];
 
     // Bind the PICO-8 entry points at call time, not import time. Scanning the
