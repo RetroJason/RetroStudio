@@ -497,7 +497,9 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * no single API function can provide.
    */
   initialize(luaState) {
-    (luaState || this.luaState)?.execute(LuaPico8Extensions.STRING_INDEX_LUA);
+    const state = luaState || this.luaState;
+    state?.execute(LuaPico8Extensions.STRING_INDEX_LUA);
+    state?.execute(LuaPico8Extensions.FIXED_POINT_LUA);
   }
 
   resetRuntimeState() {
@@ -4198,6 +4200,101 @@ LuaPico8Extensions.STRING_INDEX_LUA = `
         return nil
       end
       return c
+    end
+  end
+`;
+
+// PICO-8 numbers are signed 16.16 fixed point, so every one of them carries 32
+// significant bits. A float32 lua_Number only has a 24-bit mantissa, so it
+// cannot hold one: a cart that keeps flags in the low bits of a number - an
+// everyday PICO-8 idiom, because in fixed point those bits are simply part of
+// the number - loses them. lua_Integer is a true int32 under LUA_32BITS, so
+// carts lowered by Pico8Parser carry each number as the raw fixed-point word in
+// a Lua integer instead, and these are the operations that cannot be written as
+// a plain Lua operator on that representation.
+//
+// Kept as a constant, like STRING_INDEX_LUA above, so a test can run this exact
+// source through a real Lua VM.
+LuaPico8Extensions.FIXED_POINT_LUA = `
+  do
+    -- Unsigned >=, for values whose top bit is a magnitude bit rather than a
+    -- sign. Flipping both sign bits turns the unsigned order into the signed
+    -- order the VM already implements.
+    local function uge(x, y)
+      return (x ~ 0x80000000) >= (y ~ 0x80000000)
+    end
+
+    -- 16.16 multiply. The exact product of two 32-bit words needs 64 bits and
+    -- lua_Integer only has 32, so build it from 16-bit halves: with
+    -- a = ah*2^16 + al, the product's bits 16..47 - which are exactly the
+    -- result - are ah*bh*2^16 + ah*bl + al*bh + (al*bl)>>16.
+    --
+    -- al*bl overflows on its own, but it wraps to the true low 32 bits and
+    -- Lua's >> is logical, so shifting recovers that term's real bits 16..31.
+    -- Every other term is taken mod 2^32, which is precisely PICO-8's wrap.
+    function __p8mul(a, b)
+      local ah, al = a // 0x10000, a & 0xFFFF
+      local bh, bl = b // 0x10000, b & 0xFFFF
+      return (ah * bh << 16) + ah * bl + al * bh + ((al * bl) >> 16)
+    end
+
+    -- 16.16 divide, again without a 64-bit intermediate. The whole part comes
+    -- straight from integer division; the sixteen fraction bits are then
+    -- produced one at a time by restoring division on the remainder.
+    --
+    -- Shifting the remainder can push its top bit out of the word. That bit is
+    -- not lost information: a remainder at or above 2^31 always exceeds the
+    -- divisor, so the carry alone decides the quotient bit.
+    function __p8div(a, b)
+      -- PICO-8 has no infinity; division by zero saturates to the end of the
+      -- range, keeping the sign of the numerator.
+      if b == 0 then
+        if a < 0 then return 0x80000000 end
+        return 0x7FFFFFFF
+      end
+
+      local negative = false
+      if a < 0 then a = -a; negative = not negative end
+      if b < 0 then b = -b; negative = not negative end
+
+      -- The whole part seeds the quotient and the loop below shifts it up the
+      -- remaining sixteen places as it appends each fraction bit.
+      local q = a // b
+      local r = a % b
+
+      for _ = 1, 16 do
+        local carry = (r >> 31) & 1
+        r = r << 1
+        q = q << 1
+        if carry == 1 or uge(r, b) then
+          r = r - b
+          q = q | 1
+        end
+      end
+
+      if negative then return -q end
+      return q
+    end
+
+    -- Truncating division: PICO-8's \\ is flr(a/b).
+    function __p8idiv(a, b)
+      local q = __p8div(a, b)
+      return q - q % 0x10000
+    end
+
+    function __p8mod(a, b)
+      if b == 0 then return 0 end
+      return a - __p8mul(__p8idiv(a, b), b)
+    end
+
+    -- A table subscript stays an ordinary Lua key rather than a raw word, so
+    -- that Lua's own sequences keep working and #t, add(), all() and unpack()
+    -- behave. A whole number becomes an integer key; anything else becomes the
+    -- float it represents, which cannot collide with an integer key.
+    function __p8key(v)
+      if type(v) ~= "number" then return v end
+      if v % 0x10000 == 0 then return v // 0x10000 end
+      return v / 0x10000
     end
   end
 `;

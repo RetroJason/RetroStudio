@@ -211,7 +211,97 @@ function evalWithStringIndex(expression) {
   return stringIndexEval(expression);
 }
 
+// The fixed-point helpers are the arithmetic PICO-8 numbers cannot get from a
+// plain Lua operator, and they lean on exact int32 wrapping and on >> being
+// logical. A mock cannot show either, so evaluate them in the real VM too.
+let fixedPointEval = null;
+function evalWithFixedPoint(expression) {
+  if (!fixedPointEval) {
+    const { Lua } = require(path.resolve(__dirname, '..', 'external', 'lua-vm', 'lua.vm.js'));
+    const L = new Lua.State();
+    L.execute(LuaPico8Extensions.FIXED_POINT_LUA);
+    fixedPointEval = (source) => {
+      L.execute(`__fixed_point_result = tostring(${source})`);
+      L.getglobal('__fixed_point_result');
+      const value = L.raw_tostring(-1);
+      L.pop(1);
+      return value;
+    };
+  }
+  return fixedPointEval(expression);
+}
+
 const tests = [
+  {
+    name: 'Fixed point: multiply is exact across the whole 32-bit range',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+      const mul = (a, b) => evalWithFixedPoint(`__p8mul(${a}, ${b})`);
+
+      assert.strictEqual(mul(raw(1), raw(1)), raw(1));
+      assert.strictEqual(mul(raw(0.5), raw(2)), raw(1));
+      assert.strictEqual(mul(raw(-1), raw(2)), raw(-2));
+      assert.strictEqual(mul(raw(-3), raw(-4)), raw(12));
+      assert.strictEqual(mul(raw(0.5), raw(0.5)), raw(0.25));
+      // Anything below 1/65536 truncates away, as it does on a real PICO-8.
+      assert.strictEqual(mul('1', '1'), '0');
+      // The case a float32 lua_Number cannot do: a value needing all 32 bits
+      // multiplied by one has to come back completely unchanged.
+      assert.strictEqual(mul('2147483647', raw(1)), '2147483647');
+      assert.strictEqual(mul('-2147483640', raw(1)), '-2147483640');
+    },
+  },
+  {
+    name: 'Fixed point: divide is exact and saturates instead of going infinite',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+      const div = (a, b) => evalWithFixedPoint(`__p8div(${a}, ${b})`);
+
+      assert.strictEqual(div(raw(1), raw(2)), raw(0.5));
+      assert.strictEqual(div(raw(3), raw(2)), raw(1.5));
+      assert.strictEqual(div(raw(-3), raw(2)), raw(-1.5));
+      assert.strictEqual(div(raw(12), raw(-4)), raw(-3));
+      // 10/3 is not representable, so it truncates towards zero at 1/65536.
+      assert.strictEqual(div(raw(10), raw(3)), String(Math.floor((10 / 3) * 65536)));
+      // PICO-8 has no infinity: division by zero pins to the end of the range.
+      assert.strictEqual(div(raw(1), '0'), '2147483647');
+      assert.strictEqual(div(raw(-1), '0'), '-2147483648');
+      // A remainder large enough to push its top bit out of the word during
+      // the shift still has to produce the right quotient.
+      assert.strictEqual(div('2147483647', '2147483647'), raw(1));
+    },
+  },
+  {
+    name: 'Fixed point: integer divide floors and modulo follows it',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+
+      assert.strictEqual(evalWithFixedPoint(`__p8idiv(${raw(7)}, ${raw(2)})`), raw(3));
+      assert.strictEqual(evalWithFixedPoint(`__p8idiv(${raw(-7)}, ${raw(2)})`), raw(-4));
+      assert.strictEqual(evalWithFixedPoint(`__p8mod(${raw(7)}, ${raw(3)})`), raw(1));
+      // PICO-8's % takes the sign of the divisor, so this is 2 and not -1.
+      assert.strictEqual(evalWithFixedPoint(`__p8mod(${raw(-7)}, ${raw(3)})`), raw(2));
+      // Modulo by zero is 0 rather than a crash.
+      assert.strictEqual(evalWithFixedPoint(`__p8mod(${raw(7)}, 0)`), '0');
+    },
+  },
+  {
+    name: 'Fixed point: table keys stay ordinary Lua keys',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+
+      // A whole number has to become an integer key, or #, add() and unpack()
+      // stop seeing the table as a sequence.
+      assert.strictEqual(evalWithFixedPoint(`__p8key(${raw(1)})`), '1');
+      assert.strictEqual(evalWithFixedPoint(`__p8key(${raw(-3)})`), '-3');
+      // A fractional one becomes the float it stands for. Truncating to an
+      // integer instead would put 0.5 and 1 in the same slot.
+      assert.strictEqual(evalWithFixedPoint(`__p8key(${raw(0.5)})`), '0.5');
+      assert.strictEqual(evalWithFixedPoint(`__p8key(${raw(0.5)}) == __p8key(${raw(1)})`), 'false');
+      // Non-numbers pass straight through, since string keys are ordinary.
+      assert.strictEqual(evalWithFixedPoint(`__p8key("hp")`), 'hp');
+    },
+  },
   {
     name: 'Contract: expected function count is stable',
     fn: () => {
@@ -2489,12 +2579,15 @@ const tests = [
     },
   },
   {
-    name: 'initialize installs the string index metamethod',
+    name: 'initialize installs the string index metamethod and the fixed point helpers',
     fn: () => {
       const { pico8 } = makePico8();
       const executed = [];
       pico8.initialize({ execute: (source) => executed.push(source) });
-      assert.deepStrictEqual(executed, [LuaPico8Extensions.STRING_INDEX_LUA]);
+      assert.deepStrictEqual(executed, [
+        LuaPico8Extensions.STRING_INDEX_LUA,
+        LuaPico8Extensions.FIXED_POINT_LUA,
+      ]);
     },
   },
   {
