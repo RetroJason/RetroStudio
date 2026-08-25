@@ -1027,6 +1027,35 @@ class Pico8ImportService {
     };
   }
 
+  /**
+   * Tidy the generated Lua before it is written to the project.
+   *
+   * The generator deliberately keeps every token on the line it occupied in the
+   * cart, so a runtime error reported at line 412 still points at line 412 of
+   * the original. That fidelity is worth having while converting, but it leaves
+   * the file unindented and full of the blank runs where the cart's other
+   * sections used to be - which is nobody's idea of source you want to open.
+   *
+   * Kept out of buildRuntimeLua because that one is called synchronously from
+   * the emulator when a multicart does load(), and it must stay synchronous.
+   * Formatting is a nicety for code a human will read, not for code about to be
+   * handed straight to the interpreter.
+   */
+  async formatRuntimeLua(luaSource) {
+    const formatter = window.luaFormatService;
+    if (!formatter) return luaSource;
+    try {
+      // Converge rather than single-pass: this file is written once and read
+      // many times, so the extra few hundred milliseconds at import is cheap.
+      return await formatter.formatStable(luaSource);
+    } catch (error) {
+      // An unformatted import still runs. Failing the whole import because the
+      // prettifier choked would be a poor trade.
+      console.warn('[Pico8Import] Could not format generated Lua:', error?.message || error);
+      return luaSource;
+    }
+  }
+
   buildRuntimeLua(luaSource, options = {}) {
     // PICO-8 ships a patched Lua, so the cart source has to be lowered to plain
     // Lua before lua.vm.js will even compile it.
@@ -1837,7 +1866,7 @@ class Pico8ImportService {
       spriteFlags: this.parseP8GffSection(parsed.sections?.gff),
     });
 
-    await this.addTextFile(draft, preferredLuaFolder, 'main.lua', runtimeLua);
+    await this.addTextFile(draft, preferredLuaFolder, 'main.lua', await this.formatRuntimeLua(runtimeLua));
 
     // Archive the flattened cart rather than the original text plus its loose
     // include files: the project's Lua build compiles every .lua it finds, so

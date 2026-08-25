@@ -90,6 +90,11 @@ class LuaEditor extends EditorBase {
       // Store a backup reference to debug if the main reference gets lost
       this._monacoBackup = this.monacoEditor;
 
+      // Shift+Alt+F, the context menu entry, and the formatOnPaste/formatOnType
+      // options above all route through a language formatting provider. Lua had
+      // none, so every one of them was silently doing nothing until now.
+      window.luaFormatService?.registerMonacoProvider(monaco);
+
       // Set up change detection
       this.monacoEditor.onDidChangeModelContent(() => {
         if (!this.readOnly && !this._isLoadingContent) {
