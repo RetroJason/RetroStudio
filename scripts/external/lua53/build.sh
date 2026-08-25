@@ -56,7 +56,14 @@ SRCS=$(find "$LUA_SRC" -maxdepth 1 -name '*.c' \
   ! -name 'lua.c' ! -name 'luac.c' ! -name 'ltests.c' | sort)
 
 # lua_remove is a macro in 5.3; shim.c gives it a real symbol.
-EXPORTED_FUNCTIONS="_luaL_checkudata,_luaL_loadbufferx,_luaL_newmetatable,_luaL_newstate,_luaL_openlibs,_luaL_ref,_luaL_setmetatable,_luaL_testudata,_luaL_tolstring,_luaL_traceback,_luaL_unref,_lua_checkstack,_lua_createtable,_lua_error,_lua_gc,_lua_getfield,_lua_getglobal,_lua_gettable,_lua_gettop,_lua_newuserdata,_lua_pcallk,_lua_pushboolean,_lua_pushcclosure,_lua_pushlightuserdata,_lua_pushlstring,_lua_pushnil,_lua_pushnumber,_lua_pushvalue,_lua_rawgeti,_lua_setfield,_lua_setglobal,_lua_setmetatable,_lua_settable,_lua_settop,_lua_toboolean,_lua_tolstring,_lua_tonumberx,_lua_tothread,_lua_touserdata,_lua_type,_lua_typename,_rs_lua_remove,_malloc,_free"
+#
+# lua_pushinteger/lua_tointegerx are here because PICO-8 numbers are 16.16 fixed
+# point: 32 significant bits, which a float32 lua_Number cannot hold. The cart
+# lowering represents them as lua_Integer instead, which LUA_32BITS makes a
+# true int32 and therefore an exact container. Reading one back through
+# lua_tonumberx would convert it to float32 and undo that, so the bridge needs
+# the integer accessors. Purely additive: no existing numeric behaviour changes.
+EXPORTED_FUNCTIONS="_luaL_checkudata,_luaL_loadbufferx,_luaL_newmetatable,_luaL_newstate,_luaL_openlibs,_luaL_ref,_luaL_setmetatable,_luaL_testudata,_luaL_tolstring,_luaL_traceback,_luaL_unref,_lua_checkstack,_lua_createtable,_lua_error,_lua_gc,_lua_getfield,_lua_getglobal,_lua_gettable,_lua_gettop,_lua_newuserdata,_lua_pcallk,_lua_pushboolean,_lua_pushcclosure,_lua_pushinteger,_lua_pushlightuserdata,_lua_pushlstring,_lua_pushnil,_lua_pushnumber,_lua_pushvalue,_lua_rawgeti,_lua_setfield,_lua_setglobal,_lua_setmetatable,_lua_settable,_lua_settop,_lua_toboolean,_lua_tointegerx,_lua_tolstring,_lua_tonumberx,_lua_tothread,_lua_touserdata,_lua_type,_lua_typename,_rs_lua_remove,_malloc,_free"
 
 EXPORTED_RUNTIME_METHODS="cwrap,ccall,getValue,setValue,addFunction,removeFunction,intArrayFromString,UTF8ToString,stringToUTF8,stackAlloc,stackSave,stackRestore,HEAPU8,HEAP32"
 

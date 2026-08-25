@@ -121,7 +121,7 @@ var Lua = exports.Lua = {
 		"pushboolean":       emscripten.cwrap('lua_pushboolean',       null,     ["number", "number"]),
 		"pushcclosure":      emscripten.cwrap('lua_pushcclosure',      null,     ["number", "number", "number"]),
 		// pushfstring
-		// pushinteger
+		"pushinteger":       emscripten.cwrap('lua_pushinteger',       null,     ["number", "number"]),
 		"pushlightuserdata": emscripten.cwrap('lua_pushlightuserdata', null,     ["number", "number"]),
 		"pushlstring":       emscripten.cwrap('lua_pushlstring',       null,     ["number", "array", "number"]),
 		"pushnil":           emscripten.cwrap('lua_pushnil',           null,     ["number"]),
@@ -155,7 +155,7 @@ var Lua = exports.Lua = {
 		// status
 		"toboolean":         emscripten.cwrap('lua_toboolean',         "number", ["number", "number"]),
 		// tocfunction
-		// tointegerx
+		"tointegerx":        emscripten.cwrap('lua_tointegerx',        "number", ["number", "number", "number"]),
 		"tolstring":         emscripten.cwrap('lua_tolstring',         "number", ["number", "number", "number"]),
 		"tonumberx":         emscripten.cwrap('lua_tonumberx',         "number", ["number", "number", "number"]),
 		// topointer
