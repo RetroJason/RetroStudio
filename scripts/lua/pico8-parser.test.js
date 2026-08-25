@@ -16,8 +16,15 @@ const { tokenize, parse, compile } = require('./pico8-parser.js');
 /** Collapse whitespace so tests assert on structure, not layout. */
 const norm = (source) => String(source).replace(/\s+/g, ' ').trim();
 
-/** Compile and normalise in one step. */
-const c = (source) => norm(compile(source));
+/**
+ * Compile and normalise in one step.
+ *
+ * Explicitly unlowered. Carts are now compiled onto raw 16.16 words by
+ * default, but that is a separate lowering on top of this one, and these tests
+ * are about the dialect itself: what PICO-8 spellings mean and how precedence
+ * comes out. Group N at the bottom covers the fixed point lowering.
+ */
+const c = (source) => norm(compile(source, { fixedPoint: false }));
 
 /** Token types/values only; positions are asserted separately. */
 const kinds = (source) => tokenize(source)
@@ -444,9 +451,11 @@ test('semicolons are accepted', () => {
 });
 
 test('compiling stock Lua is idempotent', () => {
+  // Unlowered: the fixed point lowering is deliberately not idempotent, since
+  // running it twice would scale every number twice.
   const source = 'local function f(a, b) return a + b end\nfor i = 1, 10 do print(f(i, 2)) end';
-  const once = compile(source);
-  assert.strictEqual(norm(compile(once)), norm(once));
+  const once = compile(source, { fixedPoint: false });
+  assert.strictEqual(norm(compile(once, { fixedPoint: false })), norm(once));
 });
 
 test('compiled output re-parses cleanly', () => {
@@ -643,7 +652,7 @@ test('\\z skips following whitespace', () => {
 
 test('output keeps statements on their original lines', () => {
   const source = 'x = 1\n\nif (a) y = 2\nz = 3';
-  const out = compile(source);
+  const out = compile(source, { fixedPoint: false });
   const lines = out.split('\n');
   assert.strictEqual(lines.length, 4, out);
   assert.match(lines[0], /x = 1/);
@@ -658,14 +667,14 @@ test('multi-line constructs keep their line count', () => {
 });
 
 test('a multi-line long string does not push later lines down', () => {
-  const out = compile('x = [[a\nb\nc]]\ny = 1');
+  const out = compile('x = [[a\nb\nc]]\ny = 1', { fixedPoint: false });
   const lines = out.split('\n');
   assert.strictEqual(lines.length, 4, out);
   assert.match(lines[3], /y = 1/);
 });
 
 test('a multi-line table constructor keeps later lines in place', () => {
-  const out = compile('t = {\n1,\n2,\n}\ny = 1');
+  const out = compile('t = {\n1,\n2,\n}\ny = 1', { fixedPoint: false });
   const lines = out.split('\n');
   assert.strictEqual(lines.length, 5, out);
   assert.match(lines[4], /y = 1/);
@@ -708,9 +717,11 @@ test('leading shebang-style pico header comment is fine', () => {
 /** Compile with the lowering on and normalise. */
 const f = (source) => norm(compile(source, { fixedPoint: true }));
 
-test('fixed point: off by default, so numbers are untouched', () => {
-  assert.strictEqual(c('x = 1'), 'x = 1');
+test('fixed point: off by default, until the remaining holes are closed', () => {
+  assert.strictEqual(norm(compile('x = 1')), 'x = 1');
   assert.strictEqual(norm(compile('x = 1', {})), 'x = 1');
+  assert.strictEqual(norm(compile('x = 1', { fixedPoint: false })), 'x = 1');
+  assert.strictEqual(norm(compile('x = 1', { fixedPoint: true })), 'x = 65536');
 });
 
 test('fixed point: literals become their raw 16.16 word', () => {

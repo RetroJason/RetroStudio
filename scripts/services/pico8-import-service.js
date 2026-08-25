@@ -1040,6 +1040,16 @@ class Pico8ImportService {
     const hasSetup = /\bfunction\s+Setup\s*\(/.test(source);
     const hasUpdate = /\bfunction\s+Update\s*\(/.test(source);
 
+    // Everything appended below is plain Lua rather than cart dialect, because
+    // it shims stock library functions and must not be lowered along with the
+    // source. That means any number it hands to a PICO-8 builtin has to be
+    // written in whatever representation the builtins expect, which is not
+    // necessarily the number as spelt. Asking the parser to lower the literal
+    // keeps the shim in step with the cart by construction: get this wrong and
+    // the value is out by a factor of 65536, which for pico_fps() is the
+    // difference between 30 frames a second and one every thirty-six minutes.
+    const luaNumber = (value) => parser.compile(`return ${value}`).trim().replace(/^return\s+/, '');
+
     const chunks = [];
     if (source) {
       chunks.push(source);
@@ -1095,9 +1105,9 @@ class Pico8ImportService {
       chunks.push('  -- the rate when the cart starts, which is why this is decided');
       chunks.push('  -- here rather than per frame.');
       chunks.push('  if type(_update60) == "function" then');
-      chunks.push('    pico_fps(60)');
+      chunks.push(`    pico_fps(${luaNumber(60)})`);
       chunks.push('  else');
-      chunks.push('    pico_fps(30)');
+      chunks.push(`    pico_fps(${luaNumber(30)})`);
       chunks.push('  end');
       chunks.push('end');
       chunks.push('');
