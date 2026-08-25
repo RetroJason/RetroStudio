@@ -1228,13 +1228,31 @@ class LuaPico8Extensions extends BaseLuaExtension {
    * Lua VM divides in doubles, so galaxis.p8's particle age/max_age of 0/0
    * reached min() as NaN. Zero is not negative, so NaN saturates positive.
    */
+  /**
+   * Whether the running cart was lowered onto raw 16.16 words, which decides
+   * whether a number arriving from Lua is a value or a scaled word. Reads the
+   * one constant so there is a single thing to flip.
+   */
+  get fixedPointNumbers() {
+    return LuaPico8Extensions.FIXED_POINT;
+  }
+
+  /**
+   * Undo the lowering's scaling on the way in. Everything on the JS side works
+   * in ordinary values, so this is the only place the representation is known.
+   */
+  _fromRawNumber(value) {
+    if (!LuaPico8Extensions.FIXED_POINT) return value;
+    return value / 65536;
+  }
+
   _coerceNumberArg(raw, methodName, argName) {
     if (raw === undefined || raw === null || raw === '') {
       this._warnCoercedArg(methodName, argName, raw);
       return 0;
     }
 
-    if (typeof raw === 'number') return this._toPico8Number(raw);
+    if (typeof raw === 'number') return this._toPico8Number(this._fromRawNumber(raw));
 
     // The stack fallback in _readArg hands back Lua's tostring of the value.
     const text = String(raw).trim();
@@ -1243,7 +1261,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (/nan$/i.test(text)) return max;
 
     const value = Number.parseFloat(text);
-    if (Number.isFinite(value)) return value;
+    if (Number.isFinite(value)) return this._fromRawNumber(value);
 
     this._warnCoercedArg(methodName, argName, raw);
     return 0;
@@ -4392,6 +4410,13 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
     end
   end
 `;
+
+// Whether PICO-8 carts are lowered onto raw 16.16 words rather than float32
+// lua_Numbers. This is the runtime half of the representation; the compile half
+// is FIXED_POINT in pico8-parser.js, which bakes it into the stored Lua when a
+// cart is imported. THE TWO MUST BE FLIPPED TOGETHER - a cart lowered one way
+// and read back the other puts every coordinate out by a factor of 65536.
+LuaPico8Extensions.FIXED_POINT = false;
 
 // Register the extension with the Lua system
 if (typeof window !== 'undefined') {

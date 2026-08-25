@@ -1616,11 +1616,23 @@
     return writer.toString();
   }
 
+  /**
+   * Whether a cart is lowered onto raw 16.16 words rather than float32
+   * lua_Numbers. This is baked into the stored Lua when a cart is imported, so
+   * it is the compile half of the representation; the runtime half is
+   * FIXED_POINT in pico8.js, which reads those words back at the API boundary.
+   * THE TWO MUST BE FLIPPED TOGETHER.
+   */
+  const FIXED_POINT = false;
+
   function compile(source, options) {
-    return generate(parse(source), options);
+    const fixedPoint = options && options.fixedPoint !== undefined
+      ? options.fixedPoint
+      : FIXED_POINT;
+    return generate(parse(source), { fixedPoint });
   }
 
   return {
-    tokenize, parse, generate, compile,
+    tokenize, parse, generate, compile, FIXED_POINT,
   };
 }));

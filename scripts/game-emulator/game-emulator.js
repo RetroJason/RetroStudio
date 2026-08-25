@@ -3152,7 +3152,7 @@ class GameEmulator {
       // comes back as the bytes it holds rather than being re-read as UTF-8,
       // which is what lets PICO-8 characters survive. See
       // scripts/external/lua-vm/byte-strings.patch.
-      script.src = 'scripts/external/lua-vm/lua.vm.js?v=3-lua53-int';
+      script.src = 'scripts/external/lua-vm/lua.vm.js?v=4-lua53-int';
       script.onload = () => {
         // The built VM can only compile chunks that fit the 64KB emscripten
         // stack. Large carts need this shim. See large-chunk-load.js.

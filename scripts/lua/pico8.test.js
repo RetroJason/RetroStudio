@@ -367,6 +367,65 @@ const tests = [
     },
   },
   {
+    name: 'Fixed point: the API boundary scales arguments back to plain values',
+    fn: () => {
+      const { pico8 } = makePico8();
+      const previous = LuaPico8Extensions.FIXED_POINT;
+      try {
+        // Off, a number from Lua is already the value it looks like.
+        LuaPico8Extensions.FIXED_POINT = false;
+        assert.strictEqual(pico8._coerceNumberArg(64, 'circ', 'x'), 64);
+
+        // On, the same argument arrives as a scaled word and has to come back
+        // down, or every coordinate would be 65536 times too far across.
+        LuaPico8Extensions.FIXED_POINT = true;
+        assert.strictEqual(pico8._coerceNumberArg(64 * 65536, 'circ', 'x'), 64);
+        assert.strictEqual(pico8._coerceNumberArg(32768, 'circ', 'x'), 0.5);
+        // The stack fallback hands back Lua's tostring, so that path scales too.
+        assert.strictEqual(pico8._coerceNumberArg('4194304', 'circ', 'x'), 64);
+        // A missing argument is still 0 rather than a scaled anything.
+        assert.strictEqual(pico8._coerceNumberArg(undefined, 'circ', 'x'), 0);
+      } finally {
+        LuaPico8Extensions.FIXED_POINT = previous;
+      }
+    },
+  },
+  {
+    name: 'Fixed point: only a scaled extension rescales what it returns',
+    fn: () => {
+      const BaseLuaExtension = require(path.resolve(__dirname, 'base-lua-extension.js'));
+
+      const calls = [];
+      const luaState = {
+        execute: (source) => calls.push(source),
+        getglobal() {}, pushnumber() {}, setglobal() {},
+      };
+
+      const makeExt = (fixedPoint) => {
+        const ext = new BaseLuaExtension();
+        ext.luaState = luaState;
+        Object.defineProperty(ext, 'fixedPointNumbers', { value: fixedPoint });
+        return ext;
+      };
+
+      // An extension that is not scaled must be left completely alone, which is
+      // what keeps the Studio API working the way it always has.
+      makeExt(false).registerMethod('plain', () => 12.5, 'Other');
+      assert.strictEqual(window.Other_plain_Impl(), 12.5);
+
+      // A scaled one hands back the raw word, rounded to an exact integer so
+      // that the push can use lua_Integer rather than a float32.
+      makeExt(true).registerMethod('scaled', () => 12.5, 'Pico8');
+      assert.strictEqual(window.Pico8_scaled_Impl(), 12.5 * 65536);
+
+      // Anything that is not a number passes straight through either way.
+      makeExt(true).registerMethod('word', () => 'hi', 'Pico8');
+      assert.strictEqual(window.Pico8_word_Impl(), 'hi');
+      makeExt(true).registerMethod('flag', () => true, 'Pico8');
+      assert.strictEqual(window.Pico8_flag_Impl(), true);
+    },
+  },
+  {
     name: 'Fixed point: table keys stay ordinary Lua keys',
     fn: () => {
       const raw = (v) => String(Math.round(v * 65536) | 0);

@@ -594,6 +594,19 @@ Lua.State.prototype.push = function(ob) {
 		case "boolean":
 			return this.pushboolean(ob?1:0);
 		case "number":
+			// LUA_32BITS makes lua_Number a float32, whose 24-bit mantissa
+			// cannot hold a whole 32-bit value. PICO-8 numbers are 16.16 fixed
+			// point and carry 32 significant bits, so a value coming back from
+			// a builtin has to arrive as lua_Integer, which under the same
+			// define is a true int32 and therefore exact.
+			//
+			// The subtype matters as much as the precision: a float that has
+			// rounded to 2147483648 has no int32 representation at all, so the
+			// next bitwise operator a cart applies to it raises "number has no
+			// integer representation" rather than merely being imprecise.
+			if (Number.isInteger(ob) && ob >= -2147483648 && ob <= 2147483647) {
+				return this.pushinteger(ob);
+			}
 			return this.pushnumber(ob);
 		case "string":
 			return this.pushstring(ob);

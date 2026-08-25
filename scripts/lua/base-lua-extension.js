@@ -108,7 +108,17 @@ class BaseLuaExtension {
 
         // Get the arguments passed from Lua and call the JavaScript method
         const result = jsMethod.apply(self, arguments);
-        
+
+        // An extension whose numbers are a scaled representation has to scale
+        // its results back on the way out, because everything inside the JS
+        // method worked in ordinary values. Only PICO-8 sets this, so no other
+        // extension's return path changes. Rounding to an exact integer here is
+        // what lets Lua.State.push hand it over as a lua_Integer, which is the
+        // only container that holds all 32 significant bits.
+        if (self.fixedPointNumbers === true && typeof result === 'number') {
+          return Math.round(result * 65536) | 0;
+        }
+
         // Return result if any
         return result;
       } catch (error) {
