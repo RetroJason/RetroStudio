@@ -376,7 +376,7 @@ class GameEmulator {
         summary.images++;
       } else if (lowerPath.match(/\.(pal|act|aco|pmap)$/)) {
         summary.palettes++;
-      } else if (lowerPath.match(/\.(wav|sfx)$/)) {
+      } else if (lowerPath.match(/\.(wav|sfx|sfxb)$/)) {
         summary.sfx++;
       } else if (lowerPath.match(/\.(mod|xm|s3m|it|mptm|p8mus|d2mu)$/)) {
         summary.music++;
@@ -732,6 +732,8 @@ class GameEmulator {
     
     if (['.mod', '.xm', '.s3m', '.it', '.mptm'].includes(extension)) {
       audioType = 'mod';
+    } else if (extension === '.sfxb') {
+      audioType = 'sfx';
     } else if (['.wav'].includes(extension)) {
       audioType = 'wav';
     }
@@ -1136,7 +1138,9 @@ class GameEmulator {
     
     // Determine resource type and supported extensions
     const resourceTypeMap = {
-      'SFX': ['wav'],
+      // `.sfxb` is the built definition the player synthesizes; `.wav` is the
+      // legacy rendered output, still emitted for targets that cannot.
+      'SFX': ['sfxb', 'wav'],
       'MUSIC': ['mod', 'xm', 's3m', 'it', 'p8mus', 'd2mu'],
       'GRAPHICS': ['png', 'jpg', 'jpeg', 'gif', 'bmp'],
       'DATA': ['json', 'txt', 'xml'],
@@ -1595,8 +1599,9 @@ class GameEmulator {
       // Determine audio type from file extension
       const extension = resource.name.toLowerCase();
       const isModFile = ['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => extension.endsWith(ext));
-      const audioType = isModFile ? 'mod' : 'wav';
-      const mimeType = isModFile ? 'application/octet-stream' : 'audio/wav';
+      const isSfxDefinition = extension.endsWith('.sfxb');
+      const audioType = isModFile ? 'mod' : (isSfxDefinition ? 'sfx' : 'wav');
+      const mimeType = (isModFile || isSfxDefinition) ? 'application/octet-stream' : 'audio/wav';
       
       // Create File object for ResourceManager
       const file = new File([arrayBuffer], resource.name, { type: mimeType });

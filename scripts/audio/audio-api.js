@@ -139,6 +139,11 @@ class AudioEngine extends EventTarget {
         resource.id = resourceId;
         resource.type = type;
         this.resources.set(resourceId, resource);
+      } else if (type === 'sfx') {
+        resource = await this._loadSfxResource(data, name || `SFX_${resourceId}`);
+        resource.id = resourceId;
+        resource.type = type;
+        this.resources.set(resourceId, resource);
       } else {
         throw new Error(`Unsupported audio type: ${type}`);
       }
@@ -366,9 +371,20 @@ class AudioEngine extends EventTarget {
       return null;
     }
     
-    if (resource.type !== 'wav') {
+    if (resource.type !== 'wav' && resource.type !== 'sfx') {
       console.warn(`[AudioEngine] Resource ${resourceId} is not a sound (WAV) type`);
       return null;
+    }
+
+    // A sound effect is stored as its definition and synthesized the first time
+    // it is actually played.
+    if (!resource.audioBuffer) {
+      try {
+        this._synthesizeSfxBuffer(resource);
+      } catch (error) {
+        console.error(`[AudioEngine] Failed to synthesize sound ${resourceId}:`, error);
+        return null;
+      }
     }
     
     // Resume on-demand so playback does not depend on caller-specific resume logic.
@@ -676,6 +692,112 @@ class AudioEngine extends EventTarget {
       data: data.slice(),
       audioBuffer,
       duration: audioBuffer.duration
+    };
+  }
+
+  /**
+   * Build a playable resource from a binary sound effect definition.
+   *
+   * The build used to ship these as rendered WAVs, which cost 88-220KB each for
+   * a definition of a few dozen bytes; a cart with a full sfx bank paid
+   * megabytes for it. Only the definition is loaded here.
+   *
+   * Nothing is synthesized until the effect is first played. That matters more
+   * than it sounds: PICO-8 carts routinely use spare sfx slots as flat storage
+   * for level data, and those slots decode to minutes of noise that is never
+   * played. Rendering the bank up front cost POOM 268MB of audio buffers for
+   * sound it never makes.
+   */
+  async _loadSfxResource(data, name) {
+    const SfxBinary = (typeof window !== 'undefined' && window.SfxBinary) || null;
+    if (!SfxBinary) throw new Error('SfxBinary module not loaded');
+
+    const decoded = SfxBinary.decode(data);
+    const resource = {
+      name,
+      // The definition, not the audio: a few dozen bytes instead of a WAV.
+      data: data.slice(),
+      definition: decoded,
+      audioBuffer: null,
+      duration: 0,
+      // Loop points come from the slot's own markers, so _wavLoopPoints has
+      // nothing to parse - and must not try, since there is no smpl chunk.
+      _loopPoints: null
+    };
+
+    if (decoded.format === 'pico') {
+      const PicoAudio = (typeof window !== 'undefined' && window.PicoAudio) || null;
+      if (!PicoAudio) throw new Error('PicoAudio module not loaded');
+      // Length and loop points follow from the slot's step count and speed, so
+      // they are known without rendering a single sample.
+      resource.duration = PicoAudio.slotDuration(decoded.slot);
+      resource._loopPoints = this._picoLoopPoints(decoded.slot, this.audioContext.sampleRate);
+    }
+
+    return resource;
+  }
+
+  /** Render a deferred sound effect definition into its AudioBuffer. */
+  _synthesizeSfxBuffer(resource) {
+    const decoded = resource.definition;
+    if (!decoded) throw new Error('Sound effect resource has no definition');
+
+    const rendered = decoded.format === 'pico'
+      ? this._renderPicoSfx(decoded.slot, this.audioContext.sampleRate)
+      : this._renderNativeSfx(decoded.parameters);
+
+    const audioBuffer = this.audioContext.createBuffer(1, Math.max(1, rendered.samples.length), rendered.sampleRate);
+    audioBuffer.getChannelData(0).set(rendered.samples);
+
+    resource.audioBuffer = audioBuffer;
+    resource.duration = audioBuffer.duration;
+    return audioBuffer;
+  }
+
+  _renderPicoSfx(slot, sampleRate) {
+    const PicoAudio = window.PicoAudio;
+    // Gain 1: a standalone sfx() is not mixed with three other channels, so it
+    // renders at PICO-8's own amplitude rather than the per-channel level.
+    return {
+      samples: PicoAudio.renderSfxSlot(slot, sampleRate, PicoAudio.DEFAULT_TICK_RATE, 1),
+      sampleRate
+    };
+  }
+
+  /**
+   * Loop points in sample frames, or null for a one-shot.
+   *
+   * The cart's loop end is exclusive; _wavLoopPoints reports an inclusive last
+   * frame, so it lands one frame before the excluded step.
+   */
+  _picoLoopPoints(slot, sampleRate) {
+    const PicoAudio = window.PicoAudio;
+    if (!PicoAudio.slotIsLooping(slot)) return null;
+
+    const stepSamples = PicoAudio.slotStepSamples(slot, sampleRate, PicoAudio.DEFAULT_TICK_RATE);
+    const total = stepSamples * PicoAudio.slotPlayLength(PicoAudio.normalizeSlot(slot));
+    const start = slot.loopStart * stepSamples;
+    const end = Math.min(slot.loopEnd * stepSamples, total) - 1;
+    return end > start ? { start, end } : null;
+  }
+
+  _renderNativeSfx(parameters) {
+    const jsfxr = (typeof window !== 'undefined' && window.jsfxr) || null;
+    if (!jsfxr || !jsfxr.Params || !jsfxr.SoundEffect) {
+      throw new Error('jsfxr library not loaded correctly');
+    }
+
+    const params = new jsfxr.Params();
+    Object.keys(parameters).forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(params, key)) params[key] = parameters[key];
+    });
+
+    const soundEffect = new jsfxr.SoundEffect(params);
+    return {
+      samples: soundEffect.getRawBuffer().normalized,
+      // SFXR picks its own rate; the worklet resamples, exactly as it did for
+      // the WAV this replaces.
+      sampleRate: soundEffect.sampleRate || 44100
     };
   }
 
@@ -1053,7 +1175,11 @@ class AudioEngine extends EventTarget {
   }
 
   _picoSfxDurationMs(resourceId) {
-    const seconds = this.resources.get(resourceId)?.audioBuffer?.duration;
+    const resource = this.resources.get(resourceId);
+    // This is read before the sound starts, to decide when the channel ages
+    // out, so it has to work for a definition that has not been synthesized
+    // yet. A PICO-8 slot's length follows from its step count and speed.
+    const seconds = resource?.audioBuffer?.duration ?? resource?.duration;
     return Number.isFinite(seconds) ? seconds * 1000 : 0;
   }
 

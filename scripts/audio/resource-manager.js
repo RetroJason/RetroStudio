@@ -332,6 +332,8 @@ class ResourceManager {
       case 'it':
       case 'mptm':
         return 'mod';
+      case 'sfxb':
+        return 'sfx';
       case 'wav':
       case 'wave':
         return 'wav';
@@ -376,6 +378,9 @@ class StudioAudioService {
     const lower = String(filename || '').toLowerCase();
     if (['.mod', '.xm', '.s3m', '.it', '.mptm'].some(ext => lower.endsWith(ext))) {
       return 'mod';
+    }
+    if (lower.endsWith('.sfxb')) {
+      return 'sfx';
     }
     if (lower.endsWith('.wav')) {
       return 'wav';

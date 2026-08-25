@@ -145,8 +145,13 @@
   /**
    * Synthesize one SFX slot from step 0 for its full play length.
    * This is the note source for both `sfx(n)` and music patterns.
+   *
+   * `gain` defaults to the per-channel mixing level, which is what a music
+   * pattern needs because four of these are summed. A standalone sfx() is not
+   * summed with anything and must render at PICO-8's own amplitude - volume/7
+   * with no further attenuation - or quiet effects end up inaudible.
    */
-  function renderSfxSlot(rawSlot, sampleRate = 44100, tickRate = DEFAULT_TICK_RATE) {
+  function renderSfxSlot(rawSlot, sampleRate = 44100, tickRate = DEFAULT_TICK_RATE, gain = CHANNEL_GAIN) {
     const slot = normalizeSlot(rawSlot);
     const stepCount = slot ? slotPlayLength(slot) : 0;
     if (stepCount === 0) return new Float32Array(0);
@@ -188,7 +193,7 @@
         if (fx === 4) amp *= t;
         if (fx === 5) amp *= (1 - t);
 
-        out[(si * stepSamples) + i] = waveSample(phase, waveform, noise) * amp * CHANNEL_GAIN;
+        out[(si * stepSamples) + i] = waveSample(phase, waveform, noise) * amp * gain;
         noise.lastPhase = phase;
       }
     }
@@ -557,6 +562,7 @@
   return {
     DEFAULT_TICK_RATE,
     STEPS_PER_SLOT,
+    CHANNEL_GAIN,
     FLAG_LOOP_START,
     FLAG_LOOP_BACK,
     FLAG_STOP,

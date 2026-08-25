@@ -937,8 +937,27 @@ class CopyBuilder extends BaseBuilder {
   }
 }
 
-// SFX builder - converts .sfx files to .wav files
+// SFX builder - converts .sfx files to .sfxb sound effect definitions
+//
+// This used to render each effect to a 44.1kHz 16-bit WAV, which costs 88-220KB
+// for a definition of a few dozen bytes; a PICO-8 cart with a full 64-slot bank
+// paid megabytes of package size for sound it could synthesize. It now emits the
+// definition and lets the player render it, which is roughly a 40x saving on a
+// cart's audio.
+//
+// The watch still needs PCM: librw's sfx engine decodes RIFF/WAVE only and has
+// no synthesizer, so WAV output stays available behind `emitWav` until the
+// firmware can render these directly.
 class SfxBuilder extends BaseBuilder {
+  /**
+   * Whether to also emit the legacy rendered WAV alongside the definition.
+   * The watch firmware cannot synthesize yet, so a device-targeted build turns
+   * this on.
+   */
+  get emitWav() {
+    return !!(window.RetroStudioBuildOptions && window.RetroStudioBuildOptions.sfxEmitWav);
+  }
+
   async build(file) {
     try {
       // Parse SFX file to get parameters using FileManager
@@ -973,39 +992,33 @@ class SfxBuilder extends BaseBuilder {
       const parsedSpec = this.parseParameters(text);
       console.log(`[SfxBuilder] Parsed SFX spec:`, parsedSpec);
 
-      let wavData;
-      if (parsedSpec.mode === 'pico') {
-        wavData = await this.generatePicoSfxWav(parsedSpec.pico);
-      } else {
-        wavData = await this.generateJsfxrWav(parsedSpec.parameters);
+      if (!window.SfxBinary) {
+        throw new Error('SfxBinary module not loaded');
       }
-      if (!wavData) {
-        throw new Error('Failed to generate WAV');
-      }
-      
-      console.log(`[SfxBuilder] Generated WAV data: ${wavData.byteLength} bytes`);
-      
-      // Generate output path
-      const outUiPath = file.path.replace(/\.sfx$/i, '.wav');
-      const outputPath = (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
-        ? window.ProjectPaths.toBuildOutputPath(outUiPath)
-        : outUiPath.replace(/^Resources\//, 'build/');
-      
+
+      const encoded = parsedSpec.mode === 'pico'
+        ? { format: 'pico', bytes: window.SfxBinary.encodePicoSlot(parsedSpec.pico) }
+        : { format: 'native', bytes: window.SfxBinary.encodeNative(parsedSpec.parameters) };
+
+      console.log(`[SfxBuilder] Encoded ${encoded.format} definition: ${encoded.bytes.byteLength} bytes`);
+
+      const outputPath = this.resolveOutputPath(file.path, '.sfxb');
       console.log(`[SfxBuilder] Input path: ${file.path}`);
       console.log(`[SfxBuilder] Output path: ${outputPath}`);
-      
-      // Save WAV file
-      if (fileManager) {
-        const saved = await fileManager.saveFile(outputPath, wavData, {
-          type: '.wav',
-          binaryData: true
-        });
-        if (!saved) {
-          throw new Error('Failed to save WAV to persistent storage');
-        }
-        console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
+
+      const saved = await fileManager.saveFile(outputPath, encoded.bytes.buffer, {
+        type: '.sfxb',
+        binaryData: true
+      });
+      if (!saved) {
+        throw new Error('Failed to save sound effect definition to persistent storage');
       }
-      
+      console.log(`[SfxBuilder] Saved definition to: ${outputPath}`);
+
+      if (this.emitWav) {
+        await this.buildWavOutput(file, parsedSpec, fileManager);
+      }
+
       return {
         success: true,
         inputPath: file.path,
@@ -1020,6 +1033,33 @@ class SfxBuilder extends BaseBuilder {
         builder: 'sfx'
       };
     }
+  }
+
+  resolveOutputPath(inputPath, extension) {
+    const outUiPath = inputPath.replace(/\.sfx$/i, extension);
+    return (window.ProjectPaths && typeof window.ProjectPaths.toBuildOutputPath === 'function')
+      ? window.ProjectPaths.toBuildOutputPath(outUiPath)
+      : outUiPath.replace(/^Resources\//, 'build/');
+  }
+
+  /** The legacy rendered WAV, for targets that cannot synthesize. */
+  async buildWavOutput(file, parsedSpec, fileManager) {
+    const wavData = parsedSpec.mode === 'pico'
+      ? await this.generatePicoSfxWav(parsedSpec.pico)
+      : await this.generateJsfxrWav(parsedSpec.parameters);
+    if (!wavData) {
+      throw new Error('Failed to generate WAV');
+    }
+
+    const outputPath = this.resolveOutputPath(file.path, '.wav');
+    const saved = await fileManager.saveFile(outputPath, wavData, {
+      type: '.wav',
+      binaryData: true
+    });
+    if (!saved) {
+      throw new Error('Failed to save WAV to persistent storage');
+    }
+    console.log(`[SfxBuilder] Saved WAV file to: ${outputPath}`);
   }
   
   parseParameters(jsonContent) {
@@ -1040,6 +1080,11 @@ class SfxBuilder extends BaseBuilder {
               index,
               pitch: Number(step.pitch) || 0,
               waveform: Number(step.waveform ?? step.wave ?? 0) || 0,
+              // Bit 3 of the instrument nibble means "use SFX 0-7 as a custom
+              // instrument". Dropping it retunes every such note to a built-in
+              // waveform, which the WAV renderer did because it could not play
+              // one anyway; the definition has to carry it.
+              custom: !!step.custom,
               volume: Math.max(0, Math.min(7, Number(step.volume) || 0)),
               effect: Math.max(0, Math.min(7, Number(step.effect ?? step.fx ?? 0) || 0))
             }))
