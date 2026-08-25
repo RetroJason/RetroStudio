@@ -1318,9 +1318,18 @@ class GameEmulator {
         || null;
     };
 
+    // Those imported resources are baked from one cart, so they are only right
+    // for a single-cart game. When the PICO-8 extension is running it has the
+    // active cart's own bank in memory, and that is what the cart expects to
+    // hear - including anything it poke()d there itself.
+    const pico8 = () => this.extensionLoader?.extensions?.get?.('Pico8') || null;
+
     this.audioEngine.setPicoResourceProvider({
       getMusicSource: (n) => findByNumber('MUSIC', 'MUSIC', n)?.picoMusicSource || null,
-      getSfxResourceId: (n) => findByNumber('SFX', 'SFX', n)?.audioResource || null
+      getSfxResourceId: (n) => findByNumber('SFX', 'SFX', n)?.audioResource || null,
+      getAudioRevision: () => pico8()?.getAudioRevision?.() ?? null,
+      getLiveSfxSlot: (n) => pico8()?.getLiveSfxSlot?.(n) || null,
+      getLiveSong: (n) => pico8()?.getLiveSong?.(n) || null
     });
 
     console.log('[GameEmulator] Registered PICO-8 audio resource provider');

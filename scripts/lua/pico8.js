@@ -41,12 +41,20 @@ class LuaPico8Extensions extends BaseLuaExtension {
     this._romSpriteFlags = new Uint8Array(256);
     this._romMap = null;
     // 0x3100-0x42ff music (64 patterns) and SFX (64 slots of 68 bytes).
-    // Playback does not read these - music()/sfx() go to the converted audio
-    // resources - but the bytes still have to be here, because carts treat the
-    // whole 0x0000-0x42ff ROM as a data store and stream it back with peek().
-    // POOM packs its level geometry there and unpacks it a byte at a time.
+    // This is what sfx() and music() actually play, via getLiveSfxSlot() and
+    // getLiveSong(): the bank follows load() and poke() the way the cart
+    // expects, which the imported resources cannot do because they are baked
+    // from one cart at import time.
+    // Carts also treat the whole 0x0000-0x42ff ROM as a data store and stream
+    // it back with peek() - POOM packs its level geometry into the sfx slots
+    // and unpacks it a byte at a time.
     this._audioRam = null;
     this._romAudioRam = null;
+    // Bumped on every write to the audio region. The audio engine renders a
+    // slot into a buffer and has to know when that buffer went stale, and a
+    // cart re-issues the same sfx() every frame to hold a sound - comparing a
+    // counter beats re-hashing 4KB sixty times a second.
+    this._audioRevision = 0;
     // Multi-cart games: the sibling carts' .p8 text, parsed on first use and
     // keyed by bare filename, which is how carts name each other.
     this._cartFamily = null;
@@ -211,6 +219,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (!rom) return;
     this._romAudioRam = rom.slice(0x3100, 0x4300);
     this._audioRam = new Uint8Array(this._romAudioRam);
+    this._audioRevision += 1;
   }
 
   /** The 0x4300 byte image of a named cart, parsed on first use. */
@@ -2401,7 +2410,10 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
     if (a < 0x4300) {
       if (!this._audioRam) this._audioRam = new Uint8Array(0x4300 - 0x3100);
-      this._audioRam[a - 0x3100] = v;
+      if (this._audioRam[a - 0x3100] !== v) {
+        this._audioRam[a - 0x3100] = v;
+        this._audioRevision += 1;
+      }
       return;
     }
 
@@ -2541,6 +2553,7 @@ class LuaPico8Extensions extends BaseLuaExtension {
       if (this._romAudioRam) {
         if (!this._audioRam) this._audioRam = new Uint8Array(0x4300 - 0x3100);
         this._audioRam.set(this._romAudioRam);
+        this._audioRevision += 1;
       }
       return;
     }
@@ -4134,6 +4147,79 @@ class LuaPico8Extensions extends BaseLuaExtension {
     if (this.gameEmulator?.audioEngine?.playMusic) {
       this.gameEmulator.audioEngine.playMusic(n, fade, mask);
     }
+  }
+
+  /**
+   * How many times audio memory has changed. The audio engine caches what it
+   * renders and compares this to know when to throw that cache away.
+   */
+  getAudioRevision() {
+    return this._audioRevision;
+  }
+
+  /**
+   * The sfx slot n as it stands in live audio memory, decoded.
+   *
+   * sfx() used to play a resource baked at import time from whichever cart the
+   * project was built from. A multi-cart game has a different 64-slot bank per
+   * cart - POOM has 28 distinct ones - so every cart after the first played the
+   * wrong sounds, and a cart that poke()s its own sfx data was never heard at
+   * all. Reading the live bank fixes both, and costs nothing: load() already
+   * copies the incoming cart's audio region here.
+   *
+   * Returns null when there is no audio memory yet, which is how a non-PICO
+   * project falls back to its own resources.
+   *
+   * @param {number} n - sfx slot 0-63.
+   * @returns {{mode:number, speed:number, loopStart:number, loopEnd:number, steps:Array}|null}
+   */
+  getLiveSfxSlot(n) {
+    const SfxBinary = (typeof window !== 'undefined' && window.SfxBinary) || null;
+    const slot = Math.trunc(Number(n));
+    if (!SfxBinary || !this._audioRam || !(slot >= 0) || slot >= 64) return null;
+
+    const base = (0x3200 - 0x3100) + (slot * SfxBinary.PICO_SLOT_BYTES);
+    const bytes = this._audioRam.subarray(base, base + SfxBinary.PICO_SLOT_BYTES);
+    if (bytes.length < SfxBinary.PICO_SLOT_BYTES) return null;
+
+    return SfxBinary.decodePicoSlot(bytes);
+  }
+
+  /**
+   * The song starting at pattern n, built from live audio memory.
+   *
+   * PICO-8 has no song list: music(n) starts at pattern n of the one 64-entry
+   * table and runs until a pattern flagged stop or loop-back. renderSong()
+   * already walks it that way, so the whole table is handed over with n as the
+   * start rather than the pre-grouped songs the importer cut.
+   *
+   * @param {number} n - starting pattern 0-63.
+   * @returns {{patterns:Array, startIndex:number, slots:Array}|null}
+   */
+  getLiveSong(n) {
+    const start = Math.trunc(Number(n));
+    if (!this._audioRam || !(start >= 0) || start >= 64) return null;
+
+    // A pattern is four bytes, one per channel. The flags have no byte of
+    // their own: each pattern flag rides in the top bit of its channel's byte,
+    // and 0x40 marks the channel silent, leaving six bits of slot number.
+    const patterns = [];
+    for (let index = 0; index < 64; index += 1) {
+      const base = index * 4;
+      let flags = 0;
+      const channels = [];
+      for (let c = 0; c < 4; c += 1) {
+        const byte = this._audioRam[base + c] || 0;
+        if (byte & 0x80) flags |= 1 << c;
+        channels.push((byte & 0x40) ? -1 : (byte & 0x3f));
+      }
+      patterns.push({ index, flags, channels });
+    }
+
+    const slots = [];
+    for (let slot = 0; slot < 64; slot += 1) slots.push(this.getLiveSfxSlot(slot));
+
+    return { patterns, startIndex: start, slots };
   }
 
   /**

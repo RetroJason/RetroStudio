@@ -12,7 +12,7 @@ const PicoAudio = require(path.resolve(__dirname, 'pico-audio.js'));
 /** audio-api.js is a browser script; run it with just enough of a window. */
 function loadAudioEngine() {
   const source = fs.readFileSync(path.resolve(__dirname, 'audio-api.js'), 'utf8');
-  const win = {};
+  const win = { PicoAudio };
   const factory = new Function(
     'window', 'console', 'EventTarget', 'PicoAudio',
     `${source}\n;return window.AudioEngine;`
@@ -350,6 +350,101 @@ test('a channel taken while its sfx is still starting does not leak the sound', 
 
   assert(engine.activeSounds.size === 0, 'the cancelled sfx should not be left playing');
   assert(!engine._picoChannels.has(0), 'the released channel should stay free');
+});
+
+// ---------------------------------------------------------------------------
+// Live audio memory
+//
+// The imported SFX_NN resources are baked from whichever cart the project was
+// built from. A multi-cart game has a different 64 slot bank per cart - POOM
+// has 28 distinct ones - so sfx(n) has to read the bank that is in memory now,
+// not the one that was in memory at import time.
+// ---------------------------------------------------------------------------
+
+/** An engine whose provider offers both a live bank and an imported one. */
+function engineForLiveSfx(state) {
+  const engine = engineForSfx();
+  engine.resources = new Map();
+  engine.picoResourceProvider = {
+    getSfxResourceId: n => `imported${n}`,
+    getAudioRevision: () => state.revision,
+    getLiveSfxSlot: () => state.slot,
+  };
+  return engine;
+}
+
+test('sfx() plays the live cart bank rather than the imported one', async () => {
+  const engine = engineForLiveSfx({ revision: 1, slot: slot() });
+  await engine.playSfx(3);
+
+  assert(
+    engine.activeSounds.has('pico_live_sfx_3-inst'),
+    `expected the live slot to play, got ${JSON.stringify([...engine.activeSounds.keys()])}`
+  );
+});
+
+test('a live slot is rendered once and reused until audio memory changes', () => {
+  const state = { revision: 1, slot: slot() };
+  const engine = engineForLiveSfx(state);
+
+  const first = engine._liveSfxResourceId(3);
+  const resource = engine.resources.get(first);
+  // Stand in for a synthesized buffer: it must survive a repeat call, or a
+  // cart holding a sound would re-synthesize it every frame.
+  resource.audioBuffer = 'rendered';
+
+  assert(engine._liveSfxResourceId(3) === first, 'the same revision must reuse the resource');
+  assert(
+    engine.resources.get(first).audioBuffer === 'rendered',
+    'the rendered buffer was thrown away despite audio memory being unchanged'
+  );
+
+  state.revision = 2;
+  engine._liveSfxResourceId(3);
+  assert(
+    engine.resources.get(first).audioBuffer === null,
+    'a poke() to audio memory must force the slot to be rendered again'
+  );
+});
+
+test('a provider with no live bank still plays the imported resource', async () => {
+  const engine = engineForSfx();
+  engine.resources = new Map();
+  await engine.playSfx(3);
+
+  assert(
+    engine.activeSounds.has('res3-inst'),
+    `a non-PICO project must fall back to its own resources, got ${JSON.stringify([...engine.activeSounds.keys()])}`
+  );
+});
+
+test('music() renders the live pattern table starting at the requested pattern', async () => {
+  const patterns = Array.from({ length: 64 }, (_, index) => ({
+    index,
+    flags: 0,
+    channels: [-1, -1, -1, -1],
+  }));
+  // Only pattern 24 carries anything, so a song that started anywhere else
+  // would render to silence and playMusic would refuse it.
+  patterns[24] = { index: 24, flags: 0x04, channels: [63, -1, -1, -1] };
+
+  const slots = [];
+  slots[63] = slot();
+
+  const { engine, stopped } = engineForPlayMusic(null, [0, 1]);
+  engine.picoResourceProvider = {
+    getMusicSource: () => null,
+    getAudioRevision: () => 7,
+    getLiveSong: n => ({ patterns, startIndex: n, slots }),
+  };
+
+  const ok = await engine.playMusic(24);
+
+  assert(ok === true, 'the live song should have started');
+  assert(
+    JSON.stringify(stopped) === '["inst0"]',
+    `the song must still take channel 0 from sfx, got ${JSON.stringify(stopped)}`
+  );
 });
 
 async function main() {

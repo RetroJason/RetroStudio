@@ -905,8 +905,9 @@ class AudioEngine extends EventTarget {
       return true;
     }
 
-    const source = this.picoResourceProvider?.getMusicSource?.(n);
-    if (!source) {
+    const live = this._liveSong(n);
+    const source = live ? null : this.picoResourceProvider?.getMusicSource?.(n);
+    if (!live && !source) {
       console.warn(`[AudioEngine] No PICO-8 music resource for music(${n})`);
       return false;
     }
@@ -932,7 +933,7 @@ class AudioEngine extends EventTarget {
 
     let rendered;
     try {
-      rendered = this._renderPicoMusic(n, source);
+      rendered = live ? this._renderLivePicoMusic(live) : this._renderPicoMusic(n, source);
     } catch (error) {
       console.error(`[AudioEngine] Failed to render PICO-8 music ${n}:`, error);
       return false;
@@ -1057,7 +1058,8 @@ class AudioEngine extends EventTarget {
       return null;
     }
 
-    const resourceId = this.picoResourceProvider?.getSfxResourceId?.(n);
+    const resourceId = this._liveSfxResourceId(n)
+      || this.picoResourceProvider?.getSfxResourceId?.(n);
     if (!resourceId) {
       console.warn(`[AudioEngine] No PICO-8 sfx resource for sfx(${n})`);
       return null;
@@ -1122,6 +1124,55 @@ class AudioEngine extends EventTarget {
 
     reservation.instanceId = instanceId;
     return instanceId;
+  }
+
+  /**
+   * The resource for sfx(n) built from the cart's live audio memory, or null
+   * when there is no live bank to read (a Studio project, or a cart that has
+   * not loaded yet).
+   *
+   * The imported `SFX_NN` resources are baked at import time from one cart. A
+   * multi-cart game has a different bank per cart - POOM has 28 distinct ones -
+   * so every cart after the first played the wrong sound, and a cart that
+   * poke()s its own sfx data was never heard at all.
+   *
+   * The rendered buffer is kept until audio memory changes, because carts hold
+   * a sound by re-issuing the same sfx() every frame and re-synthesizing it
+   * sixty times a second would be ruinous.
+   */
+  _liveSfxResourceId(n) {
+    const provider = this.picoResourceProvider;
+    const PicoAudioModule = (typeof window !== 'undefined' && window.PicoAudio) || null;
+    if (!provider?.getLiveSfxSlot || !PicoAudioModule) return null;
+
+    // Without a revision to compare, every call would rebuild the resource and
+    // re-synthesize it - sixty times a second for a held sound. Fall back to
+    // the imported bank rather than pay that.
+    const revision = provider.getAudioRevision?.();
+    if (typeof revision !== 'number') return null;
+
+    if (!this._liveSfxCache) this._liveSfxCache = new Map();
+    const cached = this._liveSfxCache.get(n);
+    if (cached && cached.revision === revision) return cached.id;
+
+    const slot = provider.getLiveSfxSlot(n);
+    if (!slot) return null;
+
+    const id = `pico_live_sfx_${n}`;
+    this.resources.set(id, {
+      id,
+      name: id,
+      type: 'sfx',
+      // No WAV bytes to parse: the loop points come from the slot's own
+      // markers, so _wavLoopPoints must find them already resolved.
+      data: null,
+      definition: { format: 'pico', slot },
+      audioBuffer: null,
+      duration: PicoAudioModule.slotDuration(slot),
+      _loopPoints: this._picoLoopPoints(slot, this.audioContext.sampleRate)
+    });
+    this._liveSfxCache.set(n, { revision, id });
+    return id;
   }
 
   /**
@@ -1234,6 +1285,54 @@ class AudioEngine extends EventTarget {
   _picoMasterGain() {
     const { left, right } = this.masterVolume;
     return Math.max(0, (left + right) / 2);
+  }
+
+  /**
+   * The song starting at pattern n, taken from the cart's live audio memory.
+   *
+   * Returns null when there is no live bank, which is what a Studio project or
+   * a `.p8mus` played outside the emulator does.
+   */
+  _liveSong(n) {
+    const provider = this.picoResourceProvider;
+    if (!provider?.getLiveSong) return null;
+    const revision = provider.getAudioRevision?.();
+    if (typeof revision !== 'number') return null;
+
+    const song = provider.getLiveSong(n);
+    if (!song || !Array.isArray(song.patterns) || song.patterns.length === 0) return null;
+    return { ...song, number: n, revision };
+  }
+
+  /**
+   * Render a song read out of live audio memory.
+   *
+   * PICO-8 has no song list - music(n) starts at pattern n of the one 64 entry
+   * table and runs until a stop or loop-back flag - so the whole table goes to
+   * renderSong() with n as the start index, rather than the pre-grouped songs
+   * the importer cut out of the cart.
+   */
+  _renderLivePicoMusic(song) {
+    if (!this.picoLiveMusicCache) {
+      this.picoLiveMusicCache = new Map();
+    }
+    const cached = this.picoLiveMusicCache.get(song.number);
+    if (cached && cached.revision === song.revision) {
+      return cached.rendered;
+    }
+
+    const rendered = PicoAudio.renderSong(
+      song.patterns,
+      song.startIndex,
+      song.slots,
+      this.audioContext.sampleRate
+    );
+    // renderSong mixes every channel down to one buffer, so the channels the
+    // song claims have to be recorded separately for playMusic to honour them.
+    rendered.startChannels = PicoAudio.patternChannels(song.patterns[song.startIndex], song.slots);
+
+    this.picoLiveMusicCache.set(song.number, { revision: song.revision, rendered });
+    return rendered;
   }
 
   _renderPicoMusic(n, source) {
