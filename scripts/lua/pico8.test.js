@@ -416,6 +416,34 @@ const tests = [
     },
   },
   {
+    name: 'Fixed point: a value passing through a container is not rescaled',
+    fn: () => {
+      const BaseLuaExtension = require(path.resolve(__dirname, 'base-lua-extension.js'));
+
+      const ext = new BaseLuaExtension();
+      ext.luaState = { execute() {}, getglobal() {}, pushnumber() {}, setglobal() {} };
+      Object.defineProperty(ext, 'fixedPointNumbers', { value: true });
+      Object.defineProperty(ext, 'opaqueValueArgs', { value: { add: [1] } });
+      Object.defineProperty(ext, 'opaqueValueResults', { value: ['add'] });
+
+      const seen = [];
+      ext.registerMethod('add', (...args) => { seen.push(...args); return args[1]; }, 'Pico8');
+
+      // The table and the value pass through untouched, but a third argument
+      // is an insertion index and is a quantity like any other.
+      const value = 32768;
+      assert.strictEqual(window.Pico8_add_Impl(null, value, 3 * 65536), value);
+      assert.deepStrictEqual(seen, [null, 32768, 3]);
+
+      // Without the declaration the same call quietly turns the value into a
+      // float, which is the failure this guards against.
+      const other = [];
+      ext.registerMethod('plainadd', (...args) => { other.push(...args); return args[1]; }, 'Pico8');
+      assert.strictEqual(window.Pico8_plainadd_Impl(null, value), 0.5 * 65536);
+      assert.deepStrictEqual(other, [null, 0.5]);
+    },
+  },
+  {
     name: 'Fixed point: table keys stay ordinary Lua keys',
     fn: () => {
       const raw = (v) => String(Math.round(v * 65536) | 0);

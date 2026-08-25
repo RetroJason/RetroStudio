@@ -1623,7 +1623,7 @@
    * FIXED_POINT in pico8.js, which reads those words back at the API boundary.
    * THE TWO MUST BE FLIPPED TOGETHER.
    */
-  const FIXED_POINT = false;
+  const FIXED_POINT = true;
 
   function compile(source, options) {
     const fixedPoint = options && options.fixedPoint !== undefined

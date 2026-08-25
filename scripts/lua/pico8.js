@@ -1237,6 +1237,23 @@ class LuaPico8Extensions extends BaseLuaExtension {
     return LuaPico8Extensions.FIXED_POINT;
   }
 
+  /**
+   * Arguments that are values rather than quantities, by argument index.
+   *
+   * The container functions take whatever the cart chose to put in a table and
+   * are not entitled to interpret it. peek4/poke4 and dget/dset are absent on
+   * purpose: they convert between memory and a real number themselves, so the
+   * ordinary scaling is exactly right for them.
+   */
+  get opaqueValueArgs() {
+    return LuaPico8Extensions.OPAQUE_VALUE_ARGS;
+  }
+
+  /** Results handed straight back out of a container, so equally untouchable. */
+  get opaqueValueResults() {
+    return LuaPico8Extensions.OPAQUE_VALUE_RESULTS;
+  }
+
   _coerceNumberArg(raw, methodName, argName) {
     if (raw === undefined || raw === null || raw === '') {
       this._warnCoercedArg(methodName, argName, raw);
@@ -4402,12 +4419,23 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
   end
 `;
 
+// add(t, v) and friends store or return whatever the cart handed them. The
+// value is not a quantity this side is entitled to rescale, and getting it
+// wrong is invisible at the call site: the number comes back looking fine and
+// only fails later, wherever the cart applies a bitwise operator to it.
+LuaPico8Extensions.OPAQUE_VALUE_ARGS = {
+  add: [1],
+  del: [1],
+  count: [1],
+};
+LuaPico8Extensions.OPAQUE_VALUE_RESULTS = ['add', 'del', 'deli'];
+
 // Whether PICO-8 carts are lowered onto raw 16.16 words rather than float32
 // lua_Numbers. This is the runtime half of the representation; the compile half
 // is FIXED_POINT in pico8-parser.js, which bakes it into the stored Lua when a
 // cart is imported. THE TWO MUST BE FLIPPED TOGETHER - a cart lowered one way
 // and read back the other puts every coordinate out by a factor of 65536.
-LuaPico8Extensions.FIXED_POINT = false;
+LuaPico8Extensions.FIXED_POINT = true;
 
 // Register the extension with the Lua system
 if (typeof window !== 'undefined') {

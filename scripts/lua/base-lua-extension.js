@@ -112,11 +112,22 @@ class BaseLuaExtension {
         // methods keeps the representation a property of the bridge, which is
         // the only place it actually applies. Only PICO-8 sets this, so no
         // other extension's arguments change.
+        //
+        // Not every number is a quantity, though. add(t, v) does not care what
+        // v means; it stores it. Rescaling a value that is only passing through
+        // corrupts it, and silently, because the result is still a number - it
+        // is how 32768 became 0.5 and then failed a bitwise operator several
+        // frames later, nowhere near the call that broke it. A method says so
+        // by listing the argument, and the same goes for a result it merely
+        // hands back out of a container.
         const scaled = self.fixedPointNumbers === true;
         let callArgs = arguments;
         if (scaled) {
-          callArgs = Array.prototype.map.call(arguments, (arg) => (
-            typeof arg === 'number' ? arg / 65536 : arg
+          const opaque = self.opaqueValueArgs && self.opaqueValueArgs[luaFunctionName];
+          callArgs = Array.prototype.map.call(arguments, (arg, index) => (
+            typeof arg === 'number' && !(opaque && opaque.includes(index))
+              ? arg / 65536
+              : arg
           ));
         }
 
@@ -126,7 +137,8 @@ class BaseLuaExtension {
         // Rounding to an exact integer on the way back is what lets
         // Lua.State.push hand the result over as a lua_Integer, which is the
         // only container that holds all 32 significant bits.
-        if (scaled && typeof result === 'number') {
+        if (scaled && typeof result === 'number'
+          && !(self.opaqueValueResults && self.opaqueValueResults.includes(luaFunctionName))) {
           return Math.round(result * 65536) | 0;
         }
 
@@ -163,11 +175,27 @@ class BaseLuaExtension {
         'cocreate', 'coresume', 'costatus', 'cowrap', 'yield'].includes(luaFunctionName);
 
     if (isPico8LuaNative) {
+      // These run inside the VM and never cross the bridge, so the scaling the
+      // wrapper does for every other builtin does not reach them - and they
+      // still deal in cart numbers: an insertion index, a count, the numbers
+      // split() parses out of a string. Each one therefore converts at its own
+      // edge. With the representation off both emitters are the identity, so
+      // the Lua below is what it has always been.
+      const scaled = this.fixedPointNumbers === true;
+      // A cart number being used as a plain Lua index or size. The floor is
+      // deliberate and matches the "- v % 1" these helpers used to do by hand.
+      const toIndex = (expr) => (scaled ? `((${expr}) // 0x10000)` : `(${expr})`);
+      // A plain Lua count or byte being handed back to the cart.
+      const toCart = (expr) => (scaled ? `((${expr}) * 0x10000)` : `(${expr})`);
+      // tonumber() yields an ordinary Lua number that may carry a fraction, so
+      // this one has to land on an exact integer word rather than a float.
+      const toCartWord = (expr) => (scaled ? `((((${expr}) * 0x10000) // 1) | 0)` : `(${expr})`);
+
       const luaHelperImplementations = {
       add: `
     function Pico8.add(t, v, i)
       if i ~= nil then
-        table.insert(t, i, v)
+        table.insert(t, ${toIndex('i')}, v)
       else
         table.insert(t, v)
       end
@@ -191,7 +219,7 @@ class BaseLuaExtension {
     function Pico8.deli(t, i)
       if t == nil then return nil end
       -- Defaults to the last element, like table.remove.
-      if i == nil then i = #t end
+      if i == nil then i = #t else i = ${toIndex('i')} end
       -- table.remove raises on an out of range index; PICO-8 returns nil.
       if i < 1 or i > #t then return nil end
       return table.remove(t, i)
@@ -200,7 +228,7 @@ class BaseLuaExtension {
       `,
       count: `
     function Pico8.count(t)
-      return #t
+      return ${toCart('#t')}
     end
     count = Pico8.count
       `,
@@ -238,10 +266,10 @@ class BaseLuaExtension {
     function Pico8.inext(t, i)
       if t == nil then return nil end
       -- The generic for passes nil as the initial control value.
-      i = (i or 0) + 1
+      i = ${toIndex('i or 0')} + 1
       local v = t[i]
       if v == nil then return nil end
-      return i, v
+      return ${toCart('i')}, v
     end
     inext = Pico8.inext
       `,
@@ -252,7 +280,7 @@ class BaseLuaExtension {
     local function __splitElement(text, convert)
       if convert then
         local n = tonumber(text)
-        if n ~= nil then return n end
+        if n ~= nil then return ${toCartWord('n')} end
       end
       return text
     end
@@ -268,6 +296,7 @@ class BaseLuaExtension {
       -- than "look for this delimiter". An empty delimiter means the same as 1:
       -- carts pack lookup tables into a string of glyphs and unpack them with
       -- split(s, ""), so returning nothing there loses the whole table.
+      if type(separator) == "number" then separator = ${toIndex('separator')} end
       if separator == "" then separator = 1 end
       if type(separator) == "number" then
         -- No math.floor: the firmware does not register the math library.
@@ -306,10 +335,9 @@ class BaseLuaExtension {
     function Pico8.sub(s, i, j)
       if s == nil then return "" end
       if type(s) ~= "string" then s = tostring(s) end
-      if i == nil then i = 1 end
-      i = i - i % 1
+      if i == nil then i = 1 else i = ${toIndex('i')} end
       if j == nil then return string.sub(s, i) end
-      j = j - j % 1
+      j = ${toIndex('j')}
       return string.sub(s, i, j)
     end
     sub = Pico8.sub
@@ -320,8 +348,7 @@ class BaseLuaExtension {
     function Pico8.ord(s, index, num)
       if s == nil then return nil end
       if type(s) ~= "string" then s = tostring(s) end
-      if index == nil then index = 1 end
-      index = index - index % 1
+      if index == nil then index = 1 else index = ${toIndex('index')} end
       -- Out of range reads are nil in PICO-8, not an error. Index 0 and below
       -- are out of range rather than counting from the end, which is where
       -- this parts company with string.byte. The upper bound is checked here
@@ -329,19 +356,27 @@ class BaseLuaExtension {
       -- same as nil to a caller that passes the result straight on.
       if index < 1 or index > #s then return nil end
       -- A bare ord() is single-valued even when more characters are available.
-      if num == nil then return string.byte(s, index) end
-      num = num - num % 1
+      if num == nil then return ${toCart('string.byte(s, index)')} end
+      num = ${toIndex('num')}
       if num < 1 then return nil end
       -- string.byte clamps the end index to #s, so a short tail returns fewer
       -- values rather than padding with nil.
-      return string.byte(s, index, index + num - 1)
+${scaled ? `      -- Every byte has to be scaled, so the multi-value path collects them.
+      -- The single byte case above stays allocation free, which is the one
+      -- carts call in a loop over a long string.
+      local bytes = {string.byte(s, index, index + num - 1)}
+      for k = 1, #bytes do bytes[k] = ${toCart('bytes[k]')} end
+      return table.unpack(bytes)` : `      return string.byte(s, index, index + num - 1)`}
     end
     ord = Pico8.ord
       `,
       pack: `
     function Pico8.pack(...)
-      -- Sets the field n, so a trailing nil is still counted.
-      return table.pack(...)
+      -- Sets the field n, so a trailing nil is still counted. The cart reads n
+      -- as one of its own numbers, so it is converted like any other count.
+      local t = table.pack(...)
+      t.n = ${toCart('t.n')}
+      return t
     end
     pack = Pico8.pack
       `,
@@ -350,7 +385,7 @@ class BaseLuaExtension {
       -- PICO-8 exposes the 5.1 spelling as a global. This VM is 5.3, where the
       -- bare global is gone and only table.unpack exists.
       if t == nil then return end
-      return table.unpack(t, i or 1, j or #t)
+      return table.unpack(t, i and ${toIndex('i')} or 1, j and ${toIndex('j')} or #t)
     end
     unpack = Pico8.unpack
       `,
