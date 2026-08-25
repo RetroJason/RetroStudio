@@ -464,6 +464,79 @@ const tests = [
     },
   },
   {
+    // The bridge scales the arguments it can see. It cannot see inside a
+    // table, so the numbers in one arrive in the cart's representation and
+    // have to be converted where they are read. pal(tbl, 1) masks each entry
+    // to a byte, and the low byte of a scaled colour is zero - which mapped
+    // every colour to black and displayed a fully drawn frame as an empty one.
+    name: 'Fixed point: numbers read out of a Lua table come back to ordinary ones',
+    fn: () => {
+      const { pico8 } = makePico8();
+      assert.strictEqual(pico8.fixedPointNumbers, true, 'this test describes the representation being on');
+
+      // A Lua table does not arrive as a JS object: lua.vm.js wraps it in a
+      // proxy that is a function carrying a ref and a get accessor.
+      const luaTable = (entries) => Object.assign(() => {}, {
+        ref: 1,
+        get: (key) => entries[key],
+      });
+
+      const word = (v) => Math.round(v * 65536) | 0;
+      // POOM's title palette, in the cart's representation.
+      pico8.pal(luaTable({ 1: word(140), 2: word(1), 3: word(139), 16: word(7) }), 1);
+
+      assert.strictEqual(pico8._screenPalette[1], 140);
+      assert.strictEqual(pico8._screenPalette[2], 1);
+      assert.strictEqual(pico8._screenPalette[3], 139);
+      // Key 16 wraps onto colour 0, which is how a 16-element array reaches it.
+      assert.strictEqual(pico8._screenPalette[0], 7);
+
+      // A JS array is not a cart table - it is what the rest of this file
+      // passes - so it keeps its ordinary numbers.
+      pico8.pal([9, 10], 1);
+      assert.strictEqual(pico8._screenPalette[1], 9);
+      assert.strictEqual(pico8._screenPalette[2], 10);
+    },
+  },
+  {
+    // A key the cart reads back has to be one it could have written. Every
+    // subscript is lowered to __p8key(...), so a plain key out of pairs() gets
+    // divided a second time - which is how copying a table entry by entry lost
+    // every entry.
+    name: 'Fixed point: a key survives the round trip through pairs and next',
+    fn: () => {
+      const raw = (v) => String(Math.round(v * 65536) | 0);
+
+      // The copy idiom, written exactly as a cart writes it.
+      assert.strictEqual(evalWithFixedPoint(
+        `(function()
+           local src = {}
+           src[__p8key(${raw(1)})] = "a"
+           src[__p8key(${raw(5)})] = "b"
+           local dst = {}
+           for k, v in pairs(src) do dst[__p8key(k)] = v end
+           return __p8cat(dst[__p8key(${raw(1)})], dst[__p8key(${raw(5)})])
+         end)()`), 'ab');
+
+      // The key itself arrives as a cart number, so arithmetic on it works.
+      assert.strictEqual(evalWithFixedPoint(
+        `(function()
+           local t = {}
+           t[__p8key(${raw(3)})] = true
+           for k in pairs(t) do return k end
+         end)()`), raw(3));
+
+      // ipairs walks the sequence in the same numbers.
+      assert.strictEqual(evalWithFixedPoint(
+        `(function()
+           local t = {"x", "y"}
+           local out = ""
+           for i, v in ipairs(t) do out = out .. __p8tostr(i) .. v end
+           return out
+         end)()`), '1x2y');
+    },
+  },
+  {
     name: 'Fixed point: table keys stay ordinary Lua keys',
     fn: () => {
       const raw = (v) => String(Math.round(v * 65536) | 0);
@@ -2002,7 +2075,12 @@ const tests = [
       // callable carrying a registry ref and a get() accessor. typeof is
       // 'function' and indexing it directly returns undefined, so pal has to
       // recognise the proxy and read entries through get().
-      const entries = { 0: 7, 1: 13, 2: 1, 3: 0, 4: 14 };
+      //
+      // A proxy is a cart's own table, so its numbers are in the cart's
+      // representation - the bridge scales arguments, not the contents of a
+      // table it never looks inside.
+      const word = (v) => (pico8.fixedPointNumbers === true ? Math.round(v * 65536) | 0 : v);
+      const entries = { 0: word(7), 1: word(13), 2: word(1), 3: word(0), 4: word(14) };
       const proxy = function () {};
       proxy.ref = 42;
       proxy.get = (key) => entries[key];

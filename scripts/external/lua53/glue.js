@@ -449,6 +449,27 @@ Lua.State.prototype.pcall = function(n,r,f) {
 Lua.State.prototype.tonumber = function(n) {
 	return this.tonumberx(n, null);
 };
+// The exact counterpart of push()'s integer path. LUA_32BITS makes lua_Number a
+// float32, so lua_tonumberx rounds any value with more than 24 significant bits
+// on its way out of the VM - and a PICO-8 number is 16.16 fixed point, which
+// carries 32. Reading an integer-subtype value with lua_tointegerx instead keeps
+// all 32 bits, because lua_Integer is a true int32 under the same define.
+//
+// This is not a PICO-8 special case: lua_tointegerx only succeeds when the value
+// has an exact integer representation, so anything it accepts converts without
+// loss and anything it rejects falls through to the float path unchanged.
+Lua.State.prototype.exact_tonumber = function(i) {
+	// stackAlloc has no matching free, so save and restore around it.
+	var sp = emscripten.stackSave();
+	try {
+		var isnum = emscripten.stackAlloc(4);
+		var n = Lua.lib.tointegerx(this._L, i, isnum);
+		if (emscripten.getValue(isnum, "i32") !== 0) return n;
+	} finally {
+		emscripten.stackRestore(sp);
+	}
+	return this.tonumberx(i, null);
+};
 
 // Debugging
 Lua.State.prototype.printStack = function() {
@@ -541,7 +562,7 @@ Lua.State.prototype.lua_to_js = function(i) {
 		case 2: // LUA_TLIGHTUSERDATA
 			return this.touserdata(i);
 		case 3: // LUA_TNUMBER
-			return this.tonumberx(i);
+			return this.exact_tonumber(i);
 		case 4: // LUA_TSTRING
 			return this.raw_tostring(i);
 		case 7: // LUA_TUSERDATA

@@ -3823,7 +3823,22 @@ class LuaPico8Extensions extends BaseLuaExtension {
 
   /** Read one entry from a JS array, a plain object or a Lua table proxy. */
   _tableGet(tableValue, key) {
-    if (this._isLuaTableRef(tableValue)) return tableValue.get(key);
+    if (this._isLuaTableRef(tableValue)) {
+      const value = tableValue.get(key);
+      // A table is the one argument the bridge cannot convert. It scales the
+      // numbers it can see - the arguments themselves - but not the ones
+      // inside a table, because it never looks in. Those are still cart
+      // numbers, so they arrive in the cart's representation and have to be
+      // brought back to ordinary ones here, where they are read. Missing this
+      // left every screen palette entry as the low byte of a scaled word,
+      // which is zero: POOM drew a complete frame and displayed it black.
+      //
+      // A JS array or object is not a cart table - it is what the tests and
+      // the rest of this file pass - so it is left alone.
+      return this.fixedPointNumbers === true && typeof value === 'number'
+        ? value / 65536
+        : value;
+    }
     if (Array.isArray(tableValue)) return tableValue[key - 1];
     return tableValue[key];
   }
@@ -4415,6 +4430,47 @@ LuaPico8Extensions.FIXED_POINT_LUA = `
     -- up into a word before the cart can do arithmetic on it.
     function __p8len(t)
       return #t << 16
+    end
+
+    -- The inverse of __p8key: an ordinary Lua key on its way back to the cart.
+    function __p8unkey(k)
+      if type(k) ~= "number" then return k end
+      return ((k * 0x10000) // 1) | 0
+    end
+
+    -- next() and pairs() hand the cart the keys of its own table, and a key it
+    -- gets back has to be one it could have written. Every subscript in a cart
+    -- is lowered to __p8key(...), so a plain 1 coming out of pairs() would be
+    -- divided a second time and land on 1/65536 - a key that collides with
+    -- nothing and reads back nil. That is how a table copied with the usual
+    -- "for k, v in pairs(src) do dst[k] = v end" came out holding none of its
+    -- original entries: POOM's player kept its weapons table and lost every
+    -- weapon in it. Converting in both directions makes a key survive the
+    -- round trip.
+    local __rawnext = next
+    function next(t, k)
+      local nk, nv = __rawnext(t, __p8key(k))
+      return __p8unkey(nk), nv
+    end
+
+    function pairs(t)
+      local mt = getmetatable(t)
+      if mt and mt.__pairs then return mt.__pairs(t) end
+      return next, t, nil
+    end
+
+    -- ipairs walks the same sequence inext does, in the cart's numbers. The
+    -- control value starts at a plain 0, and every one after it is a key this
+    -- iterator returned, so __p8key handles both.
+    local function __p8inext(t, i)
+      i = __p8key(i or 0) + 1
+      local v = t[i]
+      if v == nil then return nil end
+      return __p8unkey(i), v
+    end
+
+    function ipairs(t)
+      return __p8inext, t, 0
     end
   end
 `;
