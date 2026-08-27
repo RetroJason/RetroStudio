@@ -4130,6 +4130,118 @@ class LuaPico8Extensions extends BaseLuaExtension {
   // Audio Functions
   // ============================================================
 
+  /** Decode one SFX slot from live 0x3100-0x42ff audio RAM. */
+  _decodeSfxSlotFromAudioRam(slotIndex) {
+    const n = Number(slotIndex);
+    if (!Number.isFinite(n) || n < 0 || n > 63) return null;
+    const audio = this._audioRam || this._romAudioRam;
+    if (!(audio instanceof Uint8Array) || audio.length < (0x4300 - 0x3100)) return null;
+
+    const base = 0x100 + (n * 68);
+    const steps = new Array(32);
+    for (let i = 0; i < 32; i += 1) {
+      const lo = audio[base + (i * 2)] || 0;
+      const hi = audio[base + (i * 2) + 1] || 0;
+      const waveform = ((lo >> 6) & 0x03) | ((hi & 0x01) << 2) | ((hi & 0x80) >> 4);
+      steps[i] = {
+        pitch: lo & 0x3f,
+        waveform,
+        volume: (hi >> 1) & 0x07,
+        effect: (hi >> 4) & 0x07,
+      };
+    }
+
+    return {
+      speed: audio[base + 65] || 0,
+      loopStart: audio[base + 66] || 0,
+      loopEnd: audio[base + 67] || 0,
+      steps,
+    };
+  }
+
+  /** Decode one music pattern from live 0x3100-0x42ff audio RAM. */
+  _decodeMusicPatternFromAudioRam(patternIndex) {
+    const n = Number(patternIndex);
+    if (!Number.isFinite(n) || n < 0 || n > 63) return null;
+    const audio = this._audioRam || this._romAudioRam;
+    if (!(audio instanceof Uint8Array) || audio.length < (0x4300 - 0x3100)) return null;
+
+    const base = n * 4;
+    let flags = 0;
+    const channels = [];
+    for (let c = 0; c < 4; c += 1) {
+      const value = audio[base + c] || 0;
+      if (value & 0x80) flags |= (1 << c);
+      const raw = value & 0x7f;
+      channels.push((raw & 0x40) ? -1 : (raw & 0x3f));
+    }
+
+    return {
+      index: n,
+      flags,
+      loopStart: Boolean(flags & 0x01),
+      loopEnd: Boolean(flags & 0x02),
+      stop: Boolean(flags & 0x04),
+      channels,
+    };
+  }
+
+  /**
+   * Build a PicoAudio-compatible song source from the currently active cart
+   * image, starting at pattern n (what music(n) does on hardware).
+   */
+  getRuntimeMusicSource(n) {
+    const start = Number(n);
+    if (!Number.isFinite(start) || start < 0 || start > 63) return null;
+
+    const first = this._decodeMusicPatternFromAudioRam(start);
+    if (!first) return null;
+
+    const patterns = [];
+    const usedSlots = new Set();
+    let loopTo = null;
+
+    for (let index = start; index < 64; index += 1) {
+      const pattern = this._decodeMusicPatternFromAudioRam(index);
+      if (!pattern) break;
+      patterns.push(pattern);
+
+      for (const slot of pattern.channels) {
+        if (slot >= 0) usedSlots.add(slot);
+      }
+
+      if (pattern.loopStart) loopTo = index;
+      if (pattern.stop || pattern.loopEnd) break;
+    }
+
+    if (patterns.length === 0 || usedSlots.size === 0) return null;
+
+    const sfx = {};
+    for (const slot of usedSlots) {
+      const decoded = this._decodeSfxSlotFromAudioRam(slot);
+      if (decoded) sfx[slot] = decoded;
+    }
+
+    return {
+      type: 'pico_music',
+      version: '1.0',
+      name: `runtime_music_${String(start).padStart(2, '0')}`,
+      sourceFile: 'runtime://pico8-audioram',
+      song: {
+        start,
+        end: patterns[patterns.length - 1].index,
+        loopTo,
+        patterns,
+      },
+      sfx,
+    };
+  }
+
+  /** One SFX slot from the active cart image, for sfx(n). */
+  getRuntimeSfxSource(n) {
+    return this._decodeSfxSlotFromAudioRam(n);
+  }
+
   /**
    * Play music track
    * Lua: music(n, [fade, mask])

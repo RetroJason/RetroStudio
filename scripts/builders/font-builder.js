@@ -6,6 +6,50 @@
 console.log('[FontBuilder] Class definition loading');
 
 class FontBuilder extends BaseBuilder {
+  _resolveFontOutputPixelFormat(fontJson) {
+    return String(fontJson?.outputPixelFormat || 'd2_mode_alpha8').trim();
+  }
+
+  _isIndexedFontFormat(outputPixelFormat) {
+    return /^d2_mode_i[1248]$/i.test(String(outputPixelFormat || ''));
+  }
+
+  _buildIndexedAlphaRampPalette(outputPixelFormat) {
+    const format = String(outputPixelFormat || '').toLowerCase();
+    let levels = 256;
+    if (format === 'd2_mode_i1') levels = 2;
+    else if (format === 'd2_mode_i2') levels = 4;
+    else if (format === 'd2_mode_i4') levels = 16;
+
+    const max = Math.max(1, levels - 1);
+    const rgba = [];
+    for (let i = 0; i < levels; i += 1) {
+      const alpha = Math.round((i / max) * 255);
+      rgba.push([255, 255, 255, alpha]);
+    }
+    return rgba;
+  }
+
+  _registerFontPalette(outputPixelFormat, basePath) {
+    if (!this._isIndexedFontFormat(outputPixelFormat)) return 0;
+    const textureBuilder =
+      (typeof TextureBuilder !== 'undefined' && TextureBuilder) ||
+      (typeof globalThis !== 'undefined' && globalThis.TextureBuilder) ||
+      (typeof window !== 'undefined' && window.TextureBuilder) ||
+      null;
+
+    if (!textureBuilder || typeof textureBuilder.getPaletteIndexRgba !== 'function') {
+      console.warn('[FontBuilder] TextureBuilder palette registry unavailable; indexed font may render incorrectly');
+      return 0;
+    }
+
+    const key = `font:${String(outputPixelFormat).toLowerCase()}`;
+    const rgba = this._buildIndexedAlphaRampPalette(outputPixelFormat);
+    const index = textureBuilder.getPaletteIndexRgba(key, rgba);
+    console.log(`[FontBuilder] Registered indexed font palette ${key} as PMAP index ${index} for ${basePath}`);
+    return index;
+  }
+
   /**
    * Build a .font file into .d2 + .fnt outputs for the target device.
    *
@@ -68,11 +112,18 @@ class FontBuilder extends BaseBuilder {
       const generated = await this._generateOutputsFromMetadata(fontJson, basePath);
       const d2Bytes = generated.d2Bytes;
       const fntBytes = generated.fntBytes;
+      const outputPixelFormat = generated.outputPixelFormat || this._resolveFontOutputPixelFormat(fontJson);
+      const paletteIndex = generated.paletteIndex || 0;
       console.log(`${tag} Generated runtime outputs from metadata for ${file.path}`);
 
       // Make a mutable copy for header patching
       const output = new Uint8Array(d2Bytes.length);
       output.set(d2Bytes);
+
+      if (paletteIndex > 0 && output.length >= 32) {
+        const d2Header = new DataView(output.buffer, output.byteOffset, output.byteLength);
+        d2Header.setUint16(10, paletteIndex, true);
+      }
 
       // ── 3. Save .d2 to build output ──────────────────────────────
       const d2OutputPath = this._toBuildOutputPath(basePath + '.d2');
@@ -102,7 +153,7 @@ class FontBuilder extends BaseBuilder {
         meta: {
           width: hWidth,
           height: hHeight,
-          format: fontJson.outputPixelFormat || 'd2_mode_alpha8',
+          format: outputPixelFormat,
           binarySize: output.length - 32,
           fntSaved,
           generatedFromSource: true,
@@ -248,11 +299,13 @@ class FontBuilder extends BaseBuilder {
     }
 
     const rgba = result.canvas.getContext('2d').getImageData(0, 0, result.width, result.height).data;
-    const outputPixelFormat = fontJson.outputPixelFormat || 'd2_mode_alpha8';
+    const outputPixelFormat = this._resolveFontOutputPixelFormat(fontJson);
+    const paletteIndex = this._registerFontPalette(outputPixelFormat, basePath);
     const d2Bytes = D2File.buildFromRGBA({
       outputPixelFormat,
       metadata: {
         outputPixelFormat,
+        paletteIndex,
         paletteOffset: 0,
       },
       rotation: 0,
@@ -262,7 +315,7 @@ class FontBuilder extends BaseBuilder {
     const pageName = basePath.split('/').pop() + '.png';
     const fntBytes = generator.toBMFontBinary(result, pageName);
 
-    return { d2Bytes, fntBytes };
+    return { d2Bytes, fntBytes, outputPixelFormat, paletteIndex };
   }
 
   /**
@@ -330,11 +383,13 @@ class FontBuilder extends BaseBuilder {
       rgba[offset + 3] = Math.round((color.alpha ?? 1) * 255);
     }
 
-    const outputPixelFormat = fontJson.outputPixelFormat || 'd2_mode_alpha8';
+    const outputPixelFormat = this._resolveFontOutputPixelFormat(fontJson);
+    const paletteIndex = this._registerFontPalette(outputPixelFormat, basePath);
     const d2Bytes = D2File.buildFromRGBA({
       outputPixelFormat,
       metadata: {
         outputPixelFormat,
+        paletteIndex,
         paletteOffset: 0,
       },
       rotation: 0,
@@ -360,7 +415,7 @@ class FontBuilder extends BaseBuilder {
     const pageName = basePath.split('/').pop() + '.png';
     const fntBytes = new FontAtlasGenerator().toBMFontBinary(result, pageName);
 
-    return { d2Bytes, fntBytes };
+    return { d2Bytes, fntBytes, outputPixelFormat, paletteIndex };
   }
 
   /**

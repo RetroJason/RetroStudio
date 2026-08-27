@@ -179,6 +179,10 @@ class EmbeddedRuntimePlayer {
 
     await this.gameEmulator.whenReady();
 
+    // Replace semantics: loading a new runtime archive must tear down the
+    // previous one so old audio and Lua state cannot leak into the new run.
+    this.gameEmulator.stopProject();
+
     const input = arrayBuffer instanceof ArrayBuffer
       ? arrayBuffer
       : arrayBuffer.buffer.slice(arrayBuffer.byteOffset, arrayBuffer.byteOffset + arrayBuffer.byteLength);

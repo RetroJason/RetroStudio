@@ -219,7 +219,7 @@ class AiAssistantPanel {
 
     this.root = panel;
     this.setupResizer(resizer);
-    this.addSystemNote('Connected to a local Ollama server. Nothing is sent off this machine.');
+    this.addSystemNote('Assistant configured. Open Settings to choose or auto-detect an Ollama server.');
   }
 
   setupResizer(resizer) {
@@ -281,10 +281,13 @@ class AiAssistantPanel {
     const input = aiEl('input', 'modal-input');
     input.type = 'text';
     input.id = 'ai-settings-url';
-    input.value = this.service.getBaseUrl();
+    input.value = typeof this.service.getConfiguredBaseUrl === 'function'
+      ? this.service.getConfiguredBaseUrl()
+      : this.service.getBaseUrl();
+    input.placeholder = 'Leave blank for auto-detect (localhost, then current host:11434)';
     input.spellcheck = false;
     field.appendChild(input);
-    field.appendChild(aiEl('div', 'modal-hint', 'An Ollama server. Other back ends that only speak the OpenAI-style API will not work here.'));
+    field.appendChild(aiEl('div', 'modal-hint', 'An Ollama server. Leave blank to auto-detect. Other back ends that only speak the OpenAI-style API will not work here.'));
     body.appendChild(field);
 
     body.appendChild(this.buildSetupSection(onLoopback));
@@ -322,8 +325,11 @@ class AiAssistantPanel {
 
     saveBtn.addEventListener('click', async () => {
       const next = input.value.trim();
+      const previous = typeof this.service.getConfiguredBaseUrl === 'function'
+        ? this.service.getConfiguredBaseUrl()
+        : this.service.getBaseUrl();
       close();
-      if (next && next !== this.service.getBaseUrl()) {
+      if (next !== previous) {
         this.service.setBaseUrl(next);
         // The reference is fetched relative to the studio, not the model server,
         // but it is cached per configuration - drop it so a changed server does

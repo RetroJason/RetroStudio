@@ -22,15 +22,89 @@ class AiAssistantService {
     this.defaultModel = 'ornith:9b';
     this.apiReferencePromise = null;
     this.activeController = null;
+    this.resolvedBaseUrl = null;
+  }
+
+  normalizeBaseUrl(value) {
+    return String(value || '').trim().replace(/\/+$/, '');
+  }
+
+  getConfiguredBaseUrl() {
+    return this.normalizeBaseUrl(window.configManager?.get('ai.baseUrl') || '');
+  }
+
+  hasExplicitBaseUrl() {
+    const configured = this.getConfiguredBaseUrl();
+    if (!configured) return false;
+
+    // On hosted origins, the default localhost value means "auto" unless the
+    // user points it somewhere else. Otherwise staging appears pinned to
+    // localhost and never tries host-based fallbacks.
+    const isLoopback = typeof window.isAiAssistantLoopbackOrigin === 'function'
+      ? window.isAiAssistantLoopbackOrigin()
+      : false;
+    if (!isLoopback && configured === this.defaultBaseUrl) {
+      return false;
+    }
+
+    return true;
+  }
+
+  getBaseUrlCandidates() {
+    const configured = this.getConfiguredBaseUrl();
+    if (this.hasExplicitBaseUrl()) {
+      return [configured];
+    }
+
+    const candidates = [this.defaultBaseUrl];
+    const isLoopback = typeof window.isAiAssistantLoopbackOrigin === 'function'
+      ? window.isAiAssistantLoopbackOrigin()
+      : false;
+
+    if (!isLoopback) {
+      const { protocol, hostname } = window.location;
+      const protocolCandidate = this.normalizeBaseUrl(`${protocol}//${hostname}:11434`);
+      const httpCandidate = this.normalizeBaseUrl(`http://${hostname}:11434`);
+      const httpsCandidate = this.normalizeBaseUrl(`https://${hostname}:11434`);
+      candidates.push(protocolCandidate, httpCandidate, httpsCandidate);
+    }
+
+    return [...new Set(candidates.map((entry) => this.normalizeBaseUrl(entry)).filter(Boolean))];
   }
 
   getBaseUrl() {
-    const configured = window.configManager?.get('ai.baseUrl') || this.defaultBaseUrl;
-    return String(configured).replace(/\/+$/, '');
+    return this.resolvedBaseUrl || this.getBaseUrlCandidates()[0] || this.defaultBaseUrl;
+  }
+
+  async probeBaseUrl(baseUrl) {
+    const response = await fetch(`${baseUrl}/api/tags`, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Ollama returned ${response.status} ${response.statusText}`);
+    }
+    return response;
+  }
+
+  async resolveBaseUrl() {
+    const candidates = this.getBaseUrlCandidates();
+    let lastError = null;
+
+    for (const candidate of candidates) {
+      try {
+        await this.probeBaseUrl(candidate);
+        this.resolvedBaseUrl = candidate;
+        return candidate;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    this.resolvedBaseUrl = null;
+    throw lastError || new Error('Could not reach Ollama.');
   }
 
   setBaseUrl(value) {
-    window.configManager?.set('ai.baseUrl', String(value || '').trim() || this.defaultBaseUrl);
+    window.configManager?.set('ai.baseUrl', this.normalizeBaseUrl(value || ''));
+    this.resolvedBaseUrl = null;
   }
 
   getModel() {
@@ -77,23 +151,23 @@ class AiAssistantService {
    * which shows up as an opaque TypeError rather than an HTTP status.
    */
   describeConnectionError(error) {
-    const baseUrl = this.getBaseUrl();
+    const candidates = this.getBaseUrlCandidates();
+    const targetText = candidates.length > 1
+      ? candidates.join(', ')
+      : (candidates[0] || this.defaultBaseUrl);
     if (error?.name === 'AbortError') return 'Cancelled.';
     if (error instanceof TypeError) {
       // The "never *" is here rather than only in the settings dialog because
       // this is the moment someone is tempted by it: the request just failed,
       // and the first search result for an Ollama CORS error suggests exactly
       // that. It would leave their model server open to every site they visit.
-      return `Could not reach Ollama at ${baseUrl}. Check it is running (\`ollama serve\`), and if the studio is not on localhost set OLLAMA_ORIGINS to ${window.location.origin} - name that origin exactly, never *.`;
+      return `Could not reach Ollama at ${targetText}. Check it is running (\`ollama serve\`), and if the studio is not on localhost set OLLAMA_ORIGINS to ${window.location.origin} - name that origin exactly, never *.`;
     }
     return error?.message || String(error);
   }
 
   async listModels() {
-    const response = await fetch(`${this.getBaseUrl()}/api/tags`, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error(`Ollama returned ${response.status} ${response.statusText}`);
-    }
+    const response = await this.probeBaseUrl(await this.resolveBaseUrl());
     const payload = await response.json();
     return (payload?.models || []).map((entry) => entry.name).filter(Boolean);
   }
@@ -210,7 +284,8 @@ class AiAssistantService {
     this.activeController = controller;
 
     try {
-      const response = await fetch(`${this.getBaseUrl()}/api/chat`, {
+      const baseUrl = await this.resolveBaseUrl();
+      const response = await fetch(`${baseUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
