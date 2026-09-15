@@ -1604,8 +1604,6 @@ async function uploadFileViaTransport(file, options) {
   const rsp = await client.sendFile(bytes, {
     flags: options.flags,
     path: remotePath,
-    chunksPerAck: 1,
-    allowOutOfOrder: false,
     onProgress: (sent, total) => {
       updateTransferProgress(sent, total, options.stage || "transferring");
     },
@@ -2289,8 +2287,6 @@ otaConfirmBtn.addEventListener("click", async () => {
     const rsp = await client.sendFile(firmware.bytes, {
       flags: BleApi.SEND_FILE_FLAG.INSTALL,
       path: `/${firmware.fileName}`,
-      chunksPerAck: 1,
-      allowOutOfOrder: false,
       onProgress: (sent, total) => {
         updateTransferProgress(sent, total, "flashing");
       },
@@ -2426,8 +2422,6 @@ async function uploadBytesViaOta(bytes, remotePath, label) {
   const rsp = await client.sendFile(bytes, {
     flags: BleApi.SEND_FILE_FLAG.INSTALL,
     path: remotePath,
-    chunksPerAck: 1,
-    allowOutOfOrder: false,
     onProgress: (sent, total) => {
       updateTransferProgress(sent, total, "saving");
     },

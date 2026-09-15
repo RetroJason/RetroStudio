@@ -1680,8 +1680,6 @@ class RibbonToolbar {
       const rsp = await this.watchClient.sendFile(bytes, {
         flags: BLE.SEND_FILE_FLAG.PREVIEW,
         path: '/' + pkg.filename,
-        chunksPerAck: 1,
-        allowOutOfOrder: false,
         onProgress: (sent, total) => {
           const pct = Math.round((sent / total) * 100);
           if (fillEl) fillEl.style.width = pct + '%';

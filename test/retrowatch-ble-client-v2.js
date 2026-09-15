@@ -2,8 +2,13 @@
  * RetroWatch BLE Client v2.0
  *
  * Wire format (from messages.json):
- *   [type:2B LE][size:2B LE][payload:0-240B]
- *   Header = 4 bytes, max frame = 244 bytes, max payload = 240 bytes
+ *   [type:2B LE][size:2B LE][payload]
+ *   Header = 4 bytes, max frame = 2048 bytes
+ *
+ * The usable payload per notification is whatever the negotiated ATT MTU
+ * allows, which the device reports through TRANSPORT_INFO. At a 512 byte MTU
+ * that is 509 notify bytes, 505 message bytes and 497 bytes of upload chunk
+ * data.
  *
  * Changes from v1:
  *   - Message type is 16-bit LE (was 8-bit)
@@ -19,9 +24,25 @@ const RX_CHARACTERISTIC_UUID = "ed5c1401-2ac0-4349-ad36-dfe8831383ee";
 const TX_CHARACTERISTIC_UUID = "ed5c1402-2ac0-4349-ad36-dfe8831383ee";
 
 const HEADER_SIZE = 4;
-const MAX_PAYLOAD = 240;
-const MAX_FRAME = 244;
+const MAX_FRAME = 2048;
+const MAX_PAYLOAD = MAX_FRAME - HEADER_SIZE;
 const RSP_HEADER_SIZE = 3;
+
+/* Largest chunk of file data the device will accept in one FILE_CHUNK_REQ.
+ * Mirrors kMaxUploadChunkDataSize in firmware/src/FileManager.cpp. */
+const MAX_UPLOAD_CHUNK_DATA = 497;
+
+/* The device only answers a FILE_CHUNK_REQ on one of these boundaries or on the
+ * final chunk of a transfer. Mirrors UPLOAD_ACK_CHUNK_INTERVAL in
+ * firmware/src/FileManager.cpp. Waiting for a reply to every chunk deadlocks. */
+const UPLOAD_ACK_CHUNK_INTERVAL = 16;
+
+/* A full window is several kilobytes of writes before the device answers, so
+ * the wait has to cover the window rather than a single round trip. */
+const CHUNK_WINDOW_TIMEOUT_MS = 8000;
+
+/* First firmware that batches upload acknowledgements. */
+const DELAYED_UPLOAD_ACK_MIN_VERSION = [1, 1, 2, 69];
 
 const MSG = {
   NONE:               0x0000,
@@ -222,6 +243,34 @@ function parseRspHeader(payload) {
   return { status, requestId, body };
 }
 
+/* Some builds append a NUL-separated serial number to the PONG payload. */
+function parseFirmwareVersionText(value) {
+  const text = typeof value === "string" ? value : "";
+  const nul = text.indexOf("\u0000");
+  return (nul >= 0 ? text.slice(0, nul) : text).trim();
+}
+
+function firmwareSupportsDelayedUploadAck(version) {
+  const parts = parseFirmwareVersionText(version).split(".");
+  if (parts.length !== DELAYED_UPLOAD_ACK_MIN_VERSION.length) {
+    return false;
+  }
+
+  for (let index = 0; index < parts.length; index += 1) {
+    if (!/^\d+$/.test(parts[index])) {
+      return false;
+    }
+
+    const value = Number(parts[index]);
+    const minimum = DELAYED_UPLOAD_ACK_MIN_VERSION[index];
+    if (value !== minimum) {
+      return value > minimum;
+    }
+  }
+
+  return true;
+}
+
 /* ---- BLE Client ---- */
 
 class RetroWatchBleClient {
@@ -247,6 +296,7 @@ class RetroWatchBleClient {
 
     this.maxNotifyPayloadBytes = 20;
     this.maxMessagePayloadBytes = 16; /* 20 - 4 byte header */
+    this.firmwareVersion = null;
     this.debugLogger = typeof opts.debugLogger === "function" ? opts.debugLogger : null;
 
     this._onNotification = this._onNotification.bind(this);
@@ -334,6 +384,7 @@ class RetroWatchBleClient {
     this.notifyCharacteristic.addEventListener("characteristicvaluechanged", this._onNotification);
 
     await this._refreshTransportInfo();
+    await this._refreshFirmwareVersion();
 
     return this.device.name || "RetroWatch";
   }
@@ -419,7 +470,10 @@ class RetroWatchBleClient {
   }
 
   _setTransportPayloadLimits(notifyPayloadBytes, messagePayloadBytes = null) {
-    const clampedNotify = Math.max(20, Math.min(505, notifyPayloadBytes | 0));
+    /* The device reports what its negotiated ATT MTU actually supports, so the
+     * only ceiling worth applying is the protocol framing maximum. Clamping to
+     * a smaller constant silently threw away usable payload on every transfer. */
+    const clampedNotify = Math.max(20, Math.min(MAX_FRAME, notifyPayloadBytes | 0));
     this.maxNotifyPayloadBytes = clampedNotify;
     const protocolPayloadCap = Math.max(0, clampedNotify - HEADER_SIZE);
 
@@ -528,7 +582,19 @@ class RetroWatchBleClient {
       timeoutMs: 2500,
       requestIdInHeader: false,
     });
-    return bytesToText(packet.payload);
+    const text = bytesToText(packet.payload);
+    this.firmwareVersion = parseFirmwareVersionText(text);
+    return text;
+  }
+
+  async _refreshFirmwareVersion() {
+    try {
+      await this.ping("version-probe");
+    } catch (err) {
+      /* An unreachable PING only costs the faster upload path, so fall back to
+       * the conservative per-chunk scheme rather than failing the connection. */
+      this.firmwareVersion = null;
+    }
   }
 
   async setTimeUnix(unixSeconds, tzOffsetMinutesEast = 0) {
@@ -866,50 +932,78 @@ class RetroWatchBleClient {
     };
   }
 
-  async fileChunk(offset, chunkBytes) {
-    const reqId = this._nextRequestId();
-    const payload = concatBytes([
-      u16LE(reqId),
-      u32LE(offset >>> 0),
-      u16LE(chunkBytes.length & 0xffff),
-      chunkBytes,
-    ]);
+  /* Writes a whole window of chunks back to back, then waits for either the
+   * device's single windowed acknowledgement or one acknowledgement per chunk. */
+  async _sendChunkWindow(chunks, singleAck) {
+    const entries = chunks.map((chunk) => ({
+      offset: chunk.offset,
+      data: chunk.data,
+      requestId: this._nextRequestId(),
+    }));
+    const windowRequestIds = new Set(entries.map((entry) => entry.requestId));
+    const labels = entries.map((entry) => entry.requestId).join(",");
+    const waiters = singleAck
+      ? [this._registerPending(MSG.FILE_CHUNK_RSP, windowRequestIds, CHUNK_WINDOW_TIMEOUT_MS, labels)]
+      : entries.map((entry) => this._registerPending(
+        MSG.FILE_CHUNK_RSP,
+        new Set([entry.requestId]),
+        CHUNK_WINDOW_TIMEOUT_MS,
+        entry.requestId,
+      ));
 
-    const packet = await this.sendRequest(MSG.FILE_CHUNK_REQ, payload, {
-      expectType: MSG.FILE_CHUNK_RSP,
-      timeoutMs: 6000,
-      requestId: reqId,
-    });
+    try {
+      for (const entry of entries) {
+        this._emitDebug({
+          phase: "file_chunk_tx",
+          msgType: MSG.FILE_CHUNK_REQ,
+          msgName: msgTypeName(MSG.FILE_CHUNK_REQ),
+          requestId: entry.requestId,
+          offset: entry.offset,
+          length: entry.data.length,
+        });
 
-    const parsed = parseRspHeader(packet.payload);
-    let accepted = 0;
-    if (parsed.body.length >= 2) {
-      accepted = parsed.body[0] | (parsed.body[1] << 8);
-    }
+        await this.sendRaw(MSG.FILE_CHUNK_REQ, concatBytes([
+          u16LE(entry.requestId),
+          u32LE(entry.offset >>> 0),
+          u16LE(entry.data.length & 0xffff),
+          entry.data,
+        ]));
+      }
 
-    if (parsed.status !== STATUS.OK || accepted <= 0) {
-      const reason = parsed.body.length > 0 ? parsed.body[0] : 0;
-      this._emitDebug({
-        phase: "FILE_CHUNK_RSP",
-        msgType: packet.type,
-        msgName: msgTypeName(packet.type),
-        requestId: parsed.requestId,
-        status: parsed.status,
-        statusName: statusName(parsed.status),
-        reason,
-        reasonName: fileReasonName(reason),
-        bodyHex: bytesToHex(parsed.body),
-        offset: offset >>> 0,
-        requestedLen: chunkBytes.length,
-        accepted,
+      const packets = await Promise.all(waiters.map((waiter) => waiter.promise));
+
+      return packets.map((packet) => {
+        const parsed = parseRspHeader(packet.payload);
+        const accepted = parsed.body.length >= 2 ? (parsed.body[0] | (parsed.body[1] << 8)) : 0;
+
+        if (parsed.status !== STATUS.OK || accepted <= 0) {
+          const reason = parsed.body.length > 0 ? parsed.body[0] : 0;
+          this._emitDebug({
+            phase: "FILE_CHUNK_RSP",
+            msgType: packet.type,
+            msgName: msgTypeName(packet.type),
+            requestId: parsed.requestId,
+            status: parsed.status,
+            statusName: statusName(parsed.status),
+            reason,
+            reasonName: fileReasonName(reason),
+            bodyHex: bytesToHex(parsed.body),
+            accepted,
+          });
+        }
+
+        return {
+          requestId: parsed.requestId,
+          status: parsed.status,
+          accepted,
+        };
       });
+    } catch (err) {
+      for (const waiter of waiters) {
+        waiter.cancel(err);
+      }
+      throw err;
     }
-
-    return {
-      requestId: parsed.requestId,
-      status: parsed.status,
-      accepted,
-    };
   }
 
   async fileCommit() {
@@ -990,13 +1084,20 @@ class RetroWatchBleClient {
       throw new Error("sendFile requires explicit flags");
     }
     const path = opts.path ? String(opts.path) : "";
-    const pathOverhead = 2 + 4 + 2;
-    const autoChunk = this.maxMessagePayloadBytes - pathOverhead;
+    const chunkHeaderOverhead = 2 + 4 + 2;
+    const autoChunk = Math.min(this.maxMessagePayloadBytes - chunkHeaderOverhead, MAX_UPLOAD_CHUNK_DATA);
     const requestedChunk = opts.chunkSize == null ? autoChunk : opts.chunkSize;
     const chunkSize = Math.max(1, Math.min(requestedChunk, autoChunk, 0xffff));
-    const requestedWindow = opts.chunksPerAck == null ? 16 : opts.chunksPerAck;
+    const delayedAck = firmwareSupportsDelayedUploadAck(this.firmwareVersion);
+    /* Windowed firmware acknowledges only on an UPLOAD_ACK_CHUNK_INTERVAL
+     * boundary, so there the window size is dictated by the device and the
+     * caller's preference cannot be honoured without deadlocking. */
+    const requestedWindow = opts.chunksPerAck == null ? UPLOAD_ACK_CHUNK_INTERVAL : opts.chunksPerAck;
     const allowOutOfOrder = opts.allowOutOfOrder === true;
-    const chunkWindow = allowOutOfOrder ? Math.max(1, Math.min(requestedWindow | 0, 16)) : 1;
+    const legacyWindow = allowOutOfOrder
+      ? Math.max(1, Math.min(requestedWindow | 0, UPLOAD_ACK_CHUNK_INTERVAL))
+      : 1;
+    const chunkWindow = delayedAck ? UPLOAD_ACK_CHUNK_INTERVAL : legacyWindow;
     const totalCrc32 = crc32(bytes);
 
     this._emitDebug({
@@ -1009,6 +1110,8 @@ class RetroWatchBleClient {
       path,
       chunkSize,
       chunkWindow,
+      delayedAck,
+      firmwareVersion: this.firmwareVersion,
       maxNotifyPayloadBytes: this.maxNotifyPayloadBytes,
       maxMessagePayloadBytes: this.maxMessagePayloadBytes,
       estimatedAttMtu: this.maxNotifyPayloadBytes + 3,
@@ -1033,67 +1136,52 @@ class RetroWatchBleClient {
       };
     }
 
-    let nextOffset = 0;
     let acknowledged = 0;
-    const inFlight = [];
 
-    const enqueueChunk = () => {
-      if (nextOffset >= bytes.length) {
-        return false;
+    while (acknowledged < bytes.length) {
+      const windowChunks = [];
+      let windowEnd = acknowledged;
+      while (windowChunks.length < chunkWindow && windowEnd < bytes.length) {
+        const chunkEnd = Math.min(windowEnd + chunkSize, bytes.length);
+        windowChunks.push({ offset: windowEnd, data: bytes.slice(windowEnd, chunkEnd) });
+        windowEnd = chunkEnd;
       }
 
-      const end = Math.min(nextOffset + chunkSize, bytes.length);
-      const chunk = bytes.slice(nextOffset, end);
-      const chunkOffset = nextOffset;
-      nextOffset = end;
+      const responses = await this._sendChunkWindow(windowChunks, delayedAck);
 
-      this._emitDebug({
-        phase: "file_chunk_tx",
-        msgType: MSG.FILE_CHUNK_REQ,
-        msgName: msgTypeName(MSG.FILE_CHUNK_REQ),
-        offset: chunkOffset,
-        length: chunk.length,
-      });
-
-      inFlight.push({
-        offset: chunkOffset,
-        length: chunk.length,
-        promise: this.fileChunk(chunkOffset, chunk),
-      });
-
-      return true;
-    };
-
-    while (inFlight.length < chunkWindow && enqueueChunk()) {
-      // Fill initial window.
-    }
-
-    while (inFlight.length > 0) {
-      const current = inFlight.shift();
-      const rsp = await current.promise;
-
-      if (rsp.status !== STATUS.OK) {
-        return {
-          status: rsp.status,
-          sent: acknowledged,
-          crc32: totalCrc32,
-          phase: "chunk",
-          chunkRequestId: rsp.requestId,
-          chunkOffset: current.offset,
-          chunkLength: current.length,
-          accepted: rsp.accepted,
-          error: {
-            code: rsp.status,
-            name: statusName(rsp.status),
-          },
-        };
+      for (let index = 0; index < responses.length; index += 1) {
+        const rsp = responses[index];
+        if (rsp.status !== STATUS.OK) {
+          const failed = windowChunks[index] || windowChunks[windowChunks.length - 1];
+          return {
+            status: rsp.status,
+            sent: acknowledged,
+            crc32: totalCrc32,
+            phase: "chunk",
+            chunkRequestId: rsp.requestId,
+            chunkOffset: failed.offset,
+            chunkLength: failed.data.length,
+            accepted: rsp.accepted,
+            error: {
+              code: rsp.status,
+              name: statusName(rsp.status),
+            },
+          };
+        }
       }
 
-      if (rsp.accepted !== current.length) {
-        throw new Error(`OTA chunk acceptance mismatch (offset=${current.offset}, len=${current.length}, accepted=${rsp.accepted})`);
+      if (!delayedAck) {
+        /* Only per-chunk firmware reports a length for every chunk. A windowed
+         * acknowledgement describes just the chunk that closed the window. */
+        for (let index = 0; index < windowChunks.length; index += 1) {
+          const expected = windowChunks[index].data.length;
+          if (responses[index].accepted !== expected) {
+            throw new Error(`OTA chunk acceptance mismatch (offset=${windowChunks[index].offset}, len=${expected}, accepted=${responses[index].accepted})`);
+          }
+        }
       }
 
-      acknowledged += rsp.accepted;
+      acknowledged = windowEnd;
 
       if (opts.onProgress) {
         try {
@@ -1101,10 +1189,6 @@ class RetroWatchBleClient {
         } catch (err) {
           // Keep upload flow alive even if UI callback throws.
         }
-      }
-
-      while (inFlight.length < chunkWindow && enqueueChunk()) {
-        // Keep a steady in-flight window for throughput.
       }
     }
 
@@ -1208,24 +1292,22 @@ class RetroWatchBleClient {
 
   /* ---- Request/response infrastructure ---- */
 
-  async sendRequest(type, payload, opts = {}) {
-    this._assertConnected();
-
-    const timeoutMs = opts.timeoutMs || 3000;
-    const expectType = opts.expectType;
-    const requestId = opts.requestId;
-    const requestIdInHeader = opts.requestIdInHeader !== false;
-
-    return new Promise(async (resolve, reject) => {
+  /* Registers a waiter before anything is written, because the device can
+   * answer while later frames of the same window are still going out.
+   * `matchRequestIds` is a Set: more than one entry is how an upload window
+   * waits for the single acknowledgement that closes it, which carries the
+   * request id of whichever chunk the device chose to answer. */
+  _registerPending(expectType, matchRequestIds, timeoutMs, label) {
+    let entry;
+    const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(entry);
-        reject(new Error(`Timed out waiting for BLE response (type=${msgTypeName(type)}, reqId=${requestId == null ? "n/a" : requestId})`));
+        reject(new Error(`Timed out waiting for BLE response (type=${msgTypeName(expectType)}, reqId=${label})`));
       }, timeoutMs);
 
-      const entry = {
+      entry = {
         expectType,
-        requestId,
-        requestIdInHeader,
+        matchRequestIds,
         resolve: (packet) => {
           clearTimeout(timer);
           resolve(packet);
@@ -1237,22 +1319,42 @@ class RetroWatchBleClient {
       };
 
       this.pending.add(entry);
-
-      try {
-        this._emitDebug({
-          phase: "tx",
-          msgType: type,
-          msgName: msgTypeName(type),
-          requestId: requestId == null ? null : requestId,
-          payloadLen: payload ? payload.length : 0,
-        });
-        await this.sendRaw(type, payload);
-      } catch (err) {
-        this.pending.delete(entry);
-        clearTimeout(timer);
-        reject(err);
-      }
     });
+
+    return {
+      promise,
+      cancel: (err) => {
+        this.pending.delete(entry);
+        entry.reject(err);
+      },
+    };
+  }
+
+  async sendRequest(type, payload, opts = {}) {
+    this._assertConnected();
+
+    const timeoutMs = opts.timeoutMs || 3000;
+    const expectType = opts.expectType;
+    const requestId = opts.requestId;
+    const requestIdInHeader = opts.requestIdInHeader !== false;
+    const matchRequestIds = (requestIdInHeader && requestId != null) ? new Set([requestId]) : null;
+    const waiter = this._registerPending(expectType, matchRequestIds, timeoutMs, requestId == null ? "n/a" : requestId);
+
+    try {
+      this._emitDebug({
+        phase: "tx",
+        msgType: type,
+        msgName: msgTypeName(type),
+        requestId: requestId == null ? null : requestId,
+        payloadLen: payload ? payload.length : 0,
+      });
+      await this.sendRaw(type, payload);
+    } catch (err) {
+      waiter.cancel(err);
+      throw err;
+    }
+
+    return waiter.promise;
   }
 
   _onNotification(event) {
@@ -1278,12 +1380,12 @@ class RetroWatchBleClient {
         continue;
       }
 
-      if (entry.requestId != null && entry.requestIdInHeader) {
+      if (entry.matchRequestIds) {
         if (packet.payload.length < RSP_HEADER_SIZE) {
           continue;
         }
         const rspReqId = packet.payload[1] | (packet.payload[2] << 8);
-        if (rspReqId !== entry.requestId) {
+        if (!entry.matchRequestIds.has(rspReqId)) {
           continue;
         }
       }
