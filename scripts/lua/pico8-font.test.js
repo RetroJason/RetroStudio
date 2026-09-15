@@ -323,6 +323,40 @@ test('a bitmap .font with no atlas path is rejected rather than built empty', as
   );
 });
 
+test('build() writes palette index into indexed D2 output', async () => {
+  const builder = new FontBuilder();
+  const saved = new Map();
+
+  builder._toBuildOutputPath = (p) => p;
+  builder._saveFile = async (p, bytes) => {
+    saved.set(p, bytes);
+  };
+  builder._generateOutputsFromMetadata = async () => {
+    const d2Bytes = new Uint8Array(64);
+    d2Bytes[0] = 0x44; d2Bytes[1] = 0x32; d2Bytes[2] = 0x54; d2Bytes[3] = 0x58; // D2TX
+    return {
+      d2Bytes,
+      fntBytes: null,
+      outputPixelFormat: 'd2_mode_i1',
+      paletteIndex: 7,
+    };
+  };
+
+  const file = {
+    path: 'Cart/Sources/Fonts/test.font',
+    content: JSON.stringify({ type: 'retrowatch-font', outputPixelFormat: 'd2_mode_i1' }),
+  };
+
+  const result = await builder.build(file);
+  assert.strictEqual(result.success, true);
+
+  const written = saved.get('Cart/Sources/Fonts/test.d2');
+  assert.ok(written instanceof Uint8Array, 'expected .d2 output bytes to be saved');
+
+  const header = new DataView(written.buffer, written.byteOffset, written.byteLength);
+  assert.strictEqual(header.getUint16(10, true), 7, 'palette index should be present in D2 header');
+});
+
 (async function run() {
   let failed = 0;
   for (const { name, fn } of tests) {

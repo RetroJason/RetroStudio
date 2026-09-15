@@ -467,6 +467,37 @@ class TextureBuilder extends BaseBuilder {
   }
 
   /**
+   * Get (or create) a 1-based palette index for explicit RGBA entries.
+   * @param {string} key
+   * @param {Array<Array<number>>} rgbaEntries - [[r,g,b,a], ...]
+   * @returns {number}
+   */
+  static getPaletteIndexRgba(key, rgbaEntries) {
+    if (!TextureBuilder._paletteKeyToIndex) TextureBuilder.resetPaletteRegistry();
+
+    const map = TextureBuilder._paletteKeyToIndex;
+    if (map.has(key)) return map.get(key);
+
+    const idx = TextureBuilder._paletteEntries.length + 1;
+    const normalized = (rgbaEntries || []).map((entry) => {
+      const r = Number.isFinite(entry?.[0]) ? entry[0] : 0;
+      const g = Number.isFinite(entry?.[1]) ? entry[1] : 0;
+      const b = Number.isFinite(entry?.[2]) ? entry[2] : 0;
+      const a = Number.isFinite(entry?.[3]) ? entry[3] : 255;
+      return [
+        Math.max(0, Math.min(255, r | 0)),
+        Math.max(0, Math.min(255, g | 0)),
+        Math.max(0, Math.min(255, b | 0)),
+        Math.max(0, Math.min(255, a | 0)),
+      ];
+    });
+
+    TextureBuilder._paletteEntries.push({ key, rgba: normalized });
+    map.set(key, idx);
+    return idx;
+  }
+
+  /**
    * Build a binary palette map (PMAP) from the current registry.
    *
    * Format
@@ -489,7 +520,8 @@ class TextureBuilder extends BaseBuilder {
     // Calculate total size: 8-byte header + per-palette (2 + colors×4)
     let dataSize = 8;
     for (const e of entries) {
-      dataSize += 2 + e.colors.length * 4;
+      const colorCount = Array.isArray(e.rgba) ? e.rgba.length : (e.colors?.length || 0);
+      dataSize += 2 + colorCount * 4;
     }
 
     const buf = new ArrayBuffer(dataSize);
@@ -507,21 +539,39 @@ class TextureBuilder extends BaseBuilder {
 
     let offset = 8;
     for (const e of entries) {
-      view.setUint16(offset, e.colors.length, true);
+      const rgbaEntries = Array.isArray(e.rgba) ? e.rgba : null;
+      const hexColors = Array.isArray(e.colors) ? e.colors : [];
+      const colorCount = rgbaEntries ? rgbaEntries.length : hexColors.length;
+
+      view.setUint16(offset, colorCount, true);
       offset += 2;
-      for (const hex of e.colors) {
-        bytes[offset]     = parseInt(hex.substring(1, 3), 16) || 0; // R
-        bytes[offset + 1] = parseInt(hex.substring(3, 5), 16) || 0; // G
-        bytes[offset + 2] = parseInt(hex.substring(5, 7), 16) || 0; // B
-        bytes[offset + 3] = 255;                                     // A
-        offset += 4;
+      if (rgbaEntries) {
+        for (const color of rgbaEntries) {
+          bytes[offset] = color[0] || 0;
+          bytes[offset + 1] = color[1] || 0;
+          bytes[offset + 2] = color[2] || 0;
+          bytes[offset + 3] = color[3] || 0;
+          offset += 4;
+        }
+      } else {
+        for (const hex of hexColors) {
+          bytes[offset]     = parseInt(hex.substring(1, 3), 16) || 0; // R
+          bytes[offset + 1] = parseInt(hex.substring(3, 5), 16) || 0; // G
+          bytes[offset + 2] = parseInt(hex.substring(5, 7), 16) || 0; // B
+          bytes[offset + 3] = 255;                                     // A
+          offset += 4;
+        }
       }
     }
 
     console.log(`[TextureBuilder] Built palette map: ${entries.length} palettes, ${dataSize} bytes`);
     return {
       buffer: buf,
-      entries: entries.map((e, i) => ({ index: i + 1, key: e.key, colorCount: e.colors.length }))
+      entries: entries.map((e, i) => ({
+        index: i + 1,
+        key: e.key,
+        colorCount: Array.isArray(e.rgba) ? e.rgba.length : ((e.colors && e.colors.length) || 0),
+      }))
     };
   }
 }

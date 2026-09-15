@@ -376,6 +376,13 @@ test('Time: calendar and clock components', () => {
   assert.strictEqual(t.DayOfWeek(), 'Sunday');
 });
 
+test('Time: Milliseconds matches firmware 100ms slices', () => {
+  const t = new (loadExtensionClass('Time'))(makeEmulator());
+  t._getCurrentTime = () => new Date(2026, 7, 23, 3, 30, 30, 537);
+  const instrumented = instrument(t, 'Time');
+  assert.strictEqual(instrumented.Milliseconds(), 500);
+});
+
 test('Time: watch hand angles, smooth and stepped', () => {
   const t = makeTime();
 

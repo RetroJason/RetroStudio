@@ -110,6 +110,7 @@ class D2File {
     const meta     = textureCfg.metadata || {};
     const format   = meta.outputPixelFormat || textureCfg.outputPixelFormat || 'd2_mode_rgba8888';
     const fmtEnum  = FORMAT_STRING_TO_ENUM[format] ?? D2_FORMAT.RGBA8888;
+    const palIdx   = meta.paletteIndex ?? textureCfg.paletteIndex ?? 0;
     const palOff   = meta.paletteOffset ?? textureCfg.paletteOffset ?? 0;
     const compress = textureCfg.compressionType || meta.compressionType || 'none';
     const rotation = textureCfg.rotation ?? 0;
@@ -150,6 +151,7 @@ class D2File {
     }
 
     const d2 = buildD2TX(buildW, buildH, fmtEnum, data, {
+      paletteIndex: palIdx,
       paletteOffset: palOff,
       rle: isRLE,
       preRotated: rotation === 90,

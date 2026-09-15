@@ -801,7 +801,8 @@ class GameEmulator {
     this.currentVolume = Math.max(0, Math.min(100, volume));
     
     // Update the volume slider to reflect the new value
-    const volumeSlider = document.getElementById('volumeSlider');
+    const root = this.contentContainer || document;
+    const volumeSlider = root.querySelector('#volumeSlider');
     if (volumeSlider) {
       volumeSlider.value = this.currentVolume;
     }
@@ -2362,6 +2363,10 @@ class GameEmulator {
   }
 
   async playRuntimePackage(runtimePackage = null) {
+    if (this.isRunning || this.luaState) {
+      this.stopProject();
+    }
+
     if (runtimePackage) {
       this.setRuntimePackage(runtimePackage);
     }
@@ -2922,8 +2927,8 @@ class GameEmulator {
     this.updateStatus('Reloading game...', 'info');
     
     try {
-      // Stop current game
-      this.stopGameLoop();
+      // Stop current game and all audio/resources before restart.
+      this.stopProject();
       
       // Clear any paused state
       this.isPaused = false;

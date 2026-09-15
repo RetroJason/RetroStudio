@@ -7,6 +7,12 @@ class LuaTimeExtensions extends BaseLuaExtension {
     this.gameEmulator = gameEmulator;
   }
 
+  _getFirmwareMilliseconds(now) {
+    // Firmware updates its internal time slice every 100ms, so milliseconds are
+    // quantized to 0,100,...,900 rather than arbitrary wall-clock values.
+    return Math.floor(now.getMilliseconds() / 100) * 100;
+  }
+
   _getCurrentTime() {
     return new Date();
   }
@@ -104,7 +110,7 @@ class LuaTimeExtensions extends BaseLuaExtension {
    */
   Milliseconds() {
     const now = this._getCurrentTime();
-    const milliseconds = now.getMilliseconds();
+    const milliseconds = this._getFirmwareMilliseconds(now);
     console.log(`[Lua Time] Milliseconds() = ${milliseconds}`);
     return milliseconds;
   }

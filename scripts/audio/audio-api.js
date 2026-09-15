@@ -31,7 +31,6 @@ class AudioEngine extends EventTarget {
     // PICO-8 playback (music()/sfx())
     this.picoResourceProvider = null;
     this.picoMusic = null; // { number, node, gain }
-    this.picoMusicCache = new Map(); // song number -> rendered samples
 
     this.isInitialized = false;
     this.initializationPromise = null;
@@ -498,6 +497,16 @@ class AudioEngine extends EventTarget {
   setMasterVolume(left, right = null) {
     this.masterVolume.left = Math.max(0, left);
     this.masterVolume.right = Math.max(0, right !== null ? right : left);
+
+    // PICO-8 music plays through a dedicated gain node, not the mixer worklet.
+    // Keep its gain in sync so runtime volume changes apply immediately.
+    if (this.picoMusic?.gain && this.audioContext) {
+      const target = this._picoMasterGain();
+      const now = this.audioContext.currentTime;
+      this.picoMusic.gain.gain.cancelScheduledValues(now);
+      this.picoMusic.gain.gain.setValueAtTime(target, now);
+      this.picoMusic.gain.gain.value = target;
+    }
 
     if (!this.workletNode) {
       return;
@@ -1085,6 +1094,7 @@ class AudioEngine extends EventTarget {
     }
 
     const loop = this._wavLoopPoints(resourceId);
+    const durationMs = this._picoSfxDurationMs(resourceId);
 
     // Claim the channel now, before the await. Lua cannot await, so a cart line
     // like `sfx"1" sfx"9" music"24"` runs all three synchronously; a channel
@@ -1098,7 +1108,7 @@ class AudioEngine extends EventTarget {
       // A looping sfx runs until something replaces it, so it must never be
       // aged out; a one-shot has to be, because the worklet never reports
       // completion back to us.
-      endsAt: loop ? 0 : Date.now() + this._picoSfxDurationMs(resourceId),
+      endsAt: loop ? 0 : Date.now() + durationMs,
       cancelled: false,
     };
     this._picoChannels.set(target, reservation);
@@ -1336,16 +1346,26 @@ class AudioEngine extends EventTarget {
   }
 
   _renderPicoMusic(n, source) {
-    if (!this.picoMusicCache) {
-      this.picoMusicCache = new Map();
-    }
-    if (this.picoMusicCache.has(n)) {
-      return this.picoMusicCache.get(n);
+    let normalizedSource = source;
+    // Some imported/generated songs carry patterns at top-level instead of
+    // song.patterns; accept both shapes so music() stays resilient.
+    if (normalizedSource && normalizedSource.type === 'pico_music') {
+      const hasNestedPatterns = Array.isArray(normalizedSource.song?.patterns);
+      const hasTopLevelPatterns = Array.isArray(normalizedSource.patterns);
+      if (!hasNestedPatterns && hasTopLevelPatterns) {
+        normalizedSource = {
+          ...normalizedSource,
+          song: {
+            ...(normalizedSource.song || {}),
+            patterns: normalizedSource.patterns,
+          },
+        };
+      }
     }
 
     // A built project supplies the `.d2mu` binary the watch plays; an unbuilt
     // one supplies the `.p8mus` source. parseSong takes either.
-    const song = PicoAudio.parseSong(source);
+    const song = PicoAudio.parseSong(normalizedSource);
     const rendered = PicoAudio.renderSong(
       song.patterns,
       0,
@@ -1355,7 +1375,6 @@ class AudioEngine extends EventTarget {
     // renderSong mixes every channel down to one buffer, so the channels the
     // song claims have to be recorded separately for playMusic to honour them.
     rendered.startChannels = PicoAudio.patternChannels(song.patterns[0], song.slots);
-    this.picoMusicCache.set(n, rendered);
     return rendered;
   }
 }
