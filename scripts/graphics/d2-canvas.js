@@ -209,26 +209,26 @@ vec4 decodePixel(int px, int py) {
 
   // ── Indexed 1-bit ──
   if (u_format == 0x0C) {
-    int byteOff = pixelIndex / 8;
-    int bitIdx  = pixelIndex & 7;
+    int byteOff = py * u_texStride + px / 8;
+    int bitIdx  = px & 7;
     uint b = fetchByte(byteOff);
     int idx = int((b >> uint(bitIdx)) & 1u) + u_palOffset;
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── Indexed 2-bit ──
   if (u_format == 0x0B) {
-    int byteOff = pixelIndex / 4;
-    int shift   = (pixelIndex & 3) * 2;
+    int byteOff = py * u_texStride + px / 4;
+    int shift   = (px & 3) * 2;
     uint b = fetchByte(byteOff);
     int idx = int((b >> uint(shift)) & 3u) + u_palOffset;
     return texelFetch(u_palette, ivec2(idx, 0), 0);
   }
   // ── Indexed 4-bit ──
   if (u_format == 0x0A) {
-    int byteOff = pixelIndex / 2;
+    int byteOff = py * u_texStride + px / 2;
     uint b = fetchByte(byteOff);
     int idx;
-    if ((pixelIndex & 1) == 0) {
+    if ((px & 1) == 0) {
       idx = int(b & 0xFu);
     } else {
       idx = int((b >> 4u) & 0xFu);
@@ -367,26 +367,26 @@ vec4 decodePixel(int px, int py) {
 
   // ── Alpha 1-bit ──
   if (u_format == 0x0F) {
-    int byteOff = pixelIndex / 8;
-    int bitIdx  = pixelIndex & 7;
+    int byteOff = py * u_texStride + px / 8;
+    int bitIdx  = px & 7;
     uint bb = fetchByte(byteOff);
     float a = float((bb >> uint(bitIdx)) & 1u);
     return vec4(1.0, 1.0, 1.0, a);
   }
   // ── Alpha 2-bit ──
   if (u_format == 0x0E) {
-    int byteOff = pixelIndex / 4;
-    int shift   = (pixelIndex & 3) * 2;
+    int byteOff = py * u_texStride + px / 4;
+    int shift   = (px & 3) * 2;
     uint bb = fetchByte(byteOff);
     float a = float((bb >> uint(shift)) & 3u) / 3.0;
     return vec4(1.0, 1.0, 1.0, a);
   }
   // ── Alpha 4-bit ──
   if (u_format == 0x0D) {
-    int byteOff = pixelIndex / 2;
+    int byteOff = py * u_texStride + px / 2;
     uint bb = fetchByte(byteOff);
     float a;
-    if ((pixelIndex & 1) == 0) {
+    if ((px & 1) == 0) {
       a = float(bb & 0xFu) / 15.0;
     } else {
       a = float((bb >> 4u) & 0xFu) / 15.0;
