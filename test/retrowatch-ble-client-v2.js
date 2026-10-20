@@ -44,7 +44,7 @@ const UPLOAD_ACK_CHUNK_INTERVAL = 16;
 const CHUNK_WINDOW_TIMEOUT_MS = 8000;
 
 /* First firmware that batches upload acknowledgements. */
-const DELAYED_UPLOAD_ACK_MIN_VERSION = [1, 1, 2, 69];
+const DELAYED_UPLOAD_ACK_MIN_VERSION = [1, 1, 3, 112];
 
 const MSG = {
   NONE:               0x0000,
