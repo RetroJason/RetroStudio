@@ -944,11 +944,26 @@ body.no-select {
   border-radius: 2px;
   transition: width 0.15s ease;
 }
+.watch-progress-fill.is-indeterminate {
+  width: 30%;
+  animation: watch-progress-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes watch-progress-indeterminate {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(340%); }
+}
 .watch-progress-text {
   font-size: 9px;
   color: var(--studio-muted);
   text-align: center;
   margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .watch-progress-fill.is-indeterminate {
+    animation: none;
+    transform: none;
+  }
 }
 
 .ribbon-icon {

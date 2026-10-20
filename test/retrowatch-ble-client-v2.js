@@ -27,6 +27,8 @@ const HEADER_SIZE = 4;
 const MAX_FRAME = 2048;
 const MAX_PAYLOAD = MAX_FRAME - HEADER_SIZE;
 const RSP_HEADER_SIZE = 3;
+const FRAMEBUFFER_WIDTH = 368;
+const FRAMEBUFFER_HEIGHT = 448;
 
 /* Largest chunk of file data the device will accept in one FILE_CHUNK_REQ.
  * Mirrors kMaxUploadChunkDataSize in firmware/src/FileManager.cpp. */
@@ -53,6 +55,8 @@ const MSG = {
   TRANSPORT_INFO_RSP: 0x0005,
   SET_TIME_REQ:       0x0006,
   SET_TIME_RSP:       0x0007,
+  FB_DUMP_REQ:        0x000A,
+  FB_DUMP_RSP:        0x000B,
   FS_LIST_REQ:        0x0100,
   FS_LIST_RSP:        0x0101,
   FS_READ_REQ:        0x0102,
@@ -241,6 +245,37 @@ function parseRspHeader(payload) {
   const requestId = payload[1] | (payload[2] << 8);
   const body = payload.slice(RSP_HEADER_SIZE);
   return { status, requestId, body };
+}
+
+function parseFramebufferDumpResponse(payload, expectedRequestId) {
+  const parsed = parseRspHeader(payload);
+  if (parsed.requestId !== expectedRequestId) {
+    throw new Error(`Framebuffer response request ID mismatch: expected ${expectedRequestId}, got ${parsed.requestId}`);
+  }
+  if (parsed.status !== STATUS.OK) {
+    throw new Error(`Framebuffer capture failed: ${statusName(parsed.status)}`);
+  }
+  if (parsed.body.length < 7) {
+    throw new Error("Framebuffer response payload too short");
+  }
+
+  const view = new DataView(parsed.body.buffer, parsed.body.byteOffset, parsed.body.byteLength);
+  const hasMore = parsed.body[0];
+  const nextOffset = view.getUint32(1, true);
+  const chunkLength = view.getUint16(5, true);
+  if (hasMore > 1) {
+    throw new Error("Framebuffer response has an invalid continuation flag");
+  }
+  if (chunkLength !== parsed.body.length - 7) {
+    throw new Error("Framebuffer response chunk length does not match its payload");
+  }
+
+  return {
+    requestId: parsed.requestId,
+    hasMore: hasMore === 1,
+    nextOffset,
+    chunk: parsed.body.slice(7),
+  };
 }
 
 /* Some builds append a NUL-separated serial number to the PONG payload. */
@@ -616,6 +651,61 @@ class RetroWatchBleClient {
       status: parsed.status,
       unixSeconds: sec,
       tzOffsetMinutesEast: tz,
+    };
+  }
+
+  async captureFramebuffer({ onProgress = null } = {}) {
+    this._assertConnected();
+
+    const totalBytes = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT * 2;
+    const responseOverhead = RSP_HEADER_SIZE + 7;
+    if (this.maxMessagePayloadBytes <= responseOverhead) {
+      throw new Error("BLE payload is too small to capture the watch framebuffer");
+    }
+
+    const requestedLength = Math.min(
+      0xffff,
+      MAX_PAYLOAD - responseOverhead,
+      this.maxMessagePayloadBytes - responseOverhead
+    );
+    const pixels = new Uint8Array(totalBytes);
+    let offset = 0;
+
+    while (offset < totalBytes) {
+      const requestId = this._nextRequestId();
+      const payload = concatBytes([
+        u16LE(requestId),
+        u32LE(offset),
+        u16LE(requestedLength),
+      ]);
+      const packet = await this.sendRequest(MSG.FB_DUMP_REQ, payload, {
+        expectType: MSG.FB_DUMP_RSP,
+        timeoutMs: 10000,
+        requestId,
+      });
+      const response = parseFramebufferDumpResponse(packet.payload, requestId);
+
+      if (response.nextOffset !== offset + response.chunk.length) {
+        throw new Error("Framebuffer response returned a non-contiguous chunk");
+      }
+      if (response.chunk.length === 0 || response.nextOffset > totalBytes) {
+        throw new Error("Framebuffer response returned an invalid chunk");
+      }
+      if (response.hasMore !== (response.nextOffset < totalBytes)) {
+        throw new Error("Framebuffer response ended at an unexpected offset");
+      }
+
+      pixels.set(response.chunk, offset);
+      offset = response.nextOffset;
+      if (typeof onProgress === "function") {
+        onProgress(offset, totalBytes);
+      }
+    }
+
+    return {
+      width: FRAMEBUFFER_WIDTH,
+      height: FRAMEBUFFER_HEIGHT,
+      pixels,
     };
   }
 
@@ -1453,6 +1543,8 @@ window.RetroWatchBle = {
   MAX_PAYLOAD,
   MAX_FRAME,
   RSP_HEADER_SIZE,
+  FRAMEBUFFER_WIDTH,
+  FRAMEBUFFER_HEIGHT,
   msgTypeName,
   statusName,
   fileReasonName,
@@ -1463,4 +1555,5 @@ window.RetroWatchBle = {
   TX_CHARACTERISTIC_UUID,
   decodePacket,
   encodePacket,
+  parseFramebufferDumpResponse,
 };

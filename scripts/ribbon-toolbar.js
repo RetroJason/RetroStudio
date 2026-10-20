@@ -930,9 +930,13 @@ class RibbonToolbar {
     // Watch operations
     this.watchClient = null;
     this.watchLaunchBtn = document.getElementById('watchLaunchBtn');
+    this.watchScreenshotBtn = document.getElementById('watchScreenshotBtn');
 
     this.setupButton('watchLaunchBtn', async () => {
       await this.watchLaunch();
+    });
+    this.setupButton('watchScreenshotBtn', async () => {
+      await this.watchScreenshot();
     });
     
     // Note: Create buttons are now handled dynamically
@@ -1587,6 +1591,11 @@ class RibbonToolbar {
     if (btn) {
       btn.title = connected ? 'Build and launch on watch' : 'Connect and launch on watch';
     }
+    if (this.watchScreenshotBtn) {
+      this.watchScreenshotBtn.title = connected
+        ? 'Capture a screenshot from the connected watch'
+        : 'Connect and capture a screenshot from the watch';
+    }
   }
 
   async ensureWatchConnected() {
@@ -1623,6 +1632,224 @@ class RibbonToolbar {
       this.updateWatchButtonState();
       window.gameEmulator?.updateStatus?.(`Watch connect failed: ${err.message}`, 'error');
     }
+  }
+
+  async watchScreenshot() {
+    const button = this.watchScreenshotBtn;
+    const progressEl = document.getElementById('watchScreenshotProgress');
+    const progressBar = document.getElementById('watchScreenshotProgressBar');
+    const fillEl = document.getElementById('watchScreenshotProgressFill');
+    const textEl = document.getElementById('watchScreenshotProgressText');
+    const setProgress = (message, percent = null, indeterminate = false) => {
+      if (progressEl) progressEl.style.display = '';
+      if (fillEl) {
+        fillEl.classList.toggle('is-indeterminate', indeterminate);
+        fillEl.style.width = indeterminate ? '30%' : `${percent ?? 0}%`;
+      }
+      if (progressBar) {
+        if (percent === null) {
+          progressBar.removeAttribute('aria-valuenow');
+        } else {
+          progressBar.setAttribute('aria-valuenow', String(percent));
+        }
+        progressBar.setAttribute('aria-valuetext', message);
+      }
+      if (textEl) textEl.textContent = message;
+    };
+
+    if (button) button.disabled = true;
+
+    try {
+      setProgress('Connecting to watch...', null, true);
+      await this.ensureWatchConnected();
+      setProgress('Waiting for watch framebuffer...', null, true);
+      window.gameEmulator?.updateStatus?.('Capturing watch screen...', 'info');
+
+      let lastPercent = -1;
+      const framebuffer = await this.watchClient.captureFramebuffer({
+        onProgress: (captured, total) => {
+          const percent = Math.floor((captured / total) * 100);
+          if (percent !== lastPercent) {
+            lastPercent = percent;
+            const message = `Downloading watch screenshot... ${percent}%`;
+            setProgress(message, percent);
+            window.gameEmulator?.updateStatus?.(message, 'info');
+          }
+        },
+      });
+      setProgress('Converting screenshot to PNG...', 100);
+      const png = await this.encodeWatchFramebufferPng(framebuffer);
+      const projectName = window.gameEmulator?.projectExplorer?.getFocusedProjectName?.() || 'watch';
+      const safeName = String(projectName).replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || 'watch';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      this.showWatchScreenshotDialog(png, `${safeName}-device-${timestamp}.png`, framebuffer);
+      window.gameEmulator?.updateStatus?.('Watch screenshot captured.', 'success');
+    } catch (error) {
+      console.error('[RibbonToolbar] Watch screenshot failed:', error);
+      window.gameEmulator?.updateStatus?.(`Watch screenshot failed: ${error.message}`, 'error');
+      alert('Watch screenshot failed: ' + error.message);
+    } finally {
+      if (progressEl) progressEl.style.display = 'none';
+      if (fillEl) {
+        fillEl.classList.remove('is-indeterminate');
+        fillEl.style.width = '0%';
+      }
+      if (button) button.disabled = false;
+    }
+  }
+
+  async encodeWatchFramebufferPng(framebuffer, rotationDegrees = 270) {
+    const BLE = window.RetroWatchBle;
+    if (!framebuffer ||
+        framebuffer.width !== BLE.FRAMEBUFFER_WIDTH ||
+        framebuffer.height !== BLE.FRAMEBUFFER_HEIGHT ||
+        !(framebuffer.pixels instanceof Uint8Array) ||
+        framebuffer.pixels.length !== framebuffer.width * framebuffer.height * 2) {
+      throw new Error('Watch returned an invalid RGB565 framebuffer.');
+    }
+    if (!Number.isInteger(rotationDegrees) || rotationDegrees % 90 !== 0) {
+      throw new Error('Screenshot rotation must be a multiple of 90 degrees.');
+    }
+    const normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
+
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = framebuffer.width;
+    sourceCanvas.height = framebuffer.height;
+    const sourceContext = sourceCanvas.getContext('2d');
+    if (!sourceContext) throw new Error('Unable to create an image canvas for the watch screenshot.');
+
+    const imageData = sourceContext.createImageData(framebuffer.width, framebuffer.height);
+    const source = new DataView(
+      framebuffer.pixels.buffer,
+      framebuffer.pixels.byteOffset,
+      framebuffer.pixels.byteLength
+    );
+    for (let index = 0; index < framebuffer.width * framebuffer.height; index++) {
+      const rgb565 = source.getUint16(index * 2, true);
+      const red = (rgb565 >> 11) & 0x1f;
+      const green = (rgb565 >> 5) & 0x3f;
+      const blue = rgb565 & 0x1f;
+      const target = index * 4;
+      imageData.data[target] = (red << 3) | (red >> 2);
+      imageData.data[target + 1] = (green << 2) | (green >> 4);
+      imageData.data[target + 2] = (blue << 3) | (blue >> 2);
+      imageData.data[target + 3] = 0xff;
+    }
+    sourceContext.putImageData(imageData, 0, 0);
+
+    const isQuarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
+    const canvas = document.createElement('canvas');
+    canvas.width = isQuarterTurn ? framebuffer.height : framebuffer.width;
+    canvas.height = isQuarterTurn ? framebuffer.width : framebuffer.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Unable to create a rotated image canvas for the watch screenshot.');
+    context.translate(canvas.width / 2, canvas.height / 2);
+    context.rotate(normalizedRotation * Math.PI / 180);
+    context.drawImage(sourceCanvas, -framebuffer.width / 2, -framebuffer.height / 2);
+
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Failed to encode the watch framebuffer as PNG.'));
+        }
+      }, 'image/png');
+    });
+  }
+
+  showWatchScreenshotDialog(png, filename, framebuffer) {
+    let rotationDegrees = 270;
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'modal-dialog';
+    dialog.style.width = 'min(90vw, 520px)';
+    dialog.style.minWidth = '0';
+    dialog.style.maxWidth = '90vw';
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const title = document.createElement('h3');
+    title.className = 'modal-title';
+    title.textContent = 'Watch screenshot';
+    header.appendChild(title);
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+    const image = document.createElement('img');
+    let imageUrl = URL.createObjectURL(png);
+    const imageUrls = new Set([imageUrl]);
+    image.src = imageUrl;
+    image.alt = 'Screenshot captured from the RetroWatch display';
+    image.style.display = 'block';
+    image.style.maxWidth = '100%';
+    image.style.maxHeight = '65vh';
+    image.style.objectFit = 'contain';
+    image.style.margin = '0 auto';
+    const rotateButton = document.createElement('button');
+    rotateButton.className = 'modal-btn modal-btn-secondary';
+    rotateButton.textContent = 'Rotate 90°';
+    rotateButton.title = 'Rotate screenshot 90 degrees clockwise';
+    rotateButton.setAttribute('aria-label', 'Rotate screenshot 90 degrees clockwise');
+    rotateButton.style.display = 'block';
+    rotateButton.style.margin = '0 0 12px auto';
+    body.append(rotateButton, image);
+
+    const footer = document.createElement('div');
+    footer.className = 'modal-footer';
+    const closeButton = document.createElement('button');
+    closeButton.className = 'modal-btn modal-btn-secondary';
+    closeButton.textContent = 'Close';
+    const downloadButton = document.createElement('button');
+    downloadButton.className = 'modal-btn modal-btn-primary';
+    downloadButton.textContent = 'Download PNG';
+    footer.append(closeButton, downloadButton);
+    dialog.append(header, body, footer);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const cleanup = () => {
+      closed = true;
+      document.removeEventListener('keydown', handleKeyDown);
+      if (document.body.contains(overlay)) document.body.removeChild(overlay);
+      imageUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+    let closed = false;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') cleanup();
+    };
+
+    closeButton.addEventListener('click', cleanup);
+    rotateButton.addEventListener('click', async () => {
+      rotateButton.disabled = true;
+      try {
+        const nextRotation = (rotationDegrees + 90) % 360;
+        const rotatedPng = await this.encodeWatchFramebufferPng(framebuffer, nextRotation);
+        if (closed) return;
+        imageUrl = URL.createObjectURL(rotatedPng);
+        imageUrls.add(imageUrl);
+        image.src = imageUrl;
+        rotationDegrees = nextRotation;
+      } catch (error) {
+        console.error('[RibbonToolbar] Unable to rotate watch screenshot:', error);
+        alert('Unable to rotate screenshot: ' + error.message);
+      } finally {
+        if (!closed) rotateButton.disabled = false;
+      }
+    });
+    downloadButton.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.href = imageUrl;
+      link.download = filename;
+      link.click();
+    });
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) cleanup();
+    });
+    document.addEventListener('keydown', handleKeyDown);
   }
 
   async watchLaunch() {

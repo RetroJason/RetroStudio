@@ -323,7 +323,90 @@ test('a bitmap .font with no atlas path is rejected rather than built empty', as
   );
 });
 
-test('build() writes palette index into indexed D2 output', async () => {
+test('indexed font palettes use magenta for transparency and white for visible glyphs', () => {
+  const builder = new FontBuilder();
+  for (const [format, count] of [
+    ['d2_mode_i1', 2],
+    ['d2_mode_i2', 4],
+    ['d2_mode_i4', 16],
+    ['d2_mode_i8', 256],
+  ]) {
+    assert.strictEqual(builder._resolveFontOutputPixelFormat({ outputPixelFormat: format }), format);
+    const palette = builder._buildFontPalette(format);
+    assert.strictEqual(palette.length, count, `${format} should have a complete palette`);
+    assert.deepStrictEqual(palette[0], [255, 0, 255, 255], 'palette index zero is the magenta key');
+    assert.ok(palette.slice(1).every((color) => color[0] === 255 && color[1] === 255 && color[2] === 255));
+  }
+});
+
+test('bitmap indexed fonts register a palette and set the magenta color key', async () => {
+  const previousImageData = globalThis.ImageData;
+  const previousD2File = globalThis.D2File;
+  const previousFontAtlasGenerator = globalThis.FontAtlasGenerator;
+  const previousTextureBuilder = globalThis.TextureBuilder;
+  let textureConfig = null;
+  let registeredPalette = null;
+
+  globalThis.ImageData = {
+    fromFile: async () => ({
+      width: 2,
+      height: 2,
+      frames: [{
+        colors: Array.from({ length: 4 }, () => ({ r: 255, g: 255, b: 255, alpha: 0 })),
+      }],
+    }),
+  };
+  globalThis.D2File = {
+    buildFromRGBA: (config) => {
+      textureConfig = config;
+      const output = new Uint8Array(32);
+      output[13] = config.useColorKey ? 0x04 : 0;
+      return output;
+    },
+  };
+  globalThis.TextureBuilder = {
+    getPaletteIndexRgba: (_key, palette) => {
+      registeredPalette = palette;
+      return 3;
+    },
+  };
+  globalThis.FontAtlasGenerator = class {
+    toBMFontBinary() {
+      return new Uint8Array(1);
+    }
+  };
+
+  try {
+    const builder = new FontBuilder();
+    builder._loadFileContent = async () => new Uint8Array([1]);
+    await builder._generateOutputsFromMetadata({
+      type: 'retrowatch-font',
+      source: 'bitmap',
+      sourceAtlasPath: 'Sources/Fonts/atlas.png',
+      outputPixelFormat: 'd2_mode_i1',
+      atlas: { columns: 1, cellWidth: 2, cellHeight: 2, firstCode: 32 },
+      ranges: [{ first: 32, last: 32, width: 1, height: 1, xadvance: 2 }],
+    }, 'Sources/Fonts/test');
+
+    assert.strictEqual(textureConfig.outputPixelFormat, 'd2_mode_i1');
+    assert.strictEqual(textureConfig.metadata.paletteIndex, 3);
+    assert.strictEqual(textureConfig.useColorKey, true);
+    assert.strictEqual(textureConfig.transparentColor, '#FF00FF');
+    assert.deepStrictEqual(registeredPalette[0], [255, 0, 255, 255]);
+    assert.deepStrictEqual(registeredPalette[1], [255, 255, 255, 255]);
+  } finally {
+    if (previousImageData === undefined) delete globalThis.ImageData;
+    else globalThis.ImageData = previousImageData;
+    if (previousD2File === undefined) delete globalThis.D2File;
+    else globalThis.D2File = previousD2File;
+    if (previousTextureBuilder === undefined) delete globalThis.TextureBuilder;
+    else globalThis.TextureBuilder = previousTextureBuilder;
+    if (previousFontAtlasGenerator === undefined) delete globalThis.FontAtlasGenerator;
+    else globalThis.FontAtlasGenerator = previousFontAtlasGenerator;
+  }
+});
+
+test('build() writes the indexed font palette index into the D2 header', async () => {
   const builder = new FontBuilder();
   const saved = new Map();
 
@@ -334,6 +417,7 @@ test('build() writes palette index into indexed D2 output', async () => {
   builder._generateOutputsFromMetadata = async () => {
     const d2Bytes = new Uint8Array(64);
     d2Bytes[0] = 0x44; d2Bytes[1] = 0x32; d2Bytes[2] = 0x54; d2Bytes[3] = 0x58; // D2TX
+    d2Bytes[5] = 0x0c; // d2_mode_i1
     return {
       d2Bytes,
       fntBytes: null,
@@ -354,7 +438,8 @@ test('build() writes palette index into indexed D2 output', async () => {
   assert.ok(written instanceof Uint8Array, 'expected .d2 output bytes to be saved');
 
   const header = new DataView(written.buffer, written.byteOffset, written.byteLength);
-  assert.strictEqual(header.getUint16(10, true), 7, 'palette index should be present in D2 header');
+  assert.strictEqual(header.getUint8(5), 0x0c, 'indexed format should be preserved in D2 header');
+  assert.strictEqual(header.getUint16(10, true), 7, 'registered font palette index should be stored');
 });
 
 (async function run() {

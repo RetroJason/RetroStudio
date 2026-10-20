@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Game Engine Editor</title>
-  <link rel="stylesheet" href="style/main.css?v=8">
+  <link rel="stylesheet" href="style/main.css?v=9">
   <link rel="stylesheet" href="style/project-explorer.css?v=4">
   <link rel="stylesheet" href="style/viewers.css?v=2">
   <link rel="stylesheet" href="style/palette-editor.css?v=2">
@@ -116,10 +116,20 @@
             <div class="ribbon-icon">&#x1F680;</div>
             <div class="ribbon-text">Launch</div>
           </button>
+          <button id="watchScreenshotBtn" class="ribbon-btn" title="Connect and capture a screenshot from the watch">
+            <div class="ribbon-icon">&#x1F4F7;</div>
+            <div class="ribbon-text">Screenshot</div>
+          </button>
         </div>
         <div id="watchProgress" class="watch-progress" style="display:none">
           <div class="watch-progress-bar"><div class="watch-progress-fill" id="watchProgressFill"></div></div>
           <div class="watch-progress-text" id="watchProgressText"></div>
+        </div>
+        <div id="watchScreenshotProgress" class="watch-progress" style="display:none" role="status" aria-live="polite">
+          <div id="watchScreenshotProgressBar" class="watch-progress-bar" role="progressbar" aria-label="Watch screenshot capture progress" aria-valuemin="0" aria-valuemax="100">
+            <div class="watch-progress-fill" id="watchScreenshotProgressFill"></div>
+          </div>
+          <div class="watch-progress-text" id="watchScreenshotProgressText"></div>
         </div>
       </div>
 
@@ -227,7 +237,7 @@
   <!-- Graphics Utilities -->
   <script src="scripts/graphics/palette.js"></script>
   <script src="scripts/graphics/image.js"></script>
-  <script src="scripts/graphics/d2-canvas.js"></script>
+  <script src="scripts/graphics/d2-canvas.js?v=4"></script>
   <script src="scripts/graphics/d2-file.js"></script>
   <script src="scripts/graphics/d2-sprite.js"></script>
   <script src="scripts/tilemap/gid.js"></script>
@@ -290,7 +300,7 @@
   <script src="scripts/editors/compound-editor.js"></script>
   
   <!-- UI Management -->
-    <script src="scripts/ribbon-toolbar.js?v=12"></script>
+    <script src="scripts/ribbon-toolbar.js?v=15"></script>
   <script src="scripts/tab-manager.js?v=6"></script>
   <script src="scripts/project-explorer.js?v=13"></script>
   <script src="scripts/game-emulator/simulator-logger.js?v=2"></script>
@@ -299,7 +309,7 @@
   <script src="scripts/game-emulator/runtime-host.js?v=2"></script>
 
   <!-- BLE Watch Client -->
-  <script src="test/retrowatch-ble-client-v2.js"></script>
+  <script src="test/retrowatch-ble-client-v2.js?v=1"></script>
   
   <!-- Application Bootstrap (components will be loaded dynamically after init) -->
   <script src="scripts/core/application.js?v=8"></script>

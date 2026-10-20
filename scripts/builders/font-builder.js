@@ -14,40 +14,34 @@ class FontBuilder extends BaseBuilder {
     return /^d2_mode_i[1248]$/i.test(String(outputPixelFormat || ''));
   }
 
-  _buildIndexedAlphaRampPalette(outputPixelFormat) {
+  _buildFontPalette(outputPixelFormat) {
     const format = String(outputPixelFormat || '').toLowerCase();
-    let levels = 256;
-    if (format === 'd2_mode_i1') levels = 2;
-    else if (format === 'd2_mode_i2') levels = 4;
-    else if (format === 'd2_mode_i4') levels = 16;
+    const levels = format === 'd2_mode_i1' ? 2
+      : format === 'd2_mode_i2' ? 4
+        : format === 'd2_mode_i4' ? 16
+          : 256;
 
-    const max = Math.max(1, levels - 1);
-    const rgba = [];
-    for (let i = 0; i < levels; i += 1) {
-      const alpha = Math.round((i / max) * 255);
-      rgba.push([255, 255, 255, alpha]);
-    }
-    return rgba;
+    // Font conversion maps transparent coverage to index zero. The runtime
+    // font renderer uses a magenta color key, so reserve that index for the
+    // key and use white for every visible coverage level.
+    return Array.from({ length: levels }, (_, index) =>
+      index === 0 ? [255, 0, 255, 255] : [255, 255, 255, 255]);
   }
 
   _registerFontPalette(outputPixelFormat, basePath) {
     if (!this._isIndexedFontFormat(outputPixelFormat)) return 0;
+
     const textureBuilder =
       (typeof TextureBuilder !== 'undefined' && TextureBuilder) ||
       (typeof globalThis !== 'undefined' && globalThis.TextureBuilder) ||
       (typeof window !== 'undefined' && window.TextureBuilder) ||
       null;
-
     if (!textureBuilder || typeof textureBuilder.getPaletteIndexRgba !== 'function') {
-      console.warn('[FontBuilder] TextureBuilder palette registry unavailable; indexed font may render incorrectly');
-      return 0;
+      throw new Error('TextureBuilder palette registry unavailable; cannot export indexed font');
     }
 
     const key = `font:${String(outputPixelFormat).toLowerCase()}`;
-    const rgba = this._buildIndexedAlphaRampPalette(outputPixelFormat);
-    const index = textureBuilder.getPaletteIndexRgba(key, rgba);
-    console.log(`[FontBuilder] Registered indexed font palette ${key} as PMAP index ${index} for ${basePath}`);
-    return index;
+    return textureBuilder.getPaletteIndexRgba(key, this._buildFontPalette(outputPixelFormat));
   }
 
   /**
@@ -113,16 +107,13 @@ class FontBuilder extends BaseBuilder {
       const d2Bytes = generated.d2Bytes;
       const fntBytes = generated.fntBytes;
       const outputPixelFormat = generated.outputPixelFormat || this._resolveFontOutputPixelFormat(fontJson);
-      const paletteIndex = generated.paletteIndex || 0;
       console.log(`${tag} Generated runtime outputs from metadata for ${file.path}`);
 
-      // Make a mutable copy for header patching
       const output = new Uint8Array(d2Bytes.length);
       output.set(d2Bytes);
-
-      if (paletteIndex > 0 && output.length >= 32) {
+      if (generated.paletteIndex > 0 && output.length >= 32) {
         const d2Header = new DataView(output.buffer, output.byteOffset, output.byteLength);
-        d2Header.setUint16(10, paletteIndex, true);
+        d2Header.setUint16(10, generated.paletteIndex, true);
       }
 
       // ── 3. Save .d2 to build output ──────────────────────────────
@@ -302,6 +293,8 @@ class FontBuilder extends BaseBuilder {
     const outputPixelFormat = this._resolveFontOutputPixelFormat(fontJson);
     const paletteIndex = this._registerFontPalette(outputPixelFormat, basePath);
     const d2Bytes = D2File.buildFromRGBA({
+      useColorKey: paletteIndex > 0,
+      transparentColor: '#FF00FF',
       outputPixelFormat,
       metadata: {
         outputPixelFormat,
@@ -386,6 +379,8 @@ class FontBuilder extends BaseBuilder {
     const outputPixelFormat = this._resolveFontOutputPixelFormat(fontJson);
     const paletteIndex = this._registerFontPalette(outputPixelFormat, basePath);
     const d2Bytes = D2File.buildFromRGBA({
+      useColorKey: paletteIndex > 0,
+      transparentColor: '#FF00FF',
       outputPixelFormat,
       metadata: {
         outputPixelFormat,
